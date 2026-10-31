@@ -5,12 +5,15 @@ import com.crdp.framework.security.SessionPrincipal;
 import com.crdp.framework.web.ApiResponse;
 import com.crdp.server.auth.AuthService;
 import com.crdp.server.auth.MenuQuery;
+import com.crdp.server.auth.TenantIdentifier;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import org.springframework.http.HttpHeaders;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
 @Tag(name = "医院端认证")
@@ -19,19 +22,24 @@ public class HospitalAuthController {
 
     private final AuthService authService;
     private final MenuQuery menuQuery;
+    private final TenantIdentifier tenantIdentifier;
 
-    public HospitalAuthController(AuthService authService, MenuQuery menuQuery) {
+    public HospitalAuthController(
+            AuthService authService, MenuQuery menuQuery, TenantIdentifier tenantIdentifier) {
         this.authService = authService;
         this.menuQuery = menuQuery;
+        this.tenantIdentifier = tenantIdentifier;
     }
 
     @Operation(summary = "医院端登录。先识别租户编码，再在该院库中校验账号。")
     @PostMapping("/api/hospital/auth/login")
     public ApiResponse<AuthService.LoginResult> login(
-            @Valid @RequestBody HospitalLoginRequest request) {
+            @Valid @RequestBody HospitalLoginRequest request,
+            @RequestHeader(value = HttpHeaders.HOST, required = false) String host) {
+        // PLT-AUTH-004：子域名识别的租户优先，统一登录页输入的编码兜底
+        String tenantCode = tenantIdentifier.resolve(host, request.tenantCode());
         return ApiResponse.ok(
-                authService.loginHospital(
-                        request.tenantCode(), request.username(), request.password()));
+                authService.loginHospital(tenantCode, request.username(), request.password()));
     }
 
     @PostMapping("/api/hospital/auth/logout")
