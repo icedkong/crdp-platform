@@ -35,6 +35,8 @@
 - 登录成功写登录日志（`auditLogger.loginAttempt`，PLT-AUD-002）。
 - 有效菜单 = 角色授予的菜单 ∩ 已开通模块；权限码 = 有效菜单上的 `perm_code` 去重（PLT-ROLE-006）。**注意**：规格要求再与“平台允许分配范围”求交（PLT-SCOPE-001/002），目前仓库未实现，属于 E05/E06 任务。
 - 会话为服务端 token（Redis `SessionStore`），不是 JWT；登出删除会话。
+- 令牌为 256 位随机不透明值（base64url，43 字符），不含任何用户信息；每个请求按令牌查服务端会话，删除会话（登出或服务端吊销）后旧令牌下一次请求即 40100（E04-T02）。
+- 会话链路的入口一致性（E04-T01 移交，E04-T02 实现）：配置了 `crdp.tenant.base-domain` 时，请求 Host 是 `{租户编码}.{平台域名}` 子域名的，会话必须是该租户的医院会话，否则按未认证处理（40100，不暴露差异）；IP、基域名等其余入口不约束。
 
 ## 2. 需要新增的接口（推断，待确认）
 
@@ -76,3 +78,5 @@ interface MeResponseExt extends MeResponse {
 - demoa 账号的 token 访问 `/api/platform/**` 返回 40300 / 40100（`requirePlatform` 失败），反之亦然。
 - 未开通模块的菜单不出现在 `menus`，其权限码不出现在 `codes`。
 - 登出后旧 token 访问返回 40100。
+- 登录成功下发不透明令牌（非 JWT、两次登录不同），会话保存在服务端；登出 / 删除会话后旧令牌立即失效（`AuthServiceTest`、`SessionStoreTest`、`TokenAuthenticationFilterTest`）。
+- 令牌租户与入口子域名不一致（demoa 的令牌用在 demob 入口、平台会话用在租户子域名）按未认证拒绝（`TokenAuthenticationFilterTest`）。

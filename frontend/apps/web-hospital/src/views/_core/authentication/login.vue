@@ -7,9 +7,12 @@ import { AuthenticationLogin, z } from '@vben/common-ui';
 
 import { useAuthStore } from '#/store';
 
-defineOptions({ name: 'Login' });
+import {
+  applyTenantCodeMemory,
+  recalledTenantCode,
+} from './tenant-code-memory';
 
-const TENANT_KEY = 'crdp.tenantCode';
+defineOptions({ name: 'Login' });
 
 const authStore = useAuthStore();
 const formRef = ref<InstanceType<typeof AuthenticationLogin>>();
@@ -26,6 +29,15 @@ const formSchema = computed((): VbenFormSchema[] => {
       rules: z
         .string()
         .regex(/^[a-z][a-z0-9]{1,31}$/, '租户编码为小写字母开头，2–32 位'),
+    },
+    {
+      component: 'VbenCheckbox',
+      defaultValue: true,
+      fieldName: 'rememberTenant',
+      label: '',
+      renderComponentContent: () => ({
+        default: () => '记住医院编码（只存编码，不存密码）',
+      }),
     },
     {
       component: 'VbenInput',
@@ -50,15 +62,21 @@ const formSchema = computed((): VbenFormSchema[] => {
   ];
 });
 
-function onSubmit(values: Record<string, string>) {
-  if (values.tenantCode) {
-    localStorage.setItem(TENANT_KEY, values.tenantCode);
-  }
-  return authStore.authLogin(values);
+function onSubmit(values: Record<string, boolean | string>) {
+  applyTenantCodeMemory(
+    localStorage,
+    typeof values.tenantCode === 'string' ? values.tenantCode : null,
+    values.rememberTenant !== false,
+  );
+  return authStore.authLogin({
+    password: values.password,
+    tenantCode: values.tenantCode,
+    username: values.username,
+  });
 }
 
 onMounted(() => {
-  const saved = localStorage.getItem(TENANT_KEY);
+  const saved = recalledTenantCode(localStorage);
   if (saved) {
     formRef.value?.getFormApi().setFieldValue('tenantCode', saved);
   }
