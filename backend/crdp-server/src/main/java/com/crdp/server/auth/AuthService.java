@@ -32,6 +32,7 @@ public class AuthService {
     private static final Logger log = LoggerFactory.getLogger(AuthService.class);
 
     private final PlatformMapper platformMapper;
+    private final TenantLookupCache tenantLookup;
     private final HospitalDirectory hospitalDirectory;
     private final PasswordEncoder passwordEncoder;
     private final SessionStore sessionStore;
@@ -42,6 +43,7 @@ public class AuthService {
 
     public AuthService(
             PlatformMapper platformMapper,
+            TenantLookupCache tenantLookup,
             HospitalDirectory hospitalDirectory,
             PasswordEncoder passwordEncoder,
             SessionStore sessionStore,
@@ -50,6 +52,7 @@ public class AuthService {
             AuditLogger auditLogger,
             TenantRoutingDataSource routing) {
         this.platformMapper = platformMapper;
+        this.tenantLookup = tenantLookup;
         this.hospitalDirectory = hospitalDirectory;
         this.passwordEncoder = passwordEncoder;
         this.sessionStore = sessionStore;
@@ -62,8 +65,7 @@ public class AuthService {
     public LoginResult loginHospital(String tenantCode, String username, String password) {
         String bucket = "H:" + tenantCode + ":" + username.toLowerCase(Locale.ROOT);
         rateLimiter.check(bucket);
-        TenantRecord tenant =
-                TenantContext.callAsPlatform(() -> platformMapper.findTenantByCode(tenantCode));
+        TenantRecord tenant = tenantLookup.findByCode(tenantCode).orElse(null);
         if (tenant == null || !tenant.routable()) {
             throw rejected(
                     bucket,
