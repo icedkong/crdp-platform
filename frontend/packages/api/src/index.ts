@@ -55,3 +55,24 @@ export function authBase(mode: SessionMode) {
 
 export { menuNodesToRoutes, menuNodeToRoute, toIconifyIcon } from './vben-menu';
 export type { VbenMenuRoute } from './vben-menu';
+
+export interface CreateTenantRequest {
+  /** 不填由后端自动生成（页面展示建议值可改）。 */
+  adminDisplayName?: string;
+  adminInitialPassword?: string;
+  adminUsername?: string;
+  code?: string;
+  name: string;
+}
+
+export interface TenantProvisionStep {
+  error: null | string;
+  status: 'FAILED' | 'SKIPPED' | 'SUCCESS';
+  step: string;
+}
+
+export interface TenantOnboardingResult {
+  code: string;
+  steps: TenantProvisionStep[];
+  tenantId: number;
+}

@@ -89,7 +89,12 @@ public class TenantOnboardingService {
         TenantResourceRow resource = resourceRow(tenantId, request.code(), dbPassword);
         provision(steps, tenantId, "database", () -> ensureDatabase(request.code(), dbPassword));
         provision(steps, tenantId, "migrate-register", () -> registry.register(resource));
-        provision(steps, tenantId, "admin", () -> ensureAdmin(tenantId, request));
+        if (adminProvided(request)) {
+            provision(steps, tenantId, "admin", () -> ensureAdmin(tenantId, request));
+        } else {
+            // 向导第 3 步可跳过：启用前经 E06 补设管理员
+            record(steps, tenantId, "admin", "SKIPPED", null);
+        }
 
         TenantContext.runAsPlatform(
                 () ->
@@ -107,12 +112,15 @@ public class TenantOnboardingService {
         if (request.name() == null || request.name().isBlank()) {
             throw new ApiException(400, 40001, "医院名称必填");
         }
-        if (request.adminUsername() == null || request.adminUsername().isBlank()) {
-            throw new ApiException(400, 40001, "首个租户管理员的用户名必填");
+        if (adminProvided(request)
+                && (request.adminInitialPassword() == null
+                        || request.adminInitialPassword().isBlank())) {
+            throw new ApiException(400, 40001, "填写首个租户管理员时初始口令必填（也可跳过，启用前补设）");
         }
-        if (request.adminInitialPassword() == null || request.adminInitialPassword().isBlank()) {
-            throw new ApiException(400, 40001, "首个租户管理员的初始口令必填");
-        }
+    }
+
+    private static boolean adminProvided(OnboardingRequest request) {
+        return request.adminUsername() != null && !request.adminUsername().isBlank();
     }
 
     private long ensureTenantRow(OnboardingRequest request) {
@@ -267,8 +275,12 @@ public class TenantOnboardingService {
 
     private void record(
             List<StepResult> steps, long tenantId, String step, RuntimeException error) {
-        String status = error == null ? "SUCCESS" : "FAILED";
-        steps.add(new StepResult(step, status, abbreviate(error)));
+        record(steps, tenantId, step, error == null ? "SUCCESS" : "FAILED", abbreviate(error));
+    }
+
+    private void record(
+            List<StepResult> steps, long tenantId, String step, String status, String errorText) {
+        steps.add(new StepResult(step, status, errorText));
         TenantContext.runAsPlatform(
                 () ->
                         platform.update(
@@ -279,7 +291,7 @@ public class TenantOnboardingService {
                                 tenantId,
                                 step,
                                 status,
-                                abbreviate(error)));
+                                errorText));
     }
 
     private String randomPassword() {

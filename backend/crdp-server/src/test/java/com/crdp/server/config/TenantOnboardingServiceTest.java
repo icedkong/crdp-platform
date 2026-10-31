@@ -70,6 +70,26 @@ class TenantOnboardingServiceTest {
     }
 
     @Test
+    void adminStepIsSkippable() {
+        stubTenantId();
+
+        TenantOnboardingService.OnboardingResult result = service.onboard(requestWithoutAdmin());
+
+        assertTrue(
+                result.steps().stream()
+                        .anyMatch(
+                                step ->
+                                        "SKIPPED".equals(step.status())
+                                                && "admin".equals(step.step())),
+                "未提供管理员时 admin 步骤应记为 SKIPPED：" + result.steps());
+        verify(platform, never()).update(contains("INSERT INTO sys_user"), any(Object[].class));
+    }
+
+    private TenantOnboardingService.OnboardingRequest requestWithoutAdmin() {
+        return new TenantOnboardingService.OnboardingRequest("democ", "虚构示例医院丙", null, null, null);
+    }
+
+    @Test
     void rejectsInvalidRequestsBeforeTouchingAnything() {
         TenantOnboardingService.OnboardingRequest badCode =
                 new TenantOnboardingService.OnboardingRequest(
