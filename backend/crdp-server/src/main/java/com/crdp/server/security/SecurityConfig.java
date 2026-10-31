@@ -46,6 +46,17 @@ public class SecurityConfig {
                                                 "/api/hospital/auth/login",
                                                 "/api/platform/auth/login")
                                         .permitAll()
+                                        // E04-T04 / PLT-AUTH-002、003：短信登录与双因素第二步。
+                                        // 公开口必须限流（AGENTS.md 第 6 节）：
+                                        // /auth/sms 有 60 秒冷却 + 每日上限 + IP 层由网关/ ingress 限流；
+                                        // /login/sms 与 /2fa/verify 走 LoginRateLimiter / 验证码错误上限。
+                                        .requestMatchers(
+                                                HttpMethod.POST,
+                                                "/api/hospital/auth/sms",
+                                                "/api/hospital/auth/login/sms",
+                                                "/api/hospital/auth/2fa/verify",
+                                                "/api/platform/auth/2fa/verify")
+                                        .permitAll()
                                         // E04-T03 / PLT-AUTH-005：平台端与医院端接口前缀各自只接受
                                         // 对应端的会话（令牌由 TokenAuthenticationFilter 附带端别权限），
                                         // 跨端令牌一律 40300，不依赖各控制器自行调用 require* 系列

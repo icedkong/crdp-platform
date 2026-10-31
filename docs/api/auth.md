@@ -18,6 +18,10 @@
 | GET | `/api/platform/auth/me` | 登录 | — | `MeResponse`（`tenantCode/tenantName` 为空） |
 | GET | `/api/platform/auth/codes` | 登录 | — | `string[]` |
 | GET | `/api/platform/menus` | 登录 | — | `MenuNode[]` |
+| POST | `/api/hospital/auth/sms` | 免登录 | `HospitalSmsRequest { tenantCode, phone }`（phone `^1\d{10}$`） | 空（无论手机号是否已绑定均返回成功，防探测；60 秒冷却与每日 10 条超限返回 42900） |
+| POST | `/api/hospital/auth/login/sms` | 免登录 | `HospitalSmsLoginRequest { tenantCode, phone, code }`（code 6 位数字） | `LoginResult`（短信验证码登录不叠加第二因素） |
+| POST | `/api/hospital/auth/2fa/verify` | 免登录 | `TwoFactorVerifyRequest { challengeId, code }` | `LoginResult` |
+| POST | `/api/platform/auth/2fa/verify` | 免登录 | `TwoFactorVerifyRequest { challengeId, code }` | `LoginResult` |
 
 字段校验（仓库已有）：
 
@@ -37,6 +41,13 @@
 - 会话为服务端 token（Redis `SessionStore`），不是 JWT；登出删除会话。
 - 令牌为 256 位随机不透明值（base64url，43 字符），不含任何用户信息；每个请求按令牌查服务端会话，删除会话（登出或服务端吊销）后旧令牌下一次请求即 40100（E04-T02）。
 - 会话链路的入口一致性（E04-T01 移交，E04-T02 实现）：配置了 `crdp.tenant.base-domain` 时，请求 Host 是 `{租户编码}.{平台域名}` 子域名的，会话必须是该租户的医院会话，否则按未认证处理（40100，不暴露差异）；IP、基域名等其余入口不约束。
+- 短信验证码与双因素（E04-T04 / PLT-AUTH-002、003）：
+  - 验证码 6 位数字、**5 分钟有效**（`crdp.security.sms-code-ttl-seconds`）、输错 5 次作废；重发间隔 60 秒、同一手机号每日 10 条（Redis 只存验证码 SHA-256 摘要）。
+  - 验证码按「租户编码 + 手机号」隔离，A 院的码不能在 B 院用；验证码错误 / 过期 / 被作废统一 **40102**「验证码错误或已过期」。
+  - 短信登录：手机号需已绑定且本院唯一；先验证码后查账号，未绑定手机号与凭据失败同口径 **40101**。短信登录本身即「持有手机」凭据，不再叠加第二因素。
+  - 双因素：平台账号按配置强制（`crdp.security.platform-two-factor-enabled`，默认 true；短信通道 E09-T03 接入前 local/dev 关闭以保证演示可用）；医院端按租户 `cfg_param` 的 `security.two-factor.roles`（逗号分隔角色编码）配置。密码第一步通过后 `login` 返回 `{ challengeId, methods: ["SMS"] }`（token 为 null），challengeId 5 分钟有效、一次性，向账号绑定手机号自动发送验证码；第二步 `POST /auth/2fa/verify` 通过后换会话令牌。challenge 缺失 / 过期 / 已用返回 **40100**。
+  - 账号绑定手机号信封加密存储（租户库 `sys_user.phone` purpose=`sys-user-phone`、平台库 `plt_account.phone` purpose=`plt-account-phone`），登录按盲索引 `phone_idx` 查询；审计与日志只落脱敏手机号（`139****0001`）。短信发送通道为占位（E09-T03 接腾讯云短信），未接入时发送动作报 50000。
+  - 短信登录失败计数按「HS:租户编码:手机号」分桶，上限同密码登录（42900），成功后清零。
 - 端别隔离（E04-T03 / PLT-AUTH-005）：`/api/platform/**` 只接受平台会话，`/api/hospital/**` 只接受医院会话。`TokenAuthenticationFilter` 认证时按会话端别附加 `SESSION_PLATFORM` / `SESSION_HOSPITAL` 权限，`SecurityConfig` 的路径规则据此把跨端令牌统一拒绝为 40300，不依赖各控制器自行调用 `require*` 系列；控制器层 `requirePlatform` / `requireHospital`（40300）保留为内层防线。登录层面两端账号分库校验：平台账号只存于平台库 `plt_account`，医院账号只存于各租户库，互不能在对方端登录（失败同样统一 40101）。
 
 ## 2. 需要新增的接口（推断，待确认）
@@ -44,9 +55,7 @@
 | 方法 | 路径 | 说明 | 需求 |
 |---|---|---|---|
 | GET | `/api/hospital/auth/tenant?code=` | 登录页识别租户，返回 `{ tenantName, logoUrl, loginMethods[], themeColor }`；租户不存在也返回通用默认值，不暴露存在性 | PLT-AUTH-004、PLT-CFG-008 |
-| POST | `/api/hospital/auth/sms` | 发送登录验证码 `{ tenantCode, phone }`；60 秒冷却；无论号码是否存在均返回成功 | PLT-AUTH-002 |
-| POST | `/api/hospital/auth/login/sms` | 验证码登录 `{ tenantCode, phone, code }` | PLT-AUTH-002 |
-| POST | `/api/hospital/auth/2fa/verify` | 双因素第二步 `{ challengeId, code }`；`login` 在需要 2FA 时返回 `{ challengeId, methods[] }` 而不是 token | PLT-AUTH-003 |
+<!-- E04-T04 已实现并移至第 1 节：/auth/sms、/auth/login/sms、/auth/2fa/verify（两端） -->
 | POST | `/api/hospital/auth/password` | 修改密码 `{ oldPassword, newPassword }`；首次登录强制改密时 `me` 返回 `mustChangePassword: true`，其他接口返回 40305（推断） | PLT-AUTH-006、PLT-AUTH-010 |
 | POST | `/api/hospital/auth/password/forgot` / `.../reset` | 忘记密码（短信验证） | PLT-AUTH-011 |
 | POST | `/api/hospital/auth/reauth` | 敏感操作二次认证，返回 5 分钟有效的 `reauthToken`，敏感接口通过请求头 `X-Reauth-Token` 携带；缺失时返回 40304 | PLT-AUTH-012 |
@@ -82,3 +91,4 @@ interface MeResponseExt extends MeResponse {
 - 登出后旧 token 访问返回 40100。
 - 登录成功下发不透明令牌（非 JWT、两次登录不同），会话保存在服务端；登出 / 删除会话后旧令牌立即失效（`AuthServiceTest`、`SessionStoreTest`、`TokenAuthenticationFilterTest`）。
 - 令牌租户与入口子域名不一致（demoa 的令牌用在 demob 入口、平台会话用在租户子域名）按未认证拒绝（`TokenAuthenticationFilterTest`）。
+- 短信验证码 5 分钟有效、60 秒冷却、每日 10 条、输错 5 次作废（`SmsCodeStoreTest`）；短信登录与租户隔离、双因素按角色配置与平台强制、challenge 一次性（`AuthServiceTest`、`TwoFactorChallengeStoreTest`）；端到端走 HTTP 的用例在 `SmsAndTwoFactorIT`（CI 起 docker compose 后运行）。

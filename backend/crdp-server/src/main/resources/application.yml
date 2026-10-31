@@ -56,6 +56,13 @@ crdp:
     session-ttl-hours: 8
     login-failure-limit: 8
     login-failure-window-seconds: 600
+    # E04-T04 / PLT-AUTH-002、003：短信验证码与双因素（等保三级参数，见 platform-spec 第 7 章）
+    sms-code-ttl-seconds: 300       # 验证码 5 分钟有效
+    sms-resend-cooldown-seconds: 60 # 重发间隔
+    sms-daily-limit-per-phone: 10   # 同一手机号每日上限
+    sms-max-verify-failures: 5      # 输错 5 次作废
+    two-factor-challenge-ttl-seconds: 300
+    platform-two-factor-enabled: true # 平台账号强制双因素（PLT-AUTH-005）
   cors:
     allowed-origin-patterns:
       - http://127.0.0.1:*

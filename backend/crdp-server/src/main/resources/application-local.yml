@@ -1,4 +1,8 @@
 crdp:
+  security:
+    # E09-T03 腾讯云短信通道接入前，本地演示关闭平台强制双因素（医院端不受影响；
+    # 手工把 security.two-factor.roles 配上角色后可走完整双因素流程，发送会因通道缺失报错）
+    platform-two-factor-enabled: false
   crypto:
     mode: local
     local-key: dev-only-not-a-production-key

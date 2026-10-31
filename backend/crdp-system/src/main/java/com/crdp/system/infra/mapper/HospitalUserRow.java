@@ -7,6 +7,7 @@ public class HospitalUserRow {
     private String displayName;
     private String passwordHash;
     private String status;
+    private String phone;
 
     public Long getId() {
         return id;
@@ -46,5 +47,13 @@ public class HospitalUserRow {
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+    public String getPhone() {
+        return phone;
+    }
+
+    public void setPhone(String phone) {
+        this.phone = phone;
     }
 }

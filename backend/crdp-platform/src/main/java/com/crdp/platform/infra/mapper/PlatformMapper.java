@@ -38,11 +38,22 @@ public interface PlatformMapper {
 
     @Select(
             """
-            SELECT id, username, display_name AS displayName, password_hash AS passwordHash, status
+            SELECT id, username, display_name AS displayName, password_hash AS passwordHash, status,
+                   phone
             FROM plt_account
             WHERE username = #{username}
             """)
     PlatformAccountRow findAccount(@Param("username") String username);
+
+    /** 平台账号双因素短信按手机号盲索引取号（E04-T04 / PLT-AUTH-003、005）。 */
+    @Select(
+            """
+            SELECT id, username, display_name AS displayName, password_hash AS passwordHash, status,
+                   phone
+            FROM plt_account
+            WHERE phone_idx = #{phoneIdx}
+            """)
+    PlatformAccountRow findAccountByPhoneIdx(@Param("phoneIdx") String phoneIdx);
 
     @Select(
             """
