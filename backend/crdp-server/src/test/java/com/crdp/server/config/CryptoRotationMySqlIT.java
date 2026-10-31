@@ -32,7 +32,8 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 /**
  * E03-T05 对真 MySQL 的端到端验收：轮换后旧密文可读（旧版本密钥保留）、新数据用新版本；重加密作业迁移存量密文与盲索引、 中断后可断点续跑且不重复已完成行。需要本地依赖（docker
- * compose 的 MySQL）时运行：CRDP_IT_MYSQL_PORT=13306； CI 无数据库自动跳过。表结构来自租户库迁移 V4 / V5；本测试自清理，不留数据，明文全部虚构。
+ * compose 的 MySQL）时运行：CRDP_IT_MYSQL_PORT=13306；自 E02-T09 起 CI 注入该端口。表结构来自租户库迁移 V4 /
+ * V5；本测试自清理，不留数据，明文全部虚构。
  */
 @EnabledIfEnvironmentVariable(named = "CRDP_IT_MYSQL_PORT", matches = "\\d+")
 class CryptoRotationMySqlIT {

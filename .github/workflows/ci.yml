@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-  pull_request:
+    pull_request:
 
 jobs:
   backend:
@@ -16,8 +16,32 @@ jobs:
           cache: maven
       - name: Flyway 脚本版本不重复
         run: python3 scripts/check_flyway_versions.py
-      - name: 格式、编译与测试
+      # E02-T09：跨租户隔离与开通编排用例（*IT，按 CRDP_IT_MYSQL_PORT 门控）纳入 CI。
+      # 与本地一致：docker compose 起 MySQL(13306)/Redis(16379)（含演示租户库初始化脚本），
+      # 打包并短暂启动应用完成平台库与演示租户库的 Flyway 迁移与种子，再跑全量测试。
+      - name: 启动 MySQL 与 Redis（与本地 docker compose 相同）
+        run: docker compose up -d --wait
+      - name: 打包后端
+        run: mvn -B -f backend/pom.xml -pl crdp-server -am -DskipTests package
+      - name: 预迁移平台库与演示租户库（启动应用至健康后停止）
+        run: |
+          java -jar backend/crdp-server/target/crdp-server.jar --spring.profiles.active=local &
+          echo $! > /tmp/crdp.pid
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:18080/actuator/health >/dev/null 2>&1 && break
+            sleep 2
+          done
+          curl -sf http://127.0.0.1:18080/actuator/health | grep -q '"UP"' || {
+            echo "应用未健康启动，无法预迁移"; exit 1; }
+          kill $(cat /tmp/crdp.pid)
+          sleep 3
+      - name: 格式、编译与测试（含跨租户隔离与开通编排 IT）
         run: mvn -B -f backend/pom.xml spotless:check test
+        env:
+          CRDP_IT_MYSQL_PORT: "13306"
+      - name: 关闭依赖容器
+        if: always()
+        run: docker compose down -v
 
   frontend:
     runs-on: ubuntu-latest

@@ -16,7 +16,7 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 /**
  * E03-T04 对真 MySQL 的端到端验证（验收原文：按病案号、电话精确查找命中）。同一值的不同写法
- * 产生同一盲索引，等值查询全部命中；不同值不误命中。CRDP_IT_MYSQL_PORT=13306 时运行；CI 跳过。
+ * 产生同一盲索引，等值查询全部命中；不同值不误命中。CRDP_IT_MYSQL_PORT=13306 时运行；自 E02-T09 起随 CI 的 MySQL 运行。
  */
 @EnabledIfEnvironmentVariable(named = "CRDP_IT_MYSQL_PORT", matches = "\\d+")
 class BlindIndexMySqlIT {

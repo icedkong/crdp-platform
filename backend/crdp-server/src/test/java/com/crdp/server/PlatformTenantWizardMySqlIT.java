@@ -22,8 +22,8 @@ import org.springframework.test.context.ActiveProfiles;
 
 /**
  * E02-T07 端到端（验收：向导走完即触发开通）：平台端登录 → POST /api/platform/tenants → 开通编排同步完成（五步 SUCCESS，租户
- * TRIAL、库已建）。门控 CRDP_IT_MYSQL_PORT（需 docker compose 的 MySQL 与 Redis）；CI 自动跳过；自建自清。完整租户 API（列表/维护）是
- * E05-T01。
+ * TRIAL、库已建）。门控 CRDP_IT_MYSQL_PORT（需 docker compose 的 MySQL 与 Redis）；自 E02-T09 起随 CI 运行；自建自清。完整租户
+ * API（列表/维护）是 E05-T01。
  */
 @ActiveProfiles("local")
 @SpringBootTest(

@@ -21,7 +21,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 
 /**
  * E02-T04 对真 MySQL 的端到端验证（验收原文：中途失败重跑可续，不重复建库）。场景按序： 迁移步骤失败 → 从失败步骤重跑成功 → 再跑一次不重复建库 / 不重复建管理员。
- * CRDP_IT_MYSQL_PORT=13306 时运行；CI 无数据库自动跳过；自建自清。
+ * CRDP_IT_MYSQL_PORT=13306 时运行；自 E02-T09 起 CI 注入该端口（docker compose 起 MySQL）；自建自清。
  */
 @EnabledIfEnvironmentVariable(named = "CRDP_IT_MYSQL_PORT", matches = "\\d+")
 class TenantOnboardingServiceMySqlIT {

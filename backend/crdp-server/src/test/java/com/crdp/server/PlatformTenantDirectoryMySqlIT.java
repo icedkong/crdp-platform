@@ -28,8 +28,8 @@ import org.springframework.test.context.ActiveProfiles;
 
 /**
  * E05-T01 端到端（验收：按名称、状态检索；修改留记录）：平台端登录 → 列表按名称/编码、状态、到期日、模块检索 → 详情 → 信息维护（电话加密落库、写 TENANT_UPDATE
- * 审计）→ 无编辑权限 40300。门控 CRDP_IT_MYSQL_PORT（docker compose 的 MySQL 与 Redis）；CI 自动跳过；自建自清（演示租户 demoa
- * 的列复原、IT 账号与审计记录清除）。
+ * 审计）→ 无编辑权限 40300。门控 CRDP_IT_MYSQL_PORT（docker compose 的 MySQL 与 Redis）；自 E02-T09 起随 CI
+ * 运行；自建自清（演示租户 demoa 的列复原、IT 账号与审计记录清除）。
  */
 @ActiveProfiles("local")
 @SpringBootTest(
