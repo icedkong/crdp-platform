@@ -2,6 +2,7 @@ package com.crdp.framework.crypto;
 
 import com.crdp.framework.tenant.TenantContext;
 import com.crdp.framework.web.ApiException;
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import javax.crypto.SecretKey;
 import org.springframework.dao.DuplicateKeyException;
@@ -44,19 +45,18 @@ public class TenantDataKeyService {
     }
 
     private SecretKey load(String purpose, int keyVersion) {
-        String wrapped =
-                jdbcTemplate.queryForObject(
-                        """
-                        SELECT wrapped_key FROM crypto_data_key
-                        WHERE purpose = ? AND key_version = ?
-                        """,
+        // 用 queryForList 区分"无行"：queryForObject 在 0 行时抛异常而不是返回 null
+        List<String> rows =
+                jdbcTemplate.queryForList(
+                        "SELECT wrapped_key FROM crypto_data_key"
+                                + " WHERE purpose = ? AND key_version = ?",
                         String.class,
                         purpose,
                         keyVersion);
-        if (wrapped == null) {
+        if (rows.isEmpty()) {
             throw new ApiException(400, 40002, "数据密钥不存在: " + purpose + " v" + keyVersion);
         }
-        return keyProvider.unwrap(wrapped);
+        return keyProvider.unwrap(rows.get(0));
     }
 
     private void createVersion(String purpose, int keyVersion) {

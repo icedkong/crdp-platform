@@ -10,6 +10,12 @@ crdp:
       url: jdbc:mysql://127.0.0.1:13306/crdp_platform?useUnicode=true&characterEncoding=utf8&connectionTimeZone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
       username: crdp_app
       password: "DevOnly#app2026"
+  provisioning:
+    # 开通编排的特权连接：本地用 docker-compose 的 root（仅本机口令）；生产注入独立的迁移账号
+    jdbc-url: jdbc:mysql://127.0.0.1:13306/?useSSL=false&allowPublicKeyRetrieval=true
+    username: root
+    password: "DevOnly#root2026"
+    tenant-jdbc-url-template: "jdbc:mysql://127.0.0.1:13306/{db}?useUnicode=true&characterEncoding=utf8&connectionTimeZone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false"
 
 spring:
   data:
