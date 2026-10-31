@@ -3,6 +3,7 @@ package com.crdp.server.auth;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -18,7 +19,9 @@ import com.crdp.framework.security.SessionPrincipal;
 import com.crdp.framework.security.SessionStore;
 import com.crdp.framework.tenant.TenantRoutingDataSource;
 import com.crdp.framework.web.ApiException;
+import com.crdp.platform.infra.mapper.PlatformAccountRow;
 import com.crdp.platform.infra.mapper.PlatformMapper;
+import com.crdp.platform.menu.MenuRow;
 import com.crdp.platform.tenant.TenantRecord;
 import com.crdp.system.user.HospitalAccount;
 import com.crdp.system.user.HospitalDirectory;
@@ -37,7 +40,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 
 /**
  * E04-T02 / PLT-AUTH-001、PLT-AUTH-008：医院端账号密码登录成功下发不透明令牌， 会话保存在服务端，删除即吊销。 登录失败的各类原因返回同一 code 与
- * message（防探测）。锁定阈值与图形验证码属 E04-T05。
+ * message（防探测）。锁定阈值与图形验证码属 E04-T05。 E04-T03 / PLT-AUTH-005：平台端独立登录，平台账号与医院账号分库校验、互不能在对方端登录。
  */
 class AuthServiceTest {
 
@@ -47,6 +50,10 @@ class AuthServiceTest {
     private static final String HASH = "$argon2id$v=19$m=16384,t=2,p=1$demo";
     private static final String RIGHT_PASSWORD = "Demo@2026";
     private static final String WRONG_PASSWORD = "Wrong@2026";
+
+    private static final String PLATFORM_USERNAME = "platform.admin";
+    private static final long PLATFORM_ACCOUNT_ID = 1L;
+    private static final String PLATFORM_HASH = "$argon2id$v=19$m=16384,t=2,p=1$platform";
 
     private final Map<String, String> redisStore = new HashMap<>();
     private final StringRedisTemplate redis = mock(StringRedisTemplate.class);
@@ -117,6 +124,16 @@ class AuthServiceTest {
         when(hospitalDirectory.find(USERNAME)).thenReturn(Optional.of(account("ENABLED", HASH)));
         when(passwordEncoder.matches(RIGHT_PASSWORD, HASH)).thenReturn(true);
         when(passwordEncoder.matches(WRONG_PASSWORD, HASH)).thenReturn(false);
+
+        when(platformMapper.findAccount(PLATFORM_USERNAME))
+                .thenReturn(platformAccount("ENABLED", PLATFORM_HASH));
+        when(platformMapper.accountRoles(PLATFORM_ACCOUNT_ID))
+                .thenReturn(List.of("PLATFORM_ADMIN"));
+        when(platformMapper.accountMenuIds(PLATFORM_ACCOUNT_ID)).thenReturn(List.of(50L));
+        when(platformMapper.listMenus("PLATFORM"))
+                .thenReturn(List.of(platformMenu(50L, "platform:tenant:view", "base")));
+        when(passwordEncoder.matches(RIGHT_PASSWORD, PLATFORM_HASH)).thenReturn(true);
+        when(passwordEncoder.matches(WRONG_PASSWORD, PLATFORM_HASH)).thenReturn(false);
     }
 
     private static HospitalAccount account(String status, String passwordHash) {
@@ -130,6 +147,27 @@ class AuthServiceTest {
                 List.of(10L, 20L),
                 List.of(),
                 ScopeSnapshot.allowAll());
+    }
+
+    private static PlatformAccountRow platformAccount(String status, String passwordHash) {
+        PlatformAccountRow row = new PlatformAccountRow();
+        row.setId(PLATFORM_ACCOUNT_ID);
+        row.setUsername(PLATFORM_USERNAME);
+        row.setDisplayName("平台管理员（示例）");
+        row.setPasswordHash(passwordHash);
+        row.setStatus(status);
+        return row;
+    }
+
+    private static MenuRow platformMenu(long id, String permCode, String moduleCode) {
+        MenuRow row = new MenuRow();
+        row.setId(id);
+        row.setSide("PLATFORM");
+        row.setType("MENU");
+        row.setModuleCode(moduleCode);
+        row.setTitle("租户管理（示例）");
+        row.setPermCode(permCode);
+        return row;
     }
 
     private ApiException loginRejected(String password) {
@@ -272,5 +310,99 @@ class AuthServiceTest {
                         org.mockito.ArgumentMatchers.eq(true),
                         message.capture());
         assertEquals("ok", message.getValue());
+    }
+
+    // ---- E04-T03 / PLT-AUTH-005：平台端独立登录，两端账号互不能在对方端登录 ----
+
+    @Test
+    void platformLoginIssuesAnOpaquePlatformSessionWithoutTenant() {
+        AuthService.LoginResult result = service.loginPlatform(PLATFORM_USERNAME, RIGHT_PASSWORD);
+
+        assertEquals("Bearer", result.tokenType());
+        assertEquals(Duration.ofHours(8).toSeconds(), result.expiresInSeconds());
+        String token = result.token();
+        assertNotNull(token);
+        assertEquals(43, token.length(), "256 位随机值的 base64url 长度为 43");
+
+        Optional<SessionPrincipal> session = sessionStore.find(token);
+        assertTrue(session.isPresent(), "平台会话同样保存在服务端");
+        SessionPrincipal principal = session.get();
+        assertTrue(principal.platform(), "平台登录得到平台会话");
+        assertNull(principal.tenantId(), "平台会话不携带租户");
+        assertNull(principal.tenantCode());
+        assertNull(principal.tenantName());
+        assertEquals(PLATFORM_USERNAME, principal.username());
+        assertTrue(
+                principal.permissionCodes().contains("platform:tenant:view"),
+                "权限码来自平台菜单 ∩ 账号菜单 ∩ 已开通模块");
+        verify(auditLogger).loginAttempt(PLATFORM_USERNAME, true, "ok");
+    }
+
+    @Test
+    void platformLoginFailuresShareUniform40101() {
+        when(platformMapper.findAccount("nobody")).thenReturn(null);
+        when(platformMapper.findAccount("ghost.admin"))
+                .thenReturn(platformAccount("ENABLED", null));
+        when(platformMapper.findAccount("blocked.admin"))
+                .thenReturn(platformAccount("DISABLED", PLATFORM_HASH));
+
+        ApiException unknownUser =
+                assertThrows(
+                        ApiException.class, () -> service.loginPlatform("nobody", RIGHT_PASSWORD));
+        ApiException wrongPassword =
+                assertThrows(
+                        ApiException.class,
+                        () -> service.loginPlatform(PLATFORM_USERNAME, WRONG_PASSWORD));
+        ApiException missingHash =
+                assertThrows(
+                        ApiException.class,
+                        () -> service.loginPlatform("ghost.admin", RIGHT_PASSWORD));
+        ApiException disabled =
+                assertThrows(
+                        ApiException.class,
+                        () -> service.loginPlatform("blocked.admin", RIGHT_PASSWORD));
+
+        for (ApiException ex : List.of(unknownUser, wrongPassword, missingHash, disabled)) {
+            assertEquals(401, ex.httpStatus());
+            assertEquals(40101, ex.code());
+            assertEquals("租户、账号或密码不正确", ex.getMessage(), "失败原因不外露（防探测）");
+        }
+    }
+
+    @Test
+    void hospitalAccountCannotLoginOnThePlatformSide() {
+        // 医院端账号只存在于租户库，平台库查无此账号，统一 40101
+        ApiException ex =
+                assertThrows(
+                        ApiException.class, () -> service.loginPlatform(USERNAME, RIGHT_PASSWORD));
+        assertEquals(40101, ex.code());
+        assertEquals("租户、账号或密码不正确", ex.getMessage());
+    }
+
+    @Test
+    void platformAccountCannotLoginOnTheHospitalSide() {
+        // 平台账号不在任何租户库中，医院端入口统一 40101
+        ApiException ex =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.loginHospital(
+                                        TENANT_CODE, PLATFORM_USERNAME, RIGHT_PASSWORD));
+        assertEquals(40101, ex.code());
+        assertEquals("租户、账号或密码不正确", ex.getMessage());
+    }
+
+    @Test
+    void platformAndHospitalLoginCountersAreIndependent() {
+        when(passwordEncoder.matches(anyString(), anyString())).thenReturn(false);
+        for (int i = 0; i < 8; i++) {
+            assertEquals(40101, loginRejected(WRONG_PASSWORD).code());
+        }
+        assertEquals(42900, loginRejected(WRONG_PASSWORD).code(), "医院端计数已达上限");
+
+        // 两端失败计数按「端 + 账号」分桶：医院端锁死不影响平台端正常登录
+        when(passwordEncoder.matches(RIGHT_PASSWORD, PLATFORM_HASH)).thenReturn(true);
+        AuthService.LoginResult result = service.loginPlatform(PLATFORM_USERNAME, RIGHT_PASSWORD);
+        assertEquals("Bearer", result.tokenType());
     }
 }

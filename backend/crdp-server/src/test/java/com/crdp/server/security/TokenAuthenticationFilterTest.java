@@ -26,8 +26,8 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 
 /**
- * E04-T02 / PLT-AUTH-008：会话链路逐请求查服务端会话，吊销后的令牌立即失效； 令牌所属租户与访问入口子域名必须一致（E04-T01 移交的一致性校验）。 过滤器在
- * finally 里清理上下文，因此断言都在过滤链内完成。
+ * E04-T02 / PLT-AUTH-008：会话链路逐请求查服务端会话，吊销后的令牌立即失效； 令牌所属租户与访问入口子域名必须一致（E04-T01 移交的一致性校验）。 E04-T03 /
+ * PLT-AUTH-005：平台端与医院端接口前缀各自只接受对应端的会话，跨端令牌按未认证拒绝。 过滤器在 finally 里清理上下文，因此断言都在过滤链内完成。
  */
 class TokenAuthenticationFilterTest {
 
@@ -192,5 +192,66 @@ class TokenAuthenticationFilterTest {
         filter = new TokenAuthenticationFilter(sessionStore, new TenantIdentifier(empty));
         when(sessionStore.find(TOKEN)).thenReturn(Optional.of(hospitalSession()));
         assertAuthenticatedAs(withToken("demob." + BASE_DOMAIN), "doctor.demo");
+    }
+
+    // ---- E04-T03：平台端独立登录，两端令牌不能混用（PLT-AUTH-005） ----
+    // 过滤器按会话端别附加 SESSION_* 权限，SecurityConfig 的路径规则据此拒绝跨端令牌（40300）；
+    // 端到端拒绝见 TenantIsolationAcceptanceIT / ProvisionedTenantIsolationIT。
+
+    @Test
+    void hospitalSessionCarriesOnlyTheHospitalSideAuthority() throws Exception {
+        when(sessionStore.find(TOKEN)).thenReturn(Optional.of(hospitalSession()));
+        Snapshot snapshot = withToken("api.internal:18080");
+        assertAuthenticatedAs(snapshot, "doctor.demo");
+        assertTrue(
+                snapshot.authentication.get().getAuthorities().stream()
+                        .anyMatch(
+                                granted ->
+                                        granted.getAuthority()
+                                                .equals(
+                                                        TokenAuthenticationFilter
+                                                                .SESSION_HOSPITAL_AUTHORITY)),
+                "医院会话应带医院端别权限，供 SecurityConfig 拒绝其访问平台接口");
+        assertTrue(
+                snapshot.authentication.get().getAuthorities().stream()
+                        .noneMatch(
+                                granted ->
+                                        granted.getAuthority()
+                                                .equals(
+                                                        TokenAuthenticationFilter
+                                                                .SESSION_PLATFORM_AUTHORITY)),
+                "医院会话不得带平台端别权限");
+    }
+
+    @Test
+    void platformSessionCarriesOnlyThePlatformSideAuthority() throws Exception {
+        when(sessionStore.find(TOKEN)).thenReturn(Optional.of(platformSession()));
+        Snapshot snapshot = withToken(BASE_DOMAIN);
+        assertAuthenticatedAs(snapshot, "platform.admin");
+        assertTrue(
+                snapshot.authentication.get().getAuthorities().stream()
+                        .anyMatch(
+                                granted ->
+                                        granted.getAuthority()
+                                                .equals(
+                                                        TokenAuthenticationFilter
+                                                                .SESSION_PLATFORM_AUTHORITY)),
+                "平台会话应带平台端别权限，供 SecurityConfig 拒绝其访问医院接口");
+        assertTrue(
+                snapshot.authentication.get().getAuthorities().stream()
+                        .noneMatch(
+                                granted ->
+                                        granted.getAuthority()
+                                                .equals(
+                                                        TokenAuthenticationFilter
+                                                                .SESSION_HOSPITAL_AUTHORITY)),
+                "平台会话不得带医院端别权限");
+    }
+
+    @Test
+    void revokedSessionCarriesNoSideAuthority() throws Exception {
+        when(sessionStore.find(TOKEN)).thenReturn(Optional.empty());
+        Snapshot snapshot = withToken("api.internal:18080");
+        assertNull(snapshot.authentication.get(), "吊销后的令牌不再携带任何端别权限");
     }
 }
