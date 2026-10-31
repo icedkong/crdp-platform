@@ -1,20 +1,20 @@
 # 平台端接口（platform）
 
 > 后端：`crdp-platform`；前缀 `/api/platform/`；只访问平台库 `plat`（技术方案“平台库 plat”一行：平台库不存任何医院的用户、患者与业务数据）。
-> 页面：`docs/design/pages.md` §11。全部接口路径 **推断，待确认**（仓库只有认证与菜单）。
+> 页面：`docs/design/pages.md` §11。除 §1 标注「已实现」的行外，其余接口路径仍为 **推断，待确认**。
 > 所有写操作写平台审计（PLT-AUD-004）；涉及高敏的操作要求二次认证（PLT-AUTH-012，请求头 `X-Reauth-Token`）。
 
 ## 1. 租户（PLT-TEN-001..022）
 
 | 方法 | 路径 | 权限 | 说明 | 需求 |
 |---|---|---|---|---|
-| GET | `/api/platform/tenants` | `platform:tenant:view` | 分页；筛选 `keyword,status,expireBefore,moduleCode`；列见 pages.md §11 | PLT-TEN-001 |
-| POST | `/api/platform/tenants` | `platform:tenant:create` | 创建并启动开通作业；body `{ name, code?, modules[], expireAt? (空=长期), quota{users,storageGb}, admin?{username, displayName, phone} }`；返回 `{ tenantId, provisionJobId }` | PLT-TEN-002 |
-| GET | `/api/platform/tenants/{id}/provision` | `platform:tenant:view` | 开通进度：步骤 `RESOURCE / DB_INIT / DATASOURCE / ADMIN / ISOLATION_CHECK`，每步 `status, startedAt, finishedAt, error` | PLT-TEN-003..008 |
-| POST | `/api/platform/tenants/{id}/provision/retry` | `platform:tenant:create` | 从失败步骤重试 | PLT-TEN-008 |
-| POST | `/api/platform/tenants/{id}/provision/abort` | `platform:tenant:create` | 放弃并回收已开通资源 | PLT-TEN-008 |
-| GET | `/api/platform/tenants/{id}` | `platform:tenant:view` | 详情；资源信息（数据源、桶、密钥 ID）**脱敏只读**，不得返回连接串和密码 | PLT-TEN-009、015 |
-| PUT | `/api/platform/tenants/{id}` | `platform:tenant:edit` | 基本信息、访问地址 | PLT-TEN-009、015 |
+| GET | `/api/platform/tenants` | `platform:tenant:view` | **已实现（E05-T01）**。分页 `{items,total,pageNo,pageSize}`；筛选 `keyword`（名称/编码 LIKE）、`status`（PLT-TEN-010 七态 + `PROVISIONING`）、`expireBefore`（yyyy-MM-dd，只含有到期日的）、`moduleCode`、`sort`（`createdAt/name/code/expireAt`，`-` 前缀降序，默认 `-createdAt`）；行：`id,code,name,shortName,status,expireType,expireAt,modules[{code,name}],userCount(租户库不可达为 null),createdAt`。列表不返回电话 | PLT-TEN-001 |
+| POST | `/api/platform/tenants` | `platform:tenant:create` | **已实现（E02-T07）**。body `{ name, code?, adminUsername?, adminDisplayName?, adminInitialPassword? }`，同步跑开通编排并返回 `{ tenantId, code, steps[{step,status,error}] }`；`modules/expireAt/quota` 随 E05-T02/T05 接入 | PLT-TEN-002 |
+| GET | `/api/platform/tenants/{id}/provision` | `platform:tenant:view` | **已实现（E02-T08）**。开通进度：步骤 `tenant-row / resource-row / database / migrate-register / admin`，每步 `status(SUCCESS/FAILED/SKIPPED), error` | PLT-TEN-003..008 |
+| POST | `/api/platform/tenants/{id}/retry` | `platform:tenant:create` | **已实现（E02-T08）**。从失败步骤重试（编排可重入） | PLT-TEN-008 |
+| DELETE | `/api/platform/tenants/{id}` | `platform:tenant:create` | **已实现（E02-T08）**。放弃并回收已开通资源；仅 `PROVISIONING` 租户，已开通完成的走正式注销 | PLT-TEN-008 |
+| GET | `/api/platform/tenants/{id}` | `platform:tenant:view` | **已实现（E05-T01）**。基本信息 + 联系人 + 备注（含电话明文，供维护编辑，见 OQ-35）；资源信息（数据源、桶、密钥 ID）**脱敏只读**、不得返回连接串和密码——随 `platform:tenant:resource:view` 页签提供（推断，待确认） | PLT-TEN-009、015 |
+| PUT | `/api/platform/tenants/{id}` | `platform:tenant:edit` | **已实现（E05-T01）**。body `{ name(必填、全平台唯一，冲突 40901), shortName?, creditCode?, orgType?, region?, contactName?, contactPhone?(信封加密存储，OQ-34), contactEmail?, contractNo?, remark? }`，空白一律清空；有字段变更写一条 `TENANT_UPDATE` 审计（只记字段名，不落明文）；返回更新后详情 | PLT-TEN-009、015 |
 | POST | `/api/platform/tenants/{id}/status` | `platform:tenant:status` | `{ action: ENABLE|DISABLE, reason }`；返回影响面（在线用户、进行中任务） | PLT-TEN-010、016、017 |
 | PUT | `/api/platform/tenants/{id}/expire` | `platform:tenant:renew` | 到期设置 / 续期 `{ expireAt | null, reason }` | PLT-TEN-011、012、013 |
 | PUT | `/api/platform/tenants/{id}/quota` | `platform:tenant:edit` | 配额 | PLT-TEN-014 |

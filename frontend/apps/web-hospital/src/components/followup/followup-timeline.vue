@@ -3,6 +3,7 @@ import type { DeviceEvent, TimelineNode } from '#/reference/types';
 
 import { computed, onMounted, ref } from 'vue';
 
+import { StatusTag } from '@crdp/status-tag';
 import { colors } from '@crdp/tokens';
 import {
   Button,
@@ -18,7 +19,6 @@ import {
 import { useBreakpoint } from '#/reference/use-breakpoint';
 
 import CategoryBar from './category-bar.vue';
-import StatusTag from './status-tag.vue';
 
 const props = defineProps<{
   events?: DeviceEvent[];

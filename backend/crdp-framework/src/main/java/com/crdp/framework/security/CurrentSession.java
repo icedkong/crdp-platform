@@ -1,12 +1,23 @@
 package com.crdp.framework.security;
 
 import com.crdp.framework.web.ApiException;
+import java.util.Optional;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 
 public final class CurrentSession {
 
     private CurrentSession() {}
+
+    /** 当前会话（可能为空），审计等旁路记录用；鉴权入口仍用 require 系列抛 40100。 */
+    public static Optional<SessionPrincipal> current() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null
+                || !(authentication.getPrincipal() instanceof SessionPrincipal principal)) {
+            return Optional.empty();
+        }
+        return Optional.of(principal);
+    }
 
     public static SessionPrincipal require() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();

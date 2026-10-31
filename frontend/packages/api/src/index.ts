@@ -53,6 +53,13 @@ export function authBase(mode: SessionMode) {
   return mode === 'hospital' ? '/api/hospital' : '/api/platform';
 }
 
+export {
+  EXPIRE_TYPE_TEXT,
+  TENANT_STATUS_OPTIONS,
+  TENANT_STATUS_TEXT,
+  tenantStatusText,
+} from './enums';
+
 export { menuNodesToRoutes, menuNodeToRoute, toIconifyIcon } from './vben-menu';
 export type { VbenMenuRoute } from './vben-menu';
 
@@ -83,4 +90,88 @@ export interface TenantProvisionView {
   status: string;
   steps: TenantProvisionStep[];
   tenantId: number;
+}
+
+/** 租户状态（PLT-TEN-010 七态 + 开通中）。 */
+export type TenantStatus =
+  | 'CANCELLED'
+  | 'CANCELLING'
+  | 'DISABLED'
+  | 'ENABLED'
+  | 'GRACE'
+  | 'PROVISIONING'
+  | 'TRIAL';
+
+/** 已开通模块（列表行内展示）。 */
+export interface TenantModuleRef {
+  code: string;
+  name: string;
+}
+
+/** 租户列表行（PLT-TEN-001）：长期有效时 expireAt 为空；用户数取不到时为空。 */
+export interface TenantListItem {
+  code: string;
+  createdAt: string;
+  expireAt: null | string;
+  expireType: 'FIXED' | 'LONG_TERM';
+  id: number;
+  modules: TenantModuleRef[];
+  name: string;
+  shortName: null | string;
+  status: TenantStatus;
+  userCount: null | number;
+}
+
+/** 租户详情（PLT-TEN-009）：电话仅详情返回（编辑场景），列表不返回。 */
+export interface TenantDetail {
+  code: string;
+  contactEmail: null | string;
+  contactName: null | string;
+  contactPhone: null | string;
+  contractNo: null | string;
+  createdAt: string;
+  creditCode: null | string;
+  expireAt: null | string;
+  expireType: 'FIXED' | 'LONG_TERM';
+  id: number;
+  name: string;
+  orgType: null | string;
+  region: null | string;
+  remark: null | string;
+  shortName: null | string;
+  status: TenantStatus;
+  updatedAt: null | string;
+}
+
+/** 信息维护提交（PLT-TEN-009）：编码、状态、到期不在此列。 */
+export interface TenantUpdateRequest {
+  contactEmail?: null | string;
+  contactName?: null | string;
+  contactPhone?: null | string;
+  contractNo?: null | string;
+  creditCode?: null | string;
+  name: string;
+  orgType?: null | string;
+  region?: null | string;
+  remark?: null | string;
+  shortName?: null | string;
+}
+
+/** 列表检索条件（keyword 命中医名名称或编码）。 */
+export interface TenantListQuery {
+  expireBefore?: string;
+  keyword?: string;
+  moduleCode?: string;
+  pageNo?: number;
+  pageSize?: number;
+  sort?: string;
+  status?: TenantStatus;
+}
+
+/** 分页响应（约定 {items,total,pageNo,pageSize}）。 */
+export interface PageView<T> {
+  items: T[];
+  pageNo: number;
+  pageSize: number;
+  total: number;
 }

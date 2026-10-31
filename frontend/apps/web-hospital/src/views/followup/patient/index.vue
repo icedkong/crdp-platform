@@ -4,6 +4,7 @@ import type { ReferencePatient } from '#/reference/types';
 import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
 
+import { StatusTag } from '@crdp/status-tag';
 import { colors, sizes } from '@crdp/tokens';
 import {
   Alert,
@@ -21,7 +22,6 @@ import {
 } from 'ant-design-vue';
 
 import MaskedField from '#/components/followup/masked-field.vue';
-import StatusTag from '#/components/followup/status-tag.vue';
 import { patientsOf } from '#/reference/fixtures';
 import { useBreakpoint } from '#/reference/use-breakpoint';
 

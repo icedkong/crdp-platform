@@ -218,7 +218,13 @@ public class TenantOnboardingService {
                                 request.code(),
                                 request.name());
                     } catch (DuplicateKeyException ex) {
-                        return queryId("SELECT id FROM plt_tenant WHERE code = ?", request.code());
+                        // 并发插入撞编码时重查可得；重查仍为空说明撞的是医院名称唯一键（E05-T01 起 name 唯一）
+                        Long raced =
+                                queryId("SELECT id FROM plt_tenant WHERE code = ?", request.code());
+                        if (raced == null) {
+                            throw new ApiException(409, 40901, "医院名称已存在");
+                        }
+                        return raced;
                     }
                 });
     }
