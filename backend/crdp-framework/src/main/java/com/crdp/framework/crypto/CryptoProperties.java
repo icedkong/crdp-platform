@@ -11,6 +11,9 @@ public class CryptoProperties {
     /** 仅 local 模式使用。生产禁止。 */
     private String localKey = "";
 
+    /** 重加密作业每批处理的行数（E03-T05）；批间推进断点游标。 */
+    private int reencryptBatchSize = 200;
+
     public String getMode() {
         return mode;
     }
@@ -25,5 +28,13 @@ public class CryptoProperties {
 
     public void setLocalKey(String localKey) {
         this.localKey = localKey;
+    }
+
+    public int getReencryptBatchSize() {
+        return reencryptBatchSize;
+    }
+
+    public void setReencryptBatchSize(int reencryptBatchSize) {
+        this.reencryptBatchSize = reencryptBatchSize;
     }
 }
