@@ -51,6 +51,29 @@ const coreRoutes: RouteRecordRaw[] = [
       },
     ],
   },
+  {
+    // E04-T05 / PLT-AUTH-010：首次登录 / 密码到期强制改密（pages.md §1）。
+    // 需要已登录（带令牌），但不进入权限路由生成（改密期间 menus/codes 返回 40305）。
+    component: AuthPageLayout,
+    meta: {
+      hideInTab: true,
+      title: '修改密码',
+    },
+    name: 'ChangePassword',
+    path: '/password/change',
+    children: [
+      {
+        name: 'ChangePasswordForm',
+        path: '',
+        component: () =>
+          import('#/views/_core/authentication/change-password.vue'),
+        meta: {
+          hideInTab: true,
+          title: '修改密码',
+        },
+      },
+    ],
+  },
 ];
 
 export { coreRoutes, fallbackNotFoundRoute };

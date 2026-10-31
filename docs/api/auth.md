@@ -22,6 +22,11 @@
 | POST | `/api/hospital/auth/login/sms` | 免登录 | `HospitalSmsLoginRequest { tenantCode, phone, code }`（code 6 位数字） | `LoginResult`（短信验证码登录不叠加第二因素） |
 | POST | `/api/hospital/auth/2fa/verify` | 免登录 | `TwoFactorVerifyRequest { challengeId, code }` | `LoginResult` |
 | POST | `/api/platform/auth/2fa/verify` | 免登录 | `TwoFactorVerifyRequest { challengeId, code }` | `LoginResult` |
+| GET | `/api/hospital/auth/captcha` | 免登录 | — | `CaptchaImage { captchaId, image }`（PNG data URL；按 IP 每小时限流 60 张） |
+| GET | `/api/platform/auth/captcha` | 免登录 | — | `CaptchaImage`（同上，两端同构） |
+| POST | `/api/hospital/auth/password` | 登录 | `ChangePasswordRequest { oldPassword, newPassword }` | 空（成功后本会话继续可用，其他会话全部失效） |
+| POST | `/api/platform/auth/password` | 登录 | `ChangePasswordRequest` | 空（同上） |
+| POST | `/api/hospital/system/users/{id}/unlock` | `tenant:user:reset` | — | `{ userId, username, unlocked: true }`（管理员解锁登录锁定） |
 
 字段校验（仓库已有）：
 
@@ -30,6 +35,7 @@
 | `tenantCode` | `^[a-z][a-z0-9]{1,31}$`（只允许小写字母和数字） |
 | `username` | `^[a-zA-Z][a-zA-Z0-9._-]{1,63}$` |
 | `password` | 8–64 位 |
+| `captchaId` / `captchaCode` | 可选；连续失败 3 次后必填（图形验证码 4 位，一次一密） |
 
 行为（仓库已有）：
 
@@ -48,6 +54,14 @@
   - 双因素：平台账号按配置强制（`crdp.security.platform-two-factor-enabled`，默认 true；短信通道 E09-T03 接入前 local/dev 关闭以保证演示可用）；医院端按租户 `cfg_param` 的 `security.two-factor.roles`（逗号分隔角色编码）配置。密码第一步通过后 `login` 返回 `{ challengeId, methods: ["SMS"] }`（token 为 null），challengeId 5 分钟有效、一次性，向账号绑定手机号自动发送验证码；第二步 `POST /auth/2fa/verify` 通过后换会话令牌。challenge 缺失 / 过期 / 已用返回 **40100**。
   - 账号绑定手机号信封加密存储（租户库 `sys_user.phone` purpose=`sys-user-phone`、平台库 `plt_account.phone` purpose=`plt-account-phone`），登录按盲索引 `phone_idx` 查询；审计与日志只落脱敏手机号（`139****0001`）。短信发送通道为占位（E09-T03 接腾讯云短信），未接入时发送动作报 50000。
   - 短信登录失败计数按「HS:租户编码:手机号」分桶，上限同密码登录（42900），成功后清零。
+- 图形验证码与失败锁定（E04-T05 / PLT-AUTH-001、007，等保参数表）：
+  - 密码登录（两端）连续失败 **3 次** 后必须携带图形验证码（`GET /auth/captcha` 取图，`captchaId + captchaCode` 随登录提交）；验证码 4 位、5 分钟有效、**一次一密**（无论对错验证即作废，前端重新取图）；错误 / 过期 / 缺失统一 **40102**，且计入失败（防暴力尝试），不区分口令对错。
+  - 连续失败 **5 次锁定 30 分钟**（`crdp.security.login-lock-seconds`），期间一律 **42900**，`data: { lockedSeconds }`；成功登录清零，管理员可提前解锁（`POST /api/hospital/system/users/{id}/unlock`，权限 `tenant:user:reset`，平台账号暂无解锁界面，靠 30 分钟自动解锁，见 OQ-39）。
+  - 40101 的 `data` 恒带 `{ captchaRequired, remainingAttempts }`（未知账号同样计数、同样提示，不外露存在性）；`message` 保持统一「租户、账号或密码不正确」。
+- 密码策略与首次登录改密（E04-T05 / PLT-AUTH-006、010）：
+  - 平台下限：长度 ≥ 8（租户经 `cfg_param` `security.password.min-length` 只能加严）、大写 / 小写 / 数字 / 特殊字符至少 3 类、不得包含账号、有效期 **90 天**（到期前 7 天 `me.passwordExpiresInDays` 提醒，到期强制改密）、不得与最近 **5** 次密码相同（`sys_password_history` / `plt_password_history` 只追加）。
+  - 初始密码 / 管理员重置（开通向导 `must_change_password=1`）/ 到期密码：登录正常发令牌，但 `me.mustChangePassword = true`，**除 `POST /auth/password`、`POST /auth/logout`、`GET /auth/me` 外一律 40305**（`MustChangePasswordFilter`）；双因素第二步换发的令牌保留该标记。
+  - `POST /auth/password`：原密码不对 → 42200「原密码不正确」；新密码不满足策略 → 42200（message 列明全部不满足项，`data.fieldErrors[]`）；与最近 5 次相同 → 42200。成功后：清标记、刷新 `password_updated_at`、旧哈希入历史表、**该账号其他会话全部失效**（当前会话保留并解除 40305）、清登录失败计数、写审计（`USER_PASSWORD_CHANGE`，不落新旧口令）。
 - 端别隔离（E04-T03 / PLT-AUTH-005）：`/api/platform/**` 只接受平台会话，`/api/hospital/**` 只接受医院会话。`TokenAuthenticationFilter` 认证时按会话端别附加 `SESSION_PLATFORM` / `SESSION_HOSPITAL` 权限，`SecurityConfig` 的路径规则据此把跨端令牌统一拒绝为 40300，不依赖各控制器自行调用 `require*` 系列；控制器层 `requirePlatform` / `requireHospital`（40300）保留为内层防线。登录层面两端账号分库校验：平台账号只存于平台库 `plt_account`，医院账号只存于各租户库，互不能在对方端登录（失败同样统一 40101）。
 
 ## 2. 需要新增的接口（推断，待确认）
@@ -56,7 +70,7 @@
 |---|---|---|---|
 | GET | `/api/hospital/auth/tenant?code=` | 登录页识别租户，返回 `{ tenantName, logoUrl, loginMethods[], themeColor }`；租户不存在也返回通用默认值，不暴露存在性 | PLT-AUTH-004、PLT-CFG-008 |
 <!-- E04-T04 已实现并移至第 1 节：/auth/sms、/auth/login/sms、/auth/2fa/verify（两端） -->
-| POST | `/api/hospital/auth/password` | 修改密码 `{ oldPassword, newPassword }`；首次登录强制改密时 `me` 返回 `mustChangePassword: true`，其他接口返回 40305（推断） | PLT-AUTH-006、PLT-AUTH-010 |
+<!-- E04-T05 已实现并移至第 1 节：/auth/captcha（两端）、/auth/password（两端）、/system/users/{id}/unlock -->
 | POST | `/api/hospital/auth/password/forgot` / `.../reset` | 忘记密码（短信验证） | PLT-AUTH-011 |
 | POST | `/api/hospital/auth/reauth` | 敏感操作二次认证，返回 5 分钟有效的 `reauthToken`，敏感接口通过请求头 `X-Reauth-Token` 携带；缺失时返回 40304 | PLT-AUTH-012 |
 | GET | `/api/hospital/auth/sessions` | 我的在线会话 | PLT-AUTH-008 |
@@ -68,8 +82,10 @@
 ### 2.1 `me` 建议扩展字段（推断，待确认）
 
 ```ts
+// E04-T05 已实现：mustChangePassword 恒返回；passwordExpiresInDays 仅在到期前 7 天窗口内返回（可为负）
 interface MeResponseExt extends MeResponse {
-  mustChangePassword?: boolean;
+  mustChangePassword: boolean;
+  passwordExpiresInDays?: number;
   features?: Record<string, boolean>;   // 若不单独提供 /auth/features
   wardIds?: number[];                    // 当前用户负责病区（仅用于默认筛选，不用于前端鉴权）
   tenantView?: { platformAccount: string; readonly: boolean; expiresAt: string }; // 平台人员进入租户视角时
@@ -92,3 +108,4 @@ interface MeResponseExt extends MeResponse {
 - 登录成功下发不透明令牌（非 JWT、两次登录不同），会话保存在服务端；登出 / 删除会话后旧令牌立即失效（`AuthServiceTest`、`SessionStoreTest`、`TokenAuthenticationFilterTest`）。
 - 令牌租户与入口子域名不一致（demoa 的令牌用在 demob 入口、平台会话用在租户子域名）按未认证拒绝（`TokenAuthenticationFilterTest`）。
 - 短信验证码 5 分钟有效、60 秒冷却、每日 10 条、输错 5 次作废（`SmsCodeStoreTest`）；短信登录与租户隔离、双因素按角色配置与平台强制、challenge 一次性（`AuthServiceTest`、`TwoFactorChallengeStoreTest`）；端到端走 HTTP 的用例在 `SmsAndTwoFactorIT`（CI 起 docker compose 后运行）。
+- E04-T05：密码策略（`PasswordPolicyTest`）、图形验证码一次一密与限流（`CaptchaStoreTest`）、3 次验证码 / 5 次锁定 / 解锁（`LoginRateLimiterTest`、`AuthServiceTest`）、强制改密标记随会话与双因素保留（`AuthServiceTest`）、40305 放行清单（`MustChangePasswordFilterTest`）、改密校验顺序与会话处理（`PasswordChangeServiceTest`）；端到端（验证码→锁定→管理员解锁、初始密码强制改密、改密后其他会话失效、密码到期、平台端镜像）在 `PasswordAndLockoutIT`。前端策略提示与失败 data 解析在 `packages/api` 的 `password-policy.spec.ts`、`login-rejection.spec.ts`。

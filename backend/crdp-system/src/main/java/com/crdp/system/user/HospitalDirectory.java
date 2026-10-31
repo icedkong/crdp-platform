@@ -21,6 +21,11 @@ public class HospitalDirectory {
         return assemble(mapper.findUser(username));
     }
 
+    /** 按 id 取账号（E04-T05：管理员解锁、改密时重读当前哈希）。 */
+    public Optional<HospitalAccount> findById(long id) {
+        return assemble(mapper.findUserById(id));
+    }
+
     /** 按手机号盲索引取账号（E04-T04 / PLT-AUTH-002）。参数是 CryptoService.blindIndex 的结果， 数据库里不落手机号明文。 */
     public Optional<HospitalAccount> findByPhoneIdx(String phoneIdx) {
         return assemble(mapper.findUserByPhoneIdx(phoneIdx));
@@ -37,6 +42,38 @@ public class HospitalDirectory {
                 .map(String::trim)
                 .filter(code -> !code.isEmpty())
                 .toList();
+    }
+
+    /**
+     * 租户在平台下限之上加严的密码最小长度（E04-T05 / PLT-AUTH-006，cfg_param security.password.min-length）。 未配置或非法返回
+     * 0，调用方取 max(平台下限, 本值)。
+     */
+    public int passwordMinLengthOverride() {
+        String value = mapper.paramValue("security.password.min-length");
+        if (value == null || value.isBlank()) {
+            return 0;
+        }
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (NumberFormatException ex) {
+            return 0;
+        }
+    }
+
+    /** 最近若干个历史密码哈希（新到旧，E04-T05 改密用例）。 */
+    public List<String> passwordHistory(long userId, int limit) {
+        return mapper.passwordHistory(userId, limit);
+    }
+
+    /** 改密落库：新哈希、清强制改密标记、刷新 password_updated_at（E04-T05）。 */
+    public void changePassword(
+            long userId, String newPasswordHash, java.time.LocalDateTime updatedAt) {
+        mapper.updatePassword(userId, newPasswordHash, updatedAt);
+    }
+
+    /** 把被替换的旧哈希追加进历史表（只增不改，E04-T05）。 */
+    public void recordPasswordHistory(long userId, String oldPasswordHash) {
+        mapper.insertPasswordHistory(userId, oldPasswordHash);
     }
 
     private Optional<HospitalAccount> assemble(HospitalUserRow row) {
@@ -63,6 +100,8 @@ public class HospitalDirectory {
                         row.getPasswordHash(),
                         row.getStatus(),
                         row.getPhone(),
+                        Boolean.TRUE.equals(row.getMustChangePassword()),
+                        row.getPasswordUpdatedAt(),
                         mapper.roles(userId),
                         mapper.menuIds(userId),
                         List.of(),

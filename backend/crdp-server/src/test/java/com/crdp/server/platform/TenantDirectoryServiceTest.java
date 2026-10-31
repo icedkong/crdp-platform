@@ -66,7 +66,9 @@ class TenantDirectoryServiceTest {
                                         List.of("platform:tenant:edit"),
                                         List.of("base"),
                                         1L,
-                                        ScopeSnapshot.allowAll()),
+                                        ScopeSnapshot.allowAll(),
+                                        false,
+                                        null),
                                 null,
                                 List.of()));
     }

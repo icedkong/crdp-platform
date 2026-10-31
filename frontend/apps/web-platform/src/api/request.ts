@@ -60,6 +60,13 @@ function createRequestClient(baseURL: string, options?: RequestClientOptions) {
     rejected: async (error) => {
       const url = String(error?.config?.url ?? '');
       const status = error?.response?.status;
+      // E04-T05 / PLT-AUTH-010：强制改密会话除改密 / 登出 / me 外一律 40305——带回改密页
+      // （登录页拉取菜单 / 权限码等残留请求也走这里；错误提示照常由下方拦截器显示）。
+      const body = error?.response?.data ?? error?.data ?? {};
+      if (body?.code === 40_305 && !url.includes('/auth/password')) {
+        const authStore = useAuthStore();
+        await authStore.redirectToPasswordChange();
+      }
       // 登录失败也是 HTTP 401，不能当成令牌过期去登出。
       if (status === 401 && !url.includes('/auth/login')) {
         await doReAuthenticate();

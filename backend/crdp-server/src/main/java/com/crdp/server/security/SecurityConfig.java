@@ -24,7 +24,10 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain securityFilterChain(
-            HttpSecurity http, TokenAuthenticationFilter tokenFilter, ApiErrorWriter errors)
+            HttpSecurity http,
+            TokenAuthenticationFilter tokenFilter,
+            MustChangePasswordFilter mustChangePasswordFilter,
+            ApiErrorWriter errors)
             throws Exception {
         http.csrf(AbstractHttpConfigurer::disable)
                 .cors(Customizer.withDefaults())
@@ -57,6 +60,13 @@ public class SecurityConfig {
                                                 "/api/hospital/auth/2fa/verify",
                                                 "/api/platform/auth/2fa/verify")
                                         .permitAll()
+                                        // E04-T05 / PLT-AUTH-001、007：图形验证码取图（公开口，
+                                        // CaptchaStore 按 IP 每小时限流；登录时验证码错误上限同 42900）
+                                        .requestMatchers(
+                                                HttpMethod.GET,
+                                                "/api/hospital/auth/captcha",
+                                                "/api/platform/auth/captcha")
+                                        .permitAll()
                                         // E04-T03 / PLT-AUTH-005：平台端与医院端接口前缀各自只接受
                                         // 对应端的会话（令牌由 TokenAuthenticationFilter 附带端别权限），
                                         // 跨端令牌一律 40300，不依赖各控制器自行调用 require* 系列
@@ -80,7 +90,9 @@ public class SecurityConfig {
                                         .permitAll()
                                         .anyRequest()
                                         .authenticated())
-                .addFilterBefore(tokenFilter, UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(tokenFilter, UsernamePasswordAuthenticationFilter.class)
+                // E04-T05 / PLT-AUTH-010：强制改密会话除改密 / 登出 / me 外一律 40305（放在令牌认证之后）
+                .addFilterAfter(mustChangePasswordFilter, TokenAuthenticationFilter.class);
         return http.build();
     }
 

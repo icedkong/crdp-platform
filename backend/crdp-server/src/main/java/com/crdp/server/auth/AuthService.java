@@ -4,6 +4,7 @@ import com.crdp.framework.audit.AuditLogger;
 import com.crdp.framework.crypto.CryptoService;
 import com.crdp.framework.notify.SmsCodeSender;
 import com.crdp.framework.security.AuthMessages;
+import com.crdp.framework.security.CaptchaStore;
 import com.crdp.framework.security.LoginRateLimiter;
 import com.crdp.framework.security.ScopeSnapshot;
 import com.crdp.framework.security.SecurityProperties;
@@ -21,9 +22,13 @@ import com.crdp.platform.menu.MenuRow;
 import com.crdp.platform.tenant.TenantRecord;
 import com.crdp.system.user.HospitalAccount;
 import com.crdp.system.user.HospitalDirectory;
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import org.slf4j.Logger;
@@ -33,6 +38,10 @@ import org.springframework.stereotype.Service;
 
 /**
  * 登录用例：账号密码（E04-T02）、平台端独立登录（E04-T03）、短信验证码登录与双因素（E04-T04 / PLT-AUTH-002、003）。
+ *
+ * <p>E04-T05 / PLT-AUTH-006、007、010：密码登录在连续失败 3 次后必须携带图形验证码、连续失败 5 次锁定 30 分钟（{@link
+ * LoginRateLimiter} + {@link CaptchaStore}，失败提示统一 40101 不外露原因，data 带剩余次数与验证码要求）； 初始 / 重置 /
+ * 到期密码在会话里带 mustChangePassword=true，除改密 / 登出 / me 外一律 40305（MustChangePasswordFilter）。
  *
  * <p>双因素：平台账号按配置强制（PLT-AUTH-005）；医院端按租户 cfg_param「security.two-factor.roles」配置的角色强制。
  * 密码第一步通过后不发会话令牌，只返回 5 分钟有效的一次性 challengeId，短信验证码通过后（/auth/2fa/verify）才发令牌。
@@ -63,6 +72,7 @@ public class AuthService {
     private final SmsCodeSender smsCodeSender;
     private final CryptoService cryptoService;
     private final SecurityProperties securityProperties;
+    private final CaptchaStore captchaStore;
 
     public AuthService(
             PlatformMapper platformMapper,
@@ -78,7 +88,8 @@ public class AuthService {
             TwoFactorChallengeStore challengeStore,
             SmsCodeSender smsCodeSender,
             CryptoService cryptoService,
-            SecurityProperties securityProperties) {
+            SecurityProperties securityProperties,
+            CaptchaStore captchaStore) {
         this.platformMapper = platformMapper;
         this.tenantLookup = tenantLookup;
         this.hospitalDirectory = hospitalDirectory;
@@ -93,11 +104,14 @@ public class AuthService {
         this.smsCodeSender = smsCodeSender;
         this.cryptoService = cryptoService;
         this.securityProperties = securityProperties;
+        this.captchaStore = captchaStore;
     }
 
-    public LoginResult loginHospital(String tenantCode, String username, String password) {
+    public LoginResult loginHospital(
+            String tenantCode, String username, String password, CaptchaInput captcha) {
         String bucket = "H:" + tenantCode + ":" + username.toLowerCase(Locale.ROOT);
         rateLimiter.check(bucket);
+        requireCaptchaIfNeeded(bucket, captcha);
         TenantRecord tenant = tenantLookup.findByCode(tenantCode).orElse(null);
         if (tenant == null || !tenant.routable()) {
             throw rejected(
@@ -148,7 +162,7 @@ public class AuthService {
         return issueHospitalSession(tenant, account, bucket);
     }
 
-    /** E04-T04 / PLT-AUTH-002：发送医院端登录短信验证码。无论手机号是否绑定都返回成功（防探测）。 */
+    /** E04-T04 / PLT-AUTH-002：发送医院端登录短信验证码。无论手机号是否已绑定都返回成功（防探测）。 */
     public void sendHospitalLoginSms(String tenantCode, String phone) {
         TenantRecord tenant = tenantLookup.findByCode(tenantCode).orElse(null);
         if (tenant == null || !tenant.routable()) {
@@ -199,9 +213,10 @@ public class AuthService {
         return issueHospitalSession(tenant, account, bucket);
     }
 
-    public LoginResult loginPlatform(String username, String password) {
+    public LoginResult loginPlatform(String username, String password, CaptchaInput captcha) {
         String bucket = "P:" + username.toLowerCase(Locale.ROOT);
         rateLimiter.check(bucket);
+        requireCaptchaIfNeeded(bucket, captcha);
         PlatformAccountRow account =
                 TenantContext.callAsPlatform(() -> platformMapper.findAccount(username));
         if (account == null
@@ -236,35 +251,19 @@ public class AuthService {
                         .orElseThrow(() -> new ApiException(401, 40100, "未登录或登录已失效"));
         // challenge 保持可用直到验证码输错上限或验证成功，避免一次手误就要重来整个密码步骤
         smsCodeStore.verify("2fa:" + challengeId, code);
-        SessionPrincipal principal = pending.principal();
-        SessionPrincipal withToken =
-                new SessionPrincipal(
-                        tokenGenerator.generate(),
-                        principal.sessionType(),
-                        principal.tenantId(),
-                        principal.tenantCode(),
-                        principal.tenantName(),
-                        principal.userId(),
-                        principal.username(),
-                        principal.displayName(),
-                        principal.roles(),
-                        principal.menuIds(),
-                        principal.permissionCodes(),
-                        principal.openedModules(),
-                        principal.permissionVersion(),
-                        principal.scope());
+        SessionPrincipal principal = pending.principal().withToken(tokenGenerator.generate());
         challengeStore.consume(challengeId);
-        sessionStore.save(withToken);
-        if (withToken.hospital()) {
+        sessionStore.save(principal);
+        if (principal.hospital()) {
             TenantContext.runAsTenant(
-                    withToken.tenantId(),
-                    withToken.tenantCode(),
+                    principal.tenantId(),
+                    principal.tenantCode(),
                     () -> auditLogger.loginAttempt(pending.username(), true, "2fa-ok"));
         } else {
             TenantContext.runAsPlatform(
                     () -> auditLogger.loginAttempt(pending.username(), true, "2fa-ok"));
         }
-        return LoginResult.issued(withToken.token(), "Bearer", sessionStore.ttl().toSeconds());
+        return LoginResult.issued(principal.token(), "Bearer", sessionStore.ttl().toSeconds());
     }
 
     public void logout(String token) {
@@ -273,10 +272,33 @@ public class AuthService {
 
     // ---- 私有步骤 ----
 
+    /**
+     * E04-T05 / PLT-AUTH-001、007：连续失败 3 次后必须携带图形验证码。 验证码先于口令校验，输错与过期统一 40102
+     * 且计入失败（防暴力尝试），此时不区分口令对错，避免借验证码错误探测口令。
+     */
+    private void requireCaptchaIfNeeded(String bucket, CaptchaInput captcha) {
+        if (!rateLimiter.captchaRequired(bucket)) {
+            return;
+        }
+        String username = bucket.substring(bucket.lastIndexOf(':') + 1);
+        try {
+            captchaStore.verify(
+                    captcha == null ? null : captcha.captchaId(),
+                    captcha == null ? null : captcha.code());
+        } catch (ApiException ex) {
+            rateLimiter.recordFailure(bucket);
+            log.info("login rejected reason=bad-captcha");
+            // 审计第 4 节：登录失败事件全部落审计；此时租户尚未解析，按平台口径记（与未知租户的 rejected 一致）
+            TenantContext.runAsPlatform(
+                    () -> auditLogger.loginAttempt(username, false, "bad-captcha"));
+            throw ex;
+        }
+    }
+
     private LoginResult issueHospitalSession(
             TenantRecord tenant, HospitalAccount account, String bucket) {
         SessionPrincipal principal =
-                withToken(hospitalDraft(tenant, account), tokenGenerator.generate());
+                hospitalDraft(tenant, account).withToken(tokenGenerator.generate());
         sessionStore.save(principal);
         rateLimiter.clear(bucket);
         TenantContext.runAsTenant(
@@ -287,7 +309,7 @@ public class AuthService {
     }
 
     private LoginResult issuePlatformSession(PlatformAccountRow account, String bucket) {
-        SessionPrincipal principal = withToken(platformDraft(account), tokenGenerator.generate());
+        SessionPrincipal principal = platformDraft(account).withToken(tokenGenerator.generate());
         sessionStore.save(principal);
         rateLimiter.clear(bucket);
         TenantContext.runAsPlatform(
@@ -339,7 +361,9 @@ public class AuthService {
                 granted.permissionCodes(),
                 opened,
                 1L,
-                account.scope());
+                account.scope(),
+                mustChangePassword(account.mustChangePassword(), account.passwordUpdatedAt()),
+                passwordExpiresAt(account.passwordUpdatedAt()));
     }
 
     private SessionPrincipal platformDraft(PlatformAccountRow account) {
@@ -351,6 +375,9 @@ public class AuthService {
         List<MenuRow> menus =
                 TenantContext.callAsPlatform(() -> platformMapper.listMenus("PLATFORM"));
         Granted granted = grant(menus, menuIds, List.of("base", "followup"));
+        boolean mustFlag =
+                Boolean.TRUE.equals(account.getMustChangePassword())
+                        || passwordExpired(account.getPasswordUpdatedAt());
         return new SessionPrincipal(
                 null,
                 "PLATFORM",
@@ -365,25 +392,34 @@ public class AuthService {
                 granted.permissionCodes(),
                 List.of("base"),
                 1L,
-                ScopeSnapshot.allowAll());
+                ScopeSnapshot.allowAll(),
+                mustFlag,
+                passwordExpiresAt(account.getPasswordUpdatedAt()));
     }
 
-    private static SessionPrincipal withToken(SessionPrincipal draft, String token) {
-        return new SessionPrincipal(
-                token,
-                draft.sessionType(),
-                draft.tenantId(),
-                draft.tenantCode(),
-                draft.tenantName(),
-                draft.userId(),
-                draft.username(),
-                draft.displayName(),
-                draft.roles(),
-                draft.menuIds(),
-                draft.permissionCodes(),
-                draft.openedModules(),
-                draft.permissionVersion(),
-                draft.scope());
+    /** PLT-AUTH-006：密码有效期 90 天，到期强制修改（与初始 / 重置标记同口径进会话）。 */
+    private boolean mustChangePassword(boolean flagged, LocalDateTime passwordUpdatedAt) {
+        return flagged || passwordExpired(passwordUpdatedAt);
+    }
+
+    private boolean passwordExpired(LocalDateTime passwordUpdatedAt) {
+        if (passwordUpdatedAt == null) {
+            // 未知改密时间不强行拦截（历史账号迁移时的兜底），由标记位决定
+            return false;
+        }
+        return Duration.between(passwordUpdatedAt, LocalDateTime.now()).toDays()
+                >= securityProperties.getPasswordValidDays();
+    }
+
+    /** 密码到期时间（epoch 秒），me 据此算「到期前 7 天提醒」；未知改密时间为 null。 */
+    private Long passwordExpiresAt(LocalDateTime passwordUpdatedAt) {
+        if (passwordUpdatedAt == null) {
+            return null;
+        }
+        return passwordUpdatedAt
+                .plusDays(securityProperties.getPasswordValidDays())
+                .atZone(ZoneId.systemDefault())
+                .toEpochSecond();
     }
 
     private String phoneIdx(String phone) {
@@ -434,7 +470,14 @@ public class AuthService {
                     tenantCode,
                     () -> auditLogger.loginAttempt(username, false, "rejected"));
         }
-        return new ApiException(401, 40101, AuthMessages.BAD_CREDENTIALS);
+        // 提示不外露失败原因；data 只带计数派生信息（防探测：未知账号同样计数、同样提示）
+        return new ApiException(
+                401,
+                40101,
+                AuthMessages.BAD_CREDENTIALS,
+                Map.of(
+                        "captchaRequired", rateLimiter.captchaRequired(bucket),
+                        "remainingAttempts", rateLimiter.remainingAttempts(bucket)));
     }
 
     private static Granted grant(
@@ -476,6 +519,9 @@ public class AuthService {
             return new LoginResult(null, null, null, challengeId, methods);
         }
     }
+
+    /** E04-T05 / PLT-AUTH-001、007：密码登录可携带的图形验证码（连续失败 3 次后必填）。 */
+    public record CaptchaInput(String captchaId, String code) {}
 
     private record Granted(List<Long> menuIds, List<String> permissionCodes) {}
 }

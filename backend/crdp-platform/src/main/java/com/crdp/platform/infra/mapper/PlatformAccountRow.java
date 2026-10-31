@@ -8,6 +8,8 @@ public class PlatformAccountRow {
     private String passwordHash;
     private String status;
     private String phone;
+    private Boolean mustChangePassword;
+    private java.time.LocalDateTime passwordUpdatedAt;
 
     public Long getId() {
         return id;
@@ -55,5 +57,21 @@ public class PlatformAccountRow {
 
     public void setPhone(String phone) {
         this.phone = phone;
+    }
+
+    public Boolean getMustChangePassword() {
+        return mustChangePassword;
+    }
+
+    public void setMustChangePassword(Boolean mustChangePassword) {
+        this.mustChangePassword = mustChangePassword;
+    }
+
+    public java.time.LocalDateTime getPasswordUpdatedAt() {
+        return passwordUpdatedAt;
+    }
+
+    public void setPasswordUpdatedAt(java.time.LocalDateTime passwordUpdatedAt) {
+        this.passwordUpdatedAt = passwordUpdatedAt;
     }
 }

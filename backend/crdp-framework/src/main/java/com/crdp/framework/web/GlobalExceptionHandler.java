@@ -16,14 +16,14 @@ public class GlobalExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     @ExceptionHandler(ApiException.class)
-    public ResponseEntity<ApiResponse<Void>> handleApi(ApiException ex) {
+    public ResponseEntity<ApiResponse<Object>> handleApi(ApiException ex) {
         if (ex.httpStatus() >= 500) {
             log.error("api error {}", ex.code(), ex);
         } else {
             log.warn("api error {}: {}", ex.code(), ex.getMessage());
         }
         return ResponseEntity.status(ex.httpStatus())
-                .body(ApiResponse.fail(ex.code(), ex.getMessage()));
+                .body(ApiResponse.fail(ex.code(), ex.getMessage(), ex.data()));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

@@ -13,4 +13,9 @@ public record ApiResponse<T>(int code, String message, T data, String traceId) {
     public static ApiResponse<Void> fail(int code, String message) {
         return new ApiResponse<>(code, message, null, TraceIds.current());
     }
+
+    /** 失败响应携带结构化提示（E04-T05：登录失败的剩余次数 / 是否需要图形验证码、锁定的剩余秒数）。 */
+    public static ApiResponse<Object> fail(int code, String message, Object data) {
+        return new ApiResponse<>(code, message, data, TraceIds.current());
+    }
 }

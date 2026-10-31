@@ -5,6 +5,8 @@ import type { UserInfo } from '@vben/types';
 import { apiPath, requestClient } from '#/api/request';
 
 export function mapMe(me: Me): UserInfo & {
+  mustChangePassword?: boolean;
+  passwordExpiresInDays?: null | number;
   permissionVersion: number;
   tenantCode: null | string;
   tenantName: null | string;
@@ -13,6 +15,8 @@ export function mapMe(me: Me): UserInfo & {
     avatar: '',
     desc: me.tenantName ?? '',
     homePath: '/dashboard',
+    mustChangePassword: me.mustChangePassword === true,
+    passwordExpiresInDays: me.passwordExpiresInDays ?? null,
     permissionVersion: me.permissionVersion,
     realName: me.displayName,
     roles: me.roles ?? [],

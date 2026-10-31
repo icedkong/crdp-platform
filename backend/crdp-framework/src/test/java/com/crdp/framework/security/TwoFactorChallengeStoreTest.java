@@ -82,7 +82,9 @@ class TwoFactorChallengeStoreTest {
                 List.of("followup:patient:view"),
                 List.of("base"),
                 1L,
-                ScopeSnapshot.allowAll());
+                ScopeSnapshot.allowAll(),
+                false,
+                null);
     }
 
     @Test

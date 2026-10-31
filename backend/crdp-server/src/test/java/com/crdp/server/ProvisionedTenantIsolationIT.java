@@ -113,6 +113,15 @@ class ProvisionedTenantIsolationIT {
         String tokenB = loginBySubdomain(codeB, ADMIN_OF_B, PASSWORD_OF_B);
         assertNotNull(tokenA, "开通完成后应立即能以编码登录（数据源热注册）");
         assertNotNull(tokenB, "开通完成后应立即能以子域名登录（PLT-TEN-015）");
+
+        // E04-T05 / PLT-AUTH-010：开通生成的初始密码首次登录强制改密——
+        // 改密前除 me / 改密 / 登出 外一律 40305，改密后恢复可用（走产品真实流程）
+        assertEquals(
+                40305,
+                codeOf(get("/api/hospital/hello", tokenA, null, null)),
+                "初始密码未改前业务接口一律 40305");
+        changeFirstLoginPassword(codeA, tokenA, PASSWORD_OF_A, "Iso-One@2027a");
+        changeFirstLoginPassword(codeB, tokenB, PASSWORD_OF_B, "Iso-One@2027b");
         assertEquals("t_" + codeA, databaseOf(get("/api/hospital/hello", tokenA, null, null)));
         assertEquals("t_" + codeB, databaseOf(get("/api/hospital/hello", tokenB, null, null)));
 
@@ -219,6 +228,18 @@ class ProvisionedTenantIsolationIT {
     private static Map<String, Object> loginBody(
             String tenantCode, String username, String password) {
         return Map.of("tenantCode", tenantCode, "username", username, "password", password);
+    }
+
+    /** E04-T05：开通管理员的首次登录改密（POST /auth/password，成功后当前会话继续可用）。 */
+    private void changeFirstLoginPassword(
+            String tenantCode, String token, String oldPassword, String newPassword) {
+        Map<?, ?> response =
+                post(
+                        Map.of("oldPassword", oldPassword, "newPassword", newPassword),
+                        "/api/hospital/auth/password",
+                        token,
+                        null);
+        assertEquals(0, codeOf(response), () -> tenantCode + " 改密失败：" + response);
     }
 
     private String hospitalLogin(String tenantCode, String username, String password) {

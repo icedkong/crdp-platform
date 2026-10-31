@@ -1,10 +1,16 @@
 <script lang="ts" setup>
-import type { TwoFactorChallenge } from '@crdp/api';
+import type { CaptchaImage, TwoFactorChallenge } from '@crdp/api';
 
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 
-import { cooldownRemaining } from '@crdp/api';
 import {
+  cooldownRemaining,
+  lockedMessage,
+  loginRejectionInfo,
+  remainingAttemptsMessage,
+} from '@crdp/api';
+import {
+  Alert,
   Button,
   Card,
   Checkbox,
@@ -16,7 +22,7 @@ import {
   Tabs,
 } from 'ant-design-vue';
 
-import { sendLoginSmsApi } from '#/api';
+import { getCaptchaApi, sendLoginSmsApi } from '#/api';
 import { useAuthStore } from '#/store';
 
 import {
@@ -41,6 +47,46 @@ const authStore = useAuthStore();
 
 const activeTab = ref<'password' | 'sms'>('password');
 const twoFactor = ref<null | TwoFactorChallenge>(null);
+
+// ---- E04-T05 / PLT-AUTH-001、007：图形验证码（连续失败 3 次后出现）与锁定提示 ----
+const captcha = ref<CaptchaImage | null>(null);
+const captchaCode = ref('');
+const captchaLoading = ref(false);
+/** 登录失败的结构化提示（剩余次数 / 锁定文案），来自 40101 / 42900 的 data。 */
+const loginHint = ref('');
+
+async function loadCaptcha() {
+  captchaLoading.value = true;
+  try {
+    captcha.value = await getCaptchaApi();
+    captchaCode.value = '';
+  } finally {
+    captchaLoading.value = false;
+  }
+}
+
+/** 登录被拒后按响应 data 更新验证码可见性与提示文案（失败原因本身不展示，防探测）。 */
+function handleLoginRejection(error: unknown) {
+  const info = loginRejectionInfo(error as never);
+  if (!info) {
+    return;
+  }
+  if (info.captchaRequired && !captcha.value) {
+    loadCaptcha();
+  }
+  const messages = [
+    lockedMessage(info.lockedSeconds),
+    remainingAttemptsMessage(info.remainingAttempts),
+    info.captchaRequired && !info.lockedSeconds
+      ? '请输入图形验证码后重试'
+      : null,
+  ].filter(Boolean);
+  loginHint.value = messages.join('，');
+}
+
+function refreshCaptcha() {
+  loadCaptcha();
+}
 
 // ---- 账号密码表单 ----
 const passwordFormRef = ref();
@@ -80,13 +126,25 @@ async function submitPassword() {
     passwordForm.tenantCode,
     passwordForm.rememberTenant !== false,
   );
-  const outcome = await authStore.authLogin({
-    password: passwordForm.password,
-    tenantCode: passwordForm.tenantCode,
-    username: passwordForm.username,
-  });
-  if (outcome.twoFactor) {
-    twoFactor.value = outcome.twoFactor;
+  loginHint.value = '';
+  try {
+    const outcome = await authStore.authLogin({
+      captchaCode: captchaCode.value || undefined,
+      captchaId: captcha.value?.captchaId,
+      password: passwordForm.password,
+      tenantCode: passwordForm.tenantCode,
+      username: passwordForm.username,
+    });
+    if (outcome.twoFactor) {
+      twoFactor.value = outcome.twoFactor;
+    }
+  } catch (error) {
+    handleLoginRejection(error);
+    // 验证码一次一密：无论成败都换一张（不存在则忽略）
+    if (captcha.value) {
+      loadCaptcha();
+    }
+    throw error;
   }
 }
 
@@ -226,6 +284,31 @@ onUnmounted(() => {
               placeholder="密码"
             />
           </FormItem>
+          <!-- E04-T05 / PLT-AUTH-007：连续失败 3 次后出现图形验证码（失败达阈值后出现） -->
+          <FormItem v-if="captcha">
+            <div class="flex items-center gap-2">
+              <Input
+                v-model:value="captchaCode"
+                :maxlength="4"
+                placeholder="图形验证码"
+                style="flex: 1"
+              />
+              <img
+                alt="图形验证码"
+                :src="captcha?.image"
+                class="h-9 cursor-pointer rounded border border-gray-200"
+                title="看不清？点击换一张"
+                @click="refreshCaptcha"
+              />
+            </div>
+          </FormItem>
+          <Alert
+            v-if="loginHint"
+            :message="loginHint"
+            class="mb-3"
+            show-icon
+            type="warning"
+          />
           <FormItem>
             <Checkbox v-model:checked="passwordForm.rememberTenant">
               记住医院编码（只存编码，不存密码）
