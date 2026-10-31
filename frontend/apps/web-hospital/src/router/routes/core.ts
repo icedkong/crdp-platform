@@ -52,6 +52,29 @@ const coreRoutes: RouteRecordRaw[] = [
     ],
   },
   {
+    // E04-T07 / PLT-AUTH-011：忘记密码（免登录，入口在登录页；pages.md §1）。
+    // 短信验证（发到账号绑定手机号）后重置，成功后该账号全部会话失效。
+    component: AuthPageLayout,
+    meta: {
+      hideInTab: true,
+      title: '忘记密码',
+    },
+    name: 'ForgotPassword',
+    path: '/password/forgot',
+    children: [
+      {
+        name: 'ForgotPasswordForm',
+        path: '',
+        component: () =>
+          import('#/views/_core/authentication/forget-password.vue'),
+        meta: {
+          hideInTab: true,
+          title: '忘记密码',
+        },
+      },
+    ],
+  },
+  {
     // E04-T05 / PLT-AUTH-010：首次登录 / 密码到期强制改密（pages.md §1）。
     // 需要已登录（带令牌），但不进入权限路由生成（改密期间 menus/codes 返回 40305）。
     component: AuthPageLayout,

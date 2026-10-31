@@ -2,6 +2,7 @@
 import type { CaptchaImage, TwoFactorChallenge } from '@crdp/api';
 
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
+import { useRouter } from 'vue-router';
 
 import {
   cooldownRemaining,
@@ -44,6 +45,7 @@ import {
 defineOptions({ name: 'Login' });
 
 const authStore = useAuthStore();
+const router = useRouter();
 
 const activeTab = ref<'password' | 'sms'>('password');
 const twoFactor = ref<null | TwoFactorChallenge>(null);
@@ -238,6 +240,11 @@ function backToLogin() {
   twoFactorForm.code = '';
 }
 
+/** E04-T07 / PLT-AUTH-011：忘记密码（短信验证后重置）。 */
+async function goForgotPassword() {
+  await router.push('/password/forgot');
+}
+
 onMounted(() => {
   const saved = recalledTenantCode(localStorage);
   if (saved) {
@@ -322,6 +329,10 @@ onUnmounted(() => {
             @click="submitPassword"
           >
             登录
+          </Button>
+          <!-- E04-T07 / PLT-AUTH-011：忘记密码（短信验证后重置，pages.md §1 线框） -->
+          <Button block class="mt-1" type="link" @click="goForgotPassword">
+            忘记密码
           </Button>
         </Form>
       </TabPane>

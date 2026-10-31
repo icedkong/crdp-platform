@@ -26,6 +26,8 @@
 | GET | `/api/platform/auth/captcha` | 免登录 | — | `CaptchaImage`（同上，两端同构） |
 | POST | `/api/hospital/auth/password` | 登录 | `ChangePasswordRequest { oldPassword, newPassword }` | 空（成功后本会话继续可用，其他会话全部失效） |
 | POST | `/api/platform/auth/password` | 登录 | `ChangePasswordRequest` | 空（同上） |
+| POST | `/api/hospital/auth/password/forgot` | 免登录 | `HospitalPasswordForgotRequest { tenantCode, username }` | 空（把重置验证码发到该账号**绑定手机号**；无论账号是否存在、是否绑定手机号均返回成功，防探测；60 秒冷却与每日上限超限 42900） |
+| POST | `/api/hospital/auth/password/reset` | 免登录 | `HospitalPasswordResetRequest { tenantCode, username, code, newPassword }`（code 6 位数字；newPassword 8–64 位） | 空（验证码通过且新密码合规后重置；**该账号全部会话失效**，写审计 `USER_PASSWORD_RESET`） |
 | POST | `/api/hospital/system/users/{id}/unlock` | `tenant:user:reset` | — | `{ userId, username, unlocked: true }`（管理员解锁登录锁定） |
 | GET | `/api/hospital/auth/sessions` | 登录 | — | `OnlineSession[] { sessionId, userId, username, displayName, ip, issuedAt, lastActiveAt, current }`（本人在线会话；`sessionId` 由令牌哈希单向推导，不返回令牌） |
 | DELETE | `/api/hospital/auth/sessions/{sessionId}` | 登录 | — | `OnlineSession`（下线自己的某个会话；被下线令牌下次请求 40100；写审计 `SESSION_REVOKE`） |
@@ -77,6 +79,11 @@
 - 在线会话管理（E04-T06 / PLT-AUTH-009）：`sessionId` = 令牌 SHA-256 前 16 个十六进制字符（单向，接口绝不返回令牌）；管理员按本院在线列表 + 会话号强制下线（`SESSION_KICK` 审计），本人可查看并下线自己的会话（`SESSION_REVOKE` 审计）；不存在的会话号统一 40400。
 - 权限变更生效（E04-T06 / PLT-PERM-010）：会话带登录时的权限版本号（初始 1）。授权用例（E06 角色 / 用户 / 数据范围管理）变更后必须调用 `PermissionVersionStore.bump(端别, 租户, 用户)` 递增版本。请求时 `TokenAuthenticationFilter` 发现会话版本落后：按库里的最新授权**重算会话**（令牌不变、菜单 / 权限码 / 数据范围 / 账号状态取新值）后继续执行——旧令牌里的权限快照自此失效；若账号已停用 / 不存在，会话删除、40100。前端依据 `me.permissionVersion` 变化或收到 40300 重新拉取 `codes` 与 `menus`（本任务为后端；前端刷新在 E06）。
 - 端别隔离（E04-T03 / PLT-AUTH-005）：`/api/platform/**` 只接受平台会话，`/api/hospital/**` 只接受医院会话。`TokenAuthenticationFilter` 认证时按会话端别附加 `SESSION_PLATFORM` / `SESSION_HOSPITAL` 权限，`SecurityConfig` 的路径规则据此把跨端令牌统一拒绝为 40300，不依赖各控制器自行调用 `require*` 系列；控制器层 `requirePlatform` / `requireHospital`（40300）保留为内层防线。登录层面两端账号分库校验：平台账号只存于平台库 `plt_account`，医院账号只存于各租户库，互不能在对方端登录（失败同样统一 40101）。
+- 忘记密码（E04-T07 / PLT-AUTH-011，医院端；平台端见 OQ-41）：
+  - 第一步 `/auth/password/forgot`：重置验证码发到该账号**绑定手机号**（不是请求里的任意手机号）；未知租户 / 未知账号 / 停用账号 / 未绑定手机号一律**静默成功**（不触达短信通道）。未知账号同样消耗 60 秒冷却位（探针键），使「短时间内第二次请求是否 42900」与真实账号不可区分；冷却与每日上限同登录验证码（同一手机号 60 秒 / 每日 10 条，超限 42900）。
+  - 重置验证码与登录验证码**分命名空间**（Redis `reset:租户:手机号` vs `login:租户:手机号`）：钓鱼拿到的登录验证码不能重置密码；A 院的码同样不能在 B 院用。
+  - 第二步 `/auth/password/reset`：未知租户 / 未知账号 / 停用账号 / 未绑定手机号 / 验证码错误 / 过期统一 **40102**（不区分存在性）；重置尝试按「HR:租户编码:账号」分桶计数，连续失败达上限 42900（连续多次锁定 30 分钟），成功后清零。校验顺序：失败计数 → 账号（统一 40102）→ 验证码（一次一用）→ 密码策略（42200，列明全部不满足项）→ 历史密码（不得与最近 5 次相同，42200）；策略与历史的 42200 只在验证码通过后给出，避免借「弱密码是否被报 42200」探测账号存在——代价是策略不达标也会消耗验证码，需重新获取。
+  - 重置成功：落新哈希、旧哈希入 `sys_password_history`、**该账号全部会话失效**（免登录流程没有「当前会话」可保留）、清登录失败计数、写审计 `USER_PASSWORD_RESET`（不落新旧口令与哈希）；被拒绝的重置尝试写登录日志（`aud_login_log`，message=`password-reset-rejected`）。用户自选新密码已满足策略，**不**置「首次登录强制改密」标记（该标记用于管理员下发的随机密码）。
 
 ## 2. 需要新增的接口（推断，待确认）
 
@@ -85,7 +92,7 @@
 | GET | `/api/hospital/auth/tenant?code=` | 登录页识别租户，返回 `{ tenantName, logoUrl, loginMethods[], themeColor }`；租户不存在也返回通用默认值，不暴露存在性 | PLT-AUTH-004、PLT-CFG-008 |
 <!-- E04-T04 已实现并移至第 1 节：/auth/sms、/auth/login/sms、/auth/2fa/verify（两端） -->
 <!-- E04-T05 已实现并移至第 1 节：/auth/captcha（两端）、/auth/password（两端）、/system/users/{id}/unlock -->
-| POST | `/api/hospital/auth/password/forgot` / `.../reset` | 忘记密码（短信验证） | PLT-AUTH-011 |
+<!-- E04-T07 已实现并移至第 1 节：/auth/password/forgot、/auth/password/reset（医院端；平台端忘记密码暂不做，见 OQ-41） -->
 | POST | `/api/hospital/auth/reauth` | 敏感操作二次认证，返回 5 分钟有效的 `reauthToken`，敏感接口通过请求头 `X-Reauth-Token` 携带；缺失时返回 40304 | PLT-AUTH-012 |
 | GET | `/api/hospital/auth/features` | 当前租户功能开关 `{ [featureCode]: boolean }`；或把 `features` 并入 `me`（二选一，见 OQ-03） | 技术方案“各院功能不同怎么办” |
 | — | 平台端 | `/api/platform/auth/reauth`、`/auth/features` 同构待定 | PLT-AUTH-005 |
@@ -121,3 +128,4 @@ interface MeResponseExt extends MeResponse {
 - 短信验证码 5 分钟有效、60 秒冷却、每日 10 条、输错 5 次作废（`SmsCodeStoreTest`）；短信登录与租户隔离、双因素按角色配置与平台强制、challenge 一次性（`AuthServiceTest`、`TwoFactorChallengeStoreTest`）；端到端走 HTTP 的用例在 `SmsAndTwoFactorIT`（CI 起 docker compose 后运行）。
 - E04-T05：密码策略（`PasswordPolicyTest`）、图形验证码一次一密与限流（`CaptchaStoreTest`）、3 次验证码 / 5 次锁定 / 解锁（`LoginRateLimiterTest`、`AuthServiceTest`）、强制改密标记随会话与双因素保留（`AuthServiceTest`）、40305 放行清单（`MustChangePasswordFilterTest`）、改密校验顺序与会话处理（`PasswordChangeServiceTest`）；端到端（验证码→锁定→管理员解锁、初始密码强制改密、改密后其他会话失效、密码到期、平台端镜像）在 `PasswordAndLockoutIT`。前端策略提示与失败 data 解析在 `packages/api` 的 `password-policy.spec.ts`、`login-rejection.spec.ts`。
 - E04-T06：空闲 / 绝对超时与滑动续期、两级索引与踢线、权限版本重算保留令牌（`SessionStoreTest`、`PermissionVersionStoreTest`）；过滤器版本落后重算 / 账号失效删会话（`TokenAuthenticationFilterTest`）；在线列表、强制下线、本人会话与 40400 / 40300（`SessionAdminServiceTest`）；单端登录、IP 与空闲窗口、登录带当前版本（`AuthServiceTest`）；端到端（在线用户→强制下线→旧令牌 40100、改权限 + 递增版本→旧令牌下次请求即按新权限执行、单端登录、平台端本人会话）在 `SessionAdminAndPermissionVersionIT`（CRDP_IT_MYSQL_PORT 存在时运行）。
+- E04-T07：发码到绑定手机号与防探测静默（`PasswordResetServiceTest`）、未知账号 / 停用 / 未绑定与验证码错误统一 40102、登录验证码不能重置密码（命名空间隔离）、验证码一次一用、策略与历史密码校验、全部会话吊销、审计不含口令材料；端到端（忘记密码→重置→旧密码 40101 / 新密码登录 / 旧令牌 40100、未知账号冷却行为一致、弱密码 42200 且验证码被消耗、登录码不可重置）在 `ForgotPasswordIT`（CRDP_IT_MYSQL_PORT 存在时运行）。前端步骤门控（获取验证码 / 提交重置）在 `apps/web-hospital` 的 `forgot-password-flow.spec.ts`。
