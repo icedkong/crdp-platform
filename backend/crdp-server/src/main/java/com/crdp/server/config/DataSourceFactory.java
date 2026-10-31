@@ -2,14 +2,13 @@ package com.crdp.server.config;
 
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import org.springframework.stereotype.Component;
 
-public final class DataSourceFactory {
+/** 每租户连接池的统一入口：方案要求每池最大 5 个连接。注册表与启动装配共用，测试可注入替身。 */
+@Component
+public class DataSourceFactory {
 
-    private DataSourceFactory() {}
-
-    /** 方案要求每池最大 5 个连接。 */
-    public static HikariDataSource hikari(
-            String poolName, String url, String username, String password) {
+    public HikariDataSource hikari(String poolName, String url, String username, String password) {
         HikariConfig config = new HikariConfig();
         config.setPoolName(poolName);
         config.setJdbcUrl(url);
