@@ -134,3 +134,8 @@ interface MeResponseExt extends MeResponse {
   - **令牌泄露**：令牌不透明（两次登录不同、base64url 43 字符非 JWT、不携带账号 / 租户材料）；`me` / `codes` / `menus` / `sessions` 任何响应不回显令牌，会话号是 16 位十六进制单向摘要；本人按会话号吊销被窃会话后，被窃令牌下次请求 40100。
   - **重放**：短信验证码、双因素 challenge、重置验证码一次一用——成功后重放分别 40102 / 40100 / 40102，已签发会话不受影响。
   - 测试客户端注意：测试类路径的 Apache HttpClient 5 收到 429 会自动重发请求，把「验证码作废 42900」掩盖成 40102；本用例在 `@BeforeEach` 里对 TestRestTemplate `disableAutomaticRetries`，看服务端第一个响应。图形验证码「一次一密」组件级用例在 `CaptchaStoreTest`（端到端读不出图片里的码）；登出重放与跨端 / 跨子域令牌在 `TenantIsolationAcceptanceIT`。
+- E04-T10（认证、会话与锁定接口用例，全部 CRDP_IT_MYSQL_PORT 存在时运行）：
+  - `AuthApiContractIT`（PLT-AUTH-001）：登录成功契约（tokenType / expiresInSeconds≈剩余空闲窗口）、me / codes / menus 字段与去重口径、参数校验失败 40001（message 为「字段 原因」）、未知租户 / 未知账号 / 停用账号 / 口令错误（两端）统一 40101 且 data 恒带 `{ captchaRequired, remainingAttempts }`、成功登录清零失败计数、无 / 伪造令牌 40100、登出即失效且重复登出 40100、解锁接口无权限 40300 与越租户 / 不存在 40400（注：两演示租户种子相同、同账号同 id，越租户负例须用他院独有 id）。
+  - `SessionIdleTimeoutIT`（PLT-AUTH-008，idle 压到 3 秒）：expiresInSeconds 即空闲窗口、空闲超时会话删除 40100、每个已认证请求滑动续期（持续活跃活得过初始窗口、停止后按最后活跃计时）、平台端独立计超时。
+  - `SessionAbsoluteTimeoutIT`（PLT-AUTH-008，absolute 压到 6 秒、idle 放宽）：绝对时长从登录起算不随活跃滑动，持续活跃的会话到点仍 40100，须重新登录。
+  - `LoginLockoutAutoUnlockIT`（PLT-AUTH-007，lock 压到 3 秒）：锁定只作用于「端 + 租户 + 账号」桶——demoa 锁死不影响 demob 同名账号（双租户负例）与医院端 / 平台端互不影响；第 5 次失败本身仍按前序口径拒绝（40102），锁定在其后的下一次请求生效 42900；锁定期满自动解锁（OQ-39：平台账号暂无解锁界面，靠的就是这条）。
