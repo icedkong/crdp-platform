@@ -94,9 +94,10 @@ class SessionAdminServiceTest {
         assertEquals("doctor.demo", view.username());
         assertEquals("203.0.113.9", view.ip(), "在线用户列表展示登录 IP（PLT-AUTH-009）");
         assertEquals(SessionPrincipal.sessionIdOf("token-doctor"), view.sessionId(), "对外只暴露会话号");
+        // 固定北京时间（Asia/Shanghai）：不随运行环境时区漂移（CI runner 默认 UTC 时输出仍为 +08:00）
         assertTrue(
-                view.issuedAt().endsWith("+08:00") || view.issuedAt().contains("+"),
-                "时间用 ISO-8601 带时区");
+                view.issuedAt().endsWith("+08:00"),
+                "时间用 ISO-8601 带时区（北京时间 +08:00），实际 " + view.issuedAt());
         assertEquals(false, view.current(), "管理员列表不带 current 标记");
     }
 

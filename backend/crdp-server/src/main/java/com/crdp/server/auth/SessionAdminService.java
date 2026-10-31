@@ -26,8 +26,12 @@ import org.springframework.stereotype.Service;
 @Service
 public class SessionAdminService {
 
+    /**
+     * 在线会话的登录 / 活跃时间展示口径：ISO-8601 带时区，固定北京时间（AGENTS 第 6 节「接口用 ISO-8601 带时区（如 +08:00）、业务时间按北京时间」）。
+     * 不随部署环境时区漂移——CI / 容器默认 UTC 时输出稳定为 +08:00。
+     */
     private static final DateTimeFormatter TIME =
-            DateTimeFormatter.ISO_OFFSET_DATE_TIME.withZone(ZoneId.systemDefault());
+            DateTimeFormatter.ISO_OFFSET_DATE_TIME.withZone(ZoneId.of("Asia/Shanghai"));
 
     private final SessionStore sessionStore;
     private final AuditLogger auditLogger;
