@@ -24,7 +24,9 @@ INSERT INTO cfg_param (param_key, param_value, remark) VALUES
 
 -- 解锁 / 重置权限码（tenant:user:reset，system.md §2）挂在用户管理菜单下的隐藏按钮上；
 -- 按钮行在平台库 V10 新增（plt_menu id=311），这里授予内置租户管理员角色。
--- 只在此处授一次：新建租户库同样会执行本脚本（base 迁移先于种子），避免与种子脚本重复。
+-- 注意：本脚本对「已在本角色存在」的库生效（老库增量升级）；全新租户库按版本号排序执行，
+-- 本脚本先于种子 V100（创建 TENANT_ADMIN）运行、插入 0 行，由种子 V102 补授，
+-- 生产（无种子）由开通编排 ensureAdmin 授予。NOT EXISTS 保证三处互不重复。
 INSERT INTO sys_role_menu (role_id, menu_id)
 SELECT r.id, 311
 FROM sys_role r
