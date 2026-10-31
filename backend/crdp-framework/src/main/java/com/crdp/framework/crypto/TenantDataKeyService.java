@@ -38,6 +38,15 @@ public class TenantDataKeyService {
         return 1;
     }
 
+    /**
+     * 轮换（E03-T05）：在当前最大版本之后新增一个版本，新写入用它，旧版本保留用于解密（NFR-CRY-004）。 并发轮换竞争同一版本号时收敛到库里已有那一行。必须在租户上下文内调用。
+     */
+    public int createNextVersion(String purpose) {
+        TenantContext.require();
+        int next = currentVersion(purpose) + 1;
+        return createVersion(purpose, next);
+    }
+
     /** 取指定用途与版本的数据密钥，优先命中内存缓存。必须在租户上下文内调用。 */
     public SecretKey keyFor(String purpose, int keyVersion) {
         String cacheKey = cacheKey(TenantContext.require(), purpose, keyVersion);
@@ -59,7 +68,7 @@ public class TenantDataKeyService {
         return keyProvider.unwrap(rows.get(0));
     }
 
-    private void createVersion(String purpose, int keyVersion) {
+    private int createVersion(String purpose, int keyVersion) {
         GeneratedDataKey generated = keyProvider.generateDataKey();
         boolean inserted = false;
         try {
@@ -74,6 +83,7 @@ public class TenantDataKeyService {
         }
         SecretKey effective = inserted ? generated.key() : load(purpose, keyVersion);
         cache.put(cacheKey(TenantContext.require(), purpose, keyVersion), effective);
+        return keyVersion;
     }
 
     private static String cacheKey(TenantContext.State tenant, String purpose, int keyVersion) {
