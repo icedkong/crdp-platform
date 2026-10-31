@@ -74,6 +74,9 @@ public class TenantSchemaMigrator {
                 .dataSource(dataSource)
                 .locations(locations.toArray(String[]::new))
                 .baselineOnMigrate(false)
+                // 种子脚本固定用 V100（高于普通迁移）；local/dev 的库先跑过种子后，新增的普通迁移
+                // 版本号低于已应用的高水位，必须允许乱序补入。生产不含种子、永远顺序执行。
+                .outOfOrder(true)
                 .load();
     }
 }
