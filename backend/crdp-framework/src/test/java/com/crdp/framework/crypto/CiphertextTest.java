@@ -9,12 +9,11 @@ import org.junit.jupiter.api.Test;
 
 class CiphertextTest {
 
-    private final LocalCryptoService crypto =
-            new LocalCryptoService("dev-only-not-a-production-key");
-
     @Test
     void parsesEveryFieldAndReEncodesToTheSameValue() {
-        String value = crypto.encrypt("field", "虚构姓名");
+        String value =
+                new Ciphertext(1, "AES-256-GCM", 1, "field", new byte[12], "tand".getBytes())
+                        .encode();
 
         Ciphertext parsed = Ciphertext.parse(value);
 
