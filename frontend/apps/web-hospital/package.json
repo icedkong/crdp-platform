@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@crdp/api": "workspace:*",
+    "@crdp/status-tag": "workspace:*",
     "@crdp/tokens": "workspace:*",
     "@vben/access": "workspace:*",
     "@vben/common-ui": "workspace:*",

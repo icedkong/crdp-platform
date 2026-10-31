@@ -34,13 +34,15 @@ class PlatformTenantWizardMySqlIT {
 
     private static JdbcTemplate root;
     private static JdbcTemplate platform;
-    private static String createdCode;
+
+    /** 本轮创建的全部租户编码：每个用例各建一个，全部回收（医院名称 E05-T01 起全平台唯一，残留会挡重跑）。 */
+    private static final List<String> createdCodes = new java.util.ArrayList<>();
 
     @Autowired private TestRestTemplate rest;
 
     @AfterAll
     static void cleanUp() {
-        if (createdCode != null) {
+        for (String createdCode : createdCodes) {
             root.execute("DROP DATABASE IF EXISTS t_" + createdCode);
             root.execute("DROP USER IF EXISTS `t_" + createdCode + "`@'%'");
             List<Long> ids =
@@ -122,7 +124,8 @@ class PlatformTenantWizardMySqlIT {
 
         assertEquals(0, code(response), () -> String.valueOf(response));
         Map<?, ?> data = (Map<?, ?>) response.get("data");
-        createdCode = data.get("code").toString();
+        String createdCode = data.get("code").toString();
+        createdCodes.add(createdCode);
         assertTrue(createdCode.matches("^t[a-z0-9]{7}$"), "未填编码时应自动生成：" + createdCode);
         List<Map<String, Object>> steps = (List<Map<String, Object>>) data.get("steps");
         assertEquals(5, steps.size());
@@ -202,7 +205,7 @@ class PlatformTenantWizardMySqlIT {
                         .getBody();
         long tenantId = ((Number) ((Map<?, ?>) created.get("data")).get("tenantId")).longValue();
         String code = ((Map<?, ?>) created.get("data")).get("code").toString();
-        createdCode = code;
+        createdCodes.add(code);
 
         // 进度页数据：TRIAL + 五步 SUCCESS（admin 已建成）
         Map<?, ?> view =
@@ -270,7 +273,7 @@ class PlatformTenantWizardMySqlIT {
                         Integer.class,
                         "t_" + code),
                 "回收后租户库已删除");
-        createdCode = null;
+        createdCodes.remove(code);
     }
 
     private static int code(Map<?, ?> response) {

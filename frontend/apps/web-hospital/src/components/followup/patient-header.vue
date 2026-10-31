@@ -3,12 +3,12 @@ import type { ReferencePatient } from '#/reference/types';
 
 import { ref } from 'vue';
 
+import { StatusTag } from '@crdp/status-tag';
 import { Button, Drawer, Space } from 'ant-design-vue';
 
 import { useBreakpoint } from '#/reference/use-breakpoint';
 
 import MaskedField from './masked-field.vue';
-import StatusTag from './status-tag.vue';
 
 defineProps<{
   canContact?: boolean;

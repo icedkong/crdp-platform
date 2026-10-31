@@ -21,6 +21,7 @@ import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.PreparedStatementCreator;
 import org.springframework.jdbc.support.KeyHolder;
@@ -214,5 +215,19 @@ class TenantOnboardingServiceTest {
         verify(platform, never())
                 .update(contains("INSERT INTO plt_tenant_resource"), any(Object[].class));
         verify(provisioning, times(2)).execute(contains("FirstPassword1"));
+    }
+
+    /** E05-T01 起医院名称全平台唯一（V7 唯一键）：撞名（而非撞编码）时给 40901，不落 NPE。 */
+    @Test
+    void duplicateHospitalNameIsRejectedInsteadOfNpe() {
+        when(platform.queryForList(anyString(), eq(Long.class), any(Object[].class)))
+                .thenReturn(List.of())
+                .thenReturn(List.of());
+        when(platform.update(any(PreparedStatementCreator.class), any(KeyHolder.class)))
+                .thenThrow(new DuplicateKeyException("uk_plt_tenant_name"));
+
+        ApiException ex = assertThrows(ApiException.class, () -> service.onboard(request()));
+        assertEquals(40901, ex.code(), () -> ex.getMessage());
+        verify(registry, never()).register(any());
     }
 }

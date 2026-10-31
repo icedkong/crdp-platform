@@ -5,10 +5,9 @@ import type {
   ReportLocation,
 } from '#/reference/types';
 
+import { StatusTag } from '@crdp/status-tag';
 import { colors } from '@crdp/tokens';
 import { Button, Empty, Tag } from 'ant-design-vue';
-
-import StatusTag from './status-tag.vue';
 
 defineProps<{
   canUpload?: boolean;
