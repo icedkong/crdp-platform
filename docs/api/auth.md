@@ -37,6 +37,7 @@
 - 会话为服务端 token（Redis `SessionStore`），不是 JWT；登出删除会话。
 - 令牌为 256 位随机不透明值（base64url，43 字符），不含任何用户信息；每个请求按令牌查服务端会话，删除会话（登出或服务端吊销）后旧令牌下一次请求即 40100（E04-T02）。
 - 会话链路的入口一致性（E04-T01 移交，E04-T02 实现）：配置了 `crdp.tenant.base-domain` 时，请求 Host 是 `{租户编码}.{平台域名}` 子域名的，会话必须是该租户的医院会话，否则按未认证处理（40100，不暴露差异）；IP、基域名等其余入口不约束。
+- 端别隔离（E04-T03 / PLT-AUTH-005）：`/api/platform/**` 只接受平台会话，`/api/hospital/**` 只接受医院会话。`TokenAuthenticationFilter` 认证时按会话端别附加 `SESSION_PLATFORM` / `SESSION_HOSPITAL` 权限，`SecurityConfig` 的路径规则据此把跨端令牌统一拒绝为 40300，不依赖各控制器自行调用 `require*` 系列；控制器层 `requirePlatform` / `requireHospital`（40300）保留为内层防线。登录层面两端账号分库校验：平台账号只存于平台库 `plt_account`，医院账号只存于各租户库，互不能在对方端登录（失败同样统一 40101）。
 
 ## 2. 需要新增的接口（推断，待确认）
 
@@ -75,7 +76,8 @@ interface MeResponseExt extends MeResponse {
 ## 3. 测试要点
 
 - 三种失败返回同一 code 与 message；超过次数返回 42900。
-- demoa 账号的 token 访问 `/api/platform/**` 返回 40300 / 40100（`requirePlatform` 失败），反之亦然。
+- 医院端账号的 token 访问 `/api/platform/**` 返回 40300（`SecurityConfig` 端别路径规则），平台端 token 访问 `/api/hospital/**` 反之亦然（E04-T03；`TenantIsolationAcceptanceIT`、`ProvisionedTenantIsolationIT` 覆盖）。
+- 平台账号在医院端登录、医院账号在平台端登录均统一 40101；两端的失败计数按「端 + 账号」分桶，互不影响（E04-T03，`AuthServiceTest`）。
 - 未开通模块的菜单不出现在 `menus`，其权限码不出现在 `codes`。
 - 登出后旧 token 访问返回 40100。
 - 登录成功下发不透明令牌（非 JWT、两次登录不同），会话保存在服务端；登出 / 删除会话后旧令牌立即失效（`AuthServiceTest`、`SessionStoreTest`、`TokenAuthenticationFilterTest`）。

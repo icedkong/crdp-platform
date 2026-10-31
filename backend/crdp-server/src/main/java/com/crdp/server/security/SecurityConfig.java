@@ -46,6 +46,17 @@ public class SecurityConfig {
                                                 "/api/hospital/auth/login",
                                                 "/api/platform/auth/login")
                                         .permitAll()
+                                        // E04-T03 / PLT-AUTH-005：平台端与医院端接口前缀各自只接受
+                                        // 对应端的会话（令牌由 TokenAuthenticationFilter 附带端别权限），
+                                        // 跨端令牌一律 40300，不依赖各控制器自行调用 require* 系列
+                                        .requestMatchers("/api/platform/**")
+                                        .hasAnyAuthority(
+                                                TokenAuthenticationFilter
+                                                        .SESSION_PLATFORM_AUTHORITY)
+                                        .requestMatchers("/api/hospital/**")
+                                        .hasAnyAuthority(
+                                                TokenAuthenticationFilter
+                                                        .SESSION_HOSPITAL_AUTHORITY)
                                         .requestMatchers(
                                                 "/actuator/health",
                                                 "/actuator/health/**",
