@@ -14,6 +14,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -145,6 +146,131 @@ class PlatformTenantWizardMySqlIT {
                         "SELECT id FROM t_" + createdCode + ".sys_user WHERE username = 'admin'",
                         Long.class),
                 "首个管理员已创建");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void provisionRetryAndRecycleWorkEndToEnd() {
+        String port = System.getenv("CRDP_IT_MYSQL_PORT");
+        root =
+                new JdbcTemplate(
+                        new DriverManagerDataSource(
+                                "jdbc:mysql://127.0.0.1:"
+                                        + port
+                                        + "/?useSSL=false&allowPublicKeyRetrieval=true",
+                                "root",
+                                "DevOnly#root2026"));
+        platform =
+                new JdbcTemplate(
+                        new DriverManagerDataSource(
+                                "jdbc:mysql://127.0.0.1:"
+                                        + port
+                                        + "/crdp_platform?useSSL=false&allowPublicKeyRetrieval=true",
+                                "crdp_app",
+                                "DevOnly#app2026"));
+
+        HttpHeaders loginHeaders = new HttpHeaders();
+        loginHeaders.setContentType(MediaType.APPLICATION_JSON);
+        Map<?, ?> login =
+                rest.postForEntity(
+                                "/api/platform/auth/login",
+                                new HttpEntity<>(
+                                        Map.of(
+                                                "username",
+                                                "platform.admin",
+                                                "password",
+                                                "Demo@2026"),
+                                        loginHeaders),
+                                Map.class)
+                        .getBody();
+        String token = ((Map<?, ?>) login.get("data")).get("token").toString();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.setBearerAuth(token);
+
+        // 成功开通一个租户
+        Map<?, ?> created =
+                rest.postForEntity(
+                                "/api/platform/tenants",
+                                new HttpEntity<>(
+                                        Map.of(
+                                                "name", "虚构示例医院己",
+                                                "adminUsername", "admin",
+                                                "adminInitialPassword", "Init@2026#"),
+                                        headers),
+                                Map.class)
+                        .getBody();
+        long tenantId = ((Number) ((Map<?, ?>) created.get("data")).get("tenantId")).longValue();
+        String code = ((Map<?, ?>) created.get("data")).get("code").toString();
+        createdCode = code;
+
+        // 进度页数据：TRIAL + 五步 SUCCESS（admin 已建成）
+        Map<?, ?> view =
+                rest.exchange(
+                                "/api/platform/tenants/" + tenantId + "/provision",
+                                HttpMethod.GET,
+                                new HttpEntity<>(headers),
+                                Map.class)
+                        .getBody();
+        Map<?, ?> viewData = (Map<?, ?>) view.get("data");
+        assertEquals("TRIAL", viewData.get("status"));
+        assertEquals(5, ((List<?>) viewData.get("steps")).size());
+
+        // 重试：幂等重跑，仍是五步 SUCCESS（admin 已存在不受影响）
+        Map<?, ?> retried =
+                rest.exchange(
+                                "/api/platform/tenants/" + tenantId + "/retry",
+                                HttpMethod.POST,
+                                new HttpEntity<>(headers),
+                                Map.class)
+                        .getBody();
+        List<Map<String, Object>> steps =
+                (List<Map<String, Object>>) ((Map<?, ?>) retried.get("data")).get("steps");
+        assertEquals(5, steps.size());
+        assertTrue(
+                steps.stream().noneMatch(step -> "FAILED".equals(step.get("status"))),
+                () -> steps.toString());
+        assertTrue(
+                steps.stream()
+                        .anyMatch(
+                                step ->
+                                        "SKIPPED".equals(step.get("status"))
+                                                && "admin".equals(step.get("step"))),
+                "重试不重复建管理员，admin 步骤为 SKIPPED");
+
+        // TRIAL 状态不得回收
+        Map<?, ?> recycleRejected =
+                rest.exchange(
+                                "/api/platform/tenants/" + tenantId,
+                                HttpMethod.DELETE,
+                                new HttpEntity<>(headers),
+                                Map.class)
+                        .getBody();
+        assertEquals(40001, code(recycleRejected), "已开通完成的租户不得回收");
+
+        // 模拟"开通失败中"（回置 PROVISIONING）后回收：库与登记全部清除
+        platform.update("UPDATE plt_tenant SET status = 'PROVISIONING' WHERE id = ?", tenantId);
+        Map<?, ?> recycled =
+                rest.exchange(
+                                "/api/platform/tenants/" + tenantId,
+                                HttpMethod.DELETE,
+                                new HttpEntity<>(headers),
+                                Map.class)
+                        .getBody();
+        assertEquals(0, code(recycled));
+        assertEquals(
+                0,
+                platform.queryForObject(
+                        "SELECT COUNT(*) FROM plt_tenant WHERE id = ?", Integer.class, tenantId),
+                "回收后平台登记清除");
+        assertEquals(
+                0,
+                root.queryForObject(
+                        "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name = ?",
+                        Integer.class,
+                        "t_" + code),
+                "回收后租户库已删除");
+        createdCode = null;
     }
 
     private static int code(Map<?, ?> response) {

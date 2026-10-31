@@ -8,6 +8,7 @@ import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import org.springframework.dao.DuplicateKeyException;
@@ -104,6 +105,85 @@ public class TenantOnboardingService {
                                 tenantId));
         return new OnboardingResult(tenantId, request.code(), steps);
     }
+
+    /** 开通进度视图（PLT-TEN-008）：租户状态与逐步结果。 */
+    public ProvisionView provisionOf(long tenantId) {
+        return TenantContext.callAsPlatform(
+                () -> {
+                    Map<String, Object> tenant =
+                            platform.queryForMap(
+                                    "SELECT code, name, status FROM plt_tenant WHERE id = ?",
+                                    tenantId);
+                    List<StepResult> steps = loadProvisionSteps(tenantId);
+                    return new ProvisionView(
+                            tenantId,
+                            String.valueOf(tenant.get("code")),
+                            String.valueOf(tenant.get("name")),
+                            String.valueOf(tenant.get("status")),
+                            steps);
+                });
+    }
+
+    /** 从失败步骤重试：用平台库里登记的名称与编码重跑编排（可重入）；管理员已建成则保持不动。 */
+    public OnboardingResult retry(long tenantId) {
+        return TenantContext.callAsPlatform(
+                () -> {
+                    Map<String, Object> tenant =
+                            platform.queryForMap(
+                                    "SELECT code, name FROM plt_tenant WHERE id = ?", tenantId);
+                    return onboard(
+                            new OnboardingRequest(
+                                    String.valueOf(tenant.get("code")),
+                                    String.valueOf(tenant.get("name")),
+                                    null,
+                                    null,
+                                    null));
+                });
+    }
+
+    /** 放弃回收（PLT-TEN-008）：仅开通中（未到 TRIAL）的租户；注销库与账号、清平台登记。 */
+    public void recycle(long tenantId) {
+        String code =
+                TenantContext.callAsPlatform(
+                        () -> {
+                            Map<String, Object> tenant =
+                                    platform.queryForMap(
+                                            "SELECT code, status FROM plt_tenant WHERE id = ?",
+                                            tenantId);
+                            if (!"PROVISIONING".equals(String.valueOf(tenant.get("status")))) {
+                                throw new ApiException(
+                                        400, 40001, "仅开通未完成的租户可回收；正式注销走 PLT-TEN-020");
+                            }
+                            return String.valueOf(tenant.get("code"));
+                        });
+        registry.unregister(tenantId);
+        String database = "t_" + code;
+        provisioning.execute("DROP DATABASE IF EXISTS `" + database + "`");
+        provisioning.execute("DROP USER IF EXISTS `" + database + "`@'%'");
+        TenantContext.runAsPlatform(
+                () -> {
+                    platform.update("DELETE FROM plt_provision_step WHERE tenant_id = ?", tenantId);
+                    platform.update(
+                            "DELETE FROM plt_tenant_resource WHERE tenant_id = ?", tenantId);
+                    platform.update("DELETE FROM plt_tenant WHERE id = ?", tenantId);
+                });
+    }
+
+    private List<StepResult> loadProvisionSteps(long tenantId) {
+        return platform.query(
+                "SELECT step, status, error_text FROM plt_provision_step"
+                        + " WHERE tenant_id = ? ORDER BY id",
+                (rs, rowNum) ->
+                        new StepResult(
+                                rs.getString("step"),
+                                rs.getString("status"),
+                                rs.getString("error_text")),
+                tenantId);
+    }
+
+    /** 进度视图（E02-T08）。 */
+    public record ProvisionView(
+            long tenantId, String code, String name, String status, List<StepResult> steps) {}
 
     private void requireValid(OnboardingRequest request) {
         if (request.code() == null || !CODE.matcher(request.code()).matches()) {

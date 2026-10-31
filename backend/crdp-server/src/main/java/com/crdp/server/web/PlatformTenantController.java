@@ -7,6 +7,9 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.security.SecureRandom;
 import java.util.Locale;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -52,6 +55,30 @@ public class PlatformTenantController {
                                 request.adminUsername(),
                                 request.adminDisplayName(),
                                 request.adminInitialPassword())));
+    }
+
+    @Operation(summary = "开通进度（PLT-TEN-008）：租户状态与逐步结果")
+    @GetMapping("/api/platform/tenants/{tenantId}/provision")
+    @RequiresPermission("platform:tenant:view")
+    public ApiResponse<TenantOnboardingService.ProvisionView> provision(
+            @PathVariable long tenantId) {
+        return ApiResponse.ok(onboardingService.provisionOf(tenantId));
+    }
+
+    @Operation(summary = "从失败步骤重试开通（可重入）")
+    @PostMapping("/api/platform/tenants/{tenantId}/retry")
+    @RequiresPermission("platform:tenant:create")
+    public ApiResponse<TenantOnboardingService.OnboardingResult> retry(
+            @PathVariable long tenantId) {
+        return ApiResponse.ok(onboardingService.retry(tenantId));
+    }
+
+    @Operation(summary = "放弃回收：仅开通未完成的租户（正式注销是 PLT-TEN-020 / E05-T08）")
+    @DeleteMapping("/api/platform/tenants/{tenantId}")
+    @RequiresPermission("platform:tenant:create")
+    public ApiResponse<Void> recycle(@PathVariable long tenantId) {
+        onboardingService.recycle(tenantId);
+        return ApiResponse.ok(null);
     }
 
     /** 租户编码建议值：页面可改（PLT-TEN-002）。 */

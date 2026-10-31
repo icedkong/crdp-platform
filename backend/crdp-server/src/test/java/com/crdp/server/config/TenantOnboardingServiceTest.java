@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
@@ -67,6 +68,70 @@ class TenantOnboardingServiceTest {
     private TenantOnboardingService.OnboardingRequest request() {
         return new TenantOnboardingService.OnboardingRequest(
                 "democ", "虚构示例医院丙", "admin", "丙院管理员", "Init@2026");
+    }
+
+    @Test
+    void provisionOfReturnsTenantStatusAndSteps() {
+        when(platform.queryForMap(anyString(), eq(TENANT_ID)))
+                .thenReturn(Map.of("code", "democ", "name", "虚构示例医院丙", "status", "PROVISIONING"));
+        when(platform.query(
+                        anyString(),
+                        any(org.springframework.jdbc.core.RowMapper.class),
+                        eq(TENANT_ID)))
+                .thenReturn(
+                        List.of(
+                                new TenantOnboardingService.StepResult(
+                                        "tenant-row", "SUCCESS", null),
+                                new TenantOnboardingService.StepResult(
+                                        "database", "FAILED", "DDL 冲突")));
+
+        TenantOnboardingService.ProvisionView view = service.provisionOf(TENANT_ID);
+
+        assertEquals("democ", view.code());
+        assertEquals("PROVISIONING", view.status());
+        assertEquals(2, view.steps().size());
+        assertEquals("FAILED", view.steps().get(1).status());
+    }
+
+    @Test
+    void retryRerunsOnboardingWithStoredNameAndCode() {
+        stubTenantId();
+        when(platform.queryForMap(anyString(), eq(TENANT_ID)))
+                .thenReturn(Map.of("code", "democ", "name", "虚构示例医院丙"));
+
+        TenantOnboardingService.OnboardingResult result = service.retry(TENANT_ID);
+
+        assertEquals("democ", result.code());
+        assertTrue(
+                result.steps().stream()
+                        .anyMatch(
+                                step ->
+                                        "SKIPPED".equals(step.status())
+                                                && "admin".equals(step.step())),
+                "重试用库内信息，不再携带管理员参数");
+    }
+
+    @Test
+    void recycleOnlyAcceptsProvisioningTenants() {
+        when(platform.queryForMap(anyString(), eq(TENANT_ID)))
+                .thenReturn(Map.of("code", "democ", "status", "TRIAL"));
+
+        assertThrows(ApiException.class, () -> service.recycle(TENANT_ID));
+        verify(provisioning, never()).execute(anyString());
+        verify(registry, never()).unregister(anyLong());
+    }
+
+    @Test
+    void recycleDropsEverythingOfAProvisioningTenant() {
+        when(platform.queryForMap(anyString(), eq(TENANT_ID)))
+                .thenReturn(Map.of("code", "democ", "status", "PROVISIONING"));
+
+        service.recycle(TENANT_ID);
+
+        verify(registry).unregister(TENANT_ID);
+        verify(provisioning).execute(contains("DROP DATABASE IF EXISTS `t_democ`"));
+        verify(provisioning).execute(contains("DROP USER IF EXISTS `t_democ`"));
+        verify(platform).update(contains("DELETE FROM plt_tenant WHERE id = ?"), eq(TENANT_ID));
     }
 
     @Test
