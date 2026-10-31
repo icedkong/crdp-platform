@@ -63,6 +63,14 @@
       <artifactId>spring-boot-starter-test</artifactId>
       <scope>test</scope>
     </dependency>
+    <!-- E02-T09：TestRestTemplate 默认的 HttpURLConnection 会静默丢弃受限的 Host 头，
+         子域名（{租户编码}.平台域名，PLT-TEN-015）登录与 Host 劫持用例实际没测到 Host。
+         加入 Apache HttpClient 5 后 Boot 自动改用它作为请求工厂，Host 头真正可达。 -->
+    <dependency>
+      <groupId>org.apache.httpcomponents.client5</groupId>
+      <artifactId>httpclient5</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>
@@ -78,6 +86,19 @@
             </goals>
           </execution>
         </executions>
+      </plugin>
+      <!-- E02-T09：跨租户隔离与开通编排用例以 *IT 命名且按 CRDP_IT_MYSQL_PORT 门控。
+           surefire 默认不收 *IT.java，这里显式纳入，CI 注入端口即跑（无 MySQL 时类级跳过），
+           使“本地 mvn test”与 CI 完全一致，不再依赖手工 -Dtest 挑选。 -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <includes>
+            <include>**/*Test.java</include>
+            <include>**/*IT.java</include>
+          </includes>
+        </configuration>
       </plugin>
     </plugins>
   </build>

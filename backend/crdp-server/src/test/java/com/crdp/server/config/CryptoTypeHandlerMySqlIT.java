@@ -26,7 +26,7 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 /**
  * E03-T03 对真 MySQL 的端到端验证：经 MyBatis 写入的敏感字段在库里是密文（v1.AES-...）， 经 Mapper
- * 读回是明文。CRDP_IT_MYSQL_PORT=13306 时运行；CI 无数据库自动跳过；自建自清。
+ * 读回是明文。CRDP_IT_MYSQL_PORT=13306 时运行；自 E02-T09 起 CI 注入该端口；自建自清。
  */
 @EnabledIfEnvironmentVariable(named = "CRDP_IT_MYSQL_PORT", matches = "\\d+")
 class CryptoTypeHandlerMySqlIT {

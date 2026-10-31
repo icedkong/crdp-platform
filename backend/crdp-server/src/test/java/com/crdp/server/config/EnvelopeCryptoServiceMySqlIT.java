@@ -17,7 +17,7 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 /**
  * E03-T02 对真 MySQL 的端到端验证：数据密钥真实落库（仅包装形态）、按租户独立、密文可往返。 需要本地依赖（docker compose 的
- * MySQL）时运行：CRDP_IT_MYSQL_PORT=13306；CI 无数据库自动跳过。 表结构来自租户库迁移 V4；本测试自清理，不留数据。
+ * MySQL）时运行：CRDP_IT_MYSQL_PORT=13306；自 E02-T09 起 CI 注入该端口。 表结构来自租户库迁移 V4；本测试自清理，不留数据。
  */
 @EnabledIfEnvironmentVariable(named = "CRDP_IT_MYSQL_PORT", matches = "\\d+")
 class EnvelopeCryptoServiceMySqlIT {
