@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import type { Hello } from '@fu/api'
-import { useSessionStore } from '@fu/admin-shell'
+import type { Hello } from '@crdp/api'
+import { useSessionStore } from '@crdp/admin-shell'
 import { onMounted, ref } from 'vue'
 
 const session = useSessionStore()

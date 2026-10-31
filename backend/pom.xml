@@ -9,7 +9,7 @@
   <version>0.1.0-SNAPSHOT</version>
   <packaging>pom</packaging>
   <name>fu-parent</name>
-  <description>多租户医院随访 SaaS · M0 工程骨架</description>
+  <description>临床科研数据一体化平台（crdp）· M0 工程骨架</description>
 
   <modules>
     <module>fu-framework</module>

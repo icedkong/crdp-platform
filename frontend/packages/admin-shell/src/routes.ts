@@ -1,4 +1,4 @@
-import type { MenuNode } from '@fu/api'
+import type { MenuNode } from '@crdp/api'
 
 export interface FlatRoute {
   name: string

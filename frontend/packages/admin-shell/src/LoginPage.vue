@@ -41,7 +41,7 @@ async function submit() {
   <div class="login">
     <section class="intro">
       <p class="eyebrow">多租户医院随访</p>
-      <h1>随访云</h1>
+      <h1>临床科研数据一体化平台</h1>
       <p>
         {{
           session.mode === 'hospital'
@@ -103,7 +103,10 @@ async function submit() {
 }
 .intro h1 {
   margin: 8px 0 16px;
-  font-size: 48px;
+  max-width: 12em;
+  font-size: 32px;
+  line-height: 1.35;
+  font-weight: 600;
 }
 .intro p {
   max-width: 360px;
@@ -135,7 +138,7 @@ async function submit() {
     padding: 28px 20px;
   }
   .intro h1 {
-    font-size: 32px;
+    font-size: 26px;
   }
   .panel {
     padding: 24px 20px 48px;

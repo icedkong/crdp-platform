@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { MenuNode } from '@fu/api'
+import type { MenuNode } from '@crdp/api'
 import { iconOf } from './icons'
 
 defineOptions({ name: 'MenuBranch' })

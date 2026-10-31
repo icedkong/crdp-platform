@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { PagePlaceholder } from '@fu/admin-shell'
+import { PagePlaceholder } from '@crdp/admin-shell'
 </script>
 
 <template>

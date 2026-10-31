@@ -10,7 +10,7 @@
   </parent>
   <artifactId>fu-server</artifactId>
   <name>fu-server</name>
-  <description>单一可部署包。M0 只启动 web，worker 剖面留到调度落地时再拆。</description>
+  <description>临床科研数据一体化平台（crdp）的单一可部署包。M0 只启动 web，worker 剖面留到调度落地时再拆。</description>
 
   <dependencies>
     <dependency>

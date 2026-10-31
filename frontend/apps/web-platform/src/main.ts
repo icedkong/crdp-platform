@@ -1,4 +1,4 @@
-import { bootstrap } from '@fu/admin-shell'
+import { bootstrap } from '@crdp/admin-shell'
 
 bootstrap({
   mode: 'platform',

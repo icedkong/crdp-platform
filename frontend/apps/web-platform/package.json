@@ -1,5 +1,5 @@
 {
-  "name": "@fu/web-platform",
+  "name": "@crdp/web-platform",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,8 +9,8 @@
   },
   "dependencies": {
     "@ant-design/icons-vue": "^7.0.1",
-    "@fu/admin-shell": "workspace:*",
-    "@fu/api": "workspace:*",
+    "@crdp/admin-shell": "workspace:*",
+    "@crdp/api": "workspace:*",
     "ant-design-vue": "^4.2.6",
     "axios": "^1.13.1",
     "pinia": "^3.0.3",

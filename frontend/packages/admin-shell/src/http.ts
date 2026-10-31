@@ -1,4 +1,4 @@
-import type { ApiResponse } from '@fu/api'
+import type { ApiResponse } from '@crdp/api'
 import axios from 'axios'
 
 export class ApiError extends Error {

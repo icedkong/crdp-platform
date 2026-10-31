@@ -6,7 +6,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps ./apps
 COPY packages ./packages
 RUN pnpm install --frozen-lockfile
-RUN pnpm --filter @fu/web-platform build
+RUN pnpm --filter @crdp/web-platform build
 
 FROM nginxinc/nginx-unprivileged:1.27-alpine
 COPY apps/web-platform/nginx.conf /etc/nginx/conf.d/default.conf

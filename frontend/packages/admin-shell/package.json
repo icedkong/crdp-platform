@@ -1,5 +1,5 @@
 {
-  "name": "@fu/admin-shell",
+  "name": "@crdp/admin-shell",
   "private": true,
   "type": "module",
   "exports": {
@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@ant-design/icons-vue": "^7.0.1",
-    "@fu/api": "workspace:*",
+    "@crdp/api": "workspace:*",
     "ant-design-vue": "^4.2.6",
     "axios": "^1.13.1",
     "pinia": "^3.0.3",

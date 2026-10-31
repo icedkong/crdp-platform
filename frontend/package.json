@@ -1,5 +1,5 @@
 {
-  "name": "fu-frontend",
+  "name": "crdp",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.33.4",
@@ -7,9 +7,9 @@
     "node": ">=20"
   },
   "scripts": {
-    "dev": "pnpm --parallel --filter @fu/web-hospital --filter @fu/web-platform dev",
-    "build": "pnpm --filter @fu/web-hospital --filter @fu/web-platform --filter @fu/mobile-upload build",
-    "test": "pnpm --filter @fu/admin-shell --filter @fu/rules test",
+    "dev": "pnpm --parallel --filter @crdp/web-hospital --filter @crdp/web-platform dev",
+    "build": "pnpm --filter @crdp/web-hospital --filter @crdp/web-platform --filter @crdp/mobile-upload build",
+    "test": "pnpm --filter @crdp/admin-shell --filter @crdp/rules test",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check ."

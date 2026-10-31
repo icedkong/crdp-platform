@@ -1,5 +1,5 @@
 {
-  "name": "@fu/api",
+  "name": "@crdp/api",
   "private": true,
   "type": "module",
   "exports": {

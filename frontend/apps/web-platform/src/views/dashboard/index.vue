@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useSessionStore } from '@fu/admin-shell'
+import { useSessionStore } from '@crdp/admin-shell'
 
 const session = useSessionStore()
 </script>

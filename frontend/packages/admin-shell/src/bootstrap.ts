@@ -1,5 +1,5 @@
 import 'ant-design-vue/dist/reset.css'
-import type { SessionMode } from '@fu/api'
+import type { SessionMode } from '@crdp/api'
 import Antd from 'ant-design-vue'
 import { createPinia } from 'pinia'
 import { createApp } from 'vue'

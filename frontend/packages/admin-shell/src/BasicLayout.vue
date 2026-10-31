@@ -41,9 +41,9 @@ async function logout() {
   <a-layout class="shell">
     <a-layout-sider class="sider" breakpoint="lg" collapsible :width="228" theme="dark">
       <div class="brand">
-        <span class="mark">访</span>
+        <span class="mark">临</span>
         <div>
-          <strong>随访云</strong>
+          <strong>临床科研数据一体化平台</strong>
           <small>{{ product }}</small>
         </div>
       </div>
@@ -94,14 +94,18 @@ async function logout() {
   display: flex;
   gap: 10px;
   align-items: center;
-  height: 64px;
-  padding: 0 16px;
+  min-height: 64px;
+  padding: 12px 16px;
   color: #f4fbfa;
 }
 .brand strong,
 .brand small {
   display: block;
-  line-height: 1.2;
+  line-height: 1.25;
+}
+.brand strong {
+  font-size: 13px;
+  font-weight: 600;
 }
 .brand small {
   color: #b7d4d2;

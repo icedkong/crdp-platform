@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { MenuNode } from '@fu/api'
+import type { MenuNode } from '@crdp/api'
 import { collectRoutes, matchView } from './routes'
 
 const menu = (partial: Partial<MenuNode> & Pick<MenuNode, 'id' | 'type' | 'name'>): MenuNode => ({

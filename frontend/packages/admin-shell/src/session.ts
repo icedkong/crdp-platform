@@ -1,5 +1,5 @@
-import type { Hello, LoginResult, Me, MenuNode, SessionMode } from '@fu/api'
-import { authBase } from '@fu/api'
+import type { Hello, LoginResult, Me, MenuNode, SessionMode } from '@crdp/api'
+import { authBase } from '@crdp/api'
 import { defineStore } from 'pinia'
 import { request, setAuthToken } from './http'
 
