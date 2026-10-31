@@ -17,6 +17,17 @@ frontend/**/.vite/
 .env
 .env.*
 !.env.example
+# Vben 应用的模式配置不含口令。本地偏好加密密钥是占位符，不是凭证。
+!frontend/apps/**/.env
+!frontend/apps/**/.env.*
+frontend/**/.turbo/
+frontend/**/dist.zip
+frontend/**/.nitro/
+frontend/**/.output/
+frontend/.eslintcache
+frontend/.stylelintcache
+**/.eslintcache
+**/.stylelintcache
 .DS_Store
 
 # IDE

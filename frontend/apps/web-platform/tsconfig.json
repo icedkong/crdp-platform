@@ -1,11 +1,11 @@
 {
-  "extends": "../../tsconfig.base.json",
-  "include": [
-    "src/**/*.ts",
-    "src/**/*.vue",
-    "env.d.ts",
-    "../../packages/admin-shell/src/**/*.ts",
-    "../../packages/admin-shell/src/**/*.vue",
-    "../../packages/api/src/**/*.ts"
-  ]
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "extends": "@vben/tsconfig/web-app.json",
+  "compilerOptions": {
+    "paths": {
+      "#/*": ["./src/*"]
+    }
+  },
+  "references": [{ "path": "./tsconfig.node.json" }],
+  "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.vue"]
 }

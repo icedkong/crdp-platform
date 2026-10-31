@@ -1,16 +1,20 @@
-import vue from '@vitejs/plugin-vue'
-import { defineConfig } from 'vite'
+import { defineConfig } from '@vben/vite-config';
 
-export default defineConfig({
-  plugins: [vue()],
-  server: {
-    host: '0.0.0.0',
-    port: 14174,
-    proxy: {
-      '/api': 'http://127.0.0.1:18080',
+export default defineConfig(async () => {
+  return {
+    application: {
+      nitroMock: false,
     },
-  },
-  resolve: {
-    dedupe: ['vue', 'vue-router', 'pinia', 'ant-design-vue'],
-  },
-})
+    vite: {
+      server: {
+        proxy: {
+          '/api': {
+            changeOrigin: true,
+            target: 'http://127.0.0.1:18080',
+            ws: true,
+          },
+        },
+      },
+    },
+  };
+});

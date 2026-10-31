@@ -1,23 +1,47 @@
-<script setup lang="ts">
-import { useSessionStore } from '@crdp/admin-shell'
+<script lang="ts" setup>
+import { onMounted, onUnmounted, ref } from 'vue';
+import { useRouter } from 'vue-router';
 
-const session = useSessionStore()
+import { breakpoints } from '@crdp/tokens';
+import { Button, Result } from 'ant-design-vue';
+
+const router = useRouter();
+const isMobile = ref(false);
+const responsive = false;
+const title = '工作台';
+
+function read() {
+  isMobile.value = window.matchMedia(
+    `(max-width: ${breakpoints.tablet - 1}px)`,
+  ).matches;
+}
+onMounted(() => {
+  read();
+  window.addEventListener('resize', read);
+});
+onUnmounted(() => window.removeEventListener('resize', read));
 </script>
 
 <template>
-  <section>
-    <h1>平台工作台</h1>
-    <p>当前是 {{ session.me?.displayName }}。租户、模块和菜单仍是占位页，数据来自后端菜单。</p>
-    <a-card title="权限码">{{ session.codes.join('、') }}</a-card>
-  </section>
+  <Result
+    v-if="isMobile && !responsive"
+    status="info"
+    title="请在电脑或平板上操作"
+  >
+    <template #extra>
+      <Button type="primary" @click="router.push('/dashboard')">
+        返回首页
+      </Button>
+    </template>
+  </Result>
+  <div v-else class="page">
+    <h1 class="crdp-page-title">{{ title }}</h1>
+    <p>占位页面。业务尚未实现。没有真实患者数据。</p>
+  </div>
 </template>
 
 <style scoped>
-h1 {
-  margin: 0 0 8px;
-  font-size: 22px;
-}
-p {
-  color: #5c706e;
+.page {
+  padding: 16px;
 }
 </style>

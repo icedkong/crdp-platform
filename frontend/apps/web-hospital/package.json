@@ -1,26 +1,41 @@
 {
   "name": "@crdp/web-hospital",
+  "version": "0.0.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0 --port 14173",
-    "build": "vue-tsc --noEmit && vite build",
-    "preview": "vite preview --host 0.0.0.0 --port 14173"
+    "build": "pnpm vite build --mode production",
+    "build:analyze": "pnpm vite build --mode analyze",
+    "dev": "pnpm vite --mode development",
+    "preview": "vite preview",
+    "typecheck": "vue-tsc --noEmit --skipLibCheck"
+  },
+  "imports": {
+    "#/*": "./src/*"
   },
   "dependencies": {
-    "@ant-design/icons-vue": "^7.0.1",
-    "@crdp/admin-shell": "workspace:*",
     "@crdp/api": "workspace:*",
-    "ant-design-vue": "^4.2.6",
-    "axios": "^1.13.1",
-    "pinia": "^3.0.3",
-    "vue": "^3.5.22",
-    "vue-router": "^4.6.3"
-  },
-  "devDependencies": {
-    "@vitejs/plugin-vue": "^6.0.1",
-    "typescript": "^5.9.3",
-    "vite": "^7.1.12",
-    "vue-tsc": "^3.1.2"
+    "@crdp/tokens": "workspace:*",
+    "@vben/access": "workspace:*",
+    "@vben/common-ui": "workspace:*",
+    "@vben/constants": "workspace:*",
+    "@vben/hooks": "workspace:*",
+    "@vben/icons": "workspace:*",
+    "@vben/layouts": "workspace:*",
+    "@vben/locales": "workspace:*",
+    "@vben/plugins": "workspace:*",
+    "@vben/preferences": "workspace:*",
+    "@vben/request": "workspace:*",
+    "@vben/stores": "workspace:*",
+    "@vben/styles": "workspace:*",
+    "@vben/types": "workspace:*",
+    "@vben/utils": "workspace:*",
+    "@vueuse/core": "catalog:",
+    "ant-design-vue": "catalog:",
+    "dayjs": "catalog:",
+    "pinia": "catalog:",
+    "vue": "catalog:",
+    "vue-router": "catalog:"
   }
 }
