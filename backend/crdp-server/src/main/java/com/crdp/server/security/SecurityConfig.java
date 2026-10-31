@@ -67,6 +67,14 @@ public class SecurityConfig {
                                                 "/api/hospital/auth/captcha",
                                                 "/api/platform/auth/captcha")
                                         .permitAll()
+                                        // E04-T07 / PLT-AUTH-011：忘记密码（免登录）。公开口限流同上：
+                                        // /password/forgot 有 60 秒冷却 + 每日上限（未知账号也消耗冷却位，
+                                        // 防探测）；/password/reset 走 LoginRateLimiter（连续失败 42900）
+                                        .requestMatchers(
+                                                HttpMethod.POST,
+                                                "/api/hospital/auth/password/forgot",
+                                                "/api/hospital/auth/password/reset")
+                                        .permitAll()
                                         // E04-T03 / PLT-AUTH-005：平台端与医院端接口前缀各自只接受
                                         // 对应端的会话（令牌由 TokenAuthenticationFilter 附带端别权限），
                                         // 跨端令牌一律 40300，不依赖各控制器自行调用 require* 系列

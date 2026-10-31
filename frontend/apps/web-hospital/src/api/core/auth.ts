@@ -70,6 +70,38 @@ export async function sendLoginSmsApi(params: {
   });
 }
 
+/**
+ * E04-T07 / PLT-AUTH-011：忘记密码第一步——把重置验证码发到账号绑定手机号。
+ * 无论账号是否存在、是否绑定手机号都算成功（防探测）；60 秒冷却与每日上限超限 42900。
+ */
+export async function requestPasswordResetSmsApi(params: {
+  tenantCode: string;
+  username: string;
+}) {
+  return requestClient.post<null>(apiPath('/auth/password/forgot'), {
+    tenantCode: params.tenantCode,
+    username: params.username,
+  });
+}
+
+/**
+ * E04-T07 / PLT-AUTH-011：忘记密码第二步——验证码 + 新密码重置。
+ * 验证码错误 / 未知账号统一 40102；成功后该账号全部会话失效，需用新密码重新登录。
+ */
+export async function resetPasswordApi(params: {
+  code: string;
+  newPassword: string;
+  tenantCode: string;
+  username: string;
+}) {
+  return requestClient.post<null>(apiPath('/auth/password/reset'), {
+    code: params.code,
+    newPassword: params.newPassword,
+    tenantCode: params.tenantCode,
+    username: params.username,
+  });
+}
+
 /** 短信验证码登录（验证码 5 分钟内有效，手机号需已绑定且本院唯一）。 */
 export async function loginBySmsApi(data: AuthApi.SmsLoginParams) {
   return requestClient.post<LoginResult>(apiPath('/auth/login/sms'), {

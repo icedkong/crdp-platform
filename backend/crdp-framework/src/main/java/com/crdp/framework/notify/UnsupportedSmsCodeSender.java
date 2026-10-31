@@ -14,4 +14,10 @@ public class UnsupportedSmsCodeSender implements SmsCodeSender {
         // 不把 code 放进异常信息（AGENTS.md 第 5 节）
         throw new UnsupportedOperationException("短信验证码通道将在 E09-T03 接入");
     }
+
+    @Override
+    public void sendPasswordResetCode(String phone, String code) {
+        // 同上：真实通道接入前发送动作失败，前端不会拿到「已发送」的假象
+        throw new UnsupportedOperationException("短信验证码通道将在 E09-T03 接入");
+    }
 }

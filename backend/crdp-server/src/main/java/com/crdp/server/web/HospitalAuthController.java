@@ -8,6 +8,7 @@ import com.crdp.framework.web.ApiResponse;
 import com.crdp.server.auth.AuthService;
 import com.crdp.server.auth.MenuQuery;
 import com.crdp.server.auth.PasswordChangeService;
+import com.crdp.server.auth.PasswordResetService;
 import com.crdp.server.auth.SessionAdminService;
 import com.crdp.server.auth.TenantIdentifier;
 import io.swagger.v3.oas.annotations.Operation;
@@ -31,6 +32,7 @@ public class HospitalAuthController {
 
     private final AuthService authService;
     private final PasswordChangeService passwordChangeService;
+    private final PasswordResetService passwordResetService;
     private final MenuQuery menuQuery;
     private final TenantIdentifier tenantIdentifier;
     private final CaptchaStore captchaStore;
@@ -40,6 +42,7 @@ public class HospitalAuthController {
     public HospitalAuthController(
             AuthService authService,
             PasswordChangeService passwordChangeService,
+            PasswordResetService passwordResetService,
             MenuQuery menuQuery,
             TenantIdentifier tenantIdentifier,
             CaptchaStore captchaStore,
@@ -47,6 +50,7 @@ public class HospitalAuthController {
             SessionAdminService sessionAdminService) {
         this.authService = authService;
         this.passwordChangeService = passwordChangeService;
+        this.passwordResetService = passwordResetService;
         this.menuQuery = menuQuery;
         this.tenantIdentifier = tenantIdentifier;
         this.captchaStore = captchaStore;
@@ -114,6 +118,31 @@ public class HospitalAuthController {
         SessionPrincipal principal = CurrentSession.requireHospital();
         passwordChangeService.changeHospital(
                 principal, request.oldPassword(), request.newPassword());
+        return ApiResponse.ok(null);
+    }
+
+    @Operation(
+            summary =
+                    "忘记密码第一步（PLT-AUTH-011）：把重置验证码发到账号绑定手机号。"
+                            + "无论账号是否存在、是否绑定手机号均返回成功（防探测）；60 秒冷却与每日上限超限 42900。")
+    @PostMapping("/api/hospital/auth/password/forgot")
+    public ApiResponse<Void> requestPasswordReset(
+            @Valid @RequestBody HospitalPasswordForgotRequest request,
+            @RequestHeader(value = HttpHeaders.HOST, required = false) String host) {
+        String tenantCode = tenantIdentifier.resolve(host, request.tenantCode());
+        passwordResetService.requestHospitalReset(tenantCode, request.username());
+        return ApiResponse.ok(null);
+    }
+
+    @Operation(
+            summary = "忘记密码第二步（PLT-AUTH-011）：验证码 + 新密码重置。" + "未知账号与验证码错误统一 40102；成功后该账号全部会话失效，写审计。")
+    @PostMapping("/api/hospital/auth/password/reset")
+    public ApiResponse<Void> resetPassword(
+            @Valid @RequestBody HospitalPasswordResetRequest request,
+            @RequestHeader(value = HttpHeaders.HOST, required = false) String host) {
+        String tenantCode = tenantIdentifier.resolve(host, request.tenantCode());
+        passwordResetService.resetHospitalPassword(
+                tenantCode, request.username(), request.code(), request.newPassword());
         return ApiResponse.ok(null);
     }
 
