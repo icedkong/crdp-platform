@@ -19,6 +19,7 @@ import static org.mockito.Mockito.when;
 import com.crdp.framework.tenant.TenantContext;
 import com.crdp.framework.web.ApiException;
 import java.util.Arrays;
+import java.util.List;
 import javax.crypto.SecretKey;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -72,9 +73,9 @@ class TenantDataKeyServiceTest {
     void keyForLoadsUnwrapsAndCachesInMemory() {
         TenantContext.useTenant(1L, "demoa");
         GeneratedDataKey generated = provider.generateDataKey();
-        when(jdbcTemplate.queryForObject(
+        when(jdbcTemplate.queryForList(
                         contains("SELECT wrapped_key"), eq(String.class), eq("field"), eq(1)))
-                .thenReturn(generated.wrappedKey());
+                .thenReturn(List.of(generated.wrappedKey()));
 
         TenantDataKeyService keys = new TenantDataKeyService(provider, jdbcTemplate);
         SecretKey first = keys.keyFor("field", 1);
@@ -83,16 +84,15 @@ class TenantDataKeyServiceTest {
         assertNotNull(first);
         assertTrue(Arrays.equals(first.getEncoded(), second.getEncoded()), "同租户同版本应命中内存缓存，拿到同一把密钥");
         verify(jdbcTemplate, times(1))
-                .queryForObject(
-                        contains("SELECT wrapped_key"), eq(String.class), eq("field"), eq(1));
+                .queryForList(contains("SELECT wrapped_key"), eq(String.class), eq("field"), eq(1));
     }
 
     @Test
     void missingVersionIsRejectedExplicitly() {
         TenantContext.useTenant(1L, "demoa");
-        when(jdbcTemplate.queryForObject(
+        when(jdbcTemplate.queryForList(
                         contains("SELECT wrapped_key"), eq(String.class), eq("field"), eq(7)))
-                .thenReturn(null);
+                .thenReturn(List.of());
 
         TenantDataKeyService keys = new TenantDataKeyService(provider, jdbcTemplate);
 
@@ -109,9 +109,9 @@ class TenantDataKeyServiceTest {
         doThrow(new DuplicateKeyException("uk_crypto_data_key"))
                 .when(jdbcTemplate)
                 .update(contains("INSERT INTO crypto_data_key"), any(Object[].class));
-        when(jdbcTemplate.queryForObject(
+        when(jdbcTemplate.queryForList(
                         contains("SELECT wrapped_key"), eq(String.class), eq("field"), eq(1)))
-                .thenReturn(winner.wrappedKey());
+                .thenReturn(List.of(winner.wrappedKey()));
 
         TenantDataKeyService keys = new TenantDataKeyService(provider, jdbcTemplate);
 
@@ -125,15 +125,15 @@ class TenantDataKeyServiceTest {
         GeneratedDataKey keyOfB = provider.generateDataKey();
 
         TenantContext.useTenant(1L, "demoa");
-        when(jdbcTemplate.queryForObject(
+        when(jdbcTemplate.queryForList(
                         contains("SELECT wrapped_key"), eq(String.class), eq("field"), eq(1)))
-                .thenReturn(keyOfA.wrappedKey());
+                .thenReturn(List.of(keyOfA.wrappedKey()));
         SecretKey a1 = keys.keyFor("field", 1);
 
         TenantContext.useTenant(2L, "demob");
-        when(jdbcTemplate.queryForObject(
+        when(jdbcTemplate.queryForList(
                         contains("SELECT wrapped_key"), eq(String.class), eq("field"), eq(1)))
-                .thenReturn(keyOfB.wrappedKey());
+                .thenReturn(List.of(keyOfB.wrappedKey()));
         SecretKey b1 = keys.keyFor("field", 1);
 
         TenantContext.useTenant(1L, "demoa");
