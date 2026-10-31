@@ -76,3 +76,11 @@ export interface TenantOnboardingResult {
   steps: TenantProvisionStep[];
   tenantId: number;
 }
+
+export interface TenantProvisionView {
+  code: string;
+  name: string;
+  status: string;
+  steps: TenantProvisionStep[];
+  tenantId: number;
+}

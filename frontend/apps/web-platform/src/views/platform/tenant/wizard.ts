@@ -4,6 +4,15 @@
 
 const CODE_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
 
+/** 开通编排步骤序号 → 展示标题（与后端 TenantOnboardingService 的 step 对应）。 */
+export const PROVISION_TITLES: Record<string, string> = {
+  admin: '账号初始化（首个管理员）',
+  database: '建库与账号',
+  'migrate-register': '初始化与注册',
+  'resource-row': '资源登记',
+  'tenant-row': '租户登记',
+};
+
 /** 租户编码规则：小写字母开头，小写字母、数字、下划线（平台规格"租户编码"）。 */
 export const TENANT_CODE_PATTERN = /^[a-z][a-z0-9_]{0,31}$/;
 

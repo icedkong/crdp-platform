@@ -27,6 +27,7 @@ import {
 import { createTenant } from '#/api/core/tenant';
 
 import {
+  PROVISION_TITLES,
   subdomainPreview,
   suggestTenantCode,
   validateInitialPassword,
@@ -55,14 +56,6 @@ const admin = reactive({
 const codeError = computed(() => validateTenantCode(basic.code));
 
 const STEP_TITLES = ['基本信息', '模块与到期设置', '首个租户管理员', '确认'];
-/** 开通编排的步骤序号 → 中文标题（与后端 TenantOnboardingService 的 step 对应）。 */
-const PROVISION_TITLES: Record<string, string> = {
-  admin: '账号初始化（首个管理员）',
-  database: '建库与账号',
-  'migrate-register': '初始化与注册',
-  'resource-row': '资源登记',
-  'tenant-row': '租户登记',
-};
 
 const adminError = computed(() =>
   adminSkipped.value
@@ -323,6 +316,12 @@ const provisionItems = computed(() => {
           @click="submit"
         >
           重试
+        </Button>
+        <Button
+          type="primary"
+          @click="router.push(`/platform/tenant/${result.tenantId}/provision`)"
+        >
+          查看进度
         </Button>
         <Button @click="router.push('/platform/tenant')">返回租户列表</Button>
       </Space>
