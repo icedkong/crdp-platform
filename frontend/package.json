@@ -1,32 +1,79 @@
 {
-  "name": "crdp",
+  "name": "crdp-frontend",
+  "version": "0.0.0",
   "private": true,
-  "type": "module",
-  "packageManager": "pnpm@10.33.4",
-  "engines": {
-    "node": ">=20"
+  "keywords": [
+    "monorepo",
+    "turbo",
+    "vben",
+    "vben admin",
+    "vben pro",
+    "vue",
+    "vue admin",
+    "vue vben admin",
+    "vue vben admin pro",
+    "vue3"
+  ],
+  "homepage": "https://github.com/vbenjs/vue-vben-admin",
+  "bugs": "https://github.com/vbenjs/vue-vben-admin/issues",
+  "repository": "vbenjs/vue-vben-admin.git",
+  "license": "MIT",
+  "author": {
+    "name": "vben",
+    "email": "ann.vben@gmail.com",
+    "url": "https://github.com/anncwb"
   },
+  "type": "module",
   "scripts": {
     "dev": "pnpm --parallel --filter @crdp/web-hospital --filter @crdp/web-platform dev",
-    "build": "pnpm --filter @crdp/web-hospital --filter @crdp/web-platform --filter @crdp/mobile-upload build",
-    "test": "pnpm --filter @crdp/admin-shell --filter @crdp/rules test",
-    "lint": "eslint .",
-    "format": "prettier --write .",
-    "format:check": "prettier --check ."
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
+    "build": "NODE_OPTIONS=--max-old-space-size=6144 pnpm --filter @crdp/web-hospital build && NODE_OPTIONS=--max-old-space-size=6144 pnpm --filter @crdp/web-platform build && pnpm --filter @crdp/mobile-upload build",
+    "test": "vitest run --dom",
+    "lint": "vsh lint",
+    "format": "vsh lint --format",
+    "format:check": "oxfmt --check",
+    "postinstall": "pnpm -r run stub --if-present",
+    "preinstall": "npx only-allow pnpm",
+    "prepare": "is-ci || pnpm exec lefthook install || true"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.0",
-    "eslint": "^9.39.0",
-    "eslint-config-prettier": "^10.1.8",
-    "eslint-plugin-vue": "^10.5.0",
-    "prettier": "^3.6.2",
-    "typescript": "^5.9.3",
-    "typescript-eslint": "^8.46.2",
-    "vue-eslint-parser": "^10.2.0"
-  }
+    "@changesets/changelog-github": "catalog:",
+    "@changesets/cli": "catalog:",
+    "@tsdown/css": "catalog:",
+    "@types/node": "catalog:",
+    "@vben/commitlint-config": "workspace:*",
+    "@vben/eslint-config": "workspace:*",
+    "@vben/oxfmt-config": "workspace:*",
+    "@vben/oxlint-config": "workspace:*",
+    "@vben/stylelint-config": "workspace:*",
+    "@vben/tailwind-config": "workspace:*",
+    "@vben/tsconfig": "workspace:*",
+    "@vben/turbo-run": "workspace:*",
+    "@vben/vite-config": "workspace:*",
+    "@vben/vsh": "workspace:*",
+    "@vitejs/plugin-vue": "catalog:",
+    "@vitejs/plugin-vue-jsx": "catalog:",
+    "cross-env": "catalog:",
+    "cspell": "catalog:",
+    "happy-dom": "catalog:",
+    "is-ci": "catalog:",
+    "lefthook": "catalog:",
+    "oxfmt": "catalog:",
+    "oxlint": "catalog:",
+    "oxlint-tsgolint": "catalog:",
+    "playwright": "catalog:",
+    "rimraf": "catalog:",
+    "tailwindcss": "catalog:",
+    "tsdown": "catalog:",
+    "turbo": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vitest": "catalog:",
+    "vue": "catalog:",
+    "vue-tsc": "catalog:"
+  },
+  "engines": {
+    "node": "^22.18.0 || ^24.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "packageManager": "pnpm@10.33.4"
 }

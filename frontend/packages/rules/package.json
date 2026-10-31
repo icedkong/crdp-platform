@@ -2,13 +2,13 @@
   "name": "@crdp/rules",
   "private": true,
   "type": "module",
-  "exports": {
-    ".": "./src/index.ts"
-  },
   "scripts": {
     "test": "vitest run"
   },
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "devDependencies": {
-    "vitest": "^3.2.4"
+    "vitest": "catalog:"
   }
 }

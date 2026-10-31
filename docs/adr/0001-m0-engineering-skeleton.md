@@ -35,22 +35,9 @@
 | 接口文档 | springdoc 2.8.13 | `/swagger-ui.html` |
 | 前端 | Vue 3 + Vite + Ant Design Vue + Pinia | 见下一节 |
 
-## 前端为什么没有整仓复制 Vben
+## 前端外壳
 
-方案写的是 Vben Admin v5，并建议 Ant Design Vue 版。编写时上游稳定标签是 **v5.7.0**。
-
-M0 没有把 `vue-vben-admin` 整仓放进来。那个仓库还带 web-ele、web-naive、文档站和 playground，和本项目的两个应用、租户编码登录对不上。
-
-当前应用壳按 Vben 5 的后端权限模式对接：
-
-- 登录后分别取用户、权限码、菜单树
-- 菜单字段是 `name`、`path`、`component`、`meta`
-- `component` 用 `import.meta.glob` 匹配 `views` 下的文件
-- 目录节点的 `component` 为 `LAYOUT`
-
-组件库用 Ant Design Vue，和方案建议的 antd 版本一致。目录按第 15 章放了 `apps/web-hospital`、`apps/web-platform`、`apps/mobile-upload`，以及 `packages/api`、`form-engine`、`rules`、`viewer`。后三个和手机上传页只是占位。
-
-如果以后要换成上游 Vben 应用壳，后端这三组接口可以保持不变。
+M0 曾用自研壳模仿 Vben。该决定已被 [ADR 0002](0002-official-vben-admin-5.md) 取代：官方 Vben Admin 5.7.0，只保留 Ant Design Vue。后端登录、`me`、权限码、菜单这几组接口保持不变。
 
 ## 多租户
 

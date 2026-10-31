@@ -2,7 +2,7 @@
 
 多租户医院随访 SaaS 的 M0 工程骨架。产品英文缩写是 `crdp`。能编译、能启动、能用虚构账号登录，并看到后端下发的菜单。没有随访业务。
 
-方案依据是《整体技术方案 V0.2》和《平台底座需求规格说明 V0.3》。取舍写在 [docs/adr/0001-m0-engineering-skeleton.md](docs/adr/0001-m0-engineering-skeleton.md)。
+方案依据是《整体技术方案 V0.2》和《平台底座需求规格说明 V0.3》。取舍写在 [docs/adr/0001-m0-engineering-skeleton.md](docs/adr/0001-m0-engineering-skeleton.md)。前端外壳改为官方 Vben Admin 5（仅 Ant Design Vue），见 [docs/adr/0002-official-vben-admin-5.md](docs/adr/0002-official-vben-admin-5.md)。
 
 ## 代码仓库
 
@@ -18,12 +18,12 @@ backend/                 Maven 多模块，JDK 21，Spring Boot 3
   crdp-system/             租户库：用户、角色、数据范围
   crdp-form/               表单引擎占位
   crdp-followup/           随访子域包结构，无业务代码
-frontend/                pnpm workspace，Vue 3 + Ant Design Vue
+frontend/                pnpm workspace，官方 Vben Admin 5（仅 Ant Design Vue，见 ADR 0002）
   apps/web-hospital/     医院端，租户编码登录
   apps/web-platform/     平台端
   apps/mobile-upload/    手机上传占位
   packages/api/          与后端约定的类型
-  packages/admin-shell/  登录、布局、动态菜单
+  packages/tokens/       设计令牌
   packages/form-engine/  占位
   packages/rules/        权限码格式
   packages/viewer/       占位
