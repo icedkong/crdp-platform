@@ -21,6 +21,10 @@ public class CryptoConfiguration {
 
     @Bean
     public CryptoService cryptoService(KeyProvider keyProvider, JdbcTemplate jdbcTemplate) {
-        return new EnvelopeCryptoService(new TenantDataKeyService(keyProvider, jdbcTemplate));
+        CryptoService service =
+                new EnvelopeCryptoService(new TenantDataKeyService(keyProvider, jdbcTemplate));
+        // MyBatis 反射实例化 TypeHandler、不走容器，这里完成静态注入（E03-T03）
+        CryptoTypeHandler.configure(service);
+        return service;
     }
 }
