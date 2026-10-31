@@ -5,8 +5,17 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "crdp.security")
 public class SecurityProperties {
 
-    /** 会话有效期，小时。M0 不做滑动续期。 */
-    private int sessionTtlHours = 8;
+    /**
+     * 医院端空闲超时，秒（E04-T06 / PLT-AUTH-008，等保参数表：30 分钟）。 每次请求滑动续期；租户可用 cfg_param
+     * security.session.idle-minutes 在此之下加严。
+     */
+    private int sessionIdleSeconds = 1800;
+
+    /** 平台端空闲超时，秒（规格：15 分钟，含租户视角会话）。 */
+    private int platformSessionIdleSeconds = 900;
+
+    /** 绝对会话时长，秒（规格：12 小时）。从登录起算、不随活跃滑动，到时重新登录； 0 表示不启用（不建议）。 */
+    private int sessionAbsoluteSeconds = 43200;
 
     /**
      * 连续失败多少次后锁定（E04-T05 / PLT-AUTH-007，等保参数表：5 次）。 达到即锁定 {@link #loginLockSeconds} 秒，期间登录一律
@@ -64,12 +73,28 @@ public class SecurityProperties {
      */
     private boolean platformTwoFactorEnabled = true;
 
-    public int getSessionTtlHours() {
-        return sessionTtlHours;
+    public int getSessionIdleSeconds() {
+        return sessionIdleSeconds;
     }
 
-    public void setSessionTtlHours(int sessionTtlHours) {
-        this.sessionTtlHours = sessionTtlHours;
+    public void setSessionIdleSeconds(int sessionIdleSeconds) {
+        this.sessionIdleSeconds = sessionIdleSeconds;
+    }
+
+    public int getPlatformSessionIdleSeconds() {
+        return platformSessionIdleSeconds;
+    }
+
+    public void setPlatformSessionIdleSeconds(int platformSessionIdleSeconds) {
+        this.platformSessionIdleSeconds = platformSessionIdleSeconds;
+    }
+
+    public int getSessionAbsoluteSeconds() {
+        return sessionAbsoluteSeconds;
+    }
+
+    public void setSessionAbsoluteSeconds(int sessionAbsoluteSeconds) {
+        this.sessionAbsoluteSeconds = sessionAbsoluteSeconds;
     }
 
     public int getLoginFailureLimit() {

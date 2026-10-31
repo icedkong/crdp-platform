@@ -8,6 +8,7 @@ import com.crdp.framework.web.ApiResponse;
 import com.crdp.server.auth.AuthService;
 import com.crdp.server.auth.MenuQuery;
 import com.crdp.server.auth.PasswordChangeService;
+import com.crdp.server.auth.SessionAdminService;
 import com.crdp.server.auth.TenantIdentifier;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -16,7 +17,9 @@ import jakarta.validation.Valid;
 import java.time.Instant;
 import java.util.List;
 import org.springframework.http.HttpHeaders;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -32,6 +35,7 @@ public class HospitalAuthController {
     private final TenantIdentifier tenantIdentifier;
     private final CaptchaStore captchaStore;
     private final SecurityProperties securityProperties;
+    private final SessionAdminService sessionAdminService;
 
     public HospitalAuthController(
             AuthService authService,
@@ -39,20 +43,23 @@ public class HospitalAuthController {
             MenuQuery menuQuery,
             TenantIdentifier tenantIdentifier,
             CaptchaStore captchaStore,
-            SecurityProperties securityProperties) {
+            SecurityProperties securityProperties,
+            SessionAdminService sessionAdminService) {
         this.authService = authService;
         this.passwordChangeService = passwordChangeService;
         this.menuQuery = menuQuery;
         this.tenantIdentifier = tenantIdentifier;
         this.captchaStore = captchaStore;
         this.securityProperties = securityProperties;
+        this.sessionAdminService = sessionAdminService;
     }
 
     @Operation(summary = "医院端登录。先识别租户编码，再在该院库中校验账号；连续失败 3 次后需携带图形验证码。")
     @PostMapping("/api/hospital/auth/login")
     public ApiResponse<AuthService.LoginResult> login(
             @Valid @RequestBody HospitalLoginRequest request,
-            @RequestHeader(value = HttpHeaders.HOST, required = false) String host) {
+            @RequestHeader(value = HttpHeaders.HOST, required = false) String host,
+            HttpServletRequest httpRequest) {
         // PLT-AUTH-004：子域名识别的租户优先，统一登录页输入的编码兜底
         String tenantCode = tenantIdentifier.resolve(host, request.tenantCode());
         return ApiResponse.ok(
@@ -60,7 +67,8 @@ public class HospitalAuthController {
                         tenantCode,
                         request.username(),
                         request.password(),
-                        new AuthService.CaptchaInput(request.captchaId(), request.captchaCode())));
+                        new AuthService.CaptchaInput(request.captchaId(), request.captchaCode()),
+                        clientIp(httpRequest)));
     }
 
     @Operation(
@@ -85,10 +93,12 @@ public class HospitalAuthController {
     @PostMapping("/api/hospital/auth/login/sms")
     public ApiResponse<AuthService.LoginResult> loginBySms(
             @Valid @RequestBody HospitalSmsLoginRequest request,
-            @RequestHeader(value = HttpHeaders.HOST, required = false) String host) {
+            @RequestHeader(value = HttpHeaders.HOST, required = false) String host,
+            HttpServletRequest httpRequest) {
         String tenantCode = tenantIdentifier.resolve(host, request.tenantCode());
         return ApiResponse.ok(
-                authService.loginHospitalWithSms(tenantCode, request.phone(), request.code()));
+                authService.loginHospitalWithSms(
+                        tenantCode, request.phone(), request.code(), clientIp(httpRequest)));
     }
 
     @Operation(summary = "双因素第二步。密码第一步返回 challengeId 时，验证短信验证码后换会话令牌。")
@@ -128,6 +138,20 @@ public class HospitalAuthController {
     public ApiResponse<List<com.crdp.platform.menu.MenuNode>> menus() {
         SessionPrincipal principal = CurrentSession.requireHospital();
         return ApiResponse.ok(menuQuery.tree("HOSPITAL", principal.menuIds()));
+    }
+
+    @Operation(summary = "本人在线会话（PLT-AUTH-008 / PLT-ORG-011）。只返回会话号，不返回令牌。")
+    @GetMapping("/api/hospital/auth/sessions")
+    public ApiResponse<List<SessionAdminService.OnlineSessionView>> mySessions() {
+        return ApiResponse.ok(sessionAdminService.listMySessions(CurrentSession.requireHospital()));
+    }
+
+    @Operation(summary = "下线自己的某个会话（按会话号；被下线令牌下次请求即 40100）。写审计。")
+    @DeleteMapping("/api/hospital/auth/sessions/{sessionId}")
+    public ApiResponse<SessionAdminService.OnlineSessionView> revokeMySession(
+            @PathVariable("sessionId") String sessionId) {
+        return ApiResponse.ok(
+                sessionAdminService.revokeMySession(CurrentSession.requireHospital(), sessionId));
     }
 
     static MeResponse toMe(SessionPrincipal principal, SecurityProperties properties) {
