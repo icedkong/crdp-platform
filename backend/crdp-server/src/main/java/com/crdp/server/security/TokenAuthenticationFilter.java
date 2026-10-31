@@ -1,26 +1,39 @@
 package com.crdp.server.security;
 
+import com.crdp.framework.security.SessionPrincipal;
 import com.crdp.framework.security.SessionStore;
 import com.crdp.framework.tenant.TenantContext;
+import com.crdp.server.auth.TenantIdentifier;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
+/**
+ * 会话链路（E04-T02）：逐请求按令牌查服务端会话，会话被删除（登出 / 吊销）后令牌立即失效。 令牌所属租户与访问入口子域名必须一致（PLT-AUTH-004，E04-T01
+ * 移交）：demoa 的令牌不能在 demob 的子域名入口使用；不一致时按未认证处理，由入口点统一返回 40100，不暴露差异。
+ */
 @Component
 public class TokenAuthenticationFilter extends OncePerRequestFilter {
 
-    private final SessionStore sessionStore;
+    private static final Logger log = LoggerFactory.getLogger(TokenAuthenticationFilter.class);
 
-    public TokenAuthenticationFilter(SessionStore sessionStore) {
+    private final SessionStore sessionStore;
+    private final TenantIdentifier tenantIdentifier;
+
+    public TokenAuthenticationFilter(SessionStore sessionStore, TenantIdentifier tenantIdentifier) {
         this.sessionStore = sessionStore;
+        this.tenantIdentifier = tenantIdentifier;
     }
 
     @Override
@@ -31,6 +44,7 @@ public class TokenAuthenticationFilter extends OncePerRequestFilter {
         if (token != null) {
             sessionStore
                     .find(token)
+                    .filter(principal -> matchesEntryHost(principal, request))
                     .ifPresent(
                             principal -> {
                                 List<SimpleGrantedAuthority> authorities =
@@ -56,6 +70,22 @@ public class TokenAuthenticationFilter extends OncePerRequestFilter {
             SecurityContextHolder.clearContext();
             TenantContext.clear();
         }
+    }
+
+    /** 入口是租户子域名时，会话必须是该租户的医院会话；其余入口（IP、API 域名、基域名）不约束。 */
+    private boolean matchesEntryHost(SessionPrincipal principal, HttpServletRequest request) {
+        String hostTenant = tenantIdentifier.codeFromHost(request.getHeader(HttpHeaders.HOST));
+        if (hostTenant == null) {
+            return true;
+        }
+        boolean matches = principal.hospital() && hostTenant.equals(principal.tenantCode());
+        if (!matches) {
+            log.warn(
+                    "会话与入口子域名不一致，按未登录拒绝 sessionType={} entryTenant={}",
+                    principal.sessionType(),
+                    hostTenant);
+        }
+        return matches;
     }
 
     private static String bearer(String header) {
