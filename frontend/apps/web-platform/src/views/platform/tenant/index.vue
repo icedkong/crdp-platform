@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import type { TenantListItem } from '@crdp/api';
+import type { TenantListItem, TenantStatusAction } from '@crdp/api';
 
 import { h, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
@@ -29,6 +29,7 @@ import dayjs from 'dayjs';
 import { listTenants } from '#/api/core/tenant';
 import { usePermission } from '#/reference/use-permission';
 
+import { canDisable, canEnable, canRenew } from './lifecycle';
 import {
   canOpenProvision,
   EMPTY_FILTER,
@@ -38,12 +39,16 @@ import {
   toTenantListQuery,
   userCountText,
 } from './list';
+import RenewDialog from './renew-dialog.vue';
+import StatusDialog from './status-dialog.vue';
 
 defineOptions({ name: 'PlatformTenant' });
 
 const router = useRouter();
 const { hasPermission } = usePermission();
 const canCreate = hasPermission('platform:tenant:create');
+const canChangeStatus = hasPermission('platform:tenant:status');
+const canRenewTenant = hasPermission('platform:tenant:renew');
 
 const isMobile = ref(false);
 const loading = ref(false);
@@ -54,6 +59,13 @@ const pagination = reactive({ pageNo: 1, pageSize: sizes.tablePageSize });
 const applied = ref({ ...EMPTY_FILTER });
 const filter = reactive({ ...EMPTY_FILTER });
 const errorMessage = ref('');
+
+// 状态变更 / 续期对话框（E05-T02）：一次只开一个，done 后刷新列表
+const statusDialogOpen = ref(false);
+const statusAction = ref<'DISABLE' | 'ENABLE'>('DISABLE');
+const statusTarget = ref<null | TenantListItem>(null);
+const renewDialogOpen = ref(false);
+const renewTarget = ref<null | TenantListItem>(null);
 
 const columns = [
   { dataIndex: 'index', title: '序号', width: 64 },
@@ -68,7 +80,7 @@ const columns = [
     width: 88,
     align: 'right' as const,
   },
-  { dataIndex: 'action', fixed: 'right' as const, title: '操作', width: 150 },
+  { dataIndex: 'action', fixed: 'right' as const, title: '操作', width: 230 },
 ];
 
 function read() {
@@ -116,6 +128,21 @@ function openDetail(row: TenantListItem) {
 
 function openProvision(row: TenantListItem) {
   void router.push(`/platform/tenant/${row.id}/provision`);
+}
+
+function openStatusDialog(row: TenantListItem, action: TenantStatusAction) {
+  statusTarget.value = row;
+  statusAction.value = action;
+  statusDialogOpen.value = true;
+}
+
+function openRenewDialog(row: TenantListItem) {
+  renewTarget.value = row;
+  renewDialogOpen.value = true;
+}
+
+function onLifecycleDone() {
+  void load();
 }
 
 function onExpireChange(date: null | string | string[]) {
@@ -267,10 +294,52 @@ onUnmounted(() => window.removeEventListener('resize', read));
             >
               开通进度
             </Button>
+            <Button
+              v-if="canChangeStatus && canDisable(record.status)"
+              danger
+              size="small"
+              type="link"
+              data-testid="disable-tenant"
+              @click="openStatusDialog(record, 'DISABLE')"
+            >
+              停用
+            </Button>
+            <Button
+              v-if="canChangeStatus && canEnable(record.status)"
+              size="small"
+              type="link"
+              data-testid="enable-tenant"
+              @click="openStatusDialog(record, 'ENABLE')"
+            >
+              {{ record.status === 'TRIAL' ? '转正' : '启用' }}
+            </Button>
+            <Button
+              v-if="canRenewTenant && canRenew(record.status)"
+              size="small"
+              type="link"
+              data-testid="renew-tenant"
+              @click="openRenewDialog(record)"
+            >
+              续期
+            </Button>
           </Space>
         </template>
       </Table>
     </Card>
+
+    <StatusDialog
+      v-model:open="statusDialogOpen"
+      :action="statusAction"
+      :status="statusTarget?.status ?? 'PROVISIONING'"
+      :tenant="statusTarget"
+      @done="onLifecycleDone"
+    />
+    <RenewDialog
+      v-model:open="renewDialogOpen"
+      :status="renewTarget?.status ?? 'PROVISIONING'"
+      :tenant="renewTarget"
+      @done="onLifecycleDone"
+    />
   </Page>
 </template>
 

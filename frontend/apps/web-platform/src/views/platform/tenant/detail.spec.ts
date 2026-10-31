@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   expireText,
   orDash,
+  remindDaysText,
   statusText,
   toFormModel,
   toUpdateRequest,
@@ -21,11 +22,14 @@ const detail = {
   creditCode: null,
   expireAt: null,
   expireType: 'LONG_TERM',
+  graceDays: null,
+  graceReadOnly: false,
   id: 1,
   name: '虚构示例医院甲',
   orgType: null,
   region: '示例市示例区',
   remark: null,
+  remindDays: null,
   shortName: '示例甲院',
   status: 'ENABLED',
   updatedAt: '2026-11-01T10:00:00+08:00',
@@ -66,6 +70,12 @@ describe('e05-T01 租户信息维护逻辑', () => {
         contactEmail: 'not-an-email',
       }).contactEmail,
     ).toBe('邮箱格式不正确');
+  });
+
+  it('到期设置展示：提醒节点与宽限期（长期有效为空）（E05-T02）', () => {
+    expect(remindDaysText(null)).toBe('—');
+    expect(remindDaysText([])).toBe('—');
+    expect(remindDaysText([30, 7, 1])).toBe('到期前 30、7、1 天');
   });
 
   it('展示：状态中文、到期「长期」、空值「—」', () => {

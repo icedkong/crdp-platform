@@ -76,6 +76,12 @@ export function statusText(status: string): string {
   return tenantStatusText(status);
 }
 
+/** 提醒节点展示（PLT-TEN-011，如「到期前 30、7、1 天」）；空为「—」。 */
+export function remindDaysText(remindDays: null | number[]): string {
+  if (!remindDays || remindDays.length === 0) return '—';
+  return `到期前 ${remindDays.join('、')} 天`;
+}
+
 /** 到期展示：长期有效显示「长期」（与列表一致）。 */
 export function expireText(
   detail: Pick<TenantDetail, 'expireAt' | 'expireType'>,

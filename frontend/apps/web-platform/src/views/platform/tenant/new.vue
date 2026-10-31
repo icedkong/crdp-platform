@@ -12,20 +12,30 @@ import {
   Card,
   Checkbox,
   CheckboxGroup,
+  DatePicker,
   Descriptions,
   DescriptionsItem,
   Form,
   FormItem,
   Input,
+  InputNumber,
   InputPassword,
   Radio,
   RadioGroup,
   Space,
   Steps,
+  Switch,
 } from 'ant-design-vue';
+import dayjs from 'dayjs';
 
 import { createTenant } from '#/api/core/tenant';
 
+import {
+  EMPTY_EXPIRY_FORM,
+  expiryFormText,
+  toCreateExpiry,
+  validateExpiryForm,
+} from './lifecycle';
 import {
   PROVISION_TITLES,
   subdomainPreview,
@@ -47,6 +57,9 @@ const basic = reactive({
   name: '',
 });
 const modules = ref<string[]>(['followup']);
+// 到期设置（E05-T02 / PLT-TEN-011，向导第 2 步）：默认长期有效，选择有到期日时展开其余项
+const expiry = reactive({ ...EMPTY_EXPIRY_FORM });
+const expiryErrors = computed(() => validateExpiryForm(expiry));
 const adminSkipped = ref(true);
 const admin = reactive({
   displayName: '',
@@ -67,6 +80,9 @@ const canLeaveStep = computed(() => {
   if (current.value === 0) {
     return basic.name.trim().length > 0 && !codeError.value;
   }
+  if (current.value === 1) {
+    return Object.keys(expiryErrors.value).length === 0;
+  }
   if (current.value === 2) {
     return (
       adminSkipped.value ||
@@ -75,6 +91,10 @@ const canLeaveStep = computed(() => {
   }
   return true;
 });
+
+function onExpireDate(_date: unknown, date: null | string | string[]) {
+  expiry.expireAt = Array.isArray(date) ? '' : (date ?? '');
+}
 
 function next() {
   current.value += 1;
@@ -98,6 +118,7 @@ async function submit() {
       adminUsername: adminSkipped.value ? undefined : admin.username.trim(),
       code: basic.code.trim(),
       name: basic.name.trim(),
+      ...toCreateExpiry(expiry),
     });
   } catch (error) {
     submitError.value = error instanceof Error ? error.message : String(error);
@@ -176,7 +197,7 @@ const provisionItems = computed(() => {
         </Alert>
       </Form>
 
-      <!-- 第 2 步：模块与到期设置（模块开通 E05-T05、到期设置 E05-T02 接入后生效） -->
+      <!-- 第 2 步：模块与到期设置（模块开通是 E05-T05；到期设置 E05-T02 / PLT-TEN-011） -->
       <Form v-show="current === 1" layout="vertical" style="max-width: 480px">
         <FormItem label="开通模块">
           <CheckboxGroup v-model:value="modules">
@@ -184,14 +205,64 @@ const provisionItems = computed(() => {
             <Checkbox value="followup">随访</Checkbox>
           </CheckboxGroup>
         </FormItem>
-        <FormItem label="到期设置">
-          <RadioGroup value="long-term" disabled>
-            <Radio value="long-term">长期有效</Radio>
+        <FormItem label="到期类型" required>
+          <RadioGroup v-model:value="expiry.expireType">
+            <Radio value="LONG_TERM">长期有效</Radio>
+            <Radio value="FIXED">有到期日</Radio>
           </RadioGroup>
-          <div class="text-neutral-500 mt-1">
-            到期日与宽限期设置随到期管理（E05-T02）提供。
+          <div
+            v-if="expiry.expireType === 'LONG_TERM'"
+            class="text-neutral-500 mt-1"
+          >
+            长期有效租户不提醒、不进入宽限期。
           </div>
         </FormItem>
+        <template v-if="expiry.expireType === 'FIXED'">
+          <FormItem
+            label="试用或服务到期日"
+            required
+            :validate-status="expiryErrors.expireAt ? 'error' : undefined"
+            :help="expiryErrors.expireAt"
+          >
+            <DatePicker
+              :value="expiry.expireAt ? dayjs(expiry.expireAt) : undefined"
+              placeholder="选择日期"
+              style="width: 100%"
+              value-format="YYYY-MM-DD"
+              @change="onExpireDate"
+            />
+          </FormItem>
+          <FormItem
+            label="提醒节点（到期前 N 天，逗号分隔）"
+            :validate-status="expiryErrors.remindDays ? 'error' : undefined"
+            :help="expiryErrors.remindDays ?? '默认 30,7,1'"
+          >
+            <Input v-model:value="expiry.remindDays" placeholder="如：30,7,1" />
+          </FormItem>
+          <FormItem
+            label="宽限期天数"
+            :validate-status="expiryErrors.graceDays ? 'error' : undefined"
+            :help="expiryErrors.graceDays ?? '默认 15'"
+          >
+            <InputNumber
+              v-model:value="expiry.graceDays"
+              :max="365"
+              :min="1"
+              placeholder="15"
+              style="width: 100%"
+            />
+          </FormItem>
+          <FormItem label="宽限期是否只读">
+            <Switch v-model:checked="expiry.graceReadOnly" />
+            <span class="switch-hint">
+              {{
+                expiry.graceReadOnly
+                  ? '宽限期内只能查看'
+                  : '宽限期内正常使用并提示续费'
+              }}
+            </span>
+          </FormItem>
+        </template>
       </Form>
 
       <!-- 第 3 步：首个租户管理员（可跳过，启用前补设） -->
@@ -245,7 +316,9 @@ const provisionItems = computed(() => {
         <DescriptionsItem label="开通模块">
           平台基础{{ modules.includes('followup') ? '、随访' : '' }}
         </DescriptionsItem>
-        <DescriptionsItem label="到期设置">长期有效</DescriptionsItem>
+        <DescriptionsItem label="到期设置">
+          {{ expiryFormText(expiry) }}
+        </DescriptionsItem>
         <DescriptionsItem label="首个管理员">
           {{
             adminSkipped
@@ -328,3 +401,10 @@ const provisionItems = computed(() => {
     </Card>
   </Page>
 </template>
+
+<style scoped>
+.switch-hint {
+  margin-left: 12px;
+  color: #4e5969;
+}
+</style>

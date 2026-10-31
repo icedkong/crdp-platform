@@ -3,6 +3,7 @@ package com.crdp.server.config;
 import com.crdp.framework.tenant.TenantContext;
 import com.crdp.framework.web.ApiException;
 import com.crdp.platform.tenant.TenantResourceRow;
+import com.crdp.server.platform.TenantLifecycleService;
 import java.security.SecureRandom;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
@@ -54,13 +55,17 @@ public class TenantOnboardingService {
      */
     private static final int[] TENANT_ADMIN_SESSION_MENU_IDS = {312, 313};
 
-    /** 开通请求：编码与医院名称必填；首个管理员在开通时提供，也可启用前经 E06 补设。 */
+    /**
+     * 开通请求：编码与医院名称必填；首个管理员在开通时提供，也可启用前经 E06 补设。 expire 为向导第 2 步的到期设置（E05-T02
+     * /PLT-TEN-011），空表示长期有效；重试重入时不会改写已登记租户的到期设置。
+     */
     public record OnboardingRequest(
             String code,
             String name,
             String adminUsername,
             String adminDisplayName,
-            String adminInitialPassword) {}
+            String adminInitialPassword,
+            TenantLifecycleService.ExpiryView expire) {}
 
     public record StepResult(String step, String status, String error) {}
 
@@ -149,6 +154,7 @@ public class TenantOnboardingService {
                                     String.valueOf(tenant.get("name")),
                                     null,
                                     null,
+                                    null,
                                     null));
                 });
     }
@@ -221,14 +227,27 @@ public class TenantOnboardingService {
                     Long existing =
                             queryId("SELECT id FROM plt_tenant WHERE code = ?", request.code());
                     if (existing != null) {
+                        // 重入（失败重试）：已登记租户的到期设置不改写，向导只对新建生效
                         return existing;
                     }
+                    TenantLifecycleService.ExpiryView expire =
+                            request.expire() == null
+                                    ? new TenantLifecycleService.ExpiryView(
+                                            "LONG_TERM", null, null, null, false)
+                                    : request.expire();
                     try {
                         return insertReturningId(
-                                "INSERT INTO plt_tenant (code, name, status)"
-                                        + " VALUES (?, ?, 'PROVISIONING')",
+                                "INSERT INTO plt_tenant"
+                                        + " (code, name, status, expire_type, expire_at,"
+                                        + " remind_days, grace_days, grace_read_only)"
+                                        + " VALUES (?, ?, 'PROVISIONING', ?, ?, ?, ?, ?)",
                                 request.code(),
-                                request.name());
+                                request.name(),
+                                expire.expireType(),
+                                expire.expireAt(),
+                                TenantLifecycleService.joinRemindDays(expire.remindDays()),
+                                expire.graceDays(),
+                                expire.graceReadOnly() ? 1 : 0);
                     } catch (DuplicateKeyException ex) {
                         // 并发插入撞编码时重查可得；重查仍为空说明撞的是医院名称唯一键（E05-T01 起 name 唯一）
                         Long raced =

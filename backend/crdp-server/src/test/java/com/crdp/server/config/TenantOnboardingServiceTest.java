@@ -68,7 +68,7 @@ class TenantOnboardingServiceTest {
 
     private TenantOnboardingService.OnboardingRequest request() {
         return new TenantOnboardingService.OnboardingRequest(
-                "democ", "虚构示例医院丙", "admin", "丙院管理员", "Init@2026");
+                "democ", "虚构示例医院丙", "admin", "丙院管理员", "Init@2026", null);
     }
 
     @Test
@@ -152,16 +152,18 @@ class TenantOnboardingServiceTest {
     }
 
     private TenantOnboardingService.OnboardingRequest requestWithoutAdmin() {
-        return new TenantOnboardingService.OnboardingRequest("democ", "虚构示例医院丙", null, null, null);
+        return new TenantOnboardingService.OnboardingRequest(
+                "democ", "虚构示例医院丙", null, null, null, null);
     }
 
     @Test
     void rejectsInvalidRequestsBeforeTouchingAnything() {
         TenantOnboardingService.OnboardingRequest badCode =
                 new TenantOnboardingService.OnboardingRequest(
-                        "DemoC", "名", "admin", null, "Init@2026");
+                        "DemoC", "名", "admin", null, "Init@2026", null);
         TenantOnboardingService.OnboardingRequest noPassword =
-                new TenantOnboardingService.OnboardingRequest("democ", "名", "admin", null, " ");
+                new TenantOnboardingService.OnboardingRequest(
+                        "democ", "名", "admin", null, " ", null);
 
         assertThrows(ApiException.class, () -> service.onboard(badCode));
         assertThrows(ApiException.class, () -> service.onboard(noPassword));

@@ -102,6 +102,9 @@ class TenantDirectoryServiceTest {
         row.put("status", "ENABLED");
         row.put("expire_type", "LONG_TERM");
         row.put("expire_at", null);
+        row.put("remind_days", null);
+        row.put("grace_days", null);
+        row.put("grace_read_only", 0);
         row.put("created_at", LocalDateTime.of(2026, 11, 1, 9, 0));
         row.put("updated_at", null);
         row.putAll(overrides);
