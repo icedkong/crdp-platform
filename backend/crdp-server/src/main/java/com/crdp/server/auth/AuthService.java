@@ -6,6 +6,7 @@ import com.crdp.framework.notify.SmsCodeSender;
 import com.crdp.framework.security.AuthMessages;
 import com.crdp.framework.security.CaptchaStore;
 import com.crdp.framework.security.LoginRateLimiter;
+import com.crdp.framework.security.PermissionVersionStore;
 import com.crdp.framework.security.ScopeSnapshot;
 import com.crdp.framework.security.SecurityProperties;
 import com.crdp.framework.security.SessionPrincipal;
@@ -23,6 +24,7 @@ import com.crdp.platform.tenant.TenantRecord;
 import com.crdp.system.user.HospitalAccount;
 import com.crdp.system.user.HospitalDirectory;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.HashSet;
@@ -42,6 +44,10 @@ import org.springframework.stereotype.Service;
  * <p>E04-T05 / PLT-AUTH-006、007、010：密码登录在连续失败 3 次后必须携带图形验证码、连续失败 5 次锁定 30 分钟（{@link
  * LoginRateLimiter} + {@link CaptchaStore}，失败提示统一 40101 不外露原因，data 带剩余次数与验证码要求）； 初始 / 重置 /
  * 到期密码在会话里带 mustChangePassword=true，除改密 / 登出 / me 外一律 40305（MustChangePasswordFilter）。
+ *
+ * <p>E04-T06 / PLT-AUTH-008、PLT-PERM-010：会话带登录 IP、空闲窗口（医院端 30 分钟、租户可经 cfg_param 加严； 平台端 15
+ * 分钟）与当前权限版本号；并发会话默认多端，租户经 cfg_param security.session.single-login=true 改为单端登录（新登录顶掉旧会话）。权限版本号由
+ * {@link PermissionVersionStore} 维护， 授权变化后递增，旧令牌下一次请求即按新权限重算。
  *
  * <p>双因素：平台账号按配置强制（PLT-AUTH-005）；医院端按租户 cfg_param「security.two-factor.roles」配置的角色强制。
  * 密码第一步通过后不发会话令牌，只返回 5 分钟有效的一次性 challengeId，短信验证码通过后（/auth/2fa/verify）才发令牌。
@@ -73,6 +79,7 @@ public class AuthService {
     private final CryptoService cryptoService;
     private final SecurityProperties securityProperties;
     private final CaptchaStore captchaStore;
+    private final PermissionVersionStore permissionVersions;
 
     public AuthService(
             PlatformMapper platformMapper,
@@ -89,7 +96,8 @@ public class AuthService {
             SmsCodeSender smsCodeSender,
             CryptoService cryptoService,
             SecurityProperties securityProperties,
-            CaptchaStore captchaStore) {
+            CaptchaStore captchaStore,
+            PermissionVersionStore permissionVersions) {
         this.platformMapper = platformMapper;
         this.tenantLookup = tenantLookup;
         this.hospitalDirectory = hospitalDirectory;
@@ -105,10 +113,11 @@ public class AuthService {
         this.cryptoService = cryptoService;
         this.securityProperties = securityProperties;
         this.captchaStore = captchaStore;
+        this.permissionVersions = permissionVersions;
     }
 
     public LoginResult loginHospital(
-            String tenantCode, String username, String password, CaptchaInput captcha) {
+            String tenantCode, String username, String password, CaptchaInput captcha, String ip) {
         String bucket = "H:" + tenantCode + ":" + username.toLowerCase(Locale.ROOT);
         rateLimiter.check(bucket);
         requireCaptchaIfNeeded(bucket, captcha);
@@ -155,11 +164,11 @@ public class AuthService {
                         username,
                         "2fa-without-phone");
             }
-            SessionPrincipal draft = hospitalDraft(tenant, account);
+            SessionPrincipal draft = hospitalDraft(tenant, account, ip);
             rateLimiter.clear(bucket);
             return challengeTwoFactor("HOSPITAL", tenant, username, draft, account.phone());
         }
-        return issueHospitalSession(tenant, account, bucket);
+        return issueHospitalSession(tenant, account, bucket, ip);
     }
 
     /** E04-T04 / PLT-AUTH-002：发送医院端登录短信验证码。无论手机号是否已绑定都返回成功（防探测）。 */
@@ -175,7 +184,8 @@ public class AuthService {
     }
 
     /** E04-T04 / PLT-AUTH-002：短信验证码登录（手机号已绑定且本院唯一）。 */
-    public LoginResult loginHospitalWithSms(String tenantCode, String phone, String code) {
+    public LoginResult loginHospitalWithSms(
+            String tenantCode, String phone, String code, String ip) {
         String bucket = "HS:" + tenantCode + ":" + phone;
         rateLimiter.check(bucket);
         // 先校验验证码再查账号：验证码错误与手机号未绑定互不可区分
@@ -210,10 +220,11 @@ public class AuthService {
                     maskedPhone(phone),
                     account == null ? "unknown-phone" : "disabled-user");
         }
-        return issueHospitalSession(tenant, account, bucket);
+        return issueHospitalSession(tenant, account, bucket, ip);
     }
 
-    public LoginResult loginPlatform(String username, String password, CaptchaInput captcha) {
+    public LoginResult loginPlatform(
+            String username, String password, CaptchaInput captcha, String ip) {
         String bucket = "P:" + username.toLowerCase(Locale.ROOT);
         rateLimiter.check(bucket);
         requireCaptchaIfNeeded(bucket, captcha);
@@ -236,11 +247,11 @@ public class AuthService {
             if (account.getPhone() == null) {
                 throw rejected(bucket, "PLATFORM", null, null, username, "2fa-without-phone");
             }
-            SessionPrincipal draft = platformDraft(account);
+            SessionPrincipal draft = platformDraft(account, ip);
             rateLimiter.clear(bucket);
             return challengeTwoFactor("PLATFORM", null, username, draft, account.getPhone());
         }
-        return issuePlatformSession(account, bucket);
+        return issuePlatformSession(account, bucket, ip);
     }
 
     /** E04-T04 / PLT-AUTH-003：双因素第二步。医院端与平台端共用，端别由 challenge 里暂挂的会话决定。 */
@@ -254,6 +265,7 @@ public class AuthService {
         SessionPrincipal principal = pending.principal().withToken(tokenGenerator.generate());
         challengeStore.consume(challengeId);
         sessionStore.save(principal);
+        enforceConcurrentSessionPolicy(principal);
         if (principal.hospital()) {
             TenantContext.runAsTenant(
                     principal.tenantId(),
@@ -263,7 +275,8 @@ public class AuthService {
             TenantContext.runAsPlatform(
                     () -> auditLogger.loginAttempt(pending.username(), true, "2fa-ok"));
         }
-        return LoginResult.issued(principal.token(), "Bearer", sessionStore.ttl().toSeconds());
+        return LoginResult.issued(
+                principal.token(), "Bearer", sessionStore.effectiveTtl(principal).toSeconds());
     }
 
     public void logout(String token) {
@@ -296,25 +309,54 @@ public class AuthService {
     }
 
     private LoginResult issueHospitalSession(
-            TenantRecord tenant, HospitalAccount account, String bucket) {
+            TenantRecord tenant, HospitalAccount account, String bucket, String ip) {
         SessionPrincipal principal =
-                hospitalDraft(tenant, account).withToken(tokenGenerator.generate());
+                hospitalDraft(tenant, account, ip).withToken(tokenGenerator.generate());
         sessionStore.save(principal);
+        enforceConcurrentSessionPolicy(principal);
         rateLimiter.clear(bucket);
         TenantContext.runAsTenant(
                 tenant.id(),
                 tenant.code(),
                 () -> auditLogger.loginAttempt(account.username(), true, "ok"));
-        return LoginResult.issued(principal.token(), "Bearer", sessionStore.ttl().toSeconds());
+        return LoginResult.issued(
+                principal.token(), "Bearer", sessionStore.effectiveTtl(principal).toSeconds());
     }
 
-    private LoginResult issuePlatformSession(PlatformAccountRow account, String bucket) {
-        SessionPrincipal principal = platformDraft(account).withToken(tokenGenerator.generate());
+    private LoginResult issuePlatformSession(PlatformAccountRow account, String bucket, String ip) {
+        SessionPrincipal principal =
+                platformDraft(account, ip).withToken(tokenGenerator.generate());
         sessionStore.save(principal);
         rateLimiter.clear(bucket);
         TenantContext.runAsPlatform(
                 () -> auditLogger.loginAttempt(account.getUsername(), true, "ok"));
-        return LoginResult.issued(principal.token(), "Bearer", sessionStore.ttl().toSeconds());
+        return LoginResult.issued(
+                principal.token(), "Bearer", sessionStore.effectiveTtl(principal).toSeconds());
+    }
+
+    /**
+     * E04-T06 / PLT-AUTH-008 并发会话策略：默认允许同一账号多端登录； 租户配置 cfg_param security.session.single-login=true
+     * 后单端登录，新登录使旧会话全部下线（当前会话保留）。
+     */
+    private void enforceConcurrentSessionPolicy(SessionPrincipal principal) {
+        if (!principal.hospital()) {
+            return; // 平台端默认多端，单端开关随平台安全策略（E06+）再接
+        }
+        boolean singleLogin =
+                TenantContext.callAsTenant(
+                        principal.tenantId(),
+                        principal.tenantCode(),
+                        hospitalDirectory::singleLoginEnabled);
+        if (singleLogin) {
+            long revoked = sessionStore.revokeAllForUser(principal, principal.token());
+            if (revoked > 0) {
+                log.info(
+                        "single-login kicked old sessions tenant={} username={} count={}",
+                        principal.tenantCode(),
+                        principal.username(),
+                        revoked);
+            }
+        }
     }
 
     private LoginResult challengeTwoFactor(
@@ -341,12 +383,14 @@ public class AuthService {
         return LoginResult.twoFactor(challengeId, List.of("SMS"));
     }
 
-    private SessionPrincipal hospitalDraft(TenantRecord tenant, HospitalAccount account) {
+    /** 医院端会话草稿（登录与权限重算共用）：授权快照 + 登录 IP + 生命周期 + 当前权限版本号。 */
+    SessionPrincipal hospitalDraft(TenantRecord tenant, HospitalAccount account, String ip) {
         List<String> opened =
                 TenantContext.callAsPlatform(() -> platformMapper.openedModules(tenant.id()));
         List<MenuRow> menus =
                 TenantContext.callAsPlatform(() -> platformMapper.listMenus("HOSPITAL"));
         Granted granted = grant(menus, account.menuIds(), opened);
+        long now = Instant.now().getEpochSecond();
         return new SessionPrincipal(
                 null,
                 "HOSPITAL",
@@ -360,13 +404,18 @@ public class AuthService {
                 granted.menuIds(),
                 granted.permissionCodes(),
                 opened,
-                1L,
+                permissionVersions.current("HOSPITAL", tenant.id(), account.id()),
                 account.scope(),
                 mustChangePassword(account.mustChangePassword(), account.passwordUpdatedAt()),
-                passwordExpiresAt(account.passwordUpdatedAt()));
+                passwordExpiresAt(account.passwordUpdatedAt()),
+                ip,
+                now,
+                now,
+                hospitalIdleSeconds(tenant, account));
     }
 
-    private SessionPrincipal platformDraft(PlatformAccountRow account) {
+    /** 平台端会话草稿（登录与权限重算共用）。平台端空闲超时固定 15 分钟（等保参数表）。 */
+    SessionPrincipal platformDraft(PlatformAccountRow account, String ip) {
         long accountId = account.getId();
         List<String> roles =
                 TenantContext.callAsPlatform(() -> platformMapper.accountRoles(accountId));
@@ -378,6 +427,7 @@ public class AuthService {
         boolean mustFlag =
                 Boolean.TRUE.equals(account.getMustChangePassword())
                         || passwordExpired(account.getPasswordUpdatedAt());
+        long now = Instant.now().getEpochSecond();
         return new SessionPrincipal(
                 null,
                 "PLATFORM",
@@ -391,10 +441,28 @@ public class AuthService {
                 granted.menuIds(),
                 granted.permissionCodes(),
                 List.of("base"),
-                1L,
+                permissionVersions.current("PLATFORM", null, accountId),
                 ScopeSnapshot.allowAll(),
                 mustFlag,
-                passwordExpiresAt(account.getPasswordUpdatedAt()));
+                passwordExpiresAt(account.getPasswordUpdatedAt()),
+                ip,
+                now,
+                now,
+                securityProperties.getPlatformSessionIdleSeconds());
+    }
+
+    /**
+     * 医院端空闲超时：平台默认 30 分钟，租户可经 cfg_param security.session.idle-minutes
+     * 加严（只能更短，PLT-AUTH-006「租户策略只能比平台下限更严」同口径）。
+     */
+    private long hospitalIdleSeconds(TenantRecord tenant, HospitalAccount account) {
+        int override =
+                TenantContext.callAsTenant(
+                        tenant.id(), tenant.code(), hospitalDirectory::sessionIdleOverrideSeconds);
+        if (override <= 0) {
+            return securityProperties.getSessionIdleSeconds();
+        }
+        return Math.min(securityProperties.getSessionIdleSeconds(), override);
     }
 
     /** PLT-AUTH-006：密码有效期 90 天，到期强制修改（与初始 / 重置标记同口径进会话）。 */

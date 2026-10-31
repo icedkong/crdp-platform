@@ -59,6 +59,17 @@ public interface PlatformMapper {
             """)
     PlatformAccountRow findAccountByPhoneIdx(@Param("phoneIdx") String phoneIdx);
 
+    /** 按 id 取平台账号（E04-T06：权限重算时按会话里的账号 id 重读）。 */
+    @Select(
+            """
+            SELECT id, username, display_name AS displayName, password_hash AS passwordHash, status,
+                   phone, must_change_password AS mustChangePassword,
+                   password_updated_at AS passwordUpdatedAt
+            FROM plt_account
+            WHERE id = #{accountId}
+            """)
+    PlatformAccountRow findAccountById(@Param("accountId") long accountId);
+
     @Select(
             """
             SELECT r.code

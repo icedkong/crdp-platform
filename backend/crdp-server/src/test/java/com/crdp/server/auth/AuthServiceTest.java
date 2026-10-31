@@ -160,7 +160,6 @@ class AuthServiceTest {
                 .remove(anyString(), anyString());
 
         properties = new SecurityProperties();
-        properties.setSessionTtlHours(8);
         // 既有平台端用例按「双因素关闭」的配置走（E09-T03 短信通道接入前 local/dev 的演示配置）；
         // 双因素开启的行为在下方 E04-T04 专组用例里显式打开覆盖。
         properties.setPlatformTwoFactorEnabled(false);
@@ -210,7 +209,8 @@ class AuthServiceTest {
                         smsCodeSender,
                         cryptoService,
                         properties,
-                        captchaStore);
+                        captchaStore,
+                        new com.crdp.framework.security.PermissionVersionStore(redis));
 
         when(tenantLookup.findByCode(TENANT_CODE))
                 .thenReturn(
@@ -314,7 +314,7 @@ class AuthServiceTest {
     private ApiException loginRejected(String password) {
         return assertThrows(
                 ApiException.class,
-                () -> service.loginHospital(TENANT_CODE, USERNAME, password, null));
+                () -> service.loginHospital(TENANT_CODE, USERNAME, password, null, null));
     }
 
     private static AuthService.CaptchaInput captcha() {
@@ -336,10 +336,15 @@ class AuthServiceTest {
     @Test
     void successfulLoginIssuesAnOpaqueBearerTokenStoredServerSide() {
         AuthService.LoginResult result =
-                service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null);
+                service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null, null);
 
         assertEquals("Bearer", result.tokenType());
-        assertEquals(Duration.ofHours(8).toSeconds(), result.expiresInSeconds());
+        // E04-T06 / PLT-AUTH-008：令牌有效期即空闲超时窗口（医院端 30 分钟，滑动续期），绝对时长 12 小时；
+        // 签发与取剩余窗口之间可能跨秒，允许 1 秒内的误差
+        assertTrue(
+                result.expiresInSeconds() > Duration.ofMinutes(30).toSeconds() - 10
+                        && result.expiresInSeconds() <= Duration.ofMinutes(30).toSeconds(),
+                "expiresInSeconds 应为剩余空闲窗口（约 30 分钟），实际 " + result.expiresInSeconds());
         String token = result.token();
         assertNotNull(token);
         assertTrue(!token.contains("."), "不透明令牌不是 JWT（无分段点）");
@@ -357,8 +362,10 @@ class AuthServiceTest {
 
     @Test
     void everyLoginIssuesAFreshToken() {
-        String first = service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null).token();
-        String second = service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null).token();
+        String first =
+                service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null, null).token();
+        String second =
+                service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null, null).token();
         assertNotEquals(first, second, "两次登录下发不同令牌");
         assertTrue(sessionStore.find(first).isPresent());
         assertTrue(sessionStore.find(second).isPresent());
@@ -375,20 +382,22 @@ class AuthServiceTest {
         ApiException unknownTenant =
                 assertThrows(
                         ApiException.class,
-                        () -> service.loginHospital("nosuch", USERNAME, RIGHT_PASSWORD, null));
+                        () ->
+                                service.loginHospital(
+                                        "nosuch", USERNAME, RIGHT_PASSWORD, null, null));
         ApiException wrongPassword = loginRejected(WRONG_PASSWORD);
         ApiException unknownUser =
                 assertThrows(
                         ApiException.class,
                         () ->
                                 service.loginHospital(
-                                        TENANT_CODE, "nobody.demo", RIGHT_PASSWORD, null));
+                                        TENANT_CODE, "nobody.demo", RIGHT_PASSWORD, null, null));
         ApiException missingHash =
                 assertThrows(
                         ApiException.class,
                         () ->
                                 service.loginHospital(
-                                        TENANT_CODE, "ghost.demo", RIGHT_PASSWORD, null));
+                                        TENANT_CODE, "ghost.demo", RIGHT_PASSWORD, null, null));
 
         for (ApiException ex : List.of(unknownTenant, wrongPassword, unknownUser, missingHash)) {
             assertEquals(401, ex.httpStatus());
@@ -456,12 +465,14 @@ class AuthServiceTest {
         ApiException missing =
                 assertThrows(
                         ApiException.class,
-                        () -> service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null));
+                        () ->
+                                service.loginHospital(
+                                        TENANT_CODE, USERNAME, RIGHT_PASSWORD, null, null));
         assertEquals(40102, missing.code());
 
         // 带上验证码且口令正确：登录成功并清零失败计数（未达锁定阈值 5）
         AuthService.LoginResult ok =
-                service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, captcha());
+                service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, captcha(), null);
         assertNotNull(ok.token(), "验证码与口令都对时正常发令牌");
 
         ApiException afterSuccess = loginRejected(WRONG_PASSWORD);
@@ -480,7 +491,7 @@ class AuthServiceTest {
                             ApiException.class,
                             () ->
                                     service.loginHospital(
-                                            TENANT_CODE, USERNAME, RIGHT_PASSWORD, null));
+                                            TENANT_CODE, USERNAME, RIGHT_PASSWORD, null, null));
             assertEquals(40102, missing.code());
         }
         // 累计 5 次失败（锁定阈值）：即使验证码与口令都对也被锁定
@@ -489,7 +500,7 @@ class AuthServiceTest {
                         ApiException.class,
                         () ->
                                 service.loginHospital(
-                                        TENANT_CODE, USERNAME, RIGHT_PASSWORD, captcha()));
+                                        TENANT_CODE, USERNAME, RIGHT_PASSWORD, captcha(), null));
         assertEquals(42900, locked.code(), "锁定后不发令牌");
     }
 
@@ -502,13 +513,19 @@ class AuthServiceTest {
                             ApiException.class,
                             () ->
                                     service.loginHospital(
-                                            TENANT_CODE, USERNAME, WRONG_PASSWORD, captcha()));
+                                            TENANT_CODE,
+                                            USERNAME,
+                                            WRONG_PASSWORD,
+                                            captcha(),
+                                            null));
             assertEquals(40101, ex.code(), "带上图形验证码后口令错误仍是 40101");
         }
         ApiException limited =
                 assertThrows(
                         ApiException.class,
-                        () -> service.loginHospital(TENANT_CODE, USERNAME, WRONG_PASSWORD, null));
+                        () ->
+                                service.loginHospital(
+                                        TENANT_CODE, USERNAME, WRONG_PASSWORD, null, null));
         assertEquals(429, limited.httpStatus());
         assertEquals(42900, limited.code());
         assertEquals("失败次数过多，账号已锁定，请 30 分钟后再试或联系管理员解锁", limited.getMessage());
@@ -525,7 +542,7 @@ class AuthServiceTest {
         loginRejected(WRONG_PASSWORD);
         when(passwordEncoder.matches(RIGHT_PASSWORD, HASH)).thenReturn(true);
 
-        service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null);
+        service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null, null);
 
         verify(auditLogger).loginAttempt(USERNAME, true, "ok");
         ApiException again = loginRejected(WRONG_PASSWORD);
@@ -546,7 +563,8 @@ class AuthServiceTest {
                                         true,
                                         LocalDateTime.now().minusDays(1))));
 
-        String token = service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null).token();
+        String token =
+                service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null, null).token();
 
         SessionPrincipal principal = sessionStore.find(token).orElseThrow();
         assertTrue(principal.mustChangePassword(), "初始/重置密码的会话带强制改密标记");
@@ -565,7 +583,8 @@ class AuthServiceTest {
                                         false,
                                         LocalDateTime.now().minusDays(91))));
 
-        String token = service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null).token();
+        String token =
+                service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null, null).token();
 
         assertTrue(
                 sessionStore.find(token).orElseThrow().mustChangePassword(),
@@ -574,7 +593,8 @@ class AuthServiceTest {
 
     @Test
     void freshPasswordSessionDoesNotRequireAChange() {
-        String token = service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null).token();
+        String token =
+                service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null, null).token();
         SessionPrincipal principal = sessionStore.find(token).orElseThrow();
         assertFalseMustChange(principal);
         long expiresAt = principal.passwordExpiresAtEpochSecond();
@@ -601,7 +621,7 @@ class AuthServiceTest {
                                 true,
                                 LocalDateTime.now().minusDays(1)));
 
-        String token = service.loginPlatform(PLATFORM_USERNAME, RIGHT_PASSWORD, null).token();
+        String token = service.loginPlatform(PLATFORM_USERNAME, RIGHT_PASSWORD, null, null).token();
 
         assertTrue(sessionStore.find(token).orElseThrow().mustChangePassword());
     }
@@ -610,7 +630,8 @@ class AuthServiceTest {
 
     @Test
     void logoutRevokesTheTokenOnTheServerSide() {
-        String token = service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null).token();
+        String token =
+                service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null, null).token();
         assertTrue(sessionStore.find(token).isPresent(), "登录后会话存在");
 
         service.logout(token);
@@ -620,7 +641,7 @@ class AuthServiceTest {
 
     @Test
     void auditLoginAttemptCarriesTheTenantContext() {
-        service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null);
+        service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null, null);
         ArgumentCaptor<String> message = ArgumentCaptor.forClass(String.class);
         verify(auditLogger)
                 .loginAttempt(
@@ -635,10 +656,14 @@ class AuthServiceTest {
     @Test
     void platformLoginIssuesAnOpaquePlatformSessionWithoutTenant() {
         AuthService.LoginResult result =
-                service.loginPlatform(PLATFORM_USERNAME, RIGHT_PASSWORD, null);
+                service.loginPlatform(PLATFORM_USERNAME, RIGHT_PASSWORD, null, null);
 
         assertEquals("Bearer", result.tokenType());
-        assertEquals(Duration.ofHours(8).toSeconds(), result.expiresInSeconds());
+        // E04-T06 / PLT-AUTH-008：平台端空闲窗口 15 分钟（滑动续期），绝对时长 12 小时
+        assertTrue(
+                result.expiresInSeconds() > Duration.ofMinutes(15).toSeconds() - 10
+                        && result.expiresInSeconds() <= Duration.ofMinutes(15).toSeconds(),
+                "expiresInSeconds 应为剩余空闲窗口（约 15 分钟），实际 " + result.expiresInSeconds());
         String token = result.token();
         assertNotNull(token);
         assertEquals(43, token.length(), "256 位随机值的 base64url 长度为 43");
@@ -668,19 +693,19 @@ class AuthServiceTest {
         ApiException unknownUser =
                 assertThrows(
                         ApiException.class,
-                        () -> service.loginPlatform("nobody", RIGHT_PASSWORD, null));
+                        () -> service.loginPlatform("nobody", RIGHT_PASSWORD, null, null));
         ApiException wrongPassword =
                 assertThrows(
                         ApiException.class,
-                        () -> service.loginPlatform(PLATFORM_USERNAME, WRONG_PASSWORD, null));
+                        () -> service.loginPlatform(PLATFORM_USERNAME, WRONG_PASSWORD, null, null));
         ApiException missingHash =
                 assertThrows(
                         ApiException.class,
-                        () -> service.loginPlatform("ghost.admin", RIGHT_PASSWORD, null));
+                        () -> service.loginPlatform("ghost.admin", RIGHT_PASSWORD, null, null));
         ApiException disabled =
                 assertThrows(
                         ApiException.class,
-                        () -> service.loginPlatform("blocked.admin", RIGHT_PASSWORD, null));
+                        () -> service.loginPlatform("blocked.admin", RIGHT_PASSWORD, null, null));
 
         for (ApiException ex : List.of(unknownUser, wrongPassword, missingHash, disabled)) {
             assertEquals(401, ex.httpStatus());
@@ -695,7 +720,7 @@ class AuthServiceTest {
         ApiException ex =
                 assertThrows(
                         ApiException.class,
-                        () -> service.loginPlatform(USERNAME, RIGHT_PASSWORD, null));
+                        () -> service.loginPlatform(USERNAME, RIGHT_PASSWORD, null, null));
         assertEquals(40101, ex.code());
         assertEquals("租户、账号或密码不正确", ex.getMessage());
     }
@@ -708,7 +733,11 @@ class AuthServiceTest {
                         ApiException.class,
                         () ->
                                 service.loginHospital(
-                                        TENANT_CODE, PLATFORM_USERNAME, RIGHT_PASSWORD, null));
+                                        TENANT_CODE,
+                                        PLATFORM_USERNAME,
+                                        RIGHT_PASSWORD,
+                                        null,
+                                        null));
         assertEquals(40101, ex.code());
         assertEquals("租户、账号或密码不正确", ex.getMessage());
     }
@@ -722,7 +751,11 @@ class AuthServiceTest {
                             ApiException.class,
                             () ->
                                     service.loginHospital(
-                                            TENANT_CODE, USERNAME, WRONG_PASSWORD, captcha()));
+                                            TENANT_CODE,
+                                            USERNAME,
+                                            WRONG_PASSWORD,
+                                            captcha(),
+                                            null));
             assertEquals(40101, ex.code(), "带上验证码后仍是口令错误统一拒绝");
         }
         assertEquals(42900, loginRejected(WRONG_PASSWORD).code(), "医院端计数已达上限");
@@ -730,7 +763,7 @@ class AuthServiceTest {
         // 两端失败计数按「端 + 账号」分桶：医院端锁死不影响平台端正常登录
         when(passwordEncoder.matches(RIGHT_PASSWORD, PLATFORM_HASH)).thenReturn(true);
         AuthService.LoginResult result =
-                service.loginPlatform(PLATFORM_USERNAME, RIGHT_PASSWORD, null);
+                service.loginPlatform(PLATFORM_USERNAME, RIGHT_PASSWORD, null, null);
         assertEquals("Bearer", result.tokenType());
     }
 
@@ -739,7 +772,7 @@ class AuthServiceTest {
     @Test
     void smsLoginWithBoundPhoneIssuesAnOpaqueToken() {
         AuthService.LoginResult result =
-                service.loginHospitalWithSms(TENANT_CODE, PHONE, sentCodeAfterSend());
+                service.loginHospitalWithSms(TENANT_CODE, PHONE, sentCodeAfterSend(), null);
 
         assertEquals("Bearer", result.tokenType());
         assertNotNull(result.token());
@@ -784,7 +817,7 @@ class AuthServiceTest {
         ApiException ex =
                 assertThrows(
                         ApiException.class,
-                        () -> service.loginHospitalWithSms(TENANT_CODE, PHONE, "000000"));
+                        () -> service.loginHospitalWithSms(TENANT_CODE, PHONE, "000000", null));
 
         assertEquals(401, ex.httpStatus());
         assertEquals(40102, ex.code());
@@ -801,7 +834,7 @@ class AuthServiceTest {
                         ApiException.class,
                         () ->
                                 service.loginHospitalWithSms(
-                                        TENANT_CODE, PHONE, sentCodeAfterSend()));
+                                        TENANT_CODE, PHONE, sentCodeAfterSend(), null));
 
         assertEquals(40101, ex.code());
         assertEquals("租户、账号或密码不正确", ex.getMessage(), "未绑定手机号与账号密码失败同口径");
@@ -816,7 +849,9 @@ class AuthServiceTest {
         ApiException ex =
                 assertThrows(
                         ApiException.class,
-                        () -> service.loginHospitalWithSms("nosuch", PHONE, sentCodeAfterSend()));
+                        () ->
+                                service.loginHospitalWithSms(
+                                        "nosuch", PHONE, sentCodeAfterSend(), null));
 
         assertEquals(40102, ex.code());
     }
@@ -833,7 +868,7 @@ class AuthServiceTest {
         ApiException crossTenant =
                 assertThrows(
                         ApiException.class,
-                        () -> service.loginHospitalWithSms("demob", PHONE, code));
+                        () -> service.loginHospitalWithSms("demob", PHONE, code, null));
 
         assertEquals(40102, crossTenant.code(), "A 院签发的验证码不能在 B 院用");
     }
@@ -847,14 +882,14 @@ class AuthServiceTest {
                             ApiException.class,
                             () ->
                                     service.loginHospitalWithSms(
-                                            TENANT_CODE, PHONE, sentCodeAfterSend()));
+                                            TENANT_CODE, PHONE, sentCodeAfterSend(), null));
             assertEquals(40101, ex.code());
         }
 
         // 阈值 5：4 次后仍放行，本次成功并清零失败计数
         when(hospitalDirectory.findByPhoneIdx(PHONE_IDX))
                 .thenReturn(Optional.of(account("ENABLED", HASH)));
-        service.loginHospitalWithSms(TENANT_CODE, PHONE, sentCodeAfterSend());
+        service.loginHospitalWithSms(TENANT_CODE, PHONE, sentCodeAfterSend(), null);
 
         when(hospitalDirectory.findByPhoneIdx(PHONE_IDX)).thenReturn(Optional.empty());
         ApiException afterSuccess =
@@ -862,7 +897,7 @@ class AuthServiceTest {
                         ApiException.class,
                         () ->
                                 service.loginHospitalWithSms(
-                                        TENANT_CODE, PHONE, sentCodeAfterSend()));
+                                        TENANT_CODE, PHONE, sentCodeAfterSend(), null));
         assertEquals(40101, afterSuccess.code(), "成功登录清零失败计数：再次失败仍是 40101，而不是 42900");
     }
 
@@ -873,7 +908,7 @@ class AuthServiceTest {
         properties.setPlatformTwoFactorEnabled(true);
 
         AuthService.LoginResult result =
-                service.loginPlatform(PLATFORM_USERNAME, RIGHT_PASSWORD, null);
+                service.loginPlatform(PLATFORM_USERNAME, RIGHT_PASSWORD, null, null);
 
         assertNull(result.token(), "密码第一步不发令牌");
         assertNull(result.tokenType());
@@ -888,7 +923,7 @@ class AuthServiceTest {
     void platformTwoFactorVerifyIssuesTheSessionToken() {
         properties.setPlatformTwoFactorEnabled(true);
         String challengeId =
-                service.loginPlatform(PLATFORM_USERNAME, RIGHT_PASSWORD, null).challengeId();
+                service.loginPlatform(PLATFORM_USERNAME, RIGHT_PASSWORD, null, null).challengeId();
 
         AuthService.LoginResult verified =
                 service.verifyTwoFactor(challengeId, sentCodes.get(PLATFORM_PHONE));
@@ -906,7 +941,7 @@ class AuthServiceTest {
     void platformTwoFactorWrongCodeKeepsTheChallengeForRetry() {
         properties.setPlatformTwoFactorEnabled(true);
         String challengeId =
-                service.loginPlatform(PLATFORM_USERNAME, RIGHT_PASSWORD, null).challengeId();
+                service.loginPlatform(PLATFORM_USERNAME, RIGHT_PASSWORD, null, null).challengeId();
 
         ApiException wrong =
                 assertThrows(
@@ -922,7 +957,7 @@ class AuthServiceTest {
     void platformTwoFactorChallengeIsSingleUse() {
         properties.setPlatformTwoFactorEnabled(true);
         String challengeId =
-                service.loginPlatform(PLATFORM_USERNAME, RIGHT_PASSWORD, null).challengeId();
+                service.loginPlatform(PLATFORM_USERNAME, RIGHT_PASSWORD, null, null).challengeId();
         service.verifyTwoFactor(challengeId, sentCodes.get(PLATFORM_PHONE));
 
         ApiException replay =
@@ -950,7 +985,7 @@ class AuthServiceTest {
         ApiException ex =
                 assertThrows(
                         ApiException.class,
-                        () -> service.loginPlatform(PLATFORM_USERNAME, RIGHT_PASSWORD, null));
+                        () -> service.loginPlatform(PLATFORM_USERNAME, RIGHT_PASSWORD, null, null));
 
         assertEquals(40101, ex.code(), "未绑定手机号与凭据失败同口径，不外露原因");
     }
@@ -960,7 +995,7 @@ class AuthServiceTest {
         when(hospitalDirectory.twoFactorRoles()).thenReturn(List.of("FOLLOWUP_DOCTOR"));
 
         AuthService.LoginResult first =
-                service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null);
+                service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null, null);
 
         assertNull(first.token());
         assertNotNull(first.challengeId(), "角色命中双因素时密码第一步只发 challenge");
@@ -991,7 +1026,8 @@ class AuthServiceTest {
                                         LocalDateTime.now().minusDays(1))));
 
         String challengeId =
-                service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null).challengeId();
+                service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null, null)
+                        .challengeId();
         AuthService.LoginResult second = service.verifyTwoFactor(challengeId, sentCodes.get(PHONE));
 
         assertTrue(
@@ -1016,9 +1052,84 @@ class AuthServiceTest {
         when(hospitalDirectory.twoFactorRoles()).thenReturn(List.of("TENANT_ADMIN"));
 
         AuthService.LoginResult result =
-                service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null);
+                service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null, null);
 
         assertNotNull(result.token(), "未命中配置角色的账号不触发双因素");
         assertNull(result.challengeId());
+    }
+
+    // ---- E04-T06 / PLT-AUTH-008、PLT-PERM-010：会话生命周期、单端登录、权限版本号 ----
+
+    @Test
+    void issuedSessionCarriesIpIdleWindowAndCurrentPermissionVersion() {
+        AuthService.LoginResult result =
+                service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null, "203.0.113.9");
+
+        SessionPrincipal session = sessionStore.find(result.token()).orElseThrow();
+        assertEquals("203.0.113.9", session.ip(), "会话记录登录 IP（在线用户列表展示）");
+        assertEquals(
+                properties.getSessionIdleSeconds(),
+                session.idleSeconds(),
+                "未配置租户加严时用平台默认空闲窗口（30 分钟）");
+        assertEquals(1L, session.permissionVersion(), "登录会话带初始权限版本号");
+        assertTrue(session.issuedAtEpochSecond() > 0, "会话带签发时间（绝对时长锚点）");
+    }
+
+    @Test
+    void tenantCanOnlyShortenTheIdleWindow() {
+        when(hospitalDirectory.sessionIdleOverrideSeconds()).thenReturn(10 * 60);
+
+        AuthService.LoginResult result =
+                service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null, null);
+        assertEquals(
+                600L, sessionStore.find(result.token()).orElseThrow().idleSeconds(), "租户加严取更短值");
+
+        // 租户配置比平台默认更长时仍取平台默认（只能加严）
+        when(hospitalDirectory.sessionIdleOverrideSeconds()).thenReturn(8 * 3600);
+        AuthService.LoginResult second =
+                service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null, null);
+        assertEquals(
+                properties.getSessionIdleSeconds(),
+                sessionStore.find(second.token()).orElseThrow().idleSeconds(),
+                "租户不能把空闲窗口改得比平台默认更长");
+    }
+
+    @Test
+    void singleLoginKicksOlderSessionsOfTheSameAccount() {
+        when(hospitalDirectory.singleLoginEnabled()).thenReturn(true);
+
+        AuthService.LoginResult first =
+                service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null, null);
+        AuthService.LoginResult second =
+                service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null, null);
+
+        assertTrue(
+                sessionStore.find(first.token()).isEmpty(), "单端登录：新登录使该账号旧会话全部下线（旧令牌下次请求 40100）");
+        assertTrue(sessionStore.find(second.token()).isPresent(), "新会话保留");
+    }
+
+    @Test
+    void multipleSessionsAreAllowedByDefault() {
+        AuthService.LoginResult first =
+                service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null, null);
+        AuthService.LoginResult second =
+                service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null, null);
+
+        assertTrue(sessionStore.find(first.token()).isPresent(), "默认并发会话策略：多端登录共存");
+        assertTrue(sessionStore.find(second.token()).isPresent());
+    }
+
+    @Test
+    void loginStampsTheCurrentPermissionVersion() {
+        // 权限已递增过的用户（例如角色刚调整过）重新登录：会话直接带新版本，无需再重算
+        redisStore.put("crdp:permver:HOSPITAL:" + TENANT_ID + ":100", "4");
+
+        AuthService.LoginResult result =
+                service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null, null);
+
+        assertEquals(
+                4L,
+                sessionStore.find(result.token()).orElseThrow().permissionVersion(),
+                "登录会话带当前权限版本号");
     }
 }

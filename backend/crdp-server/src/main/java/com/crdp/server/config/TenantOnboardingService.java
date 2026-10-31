@@ -48,6 +48,12 @@ public class TenantOnboardingService {
      */
     private static final int TENANT_ADMIN_RESET_MENU_ID = 311;
 
+    /**
+     * 在线会话按钮（tenant:session:view / kick）在 plt_menu 的固定 id，平台库迁移 V11 新增（E04-T06 /
+     * PLT-AUTH-008、009）。老库由租户库 base V8 增量授予、local/dev 全新库由种子 V103 补授，这里覆盖生产（无种子）。
+     */
+    private static final int[] TENANT_ADMIN_SESSION_MENU_IDS = {312, 313};
+
     /** 开通请求：编码与医院名称必填；首个管理员在开通时提供，也可启用前经 E06 补设。 */
     public record OnboardingRequest(
             String code,
@@ -338,6 +344,23 @@ public class TenantOnboardingService {
                                         + TENANT_ADMIN_RESET_MENU_ID
                                         + ")",
                                 roleId);
+                    }
+                    // E04-T06 / PLT-AUTH-008、009：在线会话按钮（plt_menu 312 / 313）同样授予；
+                    // local/dev 全新库由种子 V103 兜底，老库由租户库 base V8 授予。
+                    for (int menuId : TENANT_ADMIN_SESSION_MENU_IDS) {
+                        Integer sessionGranted =
+                                platform.queryForObject(
+                                        "SELECT COUNT(*) FROM sys_role_menu WHERE role_id = ? AND menu_id = "
+                                                + menuId,
+                                        Integer.class,
+                                        roleId);
+                        if (sessionGranted == null || sessionGranted == 0) {
+                            platform.update(
+                                    "INSERT INTO sys_role_menu (role_id, menu_id) VALUES (?, "
+                                            + menuId
+                                            + ")",
+                                    roleId);
+                        }
                     }
                 });
     }

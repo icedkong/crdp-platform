@@ -65,6 +65,32 @@ public class HospitalDirectory {
         return mapper.passwordHistory(userId, limit);
     }
 
+    /**
+     * 租户加严的会话空闲超时，秒（E04-T06 / PLT-AUTH-008，cfg_param security.session.idle-minutes， 单位分钟）。未配置或非法返回
+     * 0；调用方取 min(平台默认, 本值)——租户只能把空闲窗口改得更短。
+     */
+    public int sessionIdleOverrideSeconds() {
+        String value = mapper.paramValue("security.session.idle-minutes");
+        if (value == null || value.isBlank()) {
+            return 0;
+        }
+        try {
+            int minutes = Integer.parseInt(value.trim());
+            return minutes > 0 ? minutes * 60 : 0;
+        } catch (NumberFormatException ex) {
+            return 0;
+        }
+    }
+
+    /**
+     * 是否单端登录（E04-T06 / PLT-AUTH-008 并发会话策略，cfg_param security.session.single-login=true）。
+     * 默认多端登录；开启后新登录使该账号旧会话全部下线。
+     */
+    public boolean singleLoginEnabled() {
+        String value = mapper.paramValue("security.session.single-login");
+        return value != null && "true".equalsIgnoreCase(value.trim());
+    }
+
     /** 改密落库：新哈希、清强制改密标记、刷新 password_updated_at（E04-T05）。 */
     public void changePassword(
             long userId, String newPasswordHash, java.time.LocalDateTime updatedAt) {

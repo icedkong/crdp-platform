@@ -77,10 +77,12 @@
 
 ## 8. 在线会话（PLT-AUTH-008/009）
 
-| 方法 | 路径 | 权限 |
-|---|---|---|
-| GET | `/api/hospital/system/sessions` | `tenant:session:view` |
-| POST | `/api/hospital/system/sessions/{id}/kick` | `tenant:session:kick` |
+> E04-T06 已实现（权限码挂用户管理菜单下隐藏按钮，平台库 V11 `plt_menu` 312 / 313；`/system/session` 页面属 E06+）。
+
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| GET | `/api/hospital/system/sessions` | `tenant:session:view` | 本院全部在线会话：`{ sessionId, userId, username, displayName, ip, issuedAt, lastActiveAt }`；`sessionId` 由令牌哈希单向推导，接口不返回令牌 |
+| POST | `/api/hospital/system/sessions/{sessionId}/kick` | `tenant:session:kick` | 强制下线：被下线令牌下次请求 40100；写审计 `SESSION_KICK`；会话号不存在 40400 |
 
 ## 9. 组织与用户变更事件（PLT-ORG-013）
 

@@ -4,10 +4,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.crdp.framework.security.PermissionVersionStore;
 import com.crdp.framework.security.ScopeSnapshot;
 import com.crdp.framework.security.SessionPrincipal;
+import com.crdp.framework.security.SessionRefresher;
 import com.crdp.framework.security.SessionStore;
 import com.crdp.framework.tenant.TenantContext;
 import com.crdp.server.auth.TenantAccessProperties;
@@ -20,6 +23,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.Authentication;
@@ -35,13 +39,25 @@ class TokenAuthenticationFilterTest {
     private static final String BASE_DOMAIN = "crdp.example.com";
 
     private final SessionStore sessionStore = mock(SessionStore.class);
+    private final PermissionVersionStore permissionVersions = mock(PermissionVersionStore.class);
+    private final SessionRefresher sessionRefresher = mock(SessionRefresher.class);
     private TokenAuthenticationFilter filter;
 
     @BeforeEach
     void setUp() {
         TenantAccessProperties properties = new TenantAccessProperties();
         properties.setBaseDomain(BASE_DOMAIN);
-        filter = new TokenAuthenticationFilter(sessionStore, new TenantIdentifier(properties));
+        filter =
+                new TokenAuthenticationFilter(
+                        sessionStore,
+                        new TenantIdentifier(properties),
+                        permissionVersions,
+                        sessionRefresher);
+        // 版本未递增（current=1）时不触发重算；touch（滑动续期）原样返回会话
+        when(permissionVersions.current(org.mockito.ArgumentMatchers.any(SessionPrincipal.class)))
+                .thenReturn(1L);
+        when(sessionStore.touch(org.mockito.ArgumentMatchers.any(SessionPrincipal.class)))
+                .thenAnswer(inv -> inv.getArgument(0, SessionPrincipal.class));
         SecurityContextHolder.clearContext();
         TenantContext.clear();
     }
@@ -193,7 +209,12 @@ class TokenAuthenticationFilterTest {
     @Test
     void subdomainCheckIsDisabledWhenBaseDomainIsNotConfigured() throws Exception {
         TenantAccessProperties empty = new TenantAccessProperties();
-        filter = new TokenAuthenticationFilter(sessionStore, new TenantIdentifier(empty));
+        filter =
+                new TokenAuthenticationFilter(
+                        sessionStore,
+                        new TenantIdentifier(empty),
+                        permissionVersions,
+                        sessionRefresher);
         when(sessionStore.find(TOKEN)).thenReturn(Optional.of(hospitalSession()));
         assertAuthenticatedAs(withToken("demob." + BASE_DOMAIN), "doctor.demo");
     }
@@ -257,5 +278,74 @@ class TokenAuthenticationFilterTest {
         when(sessionStore.find(TOKEN)).thenReturn(Optional.empty());
         Snapshot snapshot = withToken("api.internal:18080");
         assertNull(snapshot.authentication.get(), "吊销后的令牌不再携带任何端别权限");
+    }
+
+    // ---- E04-T06 / PLT-PERM-010：权限版本落后时按新权限重算（PLT-AUTH-008 滑动续期） ----
+
+    @Test
+    void activeSessionIsRenewedOnEveryRequest() throws Exception {
+        SessionPrincipal session = hospitalSession();
+        when(sessionStore.find(TOKEN)).thenReturn(Optional.of(session));
+        withToken("api.internal:18080");
+        verify(sessionStore).touch(session);
+        verify(sessionStore, org.mockito.Mockito.never()).save(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void stalePermissionVersionIsRefreshedBeforeTheRequestRuns() throws Exception {
+        SessionPrincipal session = hospitalSession(); // 版本 1
+        when(sessionStore.find(TOKEN)).thenReturn(Optional.of(session));
+        when(permissionVersions.current(session)).thenReturn(3L);
+        SessionPrincipal refreshed =
+                session.withFreshGrants(
+                        new SessionPrincipal(
+                                "draft-token",
+                                "HOSPITAL",
+                                7L,
+                                "demoa",
+                                "虚构示例医院甲",
+                                100L,
+                                "doctor.demo",
+                                "演示医生",
+                                List.of("TENANT_ADMIN"),
+                                List.of(10L, 30L),
+                                List.of("tenant:session:view", "tenant:session:kick"),
+                                List.of("base"),
+                                3L,
+                                ScopeSnapshot.allowAll(),
+                                false,
+                                null));
+        when(sessionRefresher.refresh(session)).thenReturn(Optional.of(refreshed));
+
+        Snapshot snapshot = withToken("api.internal:18080");
+
+        assertAuthenticatedAs(snapshot, "doctor.demo");
+        assertTrue(
+                snapshot.authentication.get().getAuthorities().stream()
+                        .anyMatch(a -> a.getAuthority().equals("tenant:session:kick")),
+                "重算后的会话应携带新权限码执行本次请求");
+        assertTrue(
+                snapshot.authentication.get().getAuthorities().stream()
+                        .noneMatch(a -> a.getAuthority().equals("followup:patient:view")),
+                "旧权限快照自此失效");
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<SessionPrincipal> saved = ArgumentCaptor.forClass(SessionPrincipal.class);
+        verify(sessionStore).save(saved.capture());
+        assertEquals(3L, saved.getValue().permissionVersion(), "重算后的会话保存新版本号");
+        assertEquals(TOKEN, saved.getValue().token(), "重算保留令牌");
+    }
+
+    @Test
+    void staleVersionWithAccountGoneDropsTheSession() throws Exception {
+        SessionPrincipal session = hospitalSession();
+        when(sessionStore.find(TOKEN)).thenReturn(Optional.of(session));
+        when(permissionVersions.current(session)).thenReturn(2L);
+        when(sessionRefresher.refresh(session)).thenReturn(Optional.empty());
+
+        Snapshot snapshot = withToken("api.internal:18080");
+
+        assertNull(snapshot.authentication.get(), "账号已停用 / 不存在：会话删除，按未认证处理");
+        assertNull(snapshot.tenant.get(), "不得带入租户上下文");
+        verify(sessionStore).delete(TOKEN);
     }
 }
