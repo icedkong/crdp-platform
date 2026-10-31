@@ -2,6 +2,7 @@ package com.crdp.framework.crypto;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
@@ -151,5 +152,57 @@ class EnvelopeCryptoServiceTest {
 
         ApiException ex = assertThrows(ApiException.class, () -> crypto.decrypt(value));
         assertEquals(40002, ex.code());
+    }
+
+    /** E03-T06：用途校验——用途决定用哪把密钥，不合法的用途必须拒绝而不是落到默认密钥上。 */
+    @Test
+    void encryptRejectsPurposesThatDoNotMatchTheContract() {
+        freshTenant(1L, "demoa");
+
+        assertRejectsPurpose(null, null);
+        assertRejectsPurpose("", null);
+        assertRejectsPurpose("Field-Name", "用途不允许大写");
+        assertRejectsPurpose("field name", "用途不允许空格");
+        assertRejectsPurpose("a".repeat(33), "用途最长 32 个字符");
+    }
+
+    private void assertRejectsPurpose(String purpose, String because) {
+        ApiException ex =
+                assertThrows(ApiException.class, () -> crypto.encrypt(purpose, "虚构姓名"), because);
+        assertEquals(40002, ex.code());
+    }
+
+    /** encrypt/blindIndex 走同一个用途校验。 */
+    @Test
+    void blindIndexRejectsInvalidPurposesToo() {
+        freshTenant(1L, "demoa");
+
+        ApiException ex =
+                assertThrows(ApiException.class, () -> crypto.blindIndex("BAD", "MR-DEMO-001"));
+        assertEquals(40002, ex.code());
+    }
+
+    @Test
+    void blindIndexOfNullValueIsNullInsteadOfAnIndex() {
+        freshTenant(1L, "demoa");
+
+        assertNull(crypto.blindIndex("blind", null), "空值不产生索引，配合可空列");
+    }
+
+    /** 随机 IV：同一明文两次加密得到不同密文，都能解回原文。 */
+    @Test
+    void samePlaintextEncryptsDifferentlyEveryTime() {
+        freshTenant(1L, "demoa");
+        // 首次查询补建版本 1，之后版本稳定为 1（模拟真实库中行已存在）
+        when(jdbcTemplate.queryForObject(
+                        contains("MAX(key_version)"), eq(Integer.class), eq("field")))
+                .thenReturn(null, 1);
+
+        String first = crypto.encrypt("field", "13800138000");
+        String second = crypto.encrypt("field", "13800138000");
+
+        assertNotEquals(first, second, "GCM 每次加密使用随机 IV，同一明文不得得到同一密文");
+        assertEquals("13800138000", crypto.decrypt(first));
+        assertEquals("13800138000", crypto.decrypt(second));
     }
 }

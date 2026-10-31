@@ -1,5 +1,6 @@
 package com.crdp.framework.crypto;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -38,9 +39,60 @@ class LocalEnvelopeKeyProviderTest {
     void unwrapFailsWithADifferentMasterKey() {
         GeneratedDataKey generated = new LocalEnvelopeKeyProvider("master-one").generateDataKey();
 
-        assertThrows(
-                ApiException.class,
-                () -> new LocalEnvelopeKeyProvider("master-two").unwrap(generated.wrappedKey()));
+        ApiException ex =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                new LocalEnvelopeKeyProvider("master-two")
+                                        .unwrap(generated.wrappedKey()));
+        assertEquals(40002, ex.code());
+    }
+
+    /** E03-T06：包装密钥只能用 keywrap 用途、AES-256-GCM 算法解开，其余明确拒绝。 */
+    @Test
+    void unwrapRejectsWrappedKeysWithTheWrongPurpose() {
+        LocalEnvelopeKeyProvider provider =
+                new LocalEnvelopeKeyProvider("dev-only-not-a-production-key");
+        GeneratedDataKey generated = provider.generateDataKey();
+        Ciphertext parsed = Ciphertext.parse(generated.wrappedKey());
+        String wrongPurpose =
+                new Ciphertext(
+                                parsed.version(),
+                                parsed.algorithm(),
+                                parsed.keyVersion(),
+                                "field-name",
+                                parsed.iv(),
+                                parsed.data())
+                        .encode();
+
+        ApiException ex = assertThrows(ApiException.class, () -> provider.unwrap(wrongPurpose));
+        assertEquals(40002, ex.code(), "包装密钥用途不匹配");
+    }
+
+    @Test
+    void unwrapRejectsWrappedKeysWithAnUnsupportedAlgorithm() {
+        LocalEnvelopeKeyProvider provider =
+                new LocalEnvelopeKeyProvider("dev-only-not-a-production-key");
+        GeneratedDataKey generated = provider.generateDataKey();
+        Ciphertext parsed = Ciphertext.parse(generated.wrappedKey());
+        String wrongAlgorithm =
+                new Ciphertext(
+                                parsed.version(),
+                                "SM4-GCM",
+                                parsed.keyVersion(),
+                                parsed.purpose(),
+                                parsed.iv(),
+                                parsed.data())
+                        .encode();
+
+        ApiException ex = assertThrows(ApiException.class, () -> provider.unwrap(wrongAlgorithm));
+        assertEquals(40002, ex.code(), "包装密钥算法无法识别");
+    }
+
+    @Test
+    void blankLocalKeyIsRejectedAtStartup() {
+        assertThrows(IllegalStateException.class, () -> new LocalEnvelopeKeyProvider(" "));
+        assertThrows(IllegalStateException.class, () -> new LocalEnvelopeKeyProvider(null));
     }
 
     private static String bytesToText(SecretKey key) {
