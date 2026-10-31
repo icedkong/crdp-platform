@@ -4,6 +4,10 @@
 
 方案依据是《整体技术方案 V0.2》和《平台底座需求规格说明 V0.3》。取舍写在 [docs/adr/0001-m0-engineering-skeleton.md](docs/adr/0001-m0-engineering-skeleton.md)。
 
+## 代码仓库
+
+主仓库是 [https://github.com/icedkong/crdp-platform](https://github.com/icedkong/crdp-platform)。后续开发、问题跟踪和持续集成都在这个 GitHub 仓库进行。默认分支是 `main`。
+
 ## 结构
 
 ```

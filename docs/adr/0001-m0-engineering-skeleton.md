@@ -16,7 +16,7 @@
 
 ## 形态
 
-一个 Git 仓库。后端是 Maven 多模块的 Spring Boot 单体，前端是 pnpm workspace。可部署单元只有 `crdp-server`。医院端和平台端是两个前端应用，打到不同镜像里。
+一个 Git 仓库。主仓库是 [https://github.com/icedkong/crdp-platform](https://github.com/icedkong/crdp-platform)，默认分支是 `main`。后端是 Maven 多模块的 Spring Boot 单体，前端是 pnpm workspace。可部署单元只有 `crdp-server`。医院端和平台端是两个前端应用，打到不同镜像里。
 
 后端模块和依赖方向按第 15 章：
 
@@ -96,7 +96,7 @@ M0 没有把 `vue-vben-admin` 整仓放进来。那个仓库还带 web-ele、web
 - 敏感权限（明文、导出）种在菜单资源里，但不授给演示角色。
 - 不引入 ShedLock、POI、Tika、OBS SDK。锁表 `shedlock` 已建。外发箱、通知、对象存储、Excel、调度都是会抛「尚未实现」的接口。
 - 端口：后端 18080，医院端 14173，平台端 14174，MySQL 13306，Redis 16379。
-- CI 跑格式检查、单测和前端构建。SAST、依赖漏洞和镜像扫描留到流水线接华为云的时候再加。
+- CI 在 GitHub Actions（`.github/workflows/ci.yml`）跑格式检查、单测和前端构建。SAST、依赖漏洞和镜像扫描留到流水线接华为云的时候再加。
 
 ## 明确不做
 

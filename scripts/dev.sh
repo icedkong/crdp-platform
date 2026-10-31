@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # 一条命令拉起本地依赖、后端和两个前端。演示口令见 README。
+# 主仓库：https://github.com/icedkong/crdp-platform
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

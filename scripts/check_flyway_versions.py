@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""同一套迁移历史里版本号不能重复。平台库和租户库各算一套。"""
+"""同一套迁移历史里版本号不能重复。平台库和租户库各算一套。
+
+主仓库：https://github.com/icedkong/crdp-platform
+"""
 
 import re
 import sys
