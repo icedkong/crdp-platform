@@ -16,9 +16,11 @@ public class DataSourceConfig {
     @Bean
     @Primary
     public TenantRoutingDataSource tenantRoutingDataSource(
-            PlatformDataSourceProperties properties, TenantSchemaMigrator migrator) {
+            PlatformDataSourceProperties properties,
+            TenantSchemaMigrator migrator,
+            DataSourceFactory factory) {
         HikariDataSource platform =
-                DataSourceFactory.hikari(
+                factory.hikari(
                         "crdp-platform",
                         properties.getUrl(),
                         properties.getUsername(),
@@ -28,7 +30,7 @@ public class DataSourceConfig {
         routing.registerPlatform(platform);
         for (TenantResourceRow tenant : migrator.loadTenants(platform)) {
             HikariDataSource pool =
-                    DataSourceFactory.hikari(
+                    factory.hikari(
                             "crdp-" + tenant.code(),
                             tenant.jdbcUrl(),
                             tenant.username(),
