@@ -1,0 +1,18 @@
+crdp:
+  crypto:
+    mode: local
+    local-key: ${CRDP_CRYPTO_LOCAL_KEY:dev-only-not-a-production-key}
+  demo:
+    password: ${CRDP_DEMO_PASSWORD:Demo@2026}
+    hash-marker: PENDING_DEMO_HASH
+  platform:
+    datasource:
+      url: ${CRDP_PLATFORM_JDBC_URL:jdbc:mysql://127.0.0.1:13306/crdp_platform?useUnicode=true&characterEncoding=utf8&connectionTimeZone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false}
+      username: ${CRDP_PLATFORM_DB_USERNAME:crdp_app}
+      password: "${CRDP_PLATFORM_DB_PASSWORD:DevOnly#app2026}"
+
+spring:
+  data:
+    redis:
+      host: ${CRDP_REDIS_HOST:127.0.0.1}
+      port: ${CRDP_REDIS_PORT:16379}

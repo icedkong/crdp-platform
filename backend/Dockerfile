@@ -5,12 +5,12 @@ COPY . .
 RUN mvn -B -DskipTests package
 
 FROM eclipse-temurin:21-jre-jammy
-RUN useradd --system --uid 10001 --home /app fu \
+RUN useradd --system --uid 10001 --home /app crdp \
     && mkdir -p /app \
-    && chown fu:fu /app
+    && chown crdp:crdp /app
 WORKDIR /app
-COPY --from=build /src/fu-server/target/fu-server.jar /app/fu-server.jar
+COPY --from=build /src/crdp-server/target/crdp-server.jar /app/crdp-server.jar
 USER 10001
 EXPOSE 18080
 ENV SPRING_PROFILES_ACTIVE=prod
-ENTRYPOINT ["java", "-jar", "/app/fu-server.jar"]
+ENTRYPOINT ["java", "-jar", "/app/crdp-server.jar"]

@@ -10,15 +10,17 @@
 
 正式名称是「临床科研数据一体化平台」。英文缩写用 `crdp`（clinical research data platform）。
 
-`crdp` 用在进程名 `spring.application.name` 和前端包作用域 `@crdp/*`。技术方案第 15 章的 Maven 模块仍叫 `fu-*`，Java 包仍是 `com.fu`：这里的 `fu` 是随访域模块前缀，不是产品名。可执行包文件名因此仍是 `fu-server.jar`。
+工程标识一律用 `crdp`：Java 包 `com.crdp`，Maven 模块 `crdp-*`（例如 `crdp-server`、`crdp-framework`），前端包 `@crdp/*`，进程名 `spring.application.name=crdp`，平台库 `crdp_platform`。技术方案第 15 章写的模块前缀是 `fu-*`，这里改成产品缩写，依赖方向不变。
+
+随访业务表仍用方案里的 `fu_` 前缀，例如 `fu_task`、`fu_record`。那是表名，不是工程缩写。租户库按方案叫 `t_{租户编码}`，例如 `t_demoa`，本来就没有 `fu` 前缀。
 
 ## 形态
 
-一个 Git 仓库。后端是 Maven 多模块的 Spring Boot 单体，前端是 pnpm workspace。可部署单元只有 `fu-server`。医院端和平台端是两个前端应用，打到不同镜像里。
+一个 Git 仓库。后端是 Maven 多模块的 Spring Boot 单体，前端是 pnpm workspace。可部署单元只有 `crdp-server`。医院端和平台端是两个前端应用，打到不同镜像里。
 
 后端模块和依赖方向按第 15 章：
 
-`fu-followup` → `fu-form` → `fu-framework`，`fu-platform` 和 `fu-system` 只依赖 `fu-framework`。启动类在 `fu-server`，扫描 `com.fu`。
+`crdp-followup` → `crdp-form` → `crdp-framework`，`crdp-platform` 和 `crdp-system` 只依赖 `crdp-framework`。启动类在 `crdp-server`，扫描 `com.crdp`。
 
 ## 技术栈
 
@@ -27,7 +29,7 @@
 | JDK / 框架 | 21 / Spring Boot 3.5.7 / Spring Security 6 | 方案指定 JDK 21、Spring Boot 3.x、Spring Security 6。3.5.7 是编写时的当前 3.x |
 | 持久化 | MyBatis-Plus 3.5.14 | 方案指定。M0 用注解 SQL，没有 Mapper XML |
 | 迁移 | Flyway 11（随 Boot 3.5） | 目录 `db/platform`、`db/tenant/base`、`db/tenant/followup`。local/dev 额外跑 `seed` |
-| 数据库 | MySQL 8.0 | 本地用 Docker。平台库 `fu_platform`，演示租户库 `t_demoa`、`t_demob` |
+| 数据库 | MySQL 8.0 | 本地用 Docker。平台库 `crdp_platform`，演示租户库 `t_demoa`、`t_demob` |
 | 缓存 | Redis 7 | 不透明令牌和登录失败计数 |
 | 口令 | Argon2id | `Argon2PasswordEncoder.defaultsForSpringSecurity_v5_8()`。需要 Bouncy Castle，Boot BOM 未管理该依赖，父 POM 固定 1.80.2 |
 | 接口文档 | springdoc 2.8.13 | `/swagger-ui.html` |
@@ -52,13 +54,13 @@ M0 没有把 `vue-vben-admin` 整仓放进来。那个仓库还带 web-ele、web
 
 ## 多租户
 
-- 令牌是 256 位随机值，存在 Redis，键为 `fu:sess:{token}`。载荷含 tenantId、userId、会话类型、权限版本号、菜单和权限码。不用 JWT。方案第 3 章就是这样写的。
+- 令牌是 256 位随机值，存在 Redis，键为 `crdp:sess:{token}`。载荷含 tenantId、userId、会话类型、权限版本号、菜单和权限码。不用 JWT。方案第 3 章就是这样写的。
 - 登录先查平台库里的租户，再切到该院库查用户。平台账号和医院账号的入口分开。
 - 租户不存在、账号不存在、密码错误返回同一句「租户、账号或密码不正确」。失败次数按租户编码加账号记在 Redis 里。
 - `TenantRoutingDataSource` 按 `TenantContext` 选连接池。没有上下文就抛错，不回落到平台库。健康检查单独打平台库。
 - 异步线程用 `TenantContextTaskDecorator` 传递上下文。调度扇出还没做。
-- 本地演示把数据库口令以 `local:` 前缀放在 `plt_tenant_resource`。生产剖面禁止 `fu.crypto.mode=local`。KMS 解密留到 E03。
-- 生产要求的「运行账号 / 迁移账号」拆分，本地合成一个 `fu_app`。开通编排本身留到 E02，启动时只会给已经登记且状态为启用或试用的租户建池并跑 Flyway。
+- 本地演示把数据库口令以 `local:` 前缀放在 `plt_tenant_resource`。生产剖面禁止 `crdp.crypto.mode=local`。KMS 解密留到 E03。
+- 生产要求的「运行账号 / 迁移账号」拆分，本地合成一个 `crdp_app`。开通编排本身留到 E02，启动时只会给已经登记且状态为启用或试用的租户建池并跑 Flyway。
 
 ## 权限和数据范围
 
@@ -70,7 +72,7 @@ M0 没有把 `vue-vben-admin` 整仓放进来。那个仓库还带 web-ele、web
 - `@IgnoreScope` 放行
 - 范围为「全部」时不改 SQL
 - 受限但没有任何病区、科室或本人条件时追加 `AND (1 = 0)`
-- 已有范围 id 时只追加注释 `/* fu-datascope:restricted */`
+- 已有范围 id 时只追加注释 `/* crdp-datascope:restricted */`
 
 用 JSqlParser 把 SQL 改写成 `EXISTS` 关联 `pt_patient` 是 E07 的事。M0 还没有患者查询。
 
@@ -86,7 +88,7 @@ M0 没有把 `vue-vben-admin` 整仓放进来。那个仓库还带 web-ele、web
 
 ## 方案没写、这里拍板的默认
 
-- Java 包名用 `com.fu`，对应技术方案里的随访域模块前缀。产品级标识用 `crdp`，见上文「产品名称」。
+- Java 包名用 `com.crdp`。见上文「产品名称」。
 - 主键用数据库自增。雪花或 UUID 方案没指定。
 - 平台角色和菜单的关联表 `plt_role_menu` 不在第 15 章概要清单里，但平台端动态菜单需要它，所以加了。
 - 会话 8 小时，不滑动续期。权限版本号先写入令牌，请求时还不回源比较。那是 E04。

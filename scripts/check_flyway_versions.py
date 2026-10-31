@@ -7,8 +7,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TREES = [
-    ROOT / "backend/fu-server/src/main/resources/db/platform",
-    ROOT / "backend/fu-server/src/main/resources/db/tenant",
+    ROOT / "backend/crdp-server/src/main/resources/db/platform",
+    ROOT / "backend/crdp-server/src/main/resources/db/tenant",
 ]
 NAME = re.compile(r"^V(\d+)__.+\.sql$")
 

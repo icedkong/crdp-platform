@@ -8,12 +8,12 @@
 
 ```
 backend/                 Maven 多模块，JDK 21，Spring Boot 3
-  fu-server/             唯一可部署包
-  fu-framework/          租户路由、认证、数据范围、审计、密码服务接口
-  fu-platform/           平台库：租户、模块、菜单、平台账号
-  fu-system/             租户库：用户、角色、数据范围
-  fu-form/               表单引擎占位
-  fu-followup/           随访子域包结构，无业务代码
+  crdp-server/             唯一可部署包
+  crdp-framework/          租户路由、认证、数据范围、审计、密码服务接口
+  crdp-platform/           平台库：租户、模块、菜单、平台账号
+  crdp-system/             租户库：用户、角色、数据范围
+  crdp-form/               表单引擎占位
+  crdp-followup/           随访子域包结构，无业务代码
 frontend/                pnpm workspace，Vue 3 + Ant Design Vue
   apps/web-hospital/     医院端，租户编码登录
   apps/web-platform/     平台端
@@ -27,9 +27,9 @@ deploy/mysql/init/       本地创建 t_demoa、t_demob
 docs/adr/                架构决定
 ```
 
-依赖方向：`fu-followup` → `fu-form` → `fu-framework`。`fu-platform` 和 `fu-system` 只依赖 `fu-framework`。
+依赖方向：`crdp-followup` → `crdp-form` → `crdp-framework`。`crdp-platform` 和 `crdp-system` 只依赖 `crdp-framework`。
 
-数据分成平台库 `fu_platform` 和每家医院一个库 `t_{租户编码}`。租户库的表不带 `tenant_id`。请求上的租户来自登录令牌，路由数据源据此选连接池。没有租户上下文时不允许碰数据库。
+数据分成平台库 `crdp_platform` 和每家医院一个库 `t_{租户编码}`。租户库的表不带 `tenant_id`。请求上的租户来自登录令牌，路由数据源据此选连接池。没有租户上下文时不允许碰数据库。
 
 ## 本地启动
 
@@ -54,8 +54,8 @@ chmod +x scripts/dev.sh
 
 ```bash
 docker compose up -d
-mvn -f backend/pom.xml -pl fu-server -am -DskipTests package
-java -jar backend/fu-server/target/fu-server.jar --spring.profiles.active=local
+mvn -f backend/pom.xml -pl crdp-server -am -DskipTests package
+java -jar backend/crdp-server/target/crdp-server.jar --spring.profiles.active=local
 ```
 
 ```bash
@@ -64,7 +64,7 @@ pnpm install
 pnpm dev
 ```
 
-后端默认剖面是 `local`。另外还有 `dev`、`test`、`prod`。`prod` 不带默认口令，也不跑演示种子，并且拒绝 `fu.crypto.mode=local`。
+后端默认剖面是 `local`。另外还有 `dev`、`test`、`prod`。`prod` 不带默认口令，也不跑演示种子，并且拒绝 `crdp.crypto.mode=local`。
 
 ## 虚构演示账号
 
@@ -79,7 +79,7 @@ pnpm dev
 
 医院账号不能打开平台接口，反过来也不行。租户编码不存在、账号不存在、密码错误的提示相同。
 
-本地数据库口令写在 `docker-compose.yml` 里，用户 `fu_app`，口令 `DevOnly#app2026`，root 口令 `DevOnly#root2026`。它们只用于本机，不能拿到生产。
+本地数据库口令写在 `docker-compose.yml` 里，用户 `crdp_app`，口令 `DevOnly#app2026`，root 口令 `DevOnly#root2026`。它们只用于本机，不能拿到生产。
 
 ## 常用检查
 
@@ -106,12 +106,12 @@ cd frontend && pnpm lint && pnpm test && pnpm build
 给以后的华为云 CCE 用，仓库里没有云账号。
 
 ```bash
-docker build -f backend/Dockerfile -t fu-server:local backend
-docker build -f frontend/apps/web-hospital/Dockerfile -t fu-web-hospital:local frontend
-docker build -f frontend/apps/web-platform/Dockerfile -t fu-web-platform:local frontend
+docker build -f backend/Dockerfile -t crdp-server:local backend
+docker build -f frontend/apps/web-hospital/Dockerfile -t crdp-web-hospital:local frontend
+docker build -f frontend/apps/web-platform/Dockerfile -t crdp-web-platform:local frontend
 ```
 
-后端容器监听 18080，前端容器以非 root 用户监听 8080，并把 `/api` 转到名为 `fu-server` 的服务。生产剖面要自己注入 `FU_PLATFORM_JDBC_URL`、`FU_PLATFORM_DB_USERNAME`、`FU_PLATFORM_DB_PASSWORD`、`FU_REDIS_HOST`。
+后端容器监听 18080，前端容器以非 root 用户监听 8080，并把 `/api` 转到名为 `crdp-server` 的服务。生产剖面要自己注入 `CRDP_PLATFORM_JDBC_URL`、`CRDP_PLATFORM_DB_USERNAME`、`CRDP_PLATFORM_DB_PASSWORD`、`CRDP_REDIS_HOST`。
 
 ## 还没做
 

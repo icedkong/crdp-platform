@@ -4,20 +4,20 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>com.fu</groupId>
-  <artifactId>fu-parent</artifactId>
+  <groupId>com.crdp</groupId>
+  <artifactId>crdp-parent</artifactId>
   <version>0.1.0-SNAPSHOT</version>
   <packaging>pom</packaging>
-  <name>fu-parent</name>
+  <name>crdp-parent</name>
   <description>临床科研数据一体化平台（crdp）· M0 工程骨架</description>
 
   <modules>
-    <module>fu-framework</module>
-    <module>fu-platform</module>
-    <module>fu-system</module>
-    <module>fu-form</module>
-    <module>fu-followup</module>
-    <module>fu-server</module>
+    <module>crdp-framework</module>
+    <module>crdp-platform</module>
+    <module>crdp-system</module>
+    <module>crdp-form</module>
+    <module>crdp-followup</module>
+    <module>crdp-server</module>
   </modules>
 
   <properties>
@@ -44,28 +44,28 @@
         <scope>import</scope>
       </dependency>
       <dependency>
-        <groupId>com.fu</groupId>
-        <artifactId>fu-framework</artifactId>
+        <groupId>com.crdp</groupId>
+        <artifactId>crdp-framework</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>com.fu</groupId>
-        <artifactId>fu-platform</artifactId>
+        <groupId>com.crdp</groupId>
+        <artifactId>crdp-platform</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>com.fu</groupId>
-        <artifactId>fu-system</artifactId>
+        <groupId>com.crdp</groupId>
+        <artifactId>crdp-system</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>com.fu</groupId>
-        <artifactId>fu-form</artifactId>
+        <groupId>com.crdp</groupId>
+        <artifactId>crdp-form</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>com.fu</groupId>
-        <artifactId>fu-followup</artifactId>
+        <groupId>com.crdp</groupId>
+        <artifactId>crdp-followup</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>

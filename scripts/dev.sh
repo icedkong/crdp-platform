@@ -23,9 +23,9 @@ done
 
 if ! curl -sf "http://127.0.0.1:18080/actuator/health" >/dev/null 2>&1; then
   echo "打包并启动后端..."
-  mvn -B -f "$ROOT/backend/pom.xml" -pl fu-server -am -DskipTests package
-  java -jar "$ROOT/backend/fu-server/target/fu-server.jar" --spring.profiles.active=local >"$ROOT/backend/fu-server.log" 2>&1 &
-  echo $! >"$ROOT/backend/fu-server.pid"
+  mvn -B -f "$ROOT/backend/pom.xml" -pl crdp-server -am -DskipTests package
+  java -jar "$ROOT/backend/crdp-server/target/crdp-server.jar" --spring.profiles.active=local >"$ROOT/backend/crdp-server.log" 2>&1 &
+  echo $! >"$ROOT/backend/crdp-server.pid"
   for _ in $(seq 1 60); do
     if curl -sf "http://127.0.0.1:18080/actuator/health" >/dev/null 2>&1; then
       break

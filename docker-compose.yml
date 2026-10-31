@@ -7,8 +7,8 @@ services:
       - --innodb-buffer-pool-size=256M
     environment:
       MYSQL_ROOT_PASSWORD: "DevOnly#root2026"
-      MYSQL_DATABASE: fu_platform
-      MYSQL_USER: fu_app
+      MYSQL_DATABASE: crdp_platform
+      MYSQL_USER: crdp_app
       MYSQL_PASSWORD: "DevOnly#app2026"
     ports:
       - "13306:3306"

@@ -3,7 +3,7 @@ import { authBase } from '@crdp/api'
 import { defineStore } from 'pinia'
 import { request, setAuthToken } from './http'
 
-const TOKEN_KEY = 'fu_token'
+const TOKEN_KEY = 'crdp_token'
 
 export const useSessionStore = defineStore('session', {
   state: () => ({

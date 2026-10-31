@@ -1,0 +1,67 @@
+spring:
+  application:
+    name: crdp
+  autoconfigure:
+    exclude: org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
+  profiles:
+    default: local
+  jackson:
+    time-zone: Asia/Shanghai
+  flyway:
+    enabled: false
+  data:
+    redis:
+      timeout: 2s
+
+server:
+  port: 18080
+  forward-headers-strategy: framework
+  error:
+    include-message: never
+    include-stacktrace: never
+    whitelabel:
+      enabled: false
+
+management:
+  info:
+    env:
+      enabled: true
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+  health:
+    db:
+      enabled: false
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+  global-config:
+    db-config:
+      id-type: auto
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+
+crdp:
+  security:
+    session-ttl-hours: 8
+    login-failure-limit: 8
+    login-failure-window-seconds: 600
+  cors:
+    allowed-origin-patterns:
+      - http://127.0.0.1:*
+      - http://localhost:*
+
+info:
+  app:
+    name: 临床科研数据一体化平台
+    description: 临床科研数据一体化平台（crdp）· M0 工程骨架

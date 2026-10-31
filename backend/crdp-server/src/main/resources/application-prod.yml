@@ -1,0 +1,17 @@
+# 生产不提供默认口令。密钥走环境变量，不进镜像。
+crdp:
+  crypto:
+    mode: kms
+  platform:
+    datasource:
+      url: ${CRDP_PLATFORM_JDBC_URL}
+      username: ${CRDP_PLATFORM_DB_USERNAME}
+      password: ${CRDP_PLATFORM_DB_PASSWORD}
+  cors:
+    allowed-origin-patterns: ${CRDP_CORS_ORIGINS:https://*.example.com}
+
+spring:
+  data:
+    redis:
+      host: ${CRDP_REDIS_HOST}
+      port: ${CRDP_REDIS_PORT:6379}

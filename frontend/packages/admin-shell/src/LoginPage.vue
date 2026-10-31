@@ -10,7 +10,7 @@ const route = useRoute()
 const loading = ref(false)
 const error = ref('')
 const form = reactive({
-  tenantCode: localStorage.getItem('fu_tenant') || 'demoa',
+  tenantCode: localStorage.getItem('crdp_tenant') || 'demoa',
   username: session.mode === 'hospital' ? 'nurse.demo' : 'platform.admin',
   password: '',
 })
@@ -20,7 +20,7 @@ async function submit() {
   loading.value = true
   try {
     if (session.mode === 'hospital') {
-      localStorage.setItem('fu_tenant', form.tenantCode.trim())
+      localStorage.setItem('crdp_tenant', form.tenantCode.trim())
     }
     await session.login({
       tenantCode: session.mode === 'hospital' ? form.tenantCode.trim() : undefined,
