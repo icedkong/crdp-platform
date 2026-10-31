@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 
 import com.crdp.framework.tenant.TenantContext;
 import com.crdp.framework.web.ApiException;
+import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -56,6 +57,28 @@ class EnvelopeCryptoServiceTest {
         assertNotEquals(
                 crypto.blindIndex("blind", "MR-DEMO-001"),
                 crypto.blindIndex("file", "MR-DEMO-001"));
+    }
+
+    @Test
+    void sameValueInDifferentWritingsProducesTheSameBlindIndex() {
+        freshTenant(1L, "demoa");
+        when(jdbcTemplate.queryForObject(
+                        contains("MAX(key_version)"), eq(Integer.class), eq("blind")))
+                .thenReturn(1);
+        when(jdbcTemplate.queryForList(
+                        contains("SELECT wrapped_key"), eq(String.class), eq("blind"), eq(1)))
+                .thenAnswer(invocation -> List.of(keyMaterial()));
+
+        String first = crypto.blindIndex("blind", "138 0013-8000");
+        String second = crypto.blindIndex("blind", "+8613800138000");
+
+        assertEquals(first, second, "不同写法的同一电话必须得到同一盲索引（精确查找命中）");
+    }
+
+    private static String keyMaterial() {
+        GeneratedDataKey generated =
+                new LocalEnvelopeKeyProvider("dev-only-not-a-production-key").generateDataKey();
+        return generated.wrappedKey();
     }
 
     @Test

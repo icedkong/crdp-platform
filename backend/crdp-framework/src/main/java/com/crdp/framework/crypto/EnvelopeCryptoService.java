@@ -67,12 +67,16 @@ public class EnvelopeCryptoService implements CryptoService {
     @Override
     public String blindIndex(String purpose, String value) {
         requirePurpose(purpose);
+        String normalized = BlindIndexNormalizer.normalize(value);
+        if (normalized == null) {
+            return null;
+        }
         SecretKey key = dataKeys.keyFor(purpose, dataKeys.currentVersion(purpose));
         try {
             Mac mac = Mac.getInstance("HmacSHA256");
             mac.init(new javax.crypto.spec.SecretKeySpec(key.getEncoded(), "HmacSHA256"));
             return Base64.getEncoder()
-                    .encodeToString(mac.doFinal(value.getBytes(StandardCharsets.UTF_8)));
+                    .encodeToString(mac.doFinal(normalized.getBytes(StandardCharsets.UTF_8)));
         } catch (GeneralSecurityException ex) {
             throw new ApiException(500, 50000, "系统繁忙，请稍后再试");
         }
