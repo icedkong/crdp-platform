@@ -1,0 +1,35 @@
+# Java
+backend/**/target/
+backend/fu-server.log
+backend/fu-server.pid
+*.class
+*.log
+hs_err_pid*
+
+# Node
+frontend/node_modules/
+frontend/**/node_modules/
+frontend/**/dist/
+frontend/**/.vite/
+*.tsbuildinfo
+
+# Env and local data
+.env
+.env.*
+!.env.example
+.DS_Store
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Docker volumes
+.docker-data/
+
+# Uploaded source documents (not part of the skeleton)
+uploads/
+
+# Agent
+.cursor/
+agent-tools/
