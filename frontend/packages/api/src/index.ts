@@ -12,6 +12,12 @@ export interface ApiResponse<T> {
  * 需要双因素时 token 为 null，改发 challengeId 与可用方式（methods，当前只有 "SMS"），
  * 第二步 POST /auth/2fa/verify 通过后才换会话令牌。
  */
+/** E04-T05：图形验证码取图结果（image 为 PNG 的 data URL，<img :src> 直用）。 */
+export interface CaptchaImage {
+  captchaId: string;
+  image: string;
+}
+
 export interface LoginResult {
   challengeId?: null | string;
   expiresInSeconds?: null | number;
@@ -22,6 +28,16 @@ export interface LoginResult {
 
 export interface Me {
   displayName: string;
+  /**
+   * E04-T05 / PLT-AUTH-010：初始 / 重置 / 到期密码为 true——除改密 / 登出 / me 外
+   * 的接口一律 40305，前端跳 /password/change（pages.md §1）。
+   */
+  mustChangePassword?: boolean;
+  /**
+   * E04-T05 / PLT-AUTH-006：密码到期剩余天数，仅在到期提醒窗口（默认 7 天）内返回，
+   * 可能为负（已过期，此时 mustChangePassword 必为 true）。
+   */
+  passwordExpiresInDays?: null | number;
   permissionVersion: number;
   roles: string[];
   sessionType: 'HOSPITAL' | 'PLATFORM';
@@ -68,12 +84,35 @@ export {
 } from './auth-flow';
 
 export type { TwoFactorChallenge } from './auth-flow';
+
 export {
   EXPIRE_TYPE_TEXT,
   TENANT_STATUS_OPTIONS,
   TENANT_STATUS_TEXT,
   tenantStatusText,
 } from './enums';
+export {
+  errorBody,
+  lockedMessage,
+  loginRejectionInfo,
+  remainingAttemptsMessage,
+} from './login-rejection';
+
+export type { LoginRejectionInfo } from './login-rejection';
+export {
+  PASSWORD_EXPIRY_REMIND_DAYS,
+  PASSWORD_HISTORY_COUNT,
+  PASSWORD_MIN_CATEGORIES,
+  PASSWORD_MIN_LENGTH,
+  PASSWORD_VALID_DAYS,
+  passwordCategoryCount,
+  passwordPolicyViolations,
+  passwordRuleItems,
+} from './password-policy';
+export type {
+  PasswordPolicyOptions,
+  PasswordRuleItem,
+} from './password-policy';
 
 export { menuNodesToRoutes, menuNodeToRoute, toIconifyIcon } from './vben-menu';
 export type { VbenMenuRoute } from './vben-menu';

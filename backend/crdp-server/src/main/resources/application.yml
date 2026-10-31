@@ -54,8 +54,18 @@ springdoc:
 crdp:
   security:
     session-ttl-hours: 8
-    login-failure-limit: 8
-    login-failure-window-seconds: 600
+    # E04-T05 / PLT-AUTH-006、007、010（等保三级参数，见 platform-spec 第 7 章安全参数表）
+    login-failure-limit: 5            # 连续失败 5 次锁定
+    login-failure-window-seconds: 600 # 锁定前计数窗口
+    login-lock-seconds: 1800          # 锁定 30 分钟，管理员可提前解锁
+    captcha-threshold: 3              # 连续失败 3 次触发图形验证码
+    captcha-ttl-seconds: 300          # 图形验证码 5 分钟有效，一次一密
+    captcha-ip-hourly-limit: 60       # 同一 IP 每小时取图上限（公开口限流）
+    password-min-length: 8            # 平台下限，租户可加严（cfg_param security.password.min-length）
+    password-min-categories: 3        # 大写/小写/数字/特殊字符至少 3 类
+    password-history-count: 5         # 不得与最近 5 次密码相同
+    password-valid-days: 90           # 密码有效期 90 天，到期强制修改
+    password-expiry-remind-days: 7    # 到期前 7 天提醒
     # E04-T04 / PLT-AUTH-002、003：短信验证码与双因素（等保三级参数，见 platform-spec 第 7 章）
     sms-code-ttl-seconds: 300       # 验证码 5 分钟有效
     sms-resend-cooldown-seconds: 60 # 重发间隔

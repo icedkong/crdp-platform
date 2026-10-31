@@ -16,6 +16,7 @@ import static org.mockito.Mockito.when;
 import com.crdp.framework.audit.AuditLogger;
 import com.crdp.framework.crypto.CryptoService;
 import com.crdp.framework.notify.SmsCodeSender;
+import com.crdp.framework.security.CaptchaStore;
 import com.crdp.framework.security.ScopeSnapshot;
 import com.crdp.framework.security.SecurityProperties;
 import com.crdp.framework.security.SessionPrincipal;
@@ -32,6 +33,7 @@ import com.crdp.system.user.HospitalAccount;
 import com.crdp.system.user.HospitalDirectory;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -45,7 +47,9 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 
 /**
  * E04-T02 / PLT-AUTH-001、PLT-AUTH-008：医院端账号密码登录成功下发不透明令牌， 会话保存在服务端，删除即吊销。 登录失败的各类原因返回同一 code 与
- * message（防探测）。锁定阈值与图形验证码属 E04-T05。 E04-T03 / PLT-AUTH-005：平台端独立登录，平台账号与医院账号分库校验、互不能在对方端登录。
+ * message（防探测）。 E04-T03 / PLT-AUTH-005：平台端独立登录，平台账号与医院账号分库校验、互不能在对方端登录。 E04-T05 /
+ * PLT-AUTH-006、007、010：连续失败 3 次触发图形验证码、5 次锁定（42900 带剩余秒数）； 初始 / 重置 / 到期密码的会话带
+ * mustChangePassword，双因素第二步换发令牌时保留该标记。
  */
 class AuthServiceTest {
 
@@ -76,6 +80,7 @@ class AuthServiceTest {
     private final AuditLogger auditLogger = mock(AuditLogger.class);
     private final TenantRoutingDataSource routing = mock(TenantRoutingDataSource.class);
     private final CryptoService cryptoService = mock(CryptoService.class);
+    private final CaptchaStore captchaStore = mock(CaptchaStore.class);
     private final java.util.Map<String, String> sentCodes = new java.util.HashMap<>();
     private final SmsCodeSender smsCodeSender = mock(SmsCodeSender.class);
 
@@ -117,6 +122,42 @@ class AuthServiceTest {
                         })
                 .when(redis)
                 .delete(anyString());
+        @SuppressWarnings("unchecked")
+        org.springframework.data.redis.core.SetOperations<String, String> setOps =
+                mock(org.springframework.data.redis.core.SetOperations.class);
+        when(redis.opsForSet()).thenReturn(setOps);
+        java.util.Map<String, java.util.Set<String>> redisSets = new HashMap<>();
+        doAnswer(
+                        inv -> {
+                            redisSets
+                                    .computeIfAbsent(
+                                            inv.getArgument(0, String.class),
+                                            k -> new java.util.HashSet<>())
+                                    .add(inv.getArgument(1, String.class));
+                            return 1L;
+                        })
+                .when(setOps)
+                .add(anyString(), anyString());
+        when(setOps.members(anyString()))
+                .thenAnswer(
+                        inv -> {
+                            java.util.Set<String> members =
+                                    redisSets.get(inv.getArgument(0, String.class));
+                            return members == null
+                                    ? java.util.Set.of()
+                                    : java.util.Set.copyOf(members);
+                        });
+        doAnswer(
+                        inv -> {
+                            java.util.Set<String> members =
+                                    redisSets.get(inv.getArgument(0, String.class));
+                            if (members != null) {
+                                members.remove(inv.getArgument(1, String.class));
+                            }
+                            return 1L;
+                        })
+                .when(setOps)
+                .remove(anyString(), anyString());
 
         properties = new SecurityProperties();
         properties.setSessionTtlHours(8);
@@ -142,6 +183,17 @@ class AuthServiceTest {
                 .sendLoginCode(
                         org.mockito.ArgumentMatchers.anyString(),
                         org.mockito.ArgumentMatchers.anyString());
+        // 图形验证码桩：与真实 CaptchaStore 同口径——缺参即 40102，非空即通过
+        doAnswer(
+                        inv -> {
+                            if (inv.getArgument(0, String.class) == null
+                                    || inv.getArgument(1, String.class) == null) {
+                                throw new ApiException(401, 40102, "验证码错误或已过期");
+                            }
+                            return null;
+                        })
+                .when(captchaStore)
+                .verify(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
         service =
                 new AuthService(
                         platformMapper,
@@ -157,7 +209,8 @@ class AuthServiceTest {
                         challengeStore,
                         smsCodeSender,
                         cryptoService,
-                        properties);
+                        properties,
+                        captchaStore);
 
         when(tenantLookup.findByCode(TENANT_CODE))
                 .thenReturn(
@@ -194,6 +247,16 @@ class AuthServiceTest {
     }
 
     private static HospitalAccount account(String status, String passwordHash, String phone) {
+        return account(status, passwordHash, phone, false, LocalDateTime.now().minusDays(1));
+    }
+
+    /** E04-T05：可指定强制改密标记与密码最后修改时间（有效期 90 天从此起算）。 */
+    private static HospitalAccount account(
+            String status,
+            String passwordHash,
+            String phone,
+            boolean mustChangePassword,
+            LocalDateTime passwordUpdatedAt) {
         return new HospitalAccount(
                 100L,
                 USERNAME,
@@ -201,6 +264,8 @@ class AuthServiceTest {
                 passwordHash,
                 status,
                 phone,
+                mustChangePassword,
+                passwordUpdatedAt,
                 List.of("FOLLOWUP_DOCTOR"),
                 List.of(10L, 20L),
                 List.of(),
@@ -213,6 +278,16 @@ class AuthServiceTest {
 
     private static PlatformAccountRow platformAccount(
             String status, String passwordHash, String phone) {
+        return platformAccount(
+                status, passwordHash, phone, false, LocalDateTime.now().minusDays(1));
+    }
+
+    private static PlatformAccountRow platformAccount(
+            String status,
+            String passwordHash,
+            String phone,
+            boolean mustChangePassword,
+            LocalDateTime passwordUpdatedAt) {
         PlatformAccountRow row = new PlatformAccountRow();
         row.setId(PLATFORM_ACCOUNT_ID);
         row.setUsername(PLATFORM_USERNAME);
@@ -220,6 +295,8 @@ class AuthServiceTest {
         row.setPasswordHash(passwordHash);
         row.setStatus(status);
         row.setPhone(phone);
+        row.setMustChangePassword(mustChangePassword);
+        row.setPasswordUpdatedAt(passwordUpdatedAt);
         return row;
     }
 
@@ -236,7 +313,12 @@ class AuthServiceTest {
 
     private ApiException loginRejected(String password) {
         return assertThrows(
-                ApiException.class, () -> service.loginHospital(TENANT_CODE, USERNAME, password));
+                ApiException.class,
+                () -> service.loginHospital(TENANT_CODE, USERNAME, password, null));
+    }
+
+    private static AuthService.CaptchaInput captcha() {
+        return new AuthService.CaptchaInput("cap-1", "AB3D");
     }
 
     /** 发一次验证码并返回明文（模拟用户收到短信）。 */
@@ -254,7 +336,7 @@ class AuthServiceTest {
     @Test
     void successfulLoginIssuesAnOpaqueBearerTokenStoredServerSide() {
         AuthService.LoginResult result =
-                service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD);
+                service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null);
 
         assertEquals("Bearer", result.tokenType());
         assertEquals(Duration.ofHours(8).toSeconds(), result.expiresInSeconds());
@@ -275,8 +357,8 @@ class AuthServiceTest {
 
     @Test
     void everyLoginIssuesAFreshToken() {
-        String first = service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD).token();
-        String second = service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD).token();
+        String first = service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null).token();
+        String second = service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null).token();
         assertNotEquals(first, second, "两次登录下发不同令牌");
         assertTrue(sessionStore.find(first).isPresent());
         assertTrue(sessionStore.find(second).isPresent());
@@ -293,16 +375,20 @@ class AuthServiceTest {
         ApiException unknownTenant =
                 assertThrows(
                         ApiException.class,
-                        () -> service.loginHospital("nosuch", USERNAME, RIGHT_PASSWORD));
+                        () -> service.loginHospital("nosuch", USERNAME, RIGHT_PASSWORD, null));
         ApiException wrongPassword = loginRejected(WRONG_PASSWORD);
         ApiException unknownUser =
                 assertThrows(
                         ApiException.class,
-                        () -> service.loginHospital(TENANT_CODE, "nobody.demo", RIGHT_PASSWORD));
+                        () ->
+                                service.loginHospital(
+                                        TENANT_CODE, "nobody.demo", RIGHT_PASSWORD, null));
         ApiException missingHash =
                 assertThrows(
                         ApiException.class,
-                        () -> service.loginHospital(TENANT_CODE, "ghost.demo", RIGHT_PASSWORD));
+                        () ->
+                                service.loginHospital(
+                                        TENANT_CODE, "ghost.demo", RIGHT_PASSWORD, null));
 
         for (ApiException ex : List.of(unknownTenant, wrongPassword, unknownUser, missingHash)) {
             assertEquals(401, ex.httpStatus());
@@ -340,35 +426,191 @@ class AuthServiceTest {
         assertEquals(50002, ex.code());
     }
 
+    // ---- E04-T05 / PLT-AUTH-007：图形验证码与锁定 ----
+
     @Test
-    void repeatedFailuresEventuallyReturn42900() {
-        when(passwordEncoder.matches(anyString(), anyString())).thenReturn(false);
-        for (int i = 0; i < 8; i++) {
+    void failuresAnnounceRemainingAttemptsAndCaptchaRequirementInData() {
+        ApiException first = loginRejected(WRONG_PASSWORD);
+        assertEquals(40101, first.code());
+        assertEquals(
+                Map.of("captchaRequired", false, "remainingAttempts", 4),
+                first.data(),
+                "首次失败提示剩余次数，未到验证码阈值");
+
+        loginRejected(WRONG_PASSWORD);
+        ApiException third = loginRejected(WRONG_PASSWORD);
+        assertEquals(40101, third.code());
+        assertEquals(
+                Map.of("captchaRequired", true, "remainingAttempts", 2),
+                third.data(),
+                "连续失败 3 次后要求图形验证码");
+    }
+
+    @Test
+    void captchaIsRequiredAfterThreeFailuresAndMissingCaptchaReturns40102() {
+        loginRejected(WRONG_PASSWORD);
+        loginRejected(WRONG_PASSWORD);
+        loginRejected(WRONG_PASSWORD);
+
+        // 第 4 次尝试即使口令正确，不带验证码也直接 40102（不区分口令对错，防探测）
+        ApiException missing =
+                assertThrows(
+                        ApiException.class,
+                        () -> service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null));
+        assertEquals(40102, missing.code());
+
+        // 带上验证码且口令正确：登录成功并清零失败计数（未达锁定阈值 5）
+        AuthService.LoginResult ok =
+                service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, captcha());
+        assertNotNull(ok.token(), "验证码与口令都对时正常发令牌");
+
+        ApiException afterSuccess = loginRejected(WRONG_PASSWORD);
+        assertEquals(40101, afterSuccess.code(), "成功登录清零失败计数");
+    }
+
+    @Test
+    void wrongCaptchaCountsTowardTheLockout() {
+        for (int i = 0; i < 3; i++) {
             assertEquals(40101, loginRejected(WRONG_PASSWORD).code());
         }
-        ApiException limited = loginRejected(WRONG_PASSWORD);
+        // 进入验证码模式后：不带验证码的尝试计 40102 并继续计入失败
+        for (int i = 0; i < 2; i++) {
+            ApiException missing =
+                    assertThrows(
+                            ApiException.class,
+                            () ->
+                                    service.loginHospital(
+                                            TENANT_CODE, USERNAME, RIGHT_PASSWORD, null));
+            assertEquals(40102, missing.code());
+        }
+        // 累计 5 次失败（锁定阈值）：即使验证码与口令都对也被锁定
+        ApiException locked =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.loginHospital(
+                                        TENANT_CODE, USERNAME, RIGHT_PASSWORD, captcha()));
+        assertEquals(42900, locked.code(), "锁定后不发令牌");
+    }
+
+    @Test
+    void repeatedFailuresLockAtFiveAttemptsForThirtyMinutes() {
+        when(passwordEncoder.matches(anyString(), anyString())).thenReturn(false);
+        for (int i = 0; i < 5; i++) {
+            ApiException ex =
+                    assertThrows(
+                            ApiException.class,
+                            () ->
+                                    service.loginHospital(
+                                            TENANT_CODE, USERNAME, WRONG_PASSWORD, captcha()));
+            assertEquals(40101, ex.code(), "带上图形验证码后口令错误仍是 40101");
+        }
+        ApiException limited =
+                assertThrows(
+                        ApiException.class,
+                        () -> service.loginHospital(TENANT_CODE, USERNAME, WRONG_PASSWORD, null));
         assertEquals(429, limited.httpStatus());
         assertEquals(42900, limited.code());
+        assertEquals("失败次数过多，账号已锁定，请 30 分钟后再试或联系管理员解锁", limited.getMessage());
+        assertEquals(
+                Map.of("lockedSeconds", 1800L),
+                limited.data(),
+                "锁定剩余秒数放进 data（mock Redis 无 TTL，按整段时长兜底）");
     }
 
     @Test
     void successfulLoginClearsTheFailureCounterAndWritesAudit() {
         when(passwordEncoder.matches(anyString(), anyString())).thenReturn(false);
-        for (int i = 0; i < 7; i++) {
-            assertEquals(40101, loginRejected(WRONG_PASSWORD).code());
-        }
+        loginRejected(WRONG_PASSWORD);
+        loginRejected(WRONG_PASSWORD);
         when(passwordEncoder.matches(RIGHT_PASSWORD, HASH)).thenReturn(true);
 
-        service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD);
+        service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null);
 
         verify(auditLogger).loginAttempt(USERNAME, true, "ok");
         ApiException again = loginRejected(WRONG_PASSWORD);
         assertEquals(40101, again.code(), "成功登录必须清零失败计数：不清零时计数已达上限，这里会是 42900");
     }
 
+    // ---- E04-T05 / PLT-AUTH-010：初始 / 重置 / 到期密码强制改密 ----
+
+    @Test
+    void flaggedAccountGetsAMustChangePasswordSession() {
+        when(hospitalDirectory.find(USERNAME))
+                .thenReturn(
+                        Optional.of(
+                                account(
+                                        "ENABLED",
+                                        HASH,
+                                        PHONE_CIPHER,
+                                        true,
+                                        LocalDateTime.now().minusDays(1))));
+
+        String token = service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null).token();
+
+        SessionPrincipal principal = sessionStore.find(token).orElseThrow();
+        assertTrue(principal.mustChangePassword(), "初始/重置密码的会话带强制改密标记");
+        assertNotNull(principal.passwordExpiresAtEpochSecond());
+    }
+
+    @Test
+    void expiredPasswordForcesAChangeEvenWithoutTheFlag() {
+        when(hospitalDirectory.find(USERNAME))
+                .thenReturn(
+                        Optional.of(
+                                account(
+                                        "ENABLED",
+                                        HASH,
+                                        PHONE_CIPHER,
+                                        false,
+                                        LocalDateTime.now().minusDays(91))));
+
+        String token = service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null).token();
+
+        assertTrue(
+                sessionStore.find(token).orElseThrow().mustChangePassword(),
+                "密码超过 90 天有效期，登录即强制改密（PLT-AUTH-006）");
+    }
+
+    @Test
+    void freshPasswordSessionDoesNotRequireAChange() {
+        String token = service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null).token();
+        SessionPrincipal principal = sessionStore.find(token).orElseThrow();
+        assertFalseMustChange(principal);
+        long expiresAt = principal.passwordExpiresAtEpochSecond();
+        assertNotNull(expiresAt, "会话带密码到期时间，me 据此做到期前 7 天提醒");
+        long now = java.time.Instant.now().getEpochSecond();
+        // 演示账号 passwordUpdatedAt = 昨天，到期时间 ≈ 89 天后（= 最后改密时间 + 90 天）
+        assertTrue(
+                expiresAt - now > 88L * 86_400 && expiresAt - now <= 90L * 86_400,
+                "到期时间 = 最后改密时间 + 90 天");
+    }
+
+    private static void assertFalseMustChange(SessionPrincipal principal) {
+        assertTrue(!principal.mustChangePassword(), "正常会话不带强制改密标记");
+    }
+
+    @Test
+    void platformFlaggedAccountAlsoGetsAMustChangePasswordSession() {
+        when(platformMapper.findAccount(PLATFORM_USERNAME))
+                .thenReturn(
+                        platformAccount(
+                                "ENABLED",
+                                PLATFORM_HASH,
+                                PLATFORM_PHONE_CIPHER,
+                                true,
+                                LocalDateTime.now().minusDays(1)));
+
+        String token = service.loginPlatform(PLATFORM_USERNAME, RIGHT_PASSWORD, null).token();
+
+        assertTrue(sessionStore.find(token).orElseThrow().mustChangePassword());
+    }
+
+    // ---- E04-T02 基线 ----
+
     @Test
     void logoutRevokesTheTokenOnTheServerSide() {
-        String token = service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD).token();
+        String token = service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null).token();
         assertTrue(sessionStore.find(token).isPresent(), "登录后会话存在");
 
         service.logout(token);
@@ -378,7 +620,7 @@ class AuthServiceTest {
 
     @Test
     void auditLoginAttemptCarriesTheTenantContext() {
-        service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD);
+        service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null);
         ArgumentCaptor<String> message = ArgumentCaptor.forClass(String.class);
         verify(auditLogger)
                 .loginAttempt(
@@ -392,7 +634,8 @@ class AuthServiceTest {
 
     @Test
     void platformLoginIssuesAnOpaquePlatformSessionWithoutTenant() {
-        AuthService.LoginResult result = service.loginPlatform(PLATFORM_USERNAME, RIGHT_PASSWORD);
+        AuthService.LoginResult result =
+                service.loginPlatform(PLATFORM_USERNAME, RIGHT_PASSWORD, null);
 
         assertEquals("Bearer", result.tokenType());
         assertEquals(Duration.ofHours(8).toSeconds(), result.expiresInSeconds());
@@ -424,19 +667,20 @@ class AuthServiceTest {
 
         ApiException unknownUser =
                 assertThrows(
-                        ApiException.class, () -> service.loginPlatform("nobody", RIGHT_PASSWORD));
+                        ApiException.class,
+                        () -> service.loginPlatform("nobody", RIGHT_PASSWORD, null));
         ApiException wrongPassword =
                 assertThrows(
                         ApiException.class,
-                        () -> service.loginPlatform(PLATFORM_USERNAME, WRONG_PASSWORD));
+                        () -> service.loginPlatform(PLATFORM_USERNAME, WRONG_PASSWORD, null));
         ApiException missingHash =
                 assertThrows(
                         ApiException.class,
-                        () -> service.loginPlatform("ghost.admin", RIGHT_PASSWORD));
+                        () -> service.loginPlatform("ghost.admin", RIGHT_PASSWORD, null));
         ApiException disabled =
                 assertThrows(
                         ApiException.class,
-                        () -> service.loginPlatform("blocked.admin", RIGHT_PASSWORD));
+                        () -> service.loginPlatform("blocked.admin", RIGHT_PASSWORD, null));
 
         for (ApiException ex : List.of(unknownUser, wrongPassword, missingHash, disabled)) {
             assertEquals(401, ex.httpStatus());
@@ -450,7 +694,8 @@ class AuthServiceTest {
         // 医院端账号只存在于租户库，平台库查无此账号，统一 40101
         ApiException ex =
                 assertThrows(
-                        ApiException.class, () -> service.loginPlatform(USERNAME, RIGHT_PASSWORD));
+                        ApiException.class,
+                        () -> service.loginPlatform(USERNAME, RIGHT_PASSWORD, null));
         assertEquals(40101, ex.code());
         assertEquals("租户、账号或密码不正确", ex.getMessage());
     }
@@ -463,7 +708,7 @@ class AuthServiceTest {
                         ApiException.class,
                         () ->
                                 service.loginHospital(
-                                        TENANT_CODE, PLATFORM_USERNAME, RIGHT_PASSWORD));
+                                        TENANT_CODE, PLATFORM_USERNAME, RIGHT_PASSWORD, null));
         assertEquals(40101, ex.code());
         assertEquals("租户、账号或密码不正确", ex.getMessage());
     }
@@ -471,14 +716,21 @@ class AuthServiceTest {
     @Test
     void platformAndHospitalLoginCountersAreIndependent() {
         when(passwordEncoder.matches(anyString(), anyString())).thenReturn(false);
-        for (int i = 0; i < 8; i++) {
-            assertEquals(40101, loginRejected(WRONG_PASSWORD).code());
+        for (int i = 0; i < 5; i++) {
+            ApiException ex =
+                    assertThrows(
+                            ApiException.class,
+                            () ->
+                                    service.loginHospital(
+                                            TENANT_CODE, USERNAME, WRONG_PASSWORD, captcha()));
+            assertEquals(40101, ex.code(), "带上验证码后仍是口令错误统一拒绝");
         }
         assertEquals(42900, loginRejected(WRONG_PASSWORD).code(), "医院端计数已达上限");
 
         // 两端失败计数按「端 + 账号」分桶：医院端锁死不影响平台端正常登录
         when(passwordEncoder.matches(RIGHT_PASSWORD, PLATFORM_HASH)).thenReturn(true);
-        AuthService.LoginResult result = service.loginPlatform(PLATFORM_USERNAME, RIGHT_PASSWORD);
+        AuthService.LoginResult result =
+                service.loginPlatform(PLATFORM_USERNAME, RIGHT_PASSWORD, null);
         assertEquals("Bearer", result.tokenType());
     }
 
@@ -589,7 +841,7 @@ class AuthServiceTest {
     @Test
     void smsLoginFailureCounterLocksAtTheLimitAndClearsOnSuccess() {
         when(hospitalDirectory.findByPhoneIdx(PHONE_IDX)).thenReturn(Optional.empty());
-        for (int i = 0; i < 7; i++) {
+        for (int i = 0; i < 4; i++) {
             ApiException ex =
                     assertThrows(
                             ApiException.class,
@@ -599,7 +851,7 @@ class AuthServiceTest {
             assertEquals(40101, ex.code());
         }
 
-        // 第 8 次尝试前把账号绑回手机号：本次成功并清零失败计数（阈值 8，7 次后仍放行）
+        // 阈值 5：4 次后仍放行，本次成功并清零失败计数
         when(hospitalDirectory.findByPhoneIdx(PHONE_IDX))
                 .thenReturn(Optional.of(account("ENABLED", HASH)));
         service.loginHospitalWithSms(TENANT_CODE, PHONE, sentCodeAfterSend());
@@ -620,7 +872,8 @@ class AuthServiceTest {
     void platformTwoFactorForcedReturnsChallengeInsteadOfToken() {
         properties.setPlatformTwoFactorEnabled(true);
 
-        AuthService.LoginResult result = service.loginPlatform(PLATFORM_USERNAME, RIGHT_PASSWORD);
+        AuthService.LoginResult result =
+                service.loginPlatform(PLATFORM_USERNAME, RIGHT_PASSWORD, null);
 
         assertNull(result.token(), "密码第一步不发令牌");
         assertNull(result.tokenType());
@@ -634,7 +887,8 @@ class AuthServiceTest {
     @Test
     void platformTwoFactorVerifyIssuesTheSessionToken() {
         properties.setPlatformTwoFactorEnabled(true);
-        String challengeId = service.loginPlatform(PLATFORM_USERNAME, RIGHT_PASSWORD).challengeId();
+        String challengeId =
+                service.loginPlatform(PLATFORM_USERNAME, RIGHT_PASSWORD, null).challengeId();
 
         AuthService.LoginResult verified =
                 service.verifyTwoFactor(challengeId, sentCodes.get(PLATFORM_PHONE));
@@ -651,7 +905,8 @@ class AuthServiceTest {
     @Test
     void platformTwoFactorWrongCodeKeepsTheChallengeForRetry() {
         properties.setPlatformTwoFactorEnabled(true);
-        String challengeId = service.loginPlatform(PLATFORM_USERNAME, RIGHT_PASSWORD).challengeId();
+        String challengeId =
+                service.loginPlatform(PLATFORM_USERNAME, RIGHT_PASSWORD, null).challengeId();
 
         ApiException wrong =
                 assertThrows(
@@ -666,7 +921,8 @@ class AuthServiceTest {
     @Test
     void platformTwoFactorChallengeIsSingleUse() {
         properties.setPlatformTwoFactorEnabled(true);
-        String challengeId = service.loginPlatform(PLATFORM_USERNAME, RIGHT_PASSWORD).challengeId();
+        String challengeId =
+                service.loginPlatform(PLATFORM_USERNAME, RIGHT_PASSWORD, null).challengeId();
         service.verifyTwoFactor(challengeId, sentCodes.get(PLATFORM_PHONE));
 
         ApiException replay =
@@ -694,7 +950,7 @@ class AuthServiceTest {
         ApiException ex =
                 assertThrows(
                         ApiException.class,
-                        () -> service.loginPlatform(PLATFORM_USERNAME, RIGHT_PASSWORD));
+                        () -> service.loginPlatform(PLATFORM_USERNAME, RIGHT_PASSWORD, null));
 
         assertEquals(40101, ex.code(), "未绑定手机号与凭据失败同口径，不外露原因");
     }
@@ -704,7 +960,7 @@ class AuthServiceTest {
         when(hospitalDirectory.twoFactorRoles()).thenReturn(List.of("FOLLOWUP_DOCTOR"));
 
         AuthService.LoginResult first =
-                service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD);
+                service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null);
 
         assertNull(first.token());
         assertNotNull(first.challengeId(), "角色命中双因素时密码第一步只发 challenge");
@@ -718,6 +974,29 @@ class AuthServiceTest {
         assertTrue(session.get().hospital());
         assertEquals(TENANT_CODE, session.get().tenantCode());
         verify(auditLogger).loginAttempt(USERNAME, true, "2fa-ok");
+    }
+
+    @Test
+    void twoFactorStepKeepsTheMustChangePasswordFlag() {
+        // E04-T05 / PLT-AUTH-010：初始密码 + 双因素两步登录，最终会话仍带强制改密标记
+        when(hospitalDirectory.twoFactorRoles()).thenReturn(List.of("FOLLOWUP_DOCTOR"));
+        when(hospitalDirectory.find(USERNAME))
+                .thenReturn(
+                        Optional.of(
+                                account(
+                                        "ENABLED",
+                                        HASH,
+                                        PHONE_CIPHER,
+                                        true,
+                                        LocalDateTime.now().minusDays(1))));
+
+        String challengeId =
+                service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null).challengeId();
+        AuthService.LoginResult second = service.verifyTwoFactor(challengeId, sentCodes.get(PHONE));
+
+        assertTrue(
+                sessionStore.find(second.token()).orElseThrow().mustChangePassword(),
+                "双因素第二步换发的令牌保留强制改密标记");
     }
 
     @Test
@@ -737,7 +1016,7 @@ class AuthServiceTest {
         when(hospitalDirectory.twoFactorRoles()).thenReturn(List.of("TENANT_ADMIN"));
 
         AuthService.LoginResult result =
-                service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD);
+                service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null);
 
         assertNotNull(result.token(), "未命中配置角色的账号不触发双因素");
         assertNull(result.challengeId());

@@ -42,6 +42,12 @@ public class TenantOnboardingService {
     private static final int ERROR_MAX_LENGTH = 1000;
     private static final String TENANT_ADMIN_ROLE = "TENANT_ADMIN";
 
+    /**
+     * 解锁 / 重置按钮（tenant:user:reset）在 plt_menu 的固定 id，平台库迁移 V10 新增（E04-T05 / PLT-AUTH-007）。与种子 V100
+     * 直接写死菜单 id 的做法一致（sys_role_menu 无跨库外键）。
+     */
+    private static final int TENANT_ADMIN_RESET_MENU_ID = 311;
+
     /** 开通请求：编码与医院名称必填；首个管理员在开通时提供，也可启用前经 E06 补设。 */
     public record OnboardingRequest(
             String code,
@@ -315,6 +321,22 @@ public class TenantOnboardingService {
                         platform.update(
                                 "INSERT INTO sys_user_role (user_id, role_id) VALUES (?, ?)",
                                 userId,
+                                roleId);
+                    }
+                    // E04-T05 / PLT-AUTH-007：生产不开种子目录，内置管理员角色由这里创建，
+                    // 解锁 / 重置按钮（plt_menu 311，tenant:user:reset，平台库 V10）也随之授予；
+                    // local/dev 的全新租户库另有种子 V102 兜底（种子 V100 建角色晚于 base V7，V7 在新库上插不进去）。
+                    Integer granted =
+                            platform.queryForObject(
+                                    "SELECT COUNT(*) FROM sys_role_menu WHERE role_id = ? AND menu_id = "
+                                            + TENANT_ADMIN_RESET_MENU_ID,
+                                    Integer.class,
+                                    roleId);
+                    if (granted == null || granted == 0) {
+                        platform.update(
+                                "INSERT INTO sys_role_menu (role_id, menu_id) VALUES (?, "
+                                        + TENANT_ADMIN_RESET_MENU_ID
+                                        + ")",
                                 roleId);
                     }
                 });

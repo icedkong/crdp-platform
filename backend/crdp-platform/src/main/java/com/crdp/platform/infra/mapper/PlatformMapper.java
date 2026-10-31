@@ -3,9 +3,11 @@ package com.crdp.platform.infra.mapper;
 import com.crdp.platform.menu.MenuRow;
 import com.crdp.platform.tenant.TenantRecord;
 import java.util.List;
+import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
 @Mapper
 public interface PlatformMapper {
@@ -39,7 +41,8 @@ public interface PlatformMapper {
     @Select(
             """
             SELECT id, username, display_name AS displayName, password_hash AS passwordHash, status,
-                   phone
+                   phone, must_change_password AS mustChangePassword,
+                   password_updated_at AS passwordUpdatedAt
             FROM plt_account
             WHERE username = #{username}
             """)
@@ -49,7 +52,8 @@ public interface PlatformMapper {
     @Select(
             """
             SELECT id, username, display_name AS displayName, password_hash AS passwordHash, status,
-                   phone
+                   phone, must_change_password AS mustChangePassword,
+                   password_updated_at AS passwordUpdatedAt
             FROM plt_account
             WHERE phone_idx = #{phoneIdx}
             """)
@@ -72,4 +76,35 @@ public interface PlatformMapper {
             WHERE ar.account_id = #{accountId}
             """)
     List<Long> accountMenuIds(@Param("accountId") long accountId);
+
+    // ---- E04-T05 / PLT-AUTH-006、010：平台端自助改密 ----
+
+    /** 改密落库：清强制改密标记并把 password_updated_at 推到现在（有效期 90 天从此重算）。 */
+    @Update(
+            """
+            UPDATE plt_account
+            SET password_hash = #{passwordHash}, must_change_password = 0,
+                password_updated_at = #{updatedAt}
+            WHERE id = #{accountId}
+            """)
+    int updateAccountPassword(
+            @Param("accountId") long accountId,
+            @Param("passwordHash") String passwordHash,
+            @Param("updatedAt") java.time.LocalDateTime updatedAt);
+
+    /** 最近若干个历史密码哈希（新到旧），用于「不得与最近 5 次相同」。 */
+    @Select(
+            """
+            SELECT password_hash FROM plt_password_history
+            WHERE account_id = #{accountId}
+            ORDER BY id DESC
+            LIMIT #{limit}
+            """)
+    List<String> accountPasswordHistory(
+            @Param("accountId") long accountId, @Param("limit") int limit);
+
+    @Insert(
+            "INSERT INTO plt_password_history (account_id, password_hash) VALUES (#{accountId}, #{passwordHash})")
+    int insertAccountPasswordHistory(
+            @Param("accountId") long accountId, @Param("passwordHash") String passwordHash);
 }

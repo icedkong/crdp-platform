@@ -59,6 +59,10 @@ function setupAccessGuard(router: Router) {
             preferences.app.defaultHomePath,
         );
       }
+      // E04-T05 / PLT-AUTH-010：改密页是核心路由但要先有令牌（未登录访问回登录页）
+      if (to.path === '/password/change' && !accessStore.accessToken) {
+        return { path: LOGIN_PATH, replace: true };
+      }
       return true;
     }
 

@@ -67,7 +67,9 @@ class TokenAuthenticationFilterTest {
                 List.of("followup:patient:view"),
                 List.of("base"),
                 1L,
-                ScopeSnapshot.allowAll());
+                ScopeSnapshot.allowAll(),
+                false,
+                null);
     }
 
     private static SessionPrincipal platformSession() {
@@ -85,7 +87,9 @@ class TokenAuthenticationFilterTest {
                 List.of("platform:tenant:view"),
                 List.of("base"),
                 1L,
-                ScopeSnapshot.allowAll());
+                ScopeSnapshot.allowAll(),
+                false,
+                null);
     }
 
     /** 在过滤链内快照认证与租户上下文，供断言使用。 */
