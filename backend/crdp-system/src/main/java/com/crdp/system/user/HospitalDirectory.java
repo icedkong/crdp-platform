@@ -18,7 +18,28 @@ public class HospitalDirectory {
     }
 
     public Optional<HospitalAccount> find(String username) {
-        HospitalUserRow row = mapper.findUser(username);
+        return assemble(mapper.findUser(username));
+    }
+
+    /** 按手机号盲索引取账号（E04-T04 / PLT-AUTH-002）。参数是 CryptoService.blindIndex 的结果， 数据库里不落手机号明文。 */
+    public Optional<HospitalAccount> findByPhoneIdx(String phoneIdx) {
+        return assemble(mapper.findUserByPhoneIdx(phoneIdx));
+    }
+
+    /** 双因素按角色配置（PLT-AUTH-003）：cfg_param 里逗号分隔的角色编码，空表示无角色强制。 */
+    public List<String> twoFactorRoles() {
+        String value = mapper.paramValue("security.two-factor.roles");
+        if (value == null || value.isBlank()) {
+            return List.of();
+        }
+        return value.lines()
+                .flatMap(line -> java.util.Arrays.stream(line.split(",")))
+                .map(String::trim)
+                .filter(code -> !code.isEmpty())
+                .toList();
+    }
+
+    private Optional<HospitalAccount> assemble(HospitalUserRow row) {
         if (row == null || row.getId() == null) {
             return Optional.empty();
         }
@@ -41,6 +62,7 @@ public class HospitalDirectory {
                         row.getDisplayName(),
                         row.getPasswordHash(),
                         row.getStatus(),
+                        row.getPhone(),
                         mapper.roles(userId),
                         mapper.menuIds(userId),
                         List.of(),

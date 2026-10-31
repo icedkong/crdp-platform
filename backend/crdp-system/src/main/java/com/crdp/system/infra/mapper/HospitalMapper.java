@@ -10,11 +10,25 @@ public interface HospitalMapper {
 
     @Select(
             """
-            SELECT id, username, display_name AS displayName, password_hash AS passwordHash, status
+            SELECT id, username, display_name AS displayName, password_hash AS passwordHash, status,
+                   phone
             FROM sys_user
             WHERE username = #{username}
             """)
     HospitalUserRow findUser(@Param("username") String username);
+
+    /** 短信验证码登录按手机号盲索引取账号（E04-T04）。phone_idx 是 HMAC，不落明文。 */
+    @Select(
+            """
+            SELECT id, username, display_name AS displayName, password_hash AS passwordHash, status,
+                   phone
+            FROM sys_user
+            WHERE phone_idx = #{phoneIdx}
+            """)
+    HospitalUserRow findUserByPhoneIdx(@Param("phoneIdx") String phoneIdx);
+
+    @Select("SELECT param_value FROM cfg_param WHERE param_key = #{paramKey}")
+    String paramValue(@Param("paramKey") String paramKey);
 
     @Select(
             """

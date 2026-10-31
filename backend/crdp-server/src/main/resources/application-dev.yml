@@ -1,4 +1,7 @@
 crdp:
+  security:
+    # E09-T03 短信通道接入前，开发环境关闭平台强制双因素（同 local）
+    platform-two-factor-enabled: false
   crypto:
     mode: local
     local-key: ${CRDP_CRYPTO_LOCAL_KEY:dev-only-not-a-production-key}

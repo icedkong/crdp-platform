@@ -42,6 +42,33 @@ public class HospitalAuthController {
                 authService.loginHospital(tenantCode, request.username(), request.password()));
     }
 
+    @Operation(summary = "发送医院端登录短信验证码。60 秒冷却；无论手机号是否已绑定均返回成功（防探测）。")
+    @PostMapping("/api/hospital/auth/sms")
+    public ApiResponse<Void> sendLoginSms(
+            @Valid @RequestBody HospitalSmsRequest request,
+            @RequestHeader(value = HttpHeaders.HOST, required = false) String host) {
+        String tenantCode = tenantIdentifier.resolve(host, request.tenantCode());
+        authService.sendHospitalLoginSms(tenantCode, request.phone());
+        return ApiResponse.ok(null);
+    }
+
+    @Operation(summary = "短信验证码登录。手机号需已绑定且本院唯一；验证码 5 分钟内有效。")
+    @PostMapping("/api/hospital/auth/login/sms")
+    public ApiResponse<AuthService.LoginResult> loginBySms(
+            @Valid @RequestBody HospitalSmsLoginRequest request,
+            @RequestHeader(value = HttpHeaders.HOST, required = false) String host) {
+        String tenantCode = tenantIdentifier.resolve(host, request.tenantCode());
+        return ApiResponse.ok(
+                authService.loginHospitalWithSms(tenantCode, request.phone(), request.code()));
+    }
+
+    @Operation(summary = "双因素第二步。密码第一步返回 challengeId 时，验证短信验证码后换会话令牌。")
+    @PostMapping("/api/hospital/auth/2fa/verify")
+    public ApiResponse<AuthService.LoginResult> verifyTwoFactor(
+            @Valid @RequestBody TwoFactorVerifyRequest request) {
+        return ApiResponse.ok(authService.verifyTwoFactor(request.challengeId(), request.code()));
+    }
+
     @PostMapping("/api/hospital/auth/logout")
     public ApiResponse<Void> logout() {
         authService.logout(CurrentSession.requireHospital().token());

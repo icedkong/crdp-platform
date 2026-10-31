@@ -164,8 +164,9 @@ class TenantOnboardingServiceMySqlIT {
                         DB),
                 "租户库已建");
         assertEquals(
-                // E02-T04 时是 1..4；E03-T05 增加租户库 V5（重加密进度表），此处随迁移清单维护
-                List.of("1", "2", "3", "4", "5"),
+                // E02-T04 时是 1..4；E03-T05 增加租户库 V5（重加密进度表）；
+                // E04-T04 增加 V6（账号手机号 + 双因素角色配置），此处随迁移清单维护
+                List.of("1", "2", "3", "4", "5", "6"),
                 root.queryForList(
                         "SELECT version FROM "
                                 + DB

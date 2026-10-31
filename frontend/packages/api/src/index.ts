@@ -7,10 +7,17 @@ export interface ApiResponse<T> {
   traceId: string;
 }
 
+/**
+ * 登录结果（E04-T04 起双端同构）：密码直接通过时 token/tokenType/expiresInSeconds 有值；
+ * 需要双因素时 token 为 null，改发 challengeId 与可用方式（methods，当前只有 "SMS"），
+ * 第二步 POST /auth/2fa/verify 通过后才换会话令牌。
+ */
 export interface LoginResult {
-  expiresInSeconds: number;
-  token: string;
-  tokenType: string;
+  challengeId?: null | string;
+  expiresInSeconds?: null | number;
+  methods?: null | string[];
+  token?: null | string;
+  tokenType?: null | string;
 }
 
 export interface Me {
@@ -53,6 +60,14 @@ export function authBase(mode: SessionMode) {
   return mode === 'hospital' ? '/api/hospital' : '/api/platform';
 }
 
+export {
+  cooldownRemaining,
+  isTwoFactorChallenge,
+  maskPhone,
+  pickTwoFactorChallenge,
+} from './auth-flow';
+
+export type { TwoFactorChallenge } from './auth-flow';
 export {
   EXPIRE_TYPE_TEXT,
   TENANT_STATUS_OPTIONS,

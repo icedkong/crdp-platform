@@ -25,11 +25,18 @@ public class PlatformAuthController {
         this.menuQuery = menuQuery;
     }
 
-    @Operation(summary = "平台端登录。平台账号与医院账号不能混用。")
+    @Operation(summary = "平台端登录。平台账号与医院账号不能混用；强制双因素时返回 challengeId 而不是令牌。")
     @PostMapping("/api/platform/auth/login")
     public ApiResponse<AuthService.LoginResult> login(
             @Valid @RequestBody PlatformLoginRequest request) {
         return ApiResponse.ok(authService.loginPlatform(request.username(), request.password()));
+    }
+
+    @Operation(summary = "平台端双因素第二步。验证短信验证码后换会话令牌（E04-T04 / PLT-AUTH-003、005）。")
+    @PostMapping("/api/platform/auth/2fa/verify")
+    public ApiResponse<AuthService.LoginResult> verifyTwoFactor(
+            @Valid @RequestBody TwoFactorVerifyRequest request) {
+        return ApiResponse.ok(authService.verifyTwoFactor(request.challengeId(), request.code()));
     }
 
     @PostMapping("/api/platform/auth/logout")
