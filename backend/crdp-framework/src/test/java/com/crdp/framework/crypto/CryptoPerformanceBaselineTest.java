@@ -22,8 +22,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
  *
  * <ol>
  *   <li><b>记录基线</b>：对三个代表值（姓名、电话、病案号，均为虚构示例数据）各测 {@value #WARMUP} 次预热 + {@value #MEASURED} 次计量，把
- *       mean / p50 / p99 / max 打印进 surefire 输出，作为后续优化与回退比较的参照（首次基线数字见 PR 描述）。
- *   <li><b>防回退</b>：阈值断言留了约一个数量级的余量（CI 共享 runner 抖动不会误报），只有明显的算法级回退 （例如误把字段加密换成每次派生密钥的慢哈希）才会失败。
+ *       mean / p50 / p99 / max 打印进 surefire 输出，作为后续优化与回退比较的参照（首次基线数字见下方与 PR 描述）。
+ *   <li><b>防回退</b>：阈值按<b>最慢的运行环境</b>（CI 共享 runner）留约 5 倍余量，只有明显的算法级回退（例如误把字段加密换成每次派生密钥的
+ *       口令哈希、每条记录重复加解密多次）才会失败；它不是精确的性能回归检测器。
  * </ol>
  *
  * <p>度量范围是<b>密码算法路径</b>：AES-256-GCM 加解密、HMAC-SHA256 盲索引、密文格式的编解码与密钥的内存缓存 命中。当前实现每次 encrypt
@@ -31,26 +32,32 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * TenantDataKeyService#currentVersion}），本测试用桩代替了这次库访问；线上单条耗时还要加上同机房 MySQL
  * 的一次往返，那部分不属于算法基线。密钥明文只在内存缓存中，与生产语义一致（ADR 0004）。
  *
- * <p>首次基线（2026-11-01，macOS arm64，Homebrew OpenJDK 21.0.13，5,000 次/值）：
+ * <p>首次基线（5,000 次/值）：
  *
  * <ul>
- *   <li>encrypt：mean 6–22µs，p99 7–80µs（中文名最长、ASCII 病案号最短）
- *   <li>decrypt：mean 3–6µs，p99 2.5–22µs
- *   <li>blindIndex：mean 6–17µs，p99 28–58µs
+ *   <li>本地（2026-11-01，macOS arm64，Homebrew OpenJDK 21.0.13）：encrypt mean 6–22µs、p99 7–80µs；decrypt
+ *       mean 3–6µs、p99 2.5–22µs；blindIndex mean 6–17µs、p99 28–58µs。
+ *   <li>CI（2026-11-01，GitHub Actions ubuntu-latest，Temurin 21）：encrypt mean 观测到 187µs——共享 x86_64
+ *       runner 比本地 arm64 慢约一个数量级，因此<b>阈值必须按 CI 硬件定</b>：mean ≤ {@value #MEAN_LIMIT_MICROS}µs（约 5
+ *       倍余量）、p99 ≤ {@value #P99_LIMIT_MICROS}µs。
  * </ul>
  *
- * <p>单次 max 偶发到毫秒级（GC / JIT / 线程调度抖动），因此不作为阈值；p99 与 mean 才是稳定信号。
+ * <p>单次 max 偶发到毫秒级（GC / JIT / 线程调度抖动），因此不作为阈值；p99 与 mean 才是稳定信号。计量前先对全部 值×操作的组合统一预热（{@link
+ * #warmUpAllOperations()}），避免 JIT 分层编译成本落在第一个被计量的值上。
  */
 class CryptoPerformanceBaselineTest {
 
     private static final int WARMUP = 2_000;
     private static final int MEASURED = 5_000;
 
-    /** 阈值：单条加密 / 解密平均耗时上限（微秒）。 */
-    private static final long MEAN_LIMIT_MICROS = 100;
+    /**
+     * 阈值：单条加密 / 解密平均耗时上限（微秒）。按最慢运行环境（CI 共享 runner，encrypt mean 实测 187µs）的约 5
+     * 倍取整：只拦截明显回退（每次派生密钥的口令哈希 ≥ 毫秒级、重复加解密），CI 硬件波动不误报。
+     */
+    private static final long MEAN_LIMIT_MICROS = 1_000;
 
-    /** 阈值：单条操作 p99 耗时上限（微秒）。 */
-    private static final long P99_LIMIT_MICROS = 1_000;
+    /** 阈值：单条操作 p99 耗时上限（微秒），为 mean 上限的 5 倍。 */
+    private static final long P99_LIMIT_MICROS = 5_000;
 
     private static final JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
     private static final EnvelopeCryptoService crypto =
@@ -91,6 +98,7 @@ class CryptoPerformanceBaselineTest {
 
     @Test
     void singleRecordEncryptDecryptAndBlindIndexStayWithinTheBaseline() {
+        warmUpAllOperations();
         for (String value : REPRESENTATIVE_VALUES) {
             Stats encrypt = encryptStats(value);
             Stats blindIndex = blindIndexStats(value);
@@ -136,6 +144,20 @@ class CryptoPerformanceBaselineTest {
             String ciphertext = crypto.encrypt("field", value);
             assertEquals(value, crypto.decrypt(ciphertext));
             assertEquals(crypto.blindIndex("blind", value), crypto.blindIndex("blind", value));
+        }
+    }
+
+    /**
+     * 计量前的统一暖机：对全部 值 × 操作 的组合各跑 {@value #WARMUP} 轮，让 JIT 分层编译在任何一个组合被计量之前完成， 避免第一个被计量的值独自吸收编译成本（CI
+     * 上正是它把 encrypt mean 推到 187µs）。
+     */
+    private static void warmUpAllOperations() {
+        for (int i = 0; i < WARMUP; i++) {
+            for (String value : REPRESENTATIVE_VALUES) {
+                String ciphertext = crypto.encrypt("field", value);
+                crypto.decrypt(ciphertext);
+                crypto.blindIndex("blind", value);
+            }
         }
     }
 
