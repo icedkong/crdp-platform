@@ -1,11 +1,13 @@
 package com.crdp.framework.crypto;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -142,6 +144,125 @@ class CryptoReencryptionJobTest {
                 .query(contains("FROM it_patient"), any(RowMapper.class), eq(0L), eq(200));
     }
 
+    /** E03-T06：分页推进——满批继续、短批收尾，游标每批落库一次。 */
+    @Test
+    void fullBatchesAdvanceTheCursorAndTheShortTailEndsThePass() {
+        TenantContext.useTenant(1L, "demoa");
+        EncryptedColumn column = column();
+        stubVersions(2, 1);
+        stubProgress(running(2, 1, 0, 0L));
+        when(jdbcTemplate.query(contains("FROM it_patient"), any(RowMapper.class), eq(0L), eq(2)))
+                .thenAnswer(
+                        i ->
+                                List.of(
+                                        new CryptoReencryptionJob.StoredValue(1L, V1_CIPHER),
+                                        new CryptoReencryptionJob.StoredValue(2L, V1_CIPHER)));
+        when(jdbcTemplate.query(contains("FROM it_patient"), any(RowMapper.class), eq(2L), eq(2)))
+                .thenAnswer(i -> List.of(new CryptoReencryptionJob.StoredValue(3L, V1_CIPHER)));
+        when(cryptoService.decrypt(V1_CIPHER)).thenReturn("张医生（示例）");
+        when(cryptoService.encrypt("field-name", "张医生（示例）")).thenReturn("re-encrypted");
+        when(cryptoService.blindIndex("idx-name", "张医生（示例）")).thenReturn("bi");
+
+        List<CryptoReencryptionJob.ColumnResult> results =
+                new CryptoReencryptionJob(cryptoService, dataKeys, jdbcTemplate, List.of(column), 2)
+                        .migrateAll();
+
+        // 两批各扫一次：0→2（满批继续）、2→3（短批收尾），没有第三次查询
+        verify(jdbcTemplate)
+                .query(contains("FROM it_patient"), any(RowMapper.class), eq(0L), eq(2));
+        verify(jdbcTemplate)
+                .query(contains("FROM it_patient"), any(RowMapper.class), eq(2L), eq(2));
+        verify(jdbcTemplate, times(2))
+                .query(contains("FROM it_patient"), any(RowMapper.class), any(), any());
+        verify(jdbcTemplate)
+                .update(contains("SET last_id ="), eq(2L), eq("it_patient"), eq("name_cipher"));
+        verify(jdbcTemplate)
+                .update(contains("SET last_id ="), eq(3L), eq("it_patient"), eq("name_cipher"));
+        verify(jdbcTemplate)
+                .update(contains("SET status = 'DONE'"), eq("it_patient"), eq("name_cipher"));
+        assertEquals(1, results.size());
+        assertEquals(3, results.get(0).scanned(), "两批共扫 3 行");
+        assertEquals(3, results.get(0).reencrypted(), "3 行都旧于目标版本，全部重写");
+    }
+
+    /** 空行（历史数据未填）跳过，不进解密，也不计入重写数。 */
+    @Test
+    void rowsWithoutAStoredCiphertextAreSkippedWithoutTouchingTheCryptoService() {
+        TenantContext.useTenant(1L, "demoa");
+        EncryptedColumn column = column();
+        stubVersions(2, 1);
+        stubProgress(running(2, 1, 0, 0L));
+        stubBatch(
+                0L,
+                List.of(
+                        new CryptoReencryptionJob.StoredValue(1L, null),
+                        new CryptoReencryptionJob.StoredValue(2L, " ")));
+
+        List<CryptoReencryptionJob.ColumnResult> results = job(column).migrateAll();
+
+        verify(cryptoService, never()).decrypt(any());
+        verify(jdbcTemplate, never())
+                .update(contains("UPDATE it_patient SET"), any(Object[].class));
+        assertEquals(2, results.get(0).scanned());
+        assertEquals(0, results.get(0).reencrypted());
+    }
+
+    /** 没登记盲索引的列只重写密文列，不算索引（首趟走 INSERT 建进度行）。 */
+    @Test
+    void columnWithoutABlindIndexRewritesOnlyTheCipherColumn() {
+        TenantContext.useTenant(1L, "demoa");
+        EncryptedColumn column =
+                new EncryptedColumn("it_patient", "id", "name_cipher", "field-name", null, null);
+        when(dataKeys.currentVersion("field-name")).thenReturn(2);
+        stubProgress(null);
+        stubBatch(0L, List.of(new CryptoReencryptionJob.StoredValue(1L, V1_CIPHER)));
+        when(cryptoService.decrypt(V1_CIPHER)).thenReturn("张医生（示例）");
+        when(cryptoService.encrypt("field-name", "张医生（示例）")).thenReturn("re-encrypted");
+
+        job(column).migrateAll();
+
+        verify(cryptoService, never()).blindIndex(any(), any());
+        verify(jdbcTemplate)
+                .update(
+                        contains("UPDATE it_patient SET name_cipher = ? WHERE id = ?"),
+                        eq("re-encrypted"),
+                        eq(1L));
+        verify(jdbcTemplate, never()).update(contains("name_bi"), any(Object[].class));
+    }
+
+    @Test
+    void batchSizeMustBePositive() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        new CryptoReencryptionJob(
+                                cryptoService, dataKeys, jdbcTemplate, List.of(column()), 0));
+    }
+
+    /** 上趟标记了索引待刷新：同版本 RUNNING 续跑时继续刷新索引。 */
+    @Test
+    void resumedPassKeepsRefreshingIndexesWhenTheProgressRowSaysPending() {
+        TenantContext.useTenant(1L, "demoa");
+        EncryptedColumn column = column();
+        stubVersions(2, 2);
+        stubProgress(running(2, 2, 1, 5L));
+        stubBatch(5L, List.of(new CryptoReencryptionJob.StoredValue(6L, V2_CIPHER)));
+        when(cryptoService.decrypt(V2_CIPHER)).thenReturn("张医生（示例）");
+        when(cryptoService.encrypt("field-name", "张医生（示例）")).thenReturn("re-encrypted");
+        when(cryptoService.blindIndex("idx-name", "张医生（示例）")).thenReturn("bi");
+
+        job(column).migrateAll();
+
+        // 密文已在目标版本，但索引待刷新：重算索引并整体重写该行
+        verify(cryptoService).blindIndex("idx-name", "张医生（示例）");
+        verify(jdbcTemplate)
+                .update(
+                        contains("UPDATE it_patient SET name_cipher = ?, name_bi = ? WHERE id = ?"),
+                        eq("re-encrypted"),
+                        eq("bi"),
+                        eq(6L));
+    }
+
     @Test
     void invalidIdentifierInColumnDefinitionIsRejected() {
         assertThrows(
@@ -187,17 +308,21 @@ class CryptoReencryptionJobTest {
     }
 
     private static Map<String, Object> done(
-            int targetKeyVersion, int targetIndexVersion, int pending, long lastId) {
+            int targetKeyVersion, Integer targetIndexVersion, int pending, long lastId) {
         return progress("DONE", targetKeyVersion, targetIndexVersion, pending, lastId);
     }
 
     private static Map<String, Object> running(
-            int targetKeyVersion, int targetIndexVersion, int pending, long lastId) {
+            int targetKeyVersion, Integer targetIndexVersion, int pending, long lastId) {
         return progress("RUNNING", targetKeyVersion, targetIndexVersion, pending, lastId);
     }
 
     private static Map<String, Object> progress(
-            String status, int targetKeyVersion, int targetIndexVersion, int pending, long lastId) {
+            String status,
+            int targetKeyVersion,
+            Integer targetIndexVersion,
+            int pending,
+            long lastId) {
         Map<String, Object> row = new HashMap<>();
         row.put("status", status);
         row.put("target_key_version", targetKeyVersion);

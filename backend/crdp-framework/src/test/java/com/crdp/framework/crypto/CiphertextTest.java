@@ -47,6 +47,20 @@ class CiphertextTest {
         assertRejects("v1.AES-256-GCM.1.field.AAAAAAAAAAAAAAAA.!!not-base64!!", "密文不是 Base64");
     }
 
+    /** E03-T06：补齐格式版本的语法分支。 */
+    @Test
+    void rejectsVersionPartsThatAreNotAnnotatedWithLowercaseV() {
+        assertRejects("1.AES-256-GCM.1.field.AAAAAAAAAAAAAAAA.dGFuZA==", "版本号必须以 v 开头");
+        assertRejects("vx.AES-256-GCM.1.field.AAAAAAAAAAAAAAAA.dGFuZA==", "v 后必须是数字");
+        assertRejects("v.AES-256-GCM.1.field.AAAAAAAAAAAAAAAA.dGFuZA==", "只有 v 没有数字");
+    }
+
+    @Test
+    void rejectsAlgorithmIdentifiersWithIllegalCharacters() {
+        assertRejects("v1.AES_256/GCM.1.field.AAAAAAAAAAAAAAAA.dGFuZA==", "算法标识只允许字母数字与连字符");
+        assertRejects("v1..1.field.AAAAAAAAAAAAAAAA.dGFuZA==", "空算法标识");
+    }
+
     private static void assertRejects(String value) {
         ApiException ex = assertThrows(ApiException.class, () -> Ciphertext.parse(value));
         assertEquals(40002, ex.code());

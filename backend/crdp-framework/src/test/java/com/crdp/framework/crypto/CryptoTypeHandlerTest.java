@@ -74,4 +74,35 @@ class CryptoTypeHandlerTest {
                 () -> handler.getNullableResult(resultSet, "display_name"),
                 "未配置 CryptoService 时应明确报错，而不是空指针");
     }
+
+    /** E03-T06：MyBatis 的另外两个读取入口（列下标与存储过程）同样透明解密。 */
+    @Test
+    void readsThePlaintextByColumnIndex() throws Exception {
+        CryptoTypeHandler.configure(cryptoService);
+        ResultSet resultSet = Mockito.mock(ResultSet.class);
+        when(resultSet.getString(2)).thenReturn("v1.AES-256-GCM.1.field-name.iv.data");
+        when(cryptoService.decrypt("v1.AES-256-GCM.1.field-name.iv.data")).thenReturn("张医生（示例）");
+
+        assertEquals("张医生（示例）", handler.getNullableResult(resultSet, 2));
+    }
+
+    @Test
+    void readsThePlaintextFromACallableStatement() throws Exception {
+        CryptoTypeHandler.configure(cryptoService);
+        java.sql.CallableStatement statement = Mockito.mock(java.sql.CallableStatement.class);
+        when(statement.getString(1)).thenReturn("v1.AES-256-GCM.1.field-name.iv.data");
+        when(cryptoService.decrypt("v1.AES-256-GCM.1.field-name.iv.data")).thenReturn("张医生（示例）");
+
+        assertEquals("张医生（示例）", handler.getNullableResult(statement, 1));
+    }
+
+    @Test
+    void nullFromACallableStatementStaysNull() throws Exception {
+        CryptoTypeHandler.configure(cryptoService);
+        java.sql.CallableStatement statement = Mockito.mock(java.sql.CallableStatement.class);
+        when(statement.getString(1)).thenReturn(null);
+
+        assertEquals(null, handler.getNullableResult(statement, 1));
+        Mockito.verifyNoInteractions(cryptoService);
+    }
 }
