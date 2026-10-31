@@ -17,6 +17,7 @@
 | OQ-08 | ⚪ | 图表库 | 规格未指定 | ECharts（按需引入）；仓库若已有其他库则沿用 |
 | OQ-09 | 🟡 | 平台账号数据范围交集 | 仓库 DataScopeGuard 是 M0 占位 | 按 PLT-SCOPE 实现；平台租户视角会话类型（`TENANT_VIEW`）为推断 |
 | OQ-10 | ⚪ | 组织架构事件（病区停用、人员调离）是否自动改派 | 规格未写 | 不自动改派，只提示管理员（推断） |
+| OQ-42 | 🟡 | 取图接口按 IP 限流（60 张/小时）信任请求头 `X-Forwarded-For` 首段（`HospitalAuthController.clientIp`），未配置可信代理清单：应用可直连时攻击者可逐请求伪造该头轮换 IP 绕过限流（来源 E04-T09 安全用例） | local/dev 与 CI 直连应用，头即客户端自报；生产经 ELB/WAF 时通常由代理改写为真实链路，但仓库未约定 | 暂行维持「首段 + remoteAddr 兜底」；生产上线前由部署侧确认反代 / WAF 会覆盖 `X-Forwarded-For`（或直接在网关层做按 IP 限流，NFR-SEC-007）。若测评要求应用侧配置可信代理（如 `server.forward-headers-strategy` + 代理白名单），另开运维任务 |
 
 ## 二、权限码
 
