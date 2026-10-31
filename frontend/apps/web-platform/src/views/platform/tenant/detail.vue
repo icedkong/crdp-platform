@@ -6,35 +6,54 @@ import { useRoute, useRouter } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
 
+import { EXPIRE_TYPE_TEXT } from '@crdp/api';
 import { StatusTag } from '@crdp/status-tag';
 import {
   Alert,
   Button,
   Card,
   Col,
+  DatePicker,
   Descriptions,
   DescriptionsItem,
   Form,
   FormItem,
   Input,
+  InputNumber,
   Modal,
+  Radio,
+  RadioGroup,
   Row,
   Space,
   Spin,
+  Switch,
   TabPane,
   Tabs,
 } from 'ant-design-vue';
+import dayjs from 'dayjs';
 
-import { tenantDetail, updateTenant } from '#/api/core/tenant';
+import {
+  applyTenantExpiry,
+  tenantDetail,
+  updateTenant,
+} from '#/api/core/tenant';
 import { usePermission } from '#/reference/use-permission';
 
 import {
   expireText,
   orDash,
+  remindDaysText,
   statusText,
   toFormModel,
   validateTenantForm,
 } from './detail';
+import {
+  EMPTY_EXPIRY_FORM,
+  toExpireRequest,
+  toExpiryFormModel,
+  validateExpiryForm,
+  validateReason,
+} from './lifecycle';
 
 defineOptions({ name: 'PlatformTenantDetail' });
 
@@ -43,6 +62,7 @@ const router = useRouter();
 const tenantId = Number(route.params.id);
 const { hasPermission } = usePermission();
 const canEdit = hasPermission('platform:tenant:edit');
+const canRenew = hasPermission('platform:tenant:renew');
 
 const detail = ref<null | TenantDetail>(null);
 const loading = ref(false);
@@ -53,6 +73,21 @@ const saveError = ref('');
 
 const form = reactive(toFormModel(blankDetail()));
 const errors = computed(() => validateTenantForm(form));
+
+// 到期设置（E05-T02 / PLT-TEN-011）：展示 + 编辑（PUT /expire，写 TENANT_EXPIRE 审计）
+const expiryOpen = ref(false);
+const expirySaving = ref(false);
+const expiryError = ref('');
+const expiryForm = reactive({ ...EMPTY_EXPIRY_FORM });
+const expiryReason = ref('');
+const expiryReasonError = ref('');
+const expiryErrors = computed(() => validateExpiryForm(expiryForm));
+const expiryOkDisabled = computed(
+  () =>
+    !expiryReason.value.trim() ||
+    Boolean(expiryReasonError.value) ||
+    Object.keys(expiryErrors.value).length > 0,
+);
 
 function blankDetail(): TenantDetail {
   return {
@@ -65,11 +100,14 @@ function blankDetail(): TenantDetail {
     creditCode: null,
     expireAt: null,
     expireType: 'LONG_TERM',
+    graceDays: null,
+    graceReadOnly: false,
     id: tenantId,
     name: '',
     orgType: null,
     region: null,
     remark: null,
+    remindDays: null,
     shortName: null,
     status: 'PROVISIONING',
     updatedAt: null,
@@ -129,6 +167,41 @@ async function save() {
     saveError.value = error instanceof Error ? error.message : String(error);
   } finally {
     saving.value = false;
+  }
+}
+
+function openExpiry() {
+  if (!detail.value) return;
+  Object.assign(expiryForm, toExpiryFormModel(detail.value));
+  expiryReason.value = '';
+  expiryReasonError.value = '';
+  expiryError.value = '';
+  expiryOpen.value = true;
+}
+
+function onExpiryDate(_date: unknown, date: null | string | string[]) {
+  expiryForm.expireAt = Array.isArray(date) ? '' : (date ?? '');
+}
+
+function onExpiryReasonChange() {
+  expiryReasonError.value = validateReason(expiryReason.value) ?? '';
+}
+
+async function saveExpiry() {
+  if (expiryOkDisabled.value) return;
+  expirySaving.value = true;
+  expiryError.value = '';
+  try {
+    await applyTenantExpiry(
+      tenantId,
+      toExpireRequest(expiryForm, expiryReason.value),
+    );
+    expiryOpen.value = false;
+    await load();
+  } catch (error) {
+    expiryError.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    expirySaving.value = false;
   }
 }
 
@@ -196,7 +269,7 @@ onMounted(load);
                 <StatusTag :status="statusText(detail.status)" />
               </DescriptionsItem>
               <DescriptionsItem label="到期日">
-                {{ expireText(detail) }}（到期维护随到期管理提供）
+                {{ expireText(detail) }}（维护在「到期设置」页签）
               </DescriptionsItem>
               <DescriptionsItem label="备注" :span="2">
                 {{ orDash(detail.remark) }}
@@ -206,6 +279,42 @@ onMounted(load);
               </DescriptionsItem>
               <DescriptionsItem label="最近修改">
                 {{ detail.updatedAt ?? '—' }}
+              </DescriptionsItem>
+            </Descriptions>
+          </TabPane>
+          <TabPane key="expiry" tab="到期设置">
+            <div class="toolbar">
+              <Button
+                v-if="canRenew"
+                type="primary"
+                data-testid="edit-expiry"
+                @click="openExpiry"
+              >
+                编辑到期设置
+              </Button>
+            </div>
+            <Descriptions bordered :column="2" size="middle">
+              <DescriptionsItem label="到期类型">
+                {{ EXPIRE_TYPE_TEXT[detail.expireType] ?? detail.expireType }}
+              </DescriptionsItem>
+              <DescriptionsItem label="试用或服务到期日">
+                {{ detail.expireType === 'FIXED' ? expireText(detail) : '—' }}
+              </DescriptionsItem>
+              <DescriptionsItem label="提醒节点">
+                {{ remindDaysText(detail.remindDays) }}
+              </DescriptionsItem>
+              <DescriptionsItem label="宽限期天数">
+                {{ detail.graceDays === null ? '—' : `${detail.graceDays} 天` }}
+              </DescriptionsItem>
+              <DescriptionsItem label="宽限期是否只读">
+                {{
+                  detail.graceReadOnly
+                    ? '只读（只能查看）'
+                    : '正常使用并提示续费'
+                }}
+              </DescriptionsItem>
+              <DescriptionsItem label="提醒与宽限规则">
+                长期有效租户不提醒、不进入宽限期；到期前按提醒节点通知，宽限期默认可正常使用
               </DescriptionsItem>
             </Descriptions>
           </TabPane>
@@ -303,13 +412,113 @@ onMounted(load);
         </Row>
       </Form>
     </Modal>
+
+    <!-- 到期设置（PLT-TEN-011）：选择长期有效时其余项隐藏；保存即 PUT /expire（宽限期/停用中续期即恢复） -->
+    <Modal
+      v-model:open="expiryOpen"
+      :confirm-loading="expirySaving"
+      title="编辑到期设置"
+      :width="560"
+      :ok-button-props="{ disabled: expiryOkDisabled }"
+      ok-text="保存"
+      cancel-text="取消"
+      @ok="saveExpiry"
+    >
+      <Alert
+        v-if="expiryError"
+        :message="`保存失败：${expiryError}`"
+        show-icon
+        type="error"
+        class="mb-4"
+      />
+      <Form layout="vertical" class="crdp-form">
+        <FormItem label="到期类型" required>
+          <RadioGroup v-model:value="expiryForm.expireType">
+            <Radio value="FIXED">有到期日</Radio>
+            <Radio value="LONG_TERM">长期有效</Radio>
+          </RadioGroup>
+        </FormItem>
+        <template v-if="expiryForm.expireType === 'FIXED'">
+          <FormItem
+            label="试用或服务到期日"
+            required
+            :validate-status="expiryErrors.expireAt ? 'error' : undefined"
+            :help="expiryErrors.expireAt"
+          >
+            <DatePicker
+              :value="
+                expiryForm.expireAt ? dayjs(expiryForm.expireAt) : undefined
+              "
+              placeholder="选择日期"
+              style="width: 100%"
+              value-format="YYYY-MM-DD"
+              @change="onExpiryDate"
+            />
+          </FormItem>
+          <FormItem
+            label="提醒节点（到期前 N 天，逗号分隔）"
+            :validate-status="expiryErrors.remindDays ? 'error' : undefined"
+            :help="expiryErrors.remindDays ?? '默认 30,7,1；留空沿用当前配置'"
+          >
+            <Input
+              v-model:value="expiryForm.remindDays"
+              placeholder="如：30,7,1"
+            />
+          </FormItem>
+          <FormItem
+            label="宽限期天数"
+            :validate-status="expiryErrors.graceDays ? 'error' : undefined"
+            :help="expiryErrors.graceDays ?? '默认 15；留空沿用当前配置'"
+          >
+            <InputNumber
+              v-model:value="expiryForm.graceDays"
+              :max="365"
+              :min="1"
+              placeholder="15"
+              style="width: 100%"
+            />
+          </FormItem>
+          <FormItem label="宽限期是否只读">
+            <Switch v-model:checked="expiryForm.graceReadOnly" />
+            <span class="switch-hint">
+              {{
+                expiryForm.graceReadOnly
+                  ? '宽限期内只能查看'
+                  : '宽限期内正常使用并提示续费'
+              }}
+            </span>
+          </FormItem>
+        </template>
+        <FormItem
+          label="变更原因"
+          required
+          :validate-status="expiryReasonError ? 'error' : undefined"
+          :help="expiryReasonError"
+        >
+          <Input
+            v-model:value="expiryReason"
+            :maxlength="200"
+            placeholder="如：按合同调整（示例）"
+            show-count
+            type="textarea"
+            @change="onExpiryReasonChange"
+          />
+        </FormItem>
+      </Form>
+    </Modal>
   </Page>
 </template>
 
 <style scoped>
 .toolbar {
   display: flex;
+  gap: 8px;
   justify-content: flex-end;
   margin-bottom: 12px;
+}
+
+.switch-hint {
+  margin-left: 12px;
+  color: #4e5969;
 }
 </style>

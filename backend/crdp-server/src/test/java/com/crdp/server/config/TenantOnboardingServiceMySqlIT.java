@@ -97,7 +97,7 @@ class TenantOnboardingServiceMySqlIT {
 
     private static TenantOnboardingService.OnboardingRequest request() {
         return new TenantOnboardingService.OnboardingRequest(
-                CODE, "虚构示例医院丙", "admin", "丙院管理员", INITIAL_PASSWORD);
+                CODE, "虚构示例医院丙", "admin", "丙院管理员", INITIAL_PASSWORD, null);
     }
 
     private static TenantOnboardingService service(TenantDataSourceRegistry registryToUse) {

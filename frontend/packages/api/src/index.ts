@@ -123,7 +123,13 @@ export interface CreateTenantRequest {
   adminInitialPassword?: string;
   adminUsername?: string;
   code?: string;
+  /** 到期设置（E05-T02 / PLT-TEN-011，向导第 2 步）：整体省略 = 长期有效。 */
+  expireAt?: null | string;
+  expireType?: 'FIXED' | 'LONG_TERM';
+  graceDays?: null | number;
+  graceReadOnly?: boolean | null;
   name: string;
+  remindDays?: null | number[];
 }
 
 export interface TenantProvisionStep {
@@ -143,6 +149,58 @@ export interface TenantProvisionView {
   name: string;
   status: string;
   steps: TenantProvisionStep[];
+  tenantId: number;
+}
+
+/**
+ * 到期设置（E05-T02 / PLT-TEN-011）：FIXED 有到期日并按租户配置提醒节点、宽限期天数与宽限期是否只读；
+ * LONG_TERM 长期有效，remindDays / graceDays 为空（不提醒、不进入宽限期）。
+ */
+export interface TenantExpirySettings {
+  expireAt?: null | string;
+  expireType: 'FIXED' | 'LONG_TERM';
+  graceDays?: null | number;
+  graceReadOnly?: boolean;
+  remindDays?: null | number[];
+}
+
+/** 到期设置 / 续期提交（PLT-TEN-011、013）：FIXED 时 expireAt 必填；省略项沿用现值。 */
+export interface TenantExpireRequest {
+  expireAt?: null | string;
+  expireType: 'FIXED' | 'LONG_TERM';
+  graceDays?: null | number;
+  graceReadOnly?: boolean | null;
+  reason: string;
+  remindDays?: null | number[];
+}
+
+/** 状态变更（PLT-TEN-010）：ENABLE 转正（试用）/恢复（停用），DISABLE 手动停用（启用）。 */
+export type TenantStatusAction = 'DISABLE' | 'ENABLE';
+
+/** 状态变更影响面（状态变更对话框）：随访任务未上线时 pendingTaskCount 为空。 */
+export interface TenantStatusImpact {
+  code: string;
+  name: string;
+  onlineUserCount: number;
+  pendingTaskCount: null | number;
+  status: TenantStatus;
+  tenantId: number;
+}
+
+export interface TenantStatusResult {
+  code: string;
+  onlineUserCount: number;
+  previousStatus: TenantStatus;
+  status: TenantStatus;
+  tenantId: number;
+}
+
+export interface TenantExpireResult {
+  changedFields: string[];
+  code: string;
+  expiry: TenantExpirySettings;
+  previousStatus: TenantStatus;
+  status: TenantStatus;
   tenantId: number;
 }
 
@@ -176,7 +234,7 @@ export interface TenantListItem {
   userCount: null | number;
 }
 
-/** 租户详情（PLT-TEN-009）：电话仅详情返回（编辑场景），列表不返回。 */
+/** 租户详情（PLT-TEN-009）：电话仅详情返回（编辑场景），列表不返回；到期设置字段见 PLT-TEN-011。 */
 export interface TenantDetail {
   code: string;
   contactEmail: null | string;
@@ -187,11 +245,14 @@ export interface TenantDetail {
   creditCode: null | string;
   expireAt: null | string;
   expireType: 'FIXED' | 'LONG_TERM';
+  graceDays: null | number;
+  graceReadOnly: boolean;
   id: number;
   name: string;
   orgType: null | string;
   region: null | string;
   remark: null | string;
+  remindDays: null | number[];
   shortName: null | string;
   status: TenantStatus;
   updatedAt: null | string;

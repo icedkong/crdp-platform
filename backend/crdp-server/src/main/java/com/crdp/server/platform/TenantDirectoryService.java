@@ -105,7 +105,10 @@ public class TenantDirectoryService {
             Long userCount,
             OffsetDateTime createdAt) {}
 
-    /** 详情（PLT-TEN-009）：含联系人与备注；电话仅在详情返回明文供维护，列表不返回。 */
+    /**
+     * 详情（PLT-TEN-009）：含联系人与备注；电话仅在详情返回明文供维护，列表不返回。 remindDays / graceDays / graceReadOnly
+     * 是到期设置（E05-T02 / PLT-TEN-011），长期有效租户 remindDays 与 graceDays 为空。
+     */
     public record TenantDetail(
             long id,
             String code,
@@ -122,6 +125,9 @@ public class TenantDirectoryService {
             String status,
             String expireType,
             LocalDate expireAt,
+            List<Integer> remindDays,
+            Integer graceDays,
+            boolean graceReadOnly,
             OffsetDateTime createdAt,
             OffsetDateTime updatedAt) {}
 
@@ -382,7 +388,8 @@ public class TenantDirectoryService {
     private static final String SELECT_COLUMNS =
             "t.id, t.code, t.name, t.short_name, t.credit_code, t.org_type, t.region,"
                     + " t.contact_name, t.contact_phone, t.contact_email, t.contract_no, t.remark,"
-                    + " t.status, t.expire_type, t.expire_at, t.created_at, t.updated_at";
+                    + " t.status, t.expire_type, t.expire_at, t.remind_days, t.grace_days,"
+                    + " t.grace_read_only, t.created_at, t.updated_at";
 
     private Map<String, Object> requireRow(long tenantId) {
         List<Map<String, Object>> rows =
@@ -464,6 +471,9 @@ public class TenantDirectoryService {
                 str(row.get("status")),
                 str(row.get("expire_type")),
                 localDate(row.get("expire_at")),
+                TenantLifecycleService.parseRemindDays(str(row.get("remind_days"))),
+                row.get("grace_days") == null ? null : ((Number) row.get("grace_days")).intValue(),
+                ((Number) row.get("grace_read_only")).intValue() == 1,
                 offsetDateTime(row.get("created_at")),
                 offsetDateTime(row.get("updated_at")));
     }

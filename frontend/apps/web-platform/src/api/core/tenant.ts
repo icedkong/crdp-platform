@@ -2,10 +2,15 @@ import type {
   CreateTenantRequest,
   PageView,
   TenantDetail,
+  TenantExpireRequest,
+  TenantExpireResult,
   TenantListItem,
   TenantListQuery,
   TenantOnboardingResult,
   TenantProvisionView,
+  TenantStatusAction,
+  TenantStatusImpact,
+  TenantStatusResult,
   TenantUpdateRequest,
 } from '@crdp/api';
 
@@ -61,4 +66,37 @@ export function retryProvision(tenantId: number) {
 /** 放弃回收：仅开通未完成的租户（正式注销是 PLT-TEN-020）。 */
 export function recycleTenant(tenantId: number) {
   return requestClient.delete(apiPath(`/tenants/${tenantId}`));
+}
+
+/** 状态变更影响面（E05-T02 / PLT-TEN-010）：在线用户数、进行中任务数，供二次确认对话框展示。 */
+export function tenantStatusImpact(tenantId: number) {
+  return requestClient.get<TenantStatusImpact>(
+    apiPath(`/tenants/${tenantId}/status/impact`),
+  );
+}
+
+/**
+ * 状态变更（PLT-TEN-010）：ENABLE 转正（试用→启用）/ 恢复（停用→启用），DISABLE 手动停用。
+ * 非法流转后端 40901；人工变更必须填原因并写 TENANT_STATUS 审计。
+ */
+export function changeTenantStatus(
+  tenantId: number,
+  action: TenantStatusAction,
+  reason: string,
+) {
+  return requestClient.post<TenantStatusResult>(
+    apiPath(`/tenants/${tenantId}/status`),
+    { action, reason },
+  );
+}
+
+/**
+ * 到期设置与续期（PLT-TEN-011、013）：改到期日或转长期有效；宽限期 / 停用中的租户续期后
+ * 立即恢复启用；省略的提醒节点、宽限期沿用当前配置。
+ */
+export function applyTenantExpiry(tenantId: number, data: TenantExpireRequest) {
+  return requestClient.put<TenantExpireResult>(
+    apiPath(`/tenants/${tenantId}/expire`),
+    data,
+  );
 }
