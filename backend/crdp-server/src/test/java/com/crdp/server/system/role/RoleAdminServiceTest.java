@@ -1,10 +1,12 @@
 package com.crdp.server.system.role;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
@@ -19,6 +21,8 @@ import com.crdp.framework.tenant.TenantContext;
 import com.crdp.framework.web.ApiException;
 import com.crdp.server.platform.TenantScopeService;
 import com.crdp.server.system.role.RoleAdminService.CopyRequest;
+import com.crdp.server.system.role.RoleAdminService.FieldPolicyItem;
+import com.crdp.server.system.role.RoleAdminService.RoleFieldPoliciesView;
 import com.crdp.server.system.role.RoleAdminService.RoleSave;
 import com.crdp.server.system.role.RoleAdminService.ScopeSave;
 import com.crdp.server.system.role.RoleAdminService.StatusChange;
@@ -364,6 +368,161 @@ class RoleAdminServiceTest {
                         ApiException.class,
                         () -> service.create(new RoleSave("IT_DUP", "重复（示例）", null)));
         assertEquals(40902, ex.code());
+    }
+
+    // ---------------------------------------------------------------- 字段策略（E07-T06 / PLT-PERM-009）
+
+    @Test
+    void updateFieldPoliciesValidatesEntriesAgainstCatalog() {
+        stubRole(CUSTOM_ROLE_ID, "IT_ROLE", "示例角色", RoleAdminService.TYPE_CUSTOM, "ENABLED");
+
+        ApiException unknownField =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.updateFieldPolicies(
+                                        CUSTOM_ROLE_ID,
+                                        List.of(
+                                                new FieldPolicyItem(
+                                                        "patient", "nickname", "VISIBLE"))));
+        assertEquals(40001, unknownField.code());
+        assertTrue(unknownField.getMessage().contains("不在敏感字段清单"), unknownField.getMessage());
+
+        ApiException badPolicy =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.updateFieldPolicies(
+                                        CUSTOM_ROLE_ID,
+                                        List.of(new FieldPolicyItem("patient", "name", "PLAIN"))));
+        assertEquals(40001, badPolicy.code());
+        assertTrue(badPolicy.getMessage().contains("字段策略只允许"), badPolicy.getMessage());
+
+        ApiException duplicated =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.updateFieldPolicies(
+                                        CUSTOM_ROLE_ID,
+                                        List.of(
+                                                new FieldPolicyItem("patient", "name", "VISIBLE"),
+                                                new FieldPolicyItem("patient", "name", "HIDDEN"))));
+        assertEquals(40001, duplicated.code());
+
+        ApiException nullList =
+                assertThrows(
+                        ApiException.class,
+                        () -> service.updateFieldPolicies(CUSTOM_ROLE_ID, null));
+        assertEquals(40001, nullList.code());
+    }
+
+    @Test
+    void updateFieldPoliciesRejectsBuiltInAndTemplateRoles() {
+        stubRole(
+                BUILT_IN_ROLE_ID,
+                "TENANT_ADMIN",
+                "租户管理员",
+                RoleAdminService.TYPE_BUILT_IN,
+                "ENABLED");
+        ApiException builtIn =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.updateFieldPolicies(
+                                        BUILT_IN_ROLE_ID,
+                                        List.of(
+                                                new FieldPolicyItem(
+                                                        "patient", "name", "VISIBLE"))));
+        assertEquals(40901, builtIn.code());
+
+        stubRole(
+                TEMPLATE_ROLE_ID,
+                "FOLLOWUP_NURSE",
+                "随访员",
+                RoleAdminService.TYPE_TEMPLATE,
+                "ENABLED");
+        ApiException template =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.updateFieldPolicies(
+                                        TEMPLATE_ROLE_ID,
+                                        List.of(
+                                                new FieldPolicyItem(
+                                                        "patient", "name", "VISIBLE"))));
+        assertEquals(40901, template.code());
+        assertTrue(template.getMessage().contains("模板角色只读"), template.getMessage());
+    }
+
+    @Test
+    void updateFieldPoliciesStoresOverlayAuditsAndBumpsMembers() {
+        stubRole(CUSTOM_ROLE_ID, "IT_ROLE", "示例角色", RoleAdminService.TYPE_CUSTOM, "ENABLED");
+        lenient()
+                .when(jdbc.queryForList(contains("FROM sys_role_field_policy"), eq(CUSTOM_ROLE_ID)))
+                .thenReturn(List.of());
+
+        RoleAdminService.RoleView view =
+                service.updateFieldPolicies(
+                        CUSTOM_ROLE_ID,
+                        List.of(
+                                new FieldPolicyItem("patient", "name", "VISIBLE"),
+                                new FieldPolicyItem("patient", "phone", "HIDDEN")));
+
+        assertEquals("IT_ROLE", view.code());
+        verify(jdbc).update(contains("DELETE FROM sys_role_field_policy"), eq(CUSTOM_ROLE_ID));
+        verify(jdbc)
+                .update(
+                        contains("INSERT INTO sys_role_field_policy"),
+                        eq(CUSTOM_ROLE_ID),
+                        eq("patient"),
+                        eq("name"),
+                        eq("VISIBLE"));
+        verify(jdbc)
+                .update(
+                        contains("INSERT INTO sys_role_field_policy"),
+                        eq(CUSTOM_ROLE_ID),
+                        eq("patient"),
+                        eq("phone"),
+                        eq("HIDDEN"));
+        verify(audit)
+                .append(
+                        argThat(
+                                entry ->
+                                        entry != null
+                                                && "ROLE_FIELD_POLICY".equals(entry.eventType())));
+    }
+
+    @Test
+    void fieldPoliciesViewFallsBackToPlatformDefault() {
+        stubRole(CUSTOM_ROLE_ID, "IT_ROLE", "示例角色", RoleAdminService.TYPE_CUSTOM, "ENABLED");
+        Map<String, Object> override = new LinkedHashMap<>();
+        override.put("resource", "patient");
+        override.put("field", "name");
+        override.put("policy", "VISIBLE");
+        when(jdbc.queryForList(contains("FROM sys_role_field_policy"), eq(CUSTOM_ROLE_ID)))
+                .thenReturn(List.of(override));
+
+        RoleFieldPoliciesView view = service.fieldPoliciesView(CUSTOM_ROLE_ID);
+
+        assertEquals("IT_ROLE", view.role().code());
+        // 覆盖项：显式行；其余字段回落平台默认（MASKED），不视为覆盖
+        var name =
+                view.fields().stream()
+                        .filter(f -> "name".equals(f.field()))
+                        .findFirst()
+                        .orElseThrow();
+        assertEquals("VISIBLE", name.policy());
+        assertTrue(name.overridden());
+        var phone =
+                view.fields().stream()
+                        .filter(f -> "phone".equals(f.field()))
+                        .findFirst()
+                        .orElseThrow();
+        assertEquals("MASKED", phone.policy());
+        assertFalse(phone.overridden());
+        assertEquals("MASKED", phone.defaultPolicy());
+        // 敏感字段清单（platform-spec §8 默认视角规则：姓名、证件号、手机号、住址、病历号）
+        assertTrue(view.fields().size() >= 5, "敏感字段目录应至少包含五位患者身份字段");
     }
 
     // ---------------------------------------------------------------- 桩

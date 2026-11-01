@@ -186,11 +186,12 @@ class TenantOnboardingServiceMySqlIT {
                 // E06-T07 增加 V12（工号 / 主科室列 + 用户维护按钮授权）；
                 // E06-T10 增加 V13（租户字典 / 参数覆盖表 + 参数、字典按钮授权）；
                 // E06-T03 增加 V14（sys_outbox 事务外发箱）；
-                // E08-T01 增加 V15（审计规格字段：aud_log / aud_login_log 扩展列 + aud_data_access_log）。
+                // E08-T01 增加 V15（审计规格字段：aud_log / aud_login_log 扩展列 + aud_data_access_log）；
+                // E07-T06 增加 V16（角色字段策略覆盖表 sys_role_field_policy）。
                 // 此处随迁移清单维护
                 List.of(
                         "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14",
-                        "15"),
+                        "15", "16"),
                 root.queryForList(
                         "SELECT version FROM "
                                 + DB

@@ -1,15 +1,20 @@
 import type {
   DeptNodeView,
+  FieldPolicy,
   OrgCampusNode,
   RoleScopeType,
   RoleType,
+  TenantRoleFieldPolicyEntry,
   TenantRoleMenuNode,
   TenantRoleView,
 } from '@crdp/api';
 
+import { tenantFieldPolicyText } from '@crdp/api';
+
 /**
  * E06-T05 角色管理页的纯逻辑（校验、过滤、树装配），供 index.vue 与单测共用；
  * 校验口径与后端 RoleAdminService 保持一致（40001 的前端预检）。
+ * E07-T06 增加数据范围选项装配与字段策略草稿 / 保存载荷（PLT-PERM-007、009）。
  */
 
 /** 角色编码：必填、≤64、字母数字下划线短横线（创建后不可改）。 */
@@ -172,4 +177,71 @@ export function deptTreeOptions(orgs: OrgCampusNode[]): DeptTreeDatum[] {
 /** 模板 / 内置角色不允许在页面上直接改配置（PLT-ROLE-004、005：复制后调整）。 */
 export function isCustomRole(role: TenantRoleView): boolean {
   return role.roleType === 'CUSTOM';
+}
+
+// ---------------------------------------------------------------- 字段策略（E07-T06 / PLT-PERM-009）
+
+/** 字段策略草稿值：DEFAULT = 跟随平台默认（不落覆盖行），其余为显式覆盖。 */
+export type FieldPolicyDraftValue = 'DEFAULT' | FieldPolicy;
+
+export type FieldPolicyDraft = Record<string, FieldPolicyDraftValue>;
+
+/** 目录项定位键（resource.field，与后端覆盖行同口径）。 */
+export function fieldPolicyKey(resource: string, field: string): string {
+  return `${resource}.${field}`;
+}
+
+/** 页签初始草稿：覆盖项取覆盖值，未覆盖项跟随平台默认。 */
+export function fieldPolicyDraftOf(
+  fields: TenantRoleFieldPolicyEntry[],
+): FieldPolicyDraft {
+  const draft: FieldPolicyDraft = {};
+  for (const entry of fields) {
+    draft[fieldPolicyKey(entry.resource, entry.field)] = entry.overridden
+      ? entry.policy
+      : 'DEFAULT';
+  }
+  return draft;
+}
+
+/** 保存载荷：只提交显式覆盖项（DEFAULT 不落行 = 回落平台默认，空数组即清空全部覆盖）。 */
+export function fieldPolicySaveItems(draft: FieldPolicyDraft): Array<{
+  field: string;
+  policy: FieldPolicy;
+  resource: string;
+}> {
+  return Object.entries(draft)
+    .filter(([, value]) => value !== 'DEFAULT')
+    .map(([key, policy]) => {
+      const [resource, field] = key.split('.');
+      return { field, policy: policy as FieldPolicy, resource };
+    });
+}
+
+/** 行内下拉选项：跟随平台默认（带当前默认值说明）+ 三种策略。 */
+export function fieldPolicyRowOptions(
+  entry: TenantRoleFieldPolicyEntry,
+): Array<{ label: string; value: FieldPolicyDraftValue }> {
+  return [
+    {
+      label: `跟随平台默认（${tenantFieldPolicyText(entry.defaultPolicy)}）`,
+      value: 'DEFAULT',
+    },
+    { label: tenantFieldPolicyText('VISIBLE'), value: 'VISIBLE' },
+    { label: tenantFieldPolicyText('MASKED'), value: 'MASKED' },
+    { label: tenantFieldPolicyText('HIDDEN'), value: 'HIDDEN' },
+  ];
+}
+
+/** 是否有未保存的字段策略修改（保存按钮可用性提示）。 */
+export function fieldPolicyDirty(
+  fields: TenantRoleFieldPolicyEntry[],
+  draft: FieldPolicyDraft,
+): boolean {
+  const initial = fieldPolicyDraftOf(fields);
+  const keys = new Set([...Object.keys(initial), ...Object.keys(draft)]);
+  for (const key of keys) {
+    if (initial[key] !== draft[key]) return true;
+  }
+  return false;
 }
