@@ -83,6 +83,25 @@ public interface HospitalMapper {
     @Select("SELECT dept_id FROM sys_user_dept_scope WHERE user_id = #{userId}")
     List<Long> deptIds(@Param("userId") long userId);
 
+    /** 主科室（sys_user.main_dept_id，V12）：「本科室（DEPT）」类型的取值来源；未配置返回 null。 */
+    @Select("SELECT main_dept_id FROM sys_user WHERE id = #{userId}")
+    Long mainDeptId(@Param("userId") long userId);
+
+    /**
+     * 角色自定义科室清单（CUSTOM_DEPT，E07-T02 生效）：只统计启用角色且该角色确有 CUSTOM_DEPT 类型行 —— RoleAdminService
+     * 保存时已约束两表同步，这里防御性再校验一次；多角色由 DISTINCT 并集。
+     */
+    @Select(
+            """
+            SELECT DISTINCT rsd.dept_id
+            FROM sys_role_scope_dept rsd
+            JOIN sys_role r ON r.id = rsd.role_id AND r.status = 'ENABLED'
+            JOIN sys_role_scope rs ON rs.role_id = r.id AND rs.scope_type = 'CUSTOM_DEPT'
+            JOIN sys_user_role ur ON ur.role_id = r.id
+            WHERE ur.user_id = #{userId}
+            """)
+    List<Long> customDeptIds(@Param("userId") long userId);
+
     // ---- E04-T05 / PLT-AUTH-006、010：自助改密 ----
 
     /** 改密落库：清强制改密标记并把 password_updated_at 推到现在（有效期 90 天从此重算）。 */

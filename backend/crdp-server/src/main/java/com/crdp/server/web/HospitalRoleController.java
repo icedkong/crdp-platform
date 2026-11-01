@@ -128,7 +128,9 @@ public class HospitalRoleController {
                 service.updateMenus(roleId, request == null ? null : request.menuIds()));
     }
 
-    @Operation(summary = "数据范围页签（PLT-ORG-004）：范围类型与自定义科室清单；生效口径见 E07-T02")
+    @Operation(
+            summary =
+                    "数据范围页签（PLT-ORG-004）：范围类型与自定义科室清单；生效口径 E07-T02 已落地（见 docs/api/README.md §2.5）")
     @GetMapping("/api/hospital/system/roles/{roleId}/scope")
     @RequiresPermission("tenant:role:view")
     public ApiResponse<RoleScopeView> scope(@PathVariable long roleId) {

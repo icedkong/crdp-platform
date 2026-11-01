@@ -23,8 +23,8 @@ import org.springframework.stereotype.Service;
  * <p>规则（关键字段·角色 与 业务规则）：编码租户内唯一、创建后不可改；类型 内置 / 模板 /
  * 自定义；内置角色（租户管理员）不可删除、不可修改权限、不可停用，也不能移除其最后一名启用成员；模板角色由平台随模块开通下发（{@code
  * RoleTemplateService}），只读——租户「从模板复制生成自定义角色后调整」（PLT-ORG-005）；自定义角色可新建、编辑、复制、停用、删除（无成员时）。
- * 菜单授权只能在平台可分配范围内（超出 40001，会话层交集兜底 E05-T07）；数据范围存 sys_role_scope（多类型并集，生效口径
- * E07-T02），自定义科室（CUSTOM_DEPT）清单存 sys_role_scope_dept。
+ * 菜单授权只能在平台可分配范围内（超出 40001，会话层交集兜底 E05-T07）；数据范围存 sys_role_scope（多类型并集，登录侧由 HospitalDirectory
+ * 归并成快照、查询侧由拦截器按病区 / 科室 / 本人 OR 改写，E07-T02 已生效），自定义科室（CUSTOM_DEPT）清单存 sys_role_scope_dept。
  *
  * <p>授权 / 成员 / 状态变更后递增受影响用户的权限版本（PLT-PERM-010 / OQ-40 ①），在线会话下一次请求即按新权限重算。 字段策略页签随 E07-T04 / T06
  * 落地（pages.md §10 角色管理四页签的最后一页）。
@@ -343,8 +343,8 @@ public class RoleAdminService {
         return viewByCode(str(row.get("code")));
     }
 
-    // ---------------------------------------------------------------- 数据范围（PLT-ORG-004；生效口径
-    // E07-T02）
+    // ---------------------------------------------------------------- 数据范围（PLT-ORG-004；生效口径见
+    // HospitalDirectory + RestrictedScopeRewriter，E07-T02）
 
     public RoleView updateScope(long roleId, ScopeSave request) {
         Map<String, Object> row = editableCustomRole(roleId, "配置数据范围");

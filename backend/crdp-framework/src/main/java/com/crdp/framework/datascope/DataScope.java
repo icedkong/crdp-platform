@@ -9,6 +9,6 @@ import java.lang.annotation.Target;
 @Target({ElementType.METHOD, ElementType.TYPE})
 @Retention(RetentionPolicy.RUNTIME)
 public @interface DataScope {
-    /** 资源名，例如 patient。按病区 / 科室 / 本人的条件改写在 E07-T02 落地。 */
+    /** 资源名，例如 patient。病区 / 科室 / 本人（OR）的条件改写由拦截器统一执行（E07-T02）。 */
     String resource();
 }

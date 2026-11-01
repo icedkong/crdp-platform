@@ -24,7 +24,11 @@ public class DataScopeInnerInterceptor implements InnerInterceptor {
             throws SQLException {
         String sql = boundSql.getSql();
         String rewritten =
-                DataScopeGuard.enforce(sql, DataScopeContext.get(), DataScopeContext.ignored());
+                DataScopeGuard.enforce(
+                        sql,
+                        DataScopeContext.get(),
+                        DataScopeContext.userId(),
+                        DataScopeContext.ignored());
         if (!rewritten.equals(sql)) {
             MetaObject metaObject = SystemMetaObject.forObject(boundSql);
             metaObject.setValue("sql", rewritten);
