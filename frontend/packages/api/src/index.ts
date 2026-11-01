@@ -502,6 +502,28 @@ export interface ModuleOpenLog {
   tenantName: string;
 }
 
+export {
+  platformAccountStatusText,
+  platformRoleStatusText,
+  platformRoleViewSummary,
+  platformTenantScopeText,
+  platformVisibleScopeText,
+  validatePlatformAccount,
+  validatePlatformRole,
+} from './platform-role';
+export type {
+  PlatformAccountResetResult,
+  PlatformAccountSaveRequest,
+  PlatformAccountView,
+  PlatformGrantMenuNode,
+  PlatformRoleHolder,
+  PlatformRoleSaveRequest,
+  PlatformRoleView,
+  PlatformRoleViewFields,
+  PlatformTenantScope,
+  PlatformVisibleScope,
+} from './platform-role';
+
 export { TENANT_SCOPE_STATE_TEXT } from './tenant-scope';
 export type {
   ScopeTemplateItem,
