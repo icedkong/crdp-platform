@@ -29,3 +29,31 @@ export const EXPIRE_TYPE_TEXT: Record<string, string> = {
   FIXED: '有到期日',
   LONG_TERM: '长期有效',
 };
+
+/** 模块上架状态（PLT-MOD-001）：下架后不能再被新开通。 */
+export const MODULE_SHELF_TEXT: Record<string, string> = {
+  ON: '上架',
+  OFF: '下架',
+};
+
+/** 维护对话框里的上下架选项（顺序即展示顺序）。 */
+export const MODULE_SHELF_OPTIONS: Array<{ label: string; value: string }> =
+  Object.entries(MODULE_SHELF_TEXT).map(([value, label]) => ({
+    label,
+    value,
+  }));
+
+export function moduleShelfText(status: string): string {
+  return MODULE_SHELF_TEXT[status] ?? status;
+}
+
+/** 注册同步结果（PLT-MOD-002）：动作 → 展示文案。 */
+export const MODULE_SYNC_ACTION_TEXT: Record<string, string> = {
+  REGISTERED: '新注册',
+  UPDATED: '已更新',
+  UNCHANGED: '无变化',
+};
+
+export function moduleSyncActionText(action: string): string {
+  return MODULE_SYNC_ACTION_TEXT[action] ?? action;
+}
