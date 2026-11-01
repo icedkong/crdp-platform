@@ -7,6 +7,7 @@ import com.crdp.framework.security.SecurityProperties;
 import com.crdp.framework.security.SessionPrincipal;
 import com.crdp.framework.web.ApiResponse;
 import com.crdp.server.auth.AuthService;
+import com.crdp.server.auth.LoginBrandService;
 import com.crdp.server.auth.MenuQuery;
 import com.crdp.server.auth.PasswordChangeService;
 import com.crdp.server.auth.PasswordResetService;
@@ -25,6 +26,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @PublicApi
@@ -40,6 +42,7 @@ public class HospitalAuthController {
     private final CaptchaStore captchaStore;
     private final SecurityProperties securityProperties;
     private final SessionAdminService sessionAdminService;
+    private final LoginBrandService loginBrandService;
 
     public HospitalAuthController(
             AuthService authService,
@@ -49,7 +52,8 @@ public class HospitalAuthController {
             TenantIdentifier tenantIdentifier,
             CaptchaStore captchaStore,
             SecurityProperties securityProperties,
-            SessionAdminService sessionAdminService) {
+            SessionAdminService sessionAdminService,
+            LoginBrandService loginBrandService) {
         this.authService = authService;
         this.passwordChangeService = passwordChangeService;
         this.passwordResetService = passwordResetService;
@@ -58,6 +62,19 @@ public class HospitalAuthController {
         this.captchaStore = captchaStore;
         this.securityProperties = securityProperties;
         this.sessionAdminService = sessionAdminService;
+        this.loginBrandService = loginBrandService;
+    }
+
+    @Operation(
+            summary =
+                    "登录页租户识别（E06-T11 / PLT-CFG-008、PLT-AUTH-004）：按编码返回该院显示名称、"
+                            + "Logo、登录页背景、预设主题色与版权信息。租户不存在也返回通用默认值，不暴露存在性。"
+                            + "公开口按 IP 每小时限流（超限 42900）。")
+    @GetMapping("/api/hospital/auth/tenant")
+    public ApiResponse<LoginBrandService.TenantBrandView> tenantBrand(
+            @RequestParam(value = "code", required = false) String code,
+            HttpServletRequest httpRequest) {
+        return ApiResponse.ok(loginBrandService.brandOf(code, clientIp(httpRequest)));
     }
 
     @Operation(summary = "医院端登录。先识别租户编码，再在该院库中校验账号；连续失败 3 次后需携带图形验证码。")

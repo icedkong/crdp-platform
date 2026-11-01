@@ -7,6 +7,14 @@ import { ProfilePasswordSetting, z } from '@vben/common-ui';
 
 import { message } from 'ant-design-vue';
 
+import { changePasswordApi } from '#/api';
+
+/**
+ * E06-T11 / PLT-ORG-011：个人中心「修改密码」（接口 E04-T05 /auth/password，两端同构）。
+ * 成功后本会话继续可用，该账号其他会话全部失效。
+ */
+defineOptions({ name: 'ProfilePasswordSetting' });
+
 const formSchema = computed((): VbenFormSchema[] => {
   return [
     {
@@ -23,7 +31,7 @@ const formSchema = computed((): VbenFormSchema[] => {
       component: 'VbenInputPassword',
       componentProps: {
         passwordStrength: true,
-        placeholder: '请输入新密码',
+        placeholder: '8–64 位，含大小写 / 数字 / 特殊字符中至少 3 类',
       },
     },
     {
@@ -50,13 +58,17 @@ const formSchema = computed((): VbenFormSchema[] => {
   ];
 });
 
-function handleSubmit() {
-  message.success('密码修改成功');
+async function handleSubmit(values: Record<string, any>) {
+  await changePasswordApi({
+    newPassword: values.confirmPassword,
+    oldPassword: values.oldPassword,
+  });
+  message.success('密码修改成功，其他登录会话已全部下线');
 }
 </script>
 <template>
   <ProfilePasswordSetting
-    class="w-1/3"
+    class="w-2/5"
     :form-schema="formSchema"
     @submit="handleSubmit"
   />

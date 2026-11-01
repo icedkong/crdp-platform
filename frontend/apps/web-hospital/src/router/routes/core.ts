@@ -114,6 +114,29 @@ const coreRoutes: RouteRecordRaw[] = [
       },
     ],
   },
+  {
+    // E06-T11 / PLT-ORG-011：个人中心（pages.md §10，登录即可，不占菜单）。
+    // 走主壳布局（顶栏 / 侧栏照常）；未登录访问由守卫导回登录页（与 /password/change 同款）。
+    component: BasicLayout,
+    meta: {
+      hideInBreadcrumb: true,
+      hideInMenu: true,
+      title: '个人中心',
+    },
+    name: 'HospitalProfile',
+    path: '/profile',
+    children: [
+      {
+        name: 'HospitalProfileIndex',
+        path: '',
+        component: () => import('#/views/_core/profile/index.vue'),
+        meta: {
+          hideInMenu: true,
+          title: '个人中心',
+        },
+      },
+    ],
+  },
 ];
 
 export { coreRoutes, fallbackNotFoundRoute };

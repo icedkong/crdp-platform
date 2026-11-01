@@ -20,4 +20,10 @@ public class UnsupportedSmsCodeSender implements SmsCodeSender {
         // 同上：真实通道接入前发送动作失败，前端不会拿到「已发送」的假象
         throw new UnsupportedOperationException("短信验证码通道将在 E09-T03 接入");
     }
+
+    @Override
+    public void sendPhoneBindCode(String phone, String code) {
+        // 同上（E06-T11 换绑手机号验证码）
+        throw new UnsupportedOperationException("短信验证码通道将在 E09-T03 接入");
+    }
 }

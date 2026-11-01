@@ -32,6 +32,7 @@
 | GET | `/api/hospital/auth/sessions` | 登录 | — | `OnlineSession[] { sessionId, userId, username, displayName, ip, issuedAt, lastActiveAt, current }`（本人在线会话；`sessionId` 由令牌哈希单向推导，不返回令牌） |
 | DELETE | `/api/hospital/auth/sessions/{sessionId}` | 登录 | — | `OnlineSession`（下线自己的某个会话；被下线令牌下次请求 40100；写审计 `SESSION_REVOKE`） |
 | GET | `/api/hospital/auth/tenant-state` | 登录 | — | `TenantStateView { tenantId, code, name, status, expireType, expireAt, daysLeft, graceReadOnly }`（本院服务状态，宽限期续费提示的数据源；`daysLeft` 含到期当天为 0，已到期或长期有效为 null。E05-T03 / PLT-TEN-012） |
+| GET | `/api/hospital/auth/tenant?code=` | 免登录 | — | `TenantBrandView { tenantName, logoUrl, loginBgUrl, themeColor, themeColorHex, copyright, identified, loginMethods[] }`（登录页租户识别：显示名称取本院个性化 `cfg_brand.display_name`，未配置回落平台租户名称；租户不存在 / 未启用也返回通用默认值，不暴露存在性；公开口按 IP 每小时限流，超限 42900。E06-T11 / PLT-CFG-008、PLT-AUTH-004） |
 | GET | `/api/hospital/system/sessions` | `tenant:session:view` | — | `OnlineSession[]`（本院全部在线会话，`current` 恒 false；见 `system.md` §8） |
 | POST | `/api/hospital/system/sessions/{sessionId}/kick` | `tenant:session:kick` | — | `OnlineSession`（强制下线，写审计 `SESSION_KICK`；被下线令牌下次请求 40100） |
 | GET | `/api/platform/auth/sessions` | 登录 | — | `OnlineSession[]`（平台端同构） |
@@ -88,12 +89,10 @@
 
 ## 2. 需要新增的接口（推断，待确认）
 
-| 方法 | 路径 | 说明 | 需求 |
-|---|---|---|---|
-| GET | `/api/hospital/auth/tenant?code=` | 登录页识别租户，返回 `{ tenantName, logoUrl, loginMethods[], themeColor }`；租户不存在也返回通用默认值，不暴露存在性 | PLT-AUTH-004、PLT-CFG-008 |
 <!-- E04-T04 已实现并移至第 1 节：/auth/sms、/auth/login/sms、/auth/2fa/verify（两端） -->
 <!-- E04-T05 已实现并移至第 1 节：/auth/captcha（两端）、/auth/password（两端）、/system/users/{id}/unlock -->
 <!-- E04-T07 已实现并移至第 1 节：/auth/password/forgot、/auth/password/reset（医院端；平台端忘记密码暂不做，见 OQ-41） -->
+<!-- E06-T11 已实现并移至第 1 节：/auth/tenant?code=（登录页租户识别，PLT-CFG-008、PLT-AUTH-004） -->
 | POST | `/api/hospital/auth/reauth` | 敏感操作二次认证，返回 5 分钟有效的 `reauthToken`，敏感接口通过请求头 `X-Reauth-Token` 携带；缺失时返回 40304 | PLT-AUTH-012 |
 | GET | `/api/hospital/auth/features` | 当前租户功能开关 `{ [featureCode]: boolean }`；或把 `features` 并入 `me`（二选一，见 OQ-03） | 技术方案“各院功能不同怎么办” |
 | — | 平台端 | `/api/platform/auth/reauth`、`/auth/features` 同构待定 | PLT-AUTH-005 |

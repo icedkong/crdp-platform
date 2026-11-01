@@ -69,6 +69,12 @@ public class SecurityConfig {
                                                 "/api/hospital/auth/captcha",
                                                 "/api/platform/auth/captcha")
                                         .permitAll()
+                                        // E06-T11 / PLT-CFG-008、PLT-AUTH-004：登录页租户识别
+                                        // （显示名称 / Logo / 背景色 / 主题色）。公开口按 IP 每小时限流
+                                        // （LoginBrandService，超限 42900）；未知租户返回通用默认值不暴露存在性
+                                        .requestMatchers(
+                                                HttpMethod.GET, "/api/hospital/auth/tenant")
+                                        .permitAll()
                                         // E04-T07 / PLT-AUTH-011：忘记密码（免登录）。公开口限流同上：
                                         // /password/forgot 有 60 秒冷却 + 每日上限（未知账号也消耗冷却位，
                                         // 防探测）；/password/reset 走 LoginRateLimiter（连续失败 42900）

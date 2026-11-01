@@ -1,5 +1,6 @@
 <script lang="ts" setup>
 import { computed } from 'vue';
+import { useRouter } from 'vue-router';
 
 import { AuthenticationLoginExpiredModal } from '@vben/common-ui';
 import { BasicLayout, LockScreen, UserDropdown } from '@vben/layouts';
@@ -29,6 +30,22 @@ const description = computed(() => {
 async function handleLogout() {
   await authStore.logout(false);
 }
+
+const router = useRouter();
+
+/**
+ * E06-T11 / PLT-ORG-011：顶栏用户菜单提供「个人中心」入口（/profile，登录即可，
+ * 不占侧栏菜单——后端菜单按权限下发，个人中心对全员开放）。
+ */
+const userMenus = [
+  {
+    handler: () => {
+      router.push('/profile');
+    },
+    icon: 'ant-design:user-outlined',
+    text: '个人中心',
+  },
+];
 </script>
 
 <template>
@@ -37,6 +54,7 @@ async function handleLogout() {
       <UserDropdown
         :avatar
         :description="description"
+        :menus="userMenus"
         :tag-text="userStore.userInfo?.tenantCode ? '医院' : '平台'"
         :text="userStore.userInfo?.realName"
         @clear-preferences-and-logout="handleLogout"

@@ -404,7 +404,7 @@ public class AuthService {
                 "HOSPITAL",
                 tenant.id(),
                 tenant.code(),
-                tenant.name(),
+                hospitalDisplayName(tenant),
                 account.id(),
                 account.username(),
                 account.displayName(),
@@ -501,6 +501,17 @@ public class AuthService {
     private String phoneIdx(String phone) {
         // 盲索引必须在租户上下文里算（密钥在租户库）
         return cryptoService.blindIndex(HOSPITAL_PHONE_PURPOSE, phone);
+    }
+
+    /**
+     * 会话里的医院名称（E06-T11 / PLT-CFG-008）：租户个性化「显示名称」优先， 未配置回落平台库租户名称。水印（姓名（账号）· 医院名称 ·
+     * 预览时间）与顶栏用户信息据此展示； 改名后重新登录或会话权限重算时生效。
+     */
+    private String hospitalDisplayName(TenantRecord tenant) {
+        String override =
+                TenantContext.callAsTenant(
+                        tenant.id(), tenant.code(), hospitalDirectory::brandDisplayName);
+        return override == null || override.isBlank() ? tenant.name() : override;
     }
 
     private static String loginCodeIdentifier(String tenantCode, String phone) {

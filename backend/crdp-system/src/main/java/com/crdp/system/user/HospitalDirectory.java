@@ -1,6 +1,8 @@
 package com.crdp.system.user;
 
 import com.crdp.framework.security.ScopeSnapshot;
+import com.crdp.system.infra.mapper.BrandMapper;
+import com.crdp.system.infra.mapper.BrandRow;
 import com.crdp.system.infra.mapper.HospitalMapper;
 import com.crdp.system.infra.mapper.HospitalUserRow;
 import java.util.List;
@@ -12,9 +14,21 @@ import org.springframework.stereotype.Component;
 public class HospitalDirectory {
 
     private final HospitalMapper mapper;
+    private final BrandMapper brandMapper;
 
-    public HospitalDirectory(HospitalMapper mapper) {
+    public HospitalDirectory(HospitalMapper mapper, BrandMapper brandMapper) {
         this.mapper = mapper;
+        this.brandMapper = brandMapper;
+    }
+
+    /** 本院个性化配置行（E06-T11 / PLT-CFG-008）；未配置返回 null（各字段回落平台默认）。 */
+    public BrandRow brand() {
+        return brandMapper.find();
+    }
+
+    /** 本院显示名称（未配置返回 null，调用方回落平台租户名称）。 */
+    public String brandDisplayName() {
+        return brandMapper.displayName();
     }
 
     public Optional<HospitalAccount> find(String username) {

@@ -38,6 +38,11 @@ public class SecurityProperties {
     /** 同一 IP 每小时可取多少张图形验证码（公开接口必须限流，AGENTS.md 第 6 节）。 */
     private int captchaIpHourlyLimit = 60;
 
+    /**
+     * 同一 IP 每小时可查多少次登录页租户品牌（E06-T11 / PLT-CFG-008，GET /auth/tenant 公开口按 IP 限流； 取图与品牌查询分开计数，互不挤占）。
+     */
+    private int tenantBrandIpHourlyLimit = 120;
+
     /** 密码最小长度（平台下限，租户只能加严）。规格：8 位。 */
     private int passwordMinLength = 8;
 
@@ -143,6 +148,14 @@ public class SecurityProperties {
 
     public void setCaptchaIpHourlyLimit(int captchaIpHourlyLimit) {
         this.captchaIpHourlyLimit = captchaIpHourlyLimit;
+    }
+
+    public int getTenantBrandIpHourlyLimit() {
+        return tenantBrandIpHourlyLimit;
+    }
+
+    public void setTenantBrandIpHourlyLimit(int tenantBrandIpHourlyLimit) {
+        this.tenantBrandIpHourlyLimit = tenantBrandIpHourlyLimit;
     }
 
     public int getPasswordMinLength() {

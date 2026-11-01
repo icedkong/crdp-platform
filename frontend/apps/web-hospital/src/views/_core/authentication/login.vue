@@ -1,7 +1,11 @@
 <script lang="ts" setup>
-import type { CaptchaImage, TwoFactorChallenge } from '@crdp/api';
+import type {
+  CaptchaImage,
+  TenantBrandView,
+  TwoFactorChallenge,
+} from '@crdp/api';
 
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 
 import {
@@ -23,7 +27,7 @@ import {
   Tabs,
 } from 'ant-design-vue';
 
-import { getCaptchaApi, sendLoginSmsApi } from '#/api';
+import { getCaptchaApi, getTenantBrand, sendLoginSmsApi } from '#/api';
 import { useAuthStore } from '#/store';
 
 import {
@@ -33,6 +37,11 @@ import {
   SMS_COOLDOWN_SECONDS,
   TENANT_CODE_PATTERN,
 } from './sms-login-form';
+import {
+  BRAND_FETCH_DEBOUNCE_MS,
+  loginBrandTitle,
+  shouldFetchBrand,
+} from './tenant-brand';
 import {
   applyTenantCodeMemory,
   recalledTenantCode,
@@ -245,11 +254,55 @@ async function goForgotPassword() {
   await router.push('/password/forgot');
 }
 
+// ---- E06-T11 / PLT-CFG-008、PLT-AUTH-004：登录页租户品牌（显示名称 / Logo / 版权） ----
+// 租户识别是公开口（按 IP 每小时限流）：只在编码合法时请求、400ms 防抖；
+// 未识别出租户返回通用默认（identified=false），不提示「租户不存在」。
+const brand = ref<null | TenantBrandView>(null);
+let brandTimer: ReturnType<typeof setTimeout> | undefined;
+
+async function loadBrand(code: string) {
+  try {
+    brand.value = await getTenantBrand(code);
+  } catch {
+    // 品牌是登录页装饰：失败静默回落平台默认，不阻塞登录
+    brand.value = null;
+  }
+}
+
+function scheduleBrandFetch(code: string) {
+  if (brandTimer) {
+    clearTimeout(brandTimer);
+  }
+  if (!shouldFetchBrand(code)) {
+    brand.value = null;
+    return;
+  }
+  brandTimer = setTimeout(() => {
+    loadBrand(code.trim());
+  }, BRAND_FETCH_DEBOUNCE_MS);
+}
+
+const brandTitle = computed(() =>
+  loginBrandTitle(brand.value?.identified ?? false, brand.value?.tenantName),
+);
+
+watch(
+  () => passwordForm.tenantCode,
+  (code) => scheduleBrandFetch(code),
+);
+watch(
+  () => smsForm.tenantCode,
+  (code) => scheduleBrandFetch(code),
+);
+
 onMounted(() => {
   const saved = recalledTenantCode(localStorage);
   if (saved) {
     passwordForm.tenantCode = saved;
     smsForm.tenantCode = saved;
+    if (shouldFetchBrand(saved)) {
+      loadBrand(saved.trim());
+    }
   }
 });
 
@@ -261,7 +314,15 @@ onUnmounted(() => {
 <template>
   <Card v-if="!twoFactor" class="w-full max-w-[400px]" :bordered="false">
     <div class="mb-2 text-center">
-      <div class="text-xl font-semibold">临床科研数据一体化平台</div>
+      <img
+        v-if="brand?.logoUrl"
+        :alt="brandTitle"
+        class="mx-auto mb-2 h-10 w-auto"
+        :src="brand.logoUrl"
+      />
+      <div class="text-xl font-semibold" data-testid="login-brand-title">
+        {{ brandTitle }}
+      </div>
       <div class="text-muted-foreground mt-1 text-sm">
         医院端登录。演示环境只有虚构账号。
       </div>
@@ -392,6 +453,13 @@ onUnmounted(() => {
         </Form>
       </TabPane>
     </Tabs>
+    <!-- E06-T11 / PLT-CFG-008：租户版权与备案信息（未配置不显示） -->
+    <div
+      v-if="brand?.copyright"
+      class="text-muted-foreground mt-4 text-center text-xs"
+    >
+      {{ brand.copyright }}
+    </div>
   </Card>
 
   <!-- 双因素第二步（PLT-AUTH-003）：验证码已发送至账号绑定手机号 -->

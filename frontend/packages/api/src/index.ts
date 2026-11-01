@@ -86,6 +86,22 @@ export {
 export type { TwoFactorChallenge } from './auth-flow';
 
 export {
+  ASSET_URL_PATTERN,
+  isValidAssetUrl,
+  loginLogResultText,
+  THEME_COLOR_OPTIONS,
+  themeColorHexOf,
+} from './brand';
+export type {
+  BrandSaveRequest,
+  BrandView,
+  LoginLogView,
+  ProfileView,
+  TenantBrandView,
+  ThemeColorOption,
+} from './brand';
+
+export {
   EXPIRE_TYPE_TEXT,
   MODULE_LOG_ACTION_TEXT,
   MODULE_SHELF_OPTIONS,
@@ -101,13 +117,13 @@ export {
   tenantModuleStatusText,
   tenantStatusText,
 } from './enums';
+
 export {
   errorBody,
   lockedMessage,
   loginRejectionInfo,
   remainingAttemptsMessage,
 } from './login-rejection';
-
 export type { LoginRejectionInfo } from './login-rejection';
 export { DEPT_TYPE_OPTIONS, ORG_STATUS_TEXT, orgStatusText } from './org';
 export type {
@@ -124,7 +140,6 @@ export type {
   OrgView,
   UserOptionView,
 } from './org';
-
 export {
   PASSWORD_EXPIRY_REMIND_DAYS,
   PASSWORD_HISTORY_COUNT,
@@ -135,6 +150,7 @@ export {
   passwordPolicyViolations,
   passwordRuleItems,
 } from './password-policy';
+
 export type {
   PasswordPolicyOptions,
   PasswordRuleItem,
@@ -167,6 +183,15 @@ export type {
   MenuSyncDiffResult,
   MenuUpdateRequest,
 } from './perm-resources';
+export {
+  platformAccountStatusText,
+  platformRoleStatusText,
+  platformRoleViewSummary,
+  platformTenantScopeText,
+  platformVisibleScopeText,
+  validatePlatformAccount,
+  validatePlatformRole,
+} from './platform-role';
 
 export interface CreateTenantRequest {
   /** 不填由后端自动生成（页面展示建议值可改）。 */
@@ -502,15 +527,6 @@ export interface ModuleOpenLog {
   tenantName: string;
 }
 
-export {
-  platformAccountStatusText,
-  platformRoleStatusText,
-  platformRoleViewSummary,
-  platformTenantScopeText,
-  platformVisibleScopeText,
-  validatePlatformAccount,
-  validatePlatformRole,
-} from './platform-role';
 export type {
   PlatformAccountResetResult,
   PlatformAccountSaveRequest,
@@ -523,6 +539,7 @@ export type {
   PlatformTenantScope,
   PlatformVisibleScope,
 } from './platform-role';
+export type { OnlineSessionView } from './session';
 
 export { TENANT_SCOPE_STATE_TEXT } from './tenant-scope';
 export type {

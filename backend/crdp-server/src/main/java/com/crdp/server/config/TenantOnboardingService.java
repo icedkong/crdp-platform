@@ -56,6 +56,12 @@ public class TenantOnboardingService {
     private static final int[] TENANT_ADMIN_SESSION_MENU_IDS = {312, 313};
 
     /**
+     * 机构设置菜单（tenant:brand:edit）在 plt_menu 的固定 id，平台库迁移 V21 新增（E06-T11 / PLT-CFG-008）。 老库由租户库 base
+     * V10 增量授予、local/dev 全新库由种子 V105 补授，这里覆盖生产（无种子）。
+     */
+    private static final int TENANT_ADMIN_SETTINGS_MENU_ID = 34;
+
+    /**
      * 开通请求：编码与医院名称必填；首个管理员在开通时提供，也可启用前经 E06 补设。 expire 为向导第 2 步的到期设置（E05-T02
      * /PLT-TEN-011），空表示长期有效；重试重入时不会改写已登记租户的到期设置。 modules 为向导第 2 步勾选的 业务模块（E05-T05 /PLT-MOD-004，base
      * 必开不传），null 表示重试重入——沿用上次已登记模块。
@@ -393,6 +399,20 @@ public class TenantOnboardingService {
                                             + ")",
                                     roleId);
                         }
+                    }
+                    // E06-T11 / PLT-CFG-008：机构设置（tenant:brand:edit）同样授予（plt_menu 34）。
+                    Integer settingsGranted =
+                            platform.queryForObject(
+                                    "SELECT COUNT(*) FROM sys_role_menu WHERE role_id = ? AND menu_id = "
+                                            + TENANT_ADMIN_SETTINGS_MENU_ID,
+                                    Integer.class,
+                                    roleId);
+                    if (settingsGranted == null || settingsGranted == 0) {
+                        platform.update(
+                                "INSERT INTO sys_role_menu (role_id, menu_id) VALUES (?, "
+                                        + TENANT_ADMIN_SETTINGS_MENU_ID
+                                        + ")",
+                                roleId);
                     }
                 });
     }

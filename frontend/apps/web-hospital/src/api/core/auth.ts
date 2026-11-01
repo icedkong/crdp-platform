@@ -1,4 +1,9 @@
-import type { CaptchaImage, LoginResult, Me } from '@crdp/api';
+import type {
+  CaptchaImage,
+  LoginResult,
+  Me,
+  OnlineSessionView,
+} from '@crdp/api';
 
 import { useAccessStore } from '@vben/stores';
 
@@ -117,6 +122,20 @@ export async function verifyTwoFactorApi(data: AuthApi.TwoFactorVerifyParams) {
     challengeId: data.challengeId,
     code: data.code,
   });
+}
+
+// ---- E06-T11 / PLT-ORG-011：个人中心「在线会话」页签（接口 E04-T06 已落地） ----
+
+/** 本人在线会话（只返回会话号，不返回令牌）。 */
+export async function getMySessionsApi() {
+  return requestClient.get<OnlineSessionView[]>(apiPath('/auth/sessions'));
+}
+
+/** 下线自己的某个会话（被下线令牌下次请求即 40100；写审计）。 */
+export async function revokeMySessionApi(sessionId: string) {
+  return requestClient.delete<OnlineSessionView>(
+    apiPath(`/auth/sessions/${sessionId}`),
+  );
 }
 
 export async function logoutApi() {
