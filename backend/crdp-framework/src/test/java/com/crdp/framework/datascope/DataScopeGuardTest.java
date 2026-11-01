@@ -30,10 +30,41 @@ class DataScopeGuardTest {
     }
 
     @Test
-    void appendsFalsePredicateWhenRestrictedScopeIsEmpty() {
+    void emptyScopeAppendsFalsePredicateToWherelessSelect() {
         ScopeSnapshot empty = ScopeSnapshot.restricted(List.of(), List.of(), false);
         String rewritten = DataScopeGuard.enforce("SELECT * FROM pt_patient", empty, false);
-        assertTrue(rewritten.contains("1 = 0"));
+        assertEquals("SELECT * FROM pt_patient WHERE 1 = 0", rewritten);
+    }
+
+    @Test
+    void emptyScopeAppendsFalsePredicateToExistingWhere() {
+        ScopeSnapshot empty = ScopeSnapshot.restricted(List.of(), List.of(), false);
+        String rewritten =
+                DataScopeGuard.enforce("SELECT * FROM pt_patient WHERE deleted = ?", empty, false);
+        assertEquals("SELECT * FROM pt_patient WHERE deleted = ? AND 1 = 0", rewritten);
+    }
+
+    @Test
+    void emptyScopeAppendsFalsePredicateToJoinedQuery() {
+        ScopeSnapshot empty = ScopeSnapshot.restricted(List.of(), List.of(), false);
+        String rewritten =
+                DataScopeGuard.enforce(
+                        "SELECT t.id FROM fu_task t JOIN pt_patient p ON p.id = t.patient_id"
+                                + " WHERE t.status = 'OVERDUE'",
+                        empty,
+                        false);
+        assertEquals(
+                "SELECT t.id FROM fu_task t JOIN pt_patient p ON p.id = t.patient_id"
+                        + " WHERE t.status = 'OVERDUE' AND 1 = 0",
+                rewritten);
+    }
+
+    @Test
+    void unparseableControlledSqlFailsClosedInsteadOfPassingThrough() {
+        ScopeSnapshot empty = ScopeSnapshot.restricted(List.of(), List.of(), false);
+        assertThrows(
+                IllegalStateException.class,
+                () -> DataScopeGuard.enforce("SELECT FROM pt_patient WHERE", empty, false));
     }
 
     @Test
