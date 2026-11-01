@@ -234,6 +234,9 @@ export const statusTone: Record<string, StatusTone> = {
   注销中: 'warning',
   已注销: 'default',
   开通中: 'processing',
+  // 模块目录（PLT-MOD-001 上架状态：上架 / 下架，下架后不能再被新开通）
+  上架: 'success',
+  下架: 'error',
 };
 
 /**

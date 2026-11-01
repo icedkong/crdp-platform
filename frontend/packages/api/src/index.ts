@@ -87,6 +87,11 @@ export type { TwoFactorChallenge } from './auth-flow';
 
 export {
   EXPIRE_TYPE_TEXT,
+  MODULE_SHELF_OPTIONS,
+  MODULE_SHELF_TEXT,
+  MODULE_SYNC_ACTION_TEXT,
+  moduleShelfText,
+  moduleSyncActionText,
   TENANT_STATUS_OPTIONS,
   TENANT_STATUS_TEXT,
   tenantStatusText,
@@ -289,4 +294,67 @@ export interface PageView<T> {
   pageNo: number;
   pageSize: number;
   total: number;
+}
+
+/** 模块上架状态（PLT-MOD-001）：下架后不能再被新开通。 */
+export type ModuleShelfStatus = 'OFF' | 'ON';
+
+/** 模块目录行的菜单清单（随发版由迁移登记进 plt_menu）。 */
+export interface ModuleMenuRef {
+  id: number;
+  side: 'HOSPITAL' | 'PLATFORM';
+  title: string;
+  type: 'BUTTON' | 'DIR' | 'MENU';
+}
+
+/** 模块配置项（PLT-MOD-001 目录展示；租户级取值是 PLT-MOD-008）。 */
+export interface ModuleConfigItem {
+  code: string;
+  defaultValue: string;
+  description: string;
+  name: string;
+}
+
+/** 模块版本记录（PLT-MOD-003）：功能版本、迁移版本与变更说明，倒序（最新在前）。 */
+export interface ModuleVersionRecord {
+  changeNote: string;
+  createdAt: string;
+  featureVersion: string;
+  migrationVersion: string;
+}
+
+/** 模块目录行（PLT-MOD-001）。 */
+export interface ModuleCatalogItem {
+  baseModule: boolean;
+  code: string;
+  configItems: ModuleConfigItem[];
+  dependsOn: string[];
+  description: string;
+  featureVersion: string;
+  menus: ModuleMenuRef[];
+  migrationVersion: string;
+  name: string;
+  permissions: string[];
+  status: ModuleShelfStatus;
+  syncedAt: null | string;
+  versions: ModuleVersionRecord[];
+}
+
+/** 维护模块展示信息与上下架（PLT-MOD-002）：只允许改名称、说明、上架状态。 */
+export interface ModuleUpdateRequest {
+  description?: null | string;
+  name: string;
+  status?: ModuleShelfStatus | null;
+}
+
+/** 手动同步单个模块的结果（PLT-MOD-002）。 */
+export interface ModuleSyncOutcome {
+  action: 'REGISTERED' | 'UNCHANGED' | 'UPDATED';
+  code: string;
+  featureVersion: string;
+  migrationVersion: string;
+}
+
+export interface ModuleSyncResult {
+  outcomes: ModuleSyncOutcome[];
 }
