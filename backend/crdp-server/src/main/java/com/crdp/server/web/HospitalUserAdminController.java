@@ -1,5 +1,6 @@
 package com.crdp.server.web;
 
+import com.crdp.framework.security.PublicApi;
 import com.crdp.framework.security.RequiresPermission;
 import com.crdp.framework.web.ApiResponse;
 import com.crdp.server.auth.UserAdminService;
@@ -8,9 +9,12 @@ import com.crdp.server.system.user.UserAccountAdminService.ResetPasswordResult;
 import com.crdp.server.system.user.UserAccountAdminService.StatusChange;
 import com.crdp.server.system.user.UserAccountAdminService.UserCreateRequest;
 import com.crdp.server.system.user.UserAccountAdminService.UserDetail;
+import com.crdp.server.system.user.UserAccountAdminService.UserOptionView;
 import com.crdp.server.system.user.UserAccountAdminService.UserPage;
 import com.crdp.server.system.user.UserAccountAdminService.UserUpdateRequest;
 import com.crdp.server.system.user.UserAccountAdminService.WardOption;
+import com.crdp.server.system.user.UserPermissionPreviewService;
+import com.crdp.server.system.user.UserPermissionPreviewService.UserEffectivePermissionsView;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.List;
@@ -34,11 +38,15 @@ public class HospitalUserAdminController {
 
     private final UserAdminService userAdminService;
     private final UserAccountAdminService service;
+    private final UserPermissionPreviewService previewService;
 
     public HospitalUserAdminController(
-            UserAdminService userAdminService, UserAccountAdminService service) {
+            UserAdminService userAdminService,
+            UserAccountAdminService service,
+            UserPermissionPreviewService previewService) {
         this.userAdminService = userAdminService;
         this.service = service;
+        this.previewService = previewService;
     }
 
     @Operation(summary = "用户分页列表（PLT-ORG-006）：筛选 keyword / deptId / wardId / roleId / status；手机号脱敏")
@@ -121,5 +129,29 @@ public class HospitalUserAdminController {
     @RequiresPermission("tenant:user:view")
     public ApiResponse<List<WardOption>> wardOptions() {
         return ApiResponse.ok(service.wardOptions());
+    }
+
+    @Operation(
+            summary =
+                    "用户权限预览（PLT-ORG-009、A-WARD-009、C-WARD-008）：最终菜单树（含按钮）与来源角色、"
+                            + "权限码、数据范围（范围类型 / 可见病区 / 负责科室，逐项标注来源角色）；"
+                            + "与登录会话同一计算入口，实时反映当前授权")
+    @GetMapping("/api/hospital/system/users/{id}/effective-permissions")
+    @RequiresPermission("tenant:user:view")
+    public ApiResponse<UserEffectivePermissionsView> effectivePermissions(
+            @PathVariable("id") long id) {
+        return ApiResponse.ok(previewService.preview(id));
+    }
+
+    @Operation(
+            summary =
+                    "用户选择器（PLT-ORG-012）：本院启用用户，只返回 id、账号、显示名与主科室名；"
+                            + "keyword 命中账号 / 姓名 / 工号，deptId 命中主科室或负责科室；登录即可调用")
+    @PublicApi
+    @GetMapping("/api/hospital/system/users/options")
+    public ApiResponse<List<UserOptionView>> userOptions(
+            @RequestParam(value = "keyword", required = false) String keyword,
+            @RequestParam(value = "deptId", required = false) Long deptId) {
+        return ApiResponse.ok(service.userOptions(keyword, deptId));
     }
 }

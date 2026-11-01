@@ -7,7 +7,6 @@ import type {
   OrgStatusRequest,
   OrgTreeView,
   OrgView,
-  UserOptionView,
 } from '@crdp/api';
 
 import { apiPath, requestClient } from '#/api/request';
@@ -69,13 +68,5 @@ export function changeDeptStatus(deptId: number, data: OrgStatusRequest) {
   return requestClient.post<DeptView>(
     apiPath(`/system/depts/${deptId}/status`),
     data,
-  );
-}
-
-/** 负责人候选（暂行：本院启用用户；PLT-ORG-012 共用选择器在 E06-T09 替换）。 */
-export function userOptions(keyword: string) {
-  return requestClient.get<UserOptionView[]>(
-    apiPath('/system/orgs/user-options'),
-    { params: keyword ? { keyword } : {} },
   );
 }

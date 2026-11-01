@@ -5,7 +5,6 @@ import type {
   TenantRoleMemberView,
   TenantRoleMenuNode,
   TenantRoleView,
-  UserOptionView,
 } from '@crdp/api';
 
 import { computed, ref } from 'vue';
@@ -39,7 +38,7 @@ import {
   TreeSelect,
 } from 'ant-design-vue';
 
-import { orgTree, userOptions } from '#/api/core/org';
+import { orgTree } from '#/api/core/org';
 import {
   changeRoleStatus,
   copyRole,
@@ -55,6 +54,7 @@ import {
   updateRoleMenus,
   updateRoleScope,
 } from '#/api/core/role';
+import UserSelector from '#/components/system/user-selector.vue';
 import { useBreakpoint } from '#/reference/use-breakpoint';
 import { usePermission } from '#/reference/use-permission';
 
@@ -327,7 +327,6 @@ const editor = ref({
   orgTree: { orgs: [], singleOrg: false } as OrgTreeView,
   scopeSaving: false,
   members: [] as TenantRoleMemberView[],
-  memberCandidates: [] as UserOptionView[],
   memberIds: [] as number[],
   membersSaving: false,
 });
@@ -347,7 +346,6 @@ async function openEditor(row: TenantRoleView) {
     orgTree: editor.value.orgTree,
     scopeSaving: false,
     members: [],
-    memberCandidates: [],
     memberIds: [],
     membersSaving: false,
   };
@@ -437,14 +435,6 @@ async function loadEditorMembers() {
     editor.value.memberIds = view.members.map((member) => member.userId);
   } catch {
     // 统一拦截器已提示
-  }
-}
-
-async function searchMembers(keyword: string) {
-  try {
-    editor.value.memberCandidates = await userOptions(keyword);
-  } catch {
-    editor.value.memberCandidates = [];
   }
 }
 
@@ -901,20 +891,12 @@ const textSecondary = colors.textSecondary;
             description="还没有成员"
           />
           <FormItem class="mt-3" label="添加成员（输入姓名或账号搜索本院用户）">
-            <Select
-              :filter-option="false"
-              :options="
-                editor.memberCandidates
-                  .filter((option) => !editor.memberIds.includes(option.id))
-                  .map((option) => ({
-                    label: `${option.displayName}（${option.username}）`,
-                    value: option.id,
-                  }))
+            <!-- PLT-ORG-012 共用用户选择器（E06-T09 替换暂行候选接口）：选中即加入成员 -->
+            <UserSelector
+              :value="null"
+              @change="
+                (value) => value !== null && toggleMember(Number(value), true)
               "
-              placeholder="搜索后选择要加入的用户"
-              show-search
-              @search="searchMembers"
-              @select="(value: unknown) => toggleMember(Number(value), true)"
             />
           </FormItem>
           <div class="tab-actions">

@@ -264,6 +264,55 @@ public class UserAccountAdminService {
                 .toList();
     }
 
+    /**
+     * 用户选择器候选（E06-T09 / PLT-ORG-012，登录即可调用）：本院<b>启用</b>用户， 只返回 id、账号、显示名与主科室名（业务模块选责任人 / 研究成员共用，
+     * 原组织接口 /orgs/user-options 为暂行实现、本任务起替换）。 keyword 命中账号 / 姓名 / 工号；deptId 命中主科室或负责科室；最多 50 条。
+     */
+    public List<UserOptionView> userOptions(String keyword, Long deptId) {
+        StringBuilder where = new StringBuilder(" WHERE u.status = 'ENABLED'");
+        List<Object> args = new ArrayList<>();
+        String kw = keyword == null ? "" : keyword.trim();
+        if (!kw.isEmpty()) {
+            where.append(" AND (u.username LIKE ? OR u.display_name LIKE ? OR u.staff_no LIKE ?)");
+            String like = "%" + escapeLike(kw) + "%";
+            args.add(like);
+            args.add(like);
+            args.add(like);
+        }
+        if (deptId != null && deptId > 0) {
+            // 主科室或负责科室命中（与用户列表 deptId 筛选同口径）
+            where.append(
+                    " AND (u.main_dept_id = ? OR EXISTS (SELECT 1 FROM sys_user_dept_scope s"
+                            + " WHERE s.user_id = u.id AND s.dept_id = ?))");
+            args.add(deptId);
+            args.add(deptId);
+        }
+        return jdbc
+                .queryForList(
+                        "SELECT u.id, u.username, u.display_name, d.name AS dept_name"
+                                + " FROM sys_user u LEFT JOIN sys_dept d ON d.id = u.main_dept_id"
+                                + where
+                                + " ORDER BY u.display_name, u.id LIMIT 50",
+                        args.toArray())
+                .stream()
+                .map(
+                        row ->
+                                new UserOptionView(
+                                        num(row.get("id")),
+                                        str(row.get("username")),
+                                        str(row.get("display_name")),
+                                        strOrNull(row.get("dept_name"))))
+                .toList();
+    }
+
+    /** 选择器候选（PLT-ORG-012）：不含手机号等敏感字段，科室名用于同名人区分。 */
+    public record UserOptionView(long id, String username, String displayName, String deptName) {}
+
+    /** LIKE 关键字转义（% _ \），与组织候选暂行接口同做法。 */
+    private static String escapeLike(String raw) {
+        return raw.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+    }
+
     // ---------------------------------------------------------------- 新建（PLT-ORG-006 新建用户流程）
 
     public CreatedUser create(UserCreateRequest request) {

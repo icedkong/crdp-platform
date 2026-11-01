@@ -49,6 +49,7 @@ import {
 import { useBreakpoint } from '#/reference/use-breakpoint';
 import { usePermission } from '#/reference/use-permission';
 
+import PermissionPreviewDrawer from './permission-preview-drawer.vue';
 import {
   deptTreeOptions,
   mainDeptText,
@@ -66,8 +67,9 @@ defineOptions({ name: 'HospitalUser' });
  * 用户管理（E06-T07 / PLT-ORG-006、008 · pages.md §10）：分页列表（关键字 / 科室 / 病区 /
  * 角色 / 状态筛选，手机号脱敏）+ 新建 / 编辑弹窗（主科室、角色、负责病区与负责科室多选，
  * 变更立即生效）+ 停用 / 启用 / 离职（离职终态、立即下线）+ 重置密码（临时密码只下发一次）与解锁。
- * 批量导入（E06-T08）、导出与权限预览（E06-T09）随后续任务开放。查看 tenant:user:view，
- * 维护 tenant:user:edit，重置密码与解锁 tenant:user:reset。
+ * 权限预览（E06-T09 / PLT-ORG-009、A-WARD-009）在操作列打开抽屉，展示最终菜单、权限码与
+ * 数据范围（含可见病区）及来源角色。批量导入（E06-T08）与导出随后续任务开放。
+ * 查看 tenant:user:view，维护 tenant:user:edit，重置密码与解锁 tenant:user:reset。
  */
 const router = useRouter();
 const { isMobile } = useBreakpoint();
@@ -108,7 +110,7 @@ const columns = [
   { dataIndex: 'phoneMasked', title: '手机号', width: 130 },
   { dataIndex: 'status', title: '状态', width: 84 },
   { dataIndex: 'createdAt', title: '创建时间', width: 170 },
-  { dataIndex: 'action', fixed: 'right' as const, title: '操作', width: 250 },
+  { dataIndex: 'action', fixed: 'right' as const, title: '操作', width: 320 },
 ];
 
 async function reload(pageNo = page.pageNo) {
@@ -337,6 +339,18 @@ async function unlock(row: TenantUserView) {
   }
 }
 
+// ---- 权限预览（E06-T09 / PLT-ORG-009、A-WARD-009、C-WARD-008）----
+
+const preview = reactive({
+  open: false,
+  row: null as null | TenantUserView,
+});
+
+function openPreview(row: TenantUserView) {
+  preview.row = row;
+  preview.open = true;
+}
+
 // ---- 状态变更（停用 / 启用 / 离职）----
 
 const statusForm = reactive({
@@ -509,6 +523,14 @@ const textSecondary = colors.textSecondary;
           </span>
           <Space v-else-if="column.dataIndex === 'action'" :size="0" wrap>
             <Button
+              size="small"
+              type="link"
+              :data-testid="`user-preview-${record.username}`"
+              @click="openPreview(record as TenantUserView)"
+            >
+              权限预览
+            </Button>
+            <Button
               v-if="canEdit"
               size="small"
               type="link"
@@ -559,7 +581,7 @@ const textSecondary = colors.textSecondary;
       </Table>
       <div class="legend">
         <Tag>批量导入随 E06-T08 开放</Tag>
-        <Tag>权限预览随 E06-T09 开放</Tag>
+        <Tag>导出（敏感权限）随导出框架开放</Tag>
         <Tag>兼职科室 / 岗位职称随字典与数据范围任务开放</Tag>
       </div>
     </Card>
@@ -753,6 +775,9 @@ const textSecondary = colors.textSecondary;
         </p>
       </Spin>
     </Modal>
+
+    <!-- 权限预览抽屉（E06-T09）：菜单、权限码与数据范围（含病区）及来源角色 -->
+    <PermissionPreviewDrawer v-model:open="preview.open" :user="preview.row" />
   </div>
 </template>
 

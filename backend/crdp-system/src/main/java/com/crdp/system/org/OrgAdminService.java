@@ -58,9 +58,6 @@ public class OrgAdminService {
             int childCount,
             int enabledChildCount) {}
 
-    /** 负责人候选（暂行：本院启用用户；PLT-ORG-012 共用选择器落地于 E06-T09）。 */
-    public record UserOptionView(long id, String username, String displayName) {}
-
     public OrgTreeView tree() {
         List<OrgRow> orgs = mapper.listOrgs();
         List<OrgCampusNode> orgNodes = OrgTreeAssembler.assemble(orgs, mapper.listDepts());
@@ -96,16 +93,6 @@ public class OrgAdminService {
                 mapper.countDeptMembers(List.of(deptId)),
                 mapper.countChildren(deptId),
                 mapper.countEnabledChildren(deptId));
-    }
-
-    public List<UserOptionView> userOptions(String keyword) {
-        String safe = escapeLike(keyword == null ? "" : keyword.trim());
-        return mapper.userOptions(safe).stream()
-                .map(
-                        row ->
-                                new UserOptionView(
-                                        row.getId(), row.getUsername(), row.getDisplayName()))
-                .toList();
     }
 
     // ---------------------------------------------------------------- 院区
@@ -469,10 +456,6 @@ public class OrgAdminService {
 
     private static ApiException duplicate(String message) {
         return new ApiException(409, 40902, message);
-    }
-
-    private static String escapeLike(String keyword) {
-        return keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
     }
 
     private String orgLabel(long orgId) {

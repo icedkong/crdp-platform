@@ -102,13 +102,6 @@ export interface OrgStatusRequest {
   reason?: string;
 }
 
-/** 负责人候选（暂行：本院启用用户；PLT-ORG-012 共用选择器在 E06-T09 落地后替换）。 */
-export interface UserOptionView {
-  displayName: string;
-  id: number;
-  username: string;
-}
-
 /** 科室类型（暂行固定项，取自 platform-spec「临床 / 医技 / 职能 / 随访中心等」；字典随 E06-T10 落地后切换）。 */
 export const DEPT_TYPE_OPTIONS: Array<{ label: string; value: string }> = [
   { label: '临床科室', value: '临床' },

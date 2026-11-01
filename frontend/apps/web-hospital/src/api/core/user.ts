@@ -7,6 +7,8 @@ import type {
   TenantUserResetResult,
   TenantUserStatusRequest,
   TenantUserUpdateRequest,
+  UserEffectivePermissionsView,
+  UserOptionView,
   WardOptionView,
 } from '@crdp/api';
 
@@ -123,4 +125,34 @@ export function unlockUser(userId: number) {
 /** 病区候选（「负责病区」多选，只读启用项；病区字典维护属病区管理任务）。 */
 export function wardOptions() {
   return requestClient.get<WardOptionView[]>(apiPath('/system/wards/options'));
+}
+
+/**
+ * 用户权限预览（E06-T09 / PLT-ORG-009、A-WARD-009、C-WARD-008）：最终菜单树（含按钮与
+ * 来源角色）、权限码与数据范围（范围类型 / 可见病区 / 负责科室）；与登录会话同一计算入口。
+ */
+export function effectivePermissions(userId: number) {
+  return requestClient.get<UserEffectivePermissionsView>(
+    apiPath(`/system/users/${userId}/effective-permissions`),
+  );
+}
+
+/** 用户选择器查询条件（E06-T09 / PLT-ORG-012）：keyword 命中账号 / 姓名 / 工号。 */
+export interface UserOptionQuery {
+  deptId?: number;
+  keyword?: string;
+}
+
+/**
+ * 用户选择器候选（E06-T09 / PLT-ORG-012）：本院启用用户，登录即可调用——业务模块
+ * 选责任人 / 研究成员共用（原组织接口 /orgs/user-options 为暂行实现，本任务起替换）。
+ */
+export function userOptions(query: UserOptionQuery = {}) {
+  return requestClient.get<UserOptionView[]>(apiPath('/system/users/options'), {
+    params: Object.fromEntries(
+      Object.entries(query).filter(
+        ([, value]) => value !== undefined && value !== '',
+      ),
+    ),
+  });
 }

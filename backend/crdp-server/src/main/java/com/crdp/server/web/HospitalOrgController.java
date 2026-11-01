@@ -11,18 +11,15 @@ import com.crdp.system.org.OrgAdminService.OrgSave;
 import com.crdp.system.org.OrgAdminService.OrgTreeView;
 import com.crdp.system.org.OrgAdminService.OrgView;
 import com.crdp.system.org.OrgAdminService.StatusChange;
-import com.crdp.system.org.OrgAdminService.UserOptionView;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.constraints.Size;
-import java.util.List;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -61,14 +58,6 @@ public class HospitalOrgController {
     @RequiresPermission("tenant:org:edit")
     public ApiResponse<DeptImpactView> deptImpact(@PathVariable long deptId) {
         return ApiResponse.ok(service.deptImpact(deptId));
-    }
-
-    @Operation(summary = "负责人候选（暂行）：本院启用用户，关键字匹配账号 / 姓名；PLT-ORG-012 落地后替换")
-    @GetMapping("/api/hospital/system/orgs/user-options")
-    @RequiresPermission("tenant:org:view")
-    public ApiResponse<List<UserOptionView>> userOptions(
-            @RequestParam(required = false) String keyword) {
-        return ApiResponse.ok(service.userOptions(keyword));
     }
 
     // ---- 院区（sys_org）----
