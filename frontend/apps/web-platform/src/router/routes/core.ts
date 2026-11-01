@@ -18,6 +18,22 @@ const fallbackNotFoundRoute: RouteRecordRaw = {
   path: '/:path(.*)*',
 };
 
+/**
+ * E06-T01 / pages.md §0.2：无菜单权限的 403 页。后端菜单模式下未下发的路由
+ * （含权限刷新后清掉的旧路由）会落到 404 兜底，守卫把已登录用户改导向这里。
+ */
+const fallbackForbiddenRoute: RouteRecordRaw = {
+  component: () => import('#/views/_core/fallback/forbidden.vue'),
+  meta: {
+    hideInBreadcrumb: true,
+    hideInMenu: true,
+    hideInTab: true,
+    title: '403',
+  },
+  name: 'FallbackForbidden',
+  path: '/403',
+};
+
 /** 基本路由。登录页是 /login（pages.md），不是上游默认的 /auth/login。 */
 const coreRoutes: RouteRecordRaw[] = [
   {
@@ -31,6 +47,7 @@ const coreRoutes: RouteRecordRaw[] = [
     redirect: preferences.app.defaultHomePath,
     children: [],
   },
+  fallbackForbiddenRoute,
   {
     component: AuthPageLayout,
     meta: {
