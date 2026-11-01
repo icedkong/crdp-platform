@@ -97,17 +97,27 @@ class TenantOnboardingServiceMySqlIT {
 
     private static TenantOnboardingService.OnboardingRequest request() {
         return new TenantOnboardingService.OnboardingRequest(
-                CODE, "虚构示例医院丙", "admin", "丙院管理员", INITIAL_PASSWORD, null);
+                CODE, "虚构示例医院丙", "admin", "丙院管理员", INITIAL_PASSWORD, null, null);
     }
 
     private static TenantOnboardingService service(TenantDataSourceRegistry registryToUse) {
         // 平台操作走路由数据源（平台上下文），租户操作在租户上下文内路由到该院池
+        // 模块开通（E05-T05）只用到平台库 / 租户库与审计；会话与权限版本重算在新建租户路径不触发，
+        // 这里传 null（该 IT 无 Redis，bump 不会被调用）。
         return new TenantOnboardingService(
                 new JdbcTemplate(routing),
                 registryToUse,
                 new ProvisioningDatabase(properties),
                 properties,
-                encoder);
+                encoder,
+                new com.crdp.server.platform.TenantModuleService(
+                        new JdbcTemplate(routing),
+                        new com.crdp.platform.module.ModuleRegistry(),
+                        routing,
+                        new TenantSchemaMigrator(new MockEnvironment(), new CryptoProperties()),
+                        new com.crdp.framework.audit.JdbcAuditLogger(new JdbcTemplate(routing)),
+                        null,
+                        null));
     }
 
     @Test

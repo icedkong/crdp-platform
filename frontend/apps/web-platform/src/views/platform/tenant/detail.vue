@@ -54,6 +54,7 @@ import {
   validateExpiryForm,
   validateReason,
 } from './lifecycle';
+import ModulesTab from './modules-tab.vue';
 
 defineOptions({ name: 'PlatformTenantDetail' });
 
@@ -211,7 +212,7 @@ onMounted(load);
 <template>
   <Page
     :title="detail?.name ?? '租户详情'"
-    description="租户基本信息与维护；模块、授权范围、到期设置、操作记录随对应任务提供。"
+    description="租户基本信息与维护；模块开通随 E05-T05 提供，授权范围、资源信息、管理员、操作记录随对应任务提供。"
   >
     <Card :bordered="false" class="crdp-card">
       <Spin :spinning="loading">
@@ -281,6 +282,9 @@ onMounted(load);
                 {{ detail.updatedAt ?? '—' }}
               </DescriptionsItem>
             </Descriptions>
+          </TabPane>
+          <TabPane key="modules" tab="模块">
+            <ModulesTab :tenant-id="tenantId" />
           </TabPane>
           <TabPane key="expiry" tab="到期设置">
             <div class="toolbar">

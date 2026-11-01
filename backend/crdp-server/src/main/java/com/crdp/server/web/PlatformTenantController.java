@@ -62,7 +62,8 @@ public class PlatformTenantController {
             String expireAt,
             List<Integer> remindDays,
             Integer graceDays,
-            Boolean graceReadOnly) {}
+            Boolean graceReadOnly,
+            List<String> modules) {}
 
     @Operation(summary = "租户列表（PLT-TEN-001）：按名称/编码关键词、状态、到期日、模块检索")
     @GetMapping
@@ -181,7 +182,8 @@ public class PlatformTenantController {
                                 request.adminUsername(),
                                 request.adminDisplayName(),
                                 request.adminInitialPassword(),
-                                expire)));
+                                expire,
+                                request.modules())));
     }
 
     @Operation(summary = "开通进度（PLT-TEN-008）：租户状态与逐步结果")

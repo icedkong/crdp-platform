@@ -41,6 +41,22 @@ public class TenantSchemaMigrator {
         flyway(dataSource, locations).migrate();
     }
 
+    /**
+     * 只跑某一个模块的迁移脚本（PLT-MOD-004 开通流程第 2 步）：对该租户库执行该模块迁移目录里的脚本。 与全量迁移共用 flyway_schema_history 与
+     * outOfOrder（租户库可能已应用更高版本，如种子 V100），脚本可重入（平台规格 §3）。 校验关闭： history 里还有其他模块（base
+     * 等）的已应用版本，它们不在本模块目录里，默认校验会报 missing； 全量迁移（注册与启动时）仍做完整校验。
+     */
+    public void migrateTenantModule(DataSource dataSource, String migrationLocation) {
+        Flyway.configure()
+                .dataSource(dataSource)
+                .locations("classpath:" + migrationLocation)
+                .baselineOnMigrate(false)
+                .outOfOrder(true)
+                .validateOnMigrate(false)
+                .load()
+                .migrate();
+    }
+
     public List<TenantResourceRow> loadTenants(DataSource platform) {
         return new JdbcTemplate(platform)
                 .query(
