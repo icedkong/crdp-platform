@@ -8,6 +8,7 @@ import type {
   TenantUserStatusRequest,
   TenantUserUpdateRequest,
   UserEffectivePermissionsView,
+  UserImportReport,
   UserOptionView,
   WardOptionView,
 } from '@crdp/api';
@@ -159,4 +160,39 @@ export function userOptions(query: UserOptionQuery = {}) {
       ),
     ),
   });
+}
+
+/**
+ * 下载用户导入模板（E06-T08 / PLT-ORG-007）：xlsx 单工作表，表头 + 两行示例（全部虚构数据）。
+ * 浏览器端触发保存（Content-Disposition 的 UTF-8 文件名）。
+ */
+export async function downloadUserImportTemplate() {
+  const response = await requestClient.download(
+    apiPath('/system/users/import-template'),
+    { responseReturn: 'raw' },
+  );
+  const disposition = String(response.headers?.['content-disposition'] ?? '');
+  const encoded = /filename\*=UTF-8''([^;]+)/.exec(disposition)?.[1];
+  const filename = encoded ? decodeURIComponent(encoded) : '用户导入模板.xlsx';
+  const blob = response.data as Blob;
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * 用户批量导入（E06-T08 / PLT-ORG-007）：上传 xlsx，逐行校验并新建，单行失败不影响
+ * 其他行；返回逐行结果（CREATED / FAILED 与原因）。只新建不更新既有用户；初始密码
+ * 不随导入返回（首次短信登录后设置）。权限 tenant:user:import。
+ */
+export function importUsers(file: File) {
+  const form = new FormData();
+  form.append('file', file);
+  return requestClient.post<UserImportReport>(
+    apiPath('/system/users/import'),
+    form,
+  );
 }

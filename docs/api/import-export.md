@@ -23,7 +23,9 @@
 
 ## 2. 组织 / 用户导入（PLT-ORG-003、PLT-ORG-007，P1）
 
-**科室导入已实现（E06-T03）**：`GET /api/hospital/system/orgs/import-template` + `POST /api/hospital/system/orgs/import`（`tenant:org:edit`）——**同步一次性模型**（OQ-52），上传即逐行校验并落库、单行失败不影响其他行、返回逐行结果；详见 `system.md` §1。§1 的异步作业模型（预检 / 确认 / 结果文件）保留给患者宽表导入（E15+/E18）。用户导入（PLT-ORG-007）仍为 `POST /api/hospital/system/users/import`（E06-T08），届时用户侧也采用同步模型对齐。
+**科室导入已实现（E06-T03）**：`GET /api/hospital/system/orgs/import-template` + `POST /api/hospital/system/orgs/import`（`tenant:org:edit`）——**同步一次性模型**（OQ-52），上传即逐行校验并落库、单行失败不影响其他行、返回逐行结果；详见 `system.md` §1。§1 的异步作业模型（预检 / 确认 / 结果文件）保留给患者宽表导入（E15+/E18）。
+
+**用户导入已实现（E06-T08）**：`GET /api/hospital/system/users/import-template` + `POST /api/hospital/system/users/import`（`tenant:user:import`）——与科室导入同一同步模型对齐（OQ-52），**只新建不更新既有用户**（账号已存在该行失败，改配走用户管理编辑），逐行校验口径与手工新建一致（账号 / 手机号本院唯一、角色与主科室必填、模板角色先复制），**初始密码不随导入返回**（随机密码只落哈希、首登强制改密，用户首次短信登录后设置）；详见 `system.md` §2。
 
 ## 3. 导出（A-PAT-009、C-PAT-014、PLT-AUD-007）
 

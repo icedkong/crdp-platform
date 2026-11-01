@@ -954,6 +954,12 @@ public class UserAccountAdminService {
 
     /** 生效的密码最小长度：平台下限与租户加严取大（PLT-AUTH-006；租户项 cfg_param security.password.min-length）。 */
     private int effectiveMinPasswordLength() {
+        return effectiveMinPasswordLength(jdbc, securityProperties);
+    }
+
+    /** 同上（静态版，供批量导入等同类场景复用，E06-T08）。 */
+    static int effectiveMinPasswordLength(
+            JdbcTemplate jdbc, SecurityProperties securityProperties) {
         List<String> values =
                 jdbc.queryForList(
                         "SELECT param_value FROM cfg_param WHERE param_key = 'security.password.min-length'",
