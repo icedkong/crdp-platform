@@ -87,6 +87,40 @@ class EffectivePermissionIT {
                 });
     }
 
+    /**
+     * 收尾清理：最后一个用例结束后不再有 @BeforeEach 兜底，ITR- 角色对 doctor.demo 的成员 关系会留给同套件里后续运行的 IT（如 E06-T09
+     * 权限预览对种子角色的精确断言）。
+     */
+    @org.junit.jupiter.api.AfterAll
+    static void cleanUp(@Autowired JdbcTemplate jdbc) {
+        TenantContext.runAsTenant(
+                TENANT_ID,
+                TENANT,
+                () -> {
+                    jdbc.update(
+                            "DELETE rm FROM sys_role_menu rm JOIN sys_role r ON r.id = rm.role_id"
+                                    + " WHERE r.code LIKE 'ITR-%'");
+                    jdbc.update(
+                            "DELETE rs FROM sys_role_scope rs JOIN sys_role r ON r.id = rs.role_id"
+                                    + " WHERE r.code LIKE 'ITR-%'");
+                    jdbc.update(
+                            "DELETE ur FROM sys_user_role ur JOIN sys_role r ON r.id = ur.role_id"
+                                    + " WHERE r.code LIKE 'ITR-%'");
+                    jdbc.update("DELETE FROM sys_role WHERE code LIKE 'ITR-%'");
+                    jdbc.update("DELETE FROM aud_log WHERE event_type LIKE 'ROLE_%'");
+                });
+        TenantContext.runAsPlatform(
+                () -> {
+                    jdbc.update(
+                            "DELETE rm FROM plt_role_menu rm JOIN plt_menu m ON m.id = rm.menu_id"
+                                    + " WHERE m.title LIKE 'ITR-%'");
+                    jdbc.update("DELETE FROM plt_menu WHERE title LIKE 'ITR-%'");
+                    jdbc.update(
+                            "DELETE FROM plt_audit_log WHERE event_type LIKE 'MENU_%'"
+                                    + " AND detail LIKE '%ITR%'");
+                });
+    }
+
     @Test
     @Order(1)
     void multiRoleUnionTakesEffectOnNextRequest() {

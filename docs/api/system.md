@@ -1,7 +1,7 @@
 # 医院端系统管理接口（system）
 
 > 后端：`crdp-system`（用户、角色、组织、字典、参数、通知配置）；病区相关字段在 `crdp-followup` 使用。前缀 `/api/hospital/system/`。
-> 页面：`docs/design/pages.md` §10。E06-T02 已落地的组织接口见 §1（原「推断，待确认」已按实现定稿：院区 `/orgs`、科室 `/depts` 分资源）；其余路径仍为 **推断，待确认**。
+> 页面：`docs/design/pages.md` §10。E06-T02 已落地的组织接口见 §1（原「推断，待确认」已按实现定稿：院区 `/orgs`、科室 `/depts` 分资源）；§2 用户、§3 角色、§4 字典参数已随 E06-T05/T07/T09/T10/T11 落地。
 > 菜单种子现有权限码：`tenant:user:view`、`tenant:role:view`、`tenant:org:view` / `tenant:org:edit`（view 原种子 `tenant:dept:view`，OQ-11 定论 B 由 V103 改名对齐规格；edit 为平台库 V19 新增按钮 331）。
 
 ## 1. 组织：院区、科室、病区（PLT-ORG-001..003、A-WARD-001/008、C-WARD-001/008）
@@ -12,7 +12,6 @@ E06-T02 已实现（院区与科室树；病区字典属 `crdp-followup`，科�
 |---|---|---|---|
 | GET | `/api/hospital/system/orgs/tree` | `tenant:org:view` | 院区 → 多级科室树（含停用节点）；`{ singleOrg, orgs[] }`，`singleOrg=true` 表示启用院区 ≤ 1，页面可隐藏院区层级（PLT-ORG-001）；节点含 `code/name/status` 与科室的 `deptType/leaderUserId/leaderName/hisCode/sortNo/children`（同级按 `sortNo`、`id` 升序） |
 | GET | `/api/hospital/system/orgs/{orgId}/impact` | `tenant:org:edit` | 院区停用影响面：`{ deptCount, enabledDeptCount, memberCount }`（患者数随患者表 E08+ 落地补充） |
-| GET | `/api/hospital/system/orgs/user-options?keyword=` | `tenant:org:view` | 负责人候选（本院启用用户，暂行；PLT-ORG-012 共用选择器落地于 E06-T09 后替换） |
 | POST / PUT | `/api/hospital/system/orgs[/{orgId}]` | `tenant:org:edit` | 新增 / 编辑院区：`{ code, name }`；编码租户内唯一（重复 40902）、创建后不可改（更新可省略，携带不一致 40001）；写 `ORG_CREATE` / `ORG_UPDATE` 审计 |
 | POST | `/api/hospital/system/orgs/{orgId}/status` | `tenant:org:edit` | 停用 / 启用：`{ action: ENABLE\|DISABLE, reason? }`；有启用中的科室时 40901；重复流转 40901；写 `ORG_STATUS` 审计 |
 | POST | `/api/hospital/system/depts` | `tenant:org:edit` | 新增科室：`{ orgId, parentDeptId?, code, name, deptType?, leaderUserId?, hisCode?, sortNo? }`；`parentDeptId` 省略或 0 = 院区顶层；写 `DEPT_CREATE` 审计 |
@@ -29,7 +28,7 @@ E06-T02 已实现（院区与科室树；病区字典属 `crdp-followup`，科�
 | GET / PUT | `/api/hospital/followup/wards/aliases` | `followup:ward:edit` | 病区值映射（导入时原值 → 病区，`ward_alias`，A-WARD-006） |
 | GET | `/api/hospital/followup/wards/{id}/members` | `followup:ward:edit` | 成员与患者数 |
 
-## 2. 用户（PLT-ORG-006..012、A-WARD-002、C-WARD-003；E06-T07 已实现列表 / 详情 / 新建 / 编辑 / 状态 / 重置 / 解锁）
+## 2. 用户（PLT-ORG-006..012、A-WARD-002、C-WARD-003；E06-T07 列表 / 详情 / 新建 / 编辑 / 状态 / 重置 / 解锁，E06-T09 权限预览与用户选择器）
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
@@ -41,9 +40,9 @@ E06-T02 已实现（院区与科室树；病区字典属 `crdp-followup`，科�
 | POST | `/api/hospital/system/users/{id}/reset-password` | `tenant:user:reset` | 生成一次性临时密码（响应只返回一次），置「首登强制改密」、旧哈希入历史表、该账号全部会话失效并解除登录锁定；写 `USER_RESET_PASSWORD` 审计。二次认证（PLT-AUTH-012）随敏感操作框架落地，本接口暂以权限码 + 确认弹窗把关（推断，待确认） |
 | POST | `/api/hospital/system/users/{id}/unlock` | `tenant:user:reset` | 解锁（E04-T05 落地，清登录失败计数桶）；写 `USER_UNLOCK` 审计 |
 | GET | `/api/hospital/system/wards/options` | `tenant:user:view` | 病区候选（用户编辑页「负责病区」多选，只读启用项；病区字典维护属病区管理任务，届时替换） |
-| GET | `/api/hospital/system/users/{id}/effective-permissions` | `tenant:user:view` | 权限预览：菜单、按钮、数据范围（含病区）、字段策略（PLT-ORG-009、A-WARD-009）——**随 E06-T09 落地** |
+| GET | `/api/hospital/system/users/{id}/effective-permissions` | `tenant:user:view` | **已实现（E06-T09 / PLT-ORG-009、A-WARD-009、C-WARD-008）**。权限预览：`{ userId, username, displayName, status, roles[]（含停用行，带 roleType）, openedModules[], menus[]（树含按钮，逐项带 sourceRoles）, permissionCodes[], scopeAll, scopeTypes[]（带 sourceRoles）, wards[]（可见病区，带 sourceRoles）, depts[]（负责科室，带 sourceRoles） }`；与登录会话同一计算入口（EffectivePermissionService 三层交集 + 快照同口径范围归并），实时不缓存、只读不写审计；字段策略（PLT-PERM-009）随 E07-T04 / T06 落地后补充 |
 | POST | `/api/hospital/system/users/import` | `tenant:user:import` | 批量导入（PLT-ORG-007）——**随 E06-T08 落地** |
-| GET | `/api/hospital/system/users/options?keyword=&deptId=` | 登录 | 用户选择器（只返回 id、显示名、科室；PLT-ORG-012）——随 E06-T09 落地，暂用 §1 `/orgs/user-options` |
+| GET | `/api/hospital/system/users/options?keyword=&deptId=` | 登录（@PublicApi） | **已实现（E06-T09 / PLT-ORG-012）**。用户选择器：本院启用用户，`[{ id, username, displayName, deptName }]`（不含手机号等敏感字段；账号与科室名用于同名人区分）；keyword 命中账号 / 姓名 / 工号，deptId 命中主科室或负责科室，最多 50 条按姓名排序；原 §1 `/orgs/user-options`（暂行，tenant:org:view）已移除（未登记 40307），科室负责人与角色成员选择器均改走本接口 |
 
 用户状态取值 `ENABLED / DISABLED / RESIGNED`（「锁定」是登录侧 Redis 计数的瞬时态，不落 `sys_user.status`，列表不展示，解锁按钮常显）。`sys_user` 新增 `staff_no`、`main_dept_id`（租户库 V12）；负责病区 `sys_user_ward` 与负责科室 `sys_user_dept_scope` 沿用 V1 表，按用户全量覆盖。兼职科室、岗位 / 职称、账号有效期分别随字典（E06-T10）与数据范围生效计算（E07-T02）落地；离职转办事件随 E06-T03。
 

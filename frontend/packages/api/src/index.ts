@@ -168,7 +168,6 @@ export type {
   OrgStatusRequest,
   OrgTreeView,
   OrgView,
-  UserOptionView,
 } from './org';
 export {
   PASSWORD_EXPIRY_REMIND_DAYS,
@@ -615,12 +614,20 @@ export type {
 } from './tenant-scope';
 
 export {
+  flattenMenuPreview,
   nextStatusActions,
+  scopeSummary,
   USER_STATUS_OPTIONS,
   USER_STATUS_TEXT,
+  userOptionLabel,
   userStatusText,
 } from './tenant-user';
 export type {
+  MenuPreviewNode,
+  MenuPreviewRow,
+  ScopeDeptView,
+  ScopeTypeView,
+  ScopeWardView,
   TenantUserCreated,
   TenantUserCreateRequest,
   TenantUserDetailView,
@@ -629,6 +636,9 @@ export type {
   TenantUserStatusRequest,
   TenantUserUpdateRequest,
   TenantUserView,
+  UserEffectivePermissionsView,
+  UserOptionView,
+  UserRoleBrief,
   UserStatus,
   WardOptionView,
 } from './tenant-user';

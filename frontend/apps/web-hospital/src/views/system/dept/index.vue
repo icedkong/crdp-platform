@@ -5,7 +5,6 @@ import type {
   OrgCampusNode,
   OrgNodeStatus,
   OrgTreeView,
-  UserOptionView,
 } from '@crdp/api';
 
 import type { DropTarget } from './org-tree';
@@ -45,8 +44,8 @@ import {
   orgTree,
   updateDept,
   updateOrg,
-  userOptions,
 } from '#/api/core/org';
+import UserSelector from '#/components/system/user-selector.vue';
 import { useBreakpoint } from '#/reference/use-breakpoint';
 import { usePermission } from '#/reference/use-permission';
 
@@ -272,9 +271,6 @@ const deptForm = ref({
   nameError: '',
   submitting: false,
 });
-const leaderOptions = ref<UserOptionView[]>([]);
-const leaderLoading = ref(false);
-
 function campusOptions() {
   return selectableCampuses(tree.value.orgs).map((campus) => ({
     label: campus.name,
@@ -320,17 +316,6 @@ function parentTreeData(): Array<{
   ];
 }
 
-async function loadLeaders(kw: string) {
-  leaderLoading.value = true;
-  try {
-    leaderOptions.value = await userOptions(kw);
-  } catch {
-    leaderOptions.value = [];
-  } finally {
-    leaderLoading.value = false;
-  }
-}
-
 function openDeptCreate(parent: DeptNodeView | null) {
   const context = parent ?? selectedDept.value?.dept ?? null;
   const orgId =
@@ -354,7 +339,6 @@ function openDeptCreate(parent: DeptNodeView | null) {
     nameError: '',
     submitting: false,
   };
-  void loadLeaders('');
 }
 
 function openDeptEdit(dept: DeptNodeView) {
@@ -373,7 +357,6 @@ function openDeptEdit(dept: DeptNodeView) {
     nameError: '',
     submitting: false,
   };
-  void loadLeaders('');
 }
 
 async function submitDept() {
@@ -860,20 +843,12 @@ const textSecondary = colors.textSecondary;
           />
         </FormItem>
         <FormItem label="负责人">
-          <Select
-            v-model:value="deptForm.leaderUserId"
-            allow-clear
-            show-search
-            :filter-option="false"
-            :loading="leaderLoading"
-            :options="
-              leaderOptions.map((option) => ({
-                label: `${option.displayName}（${option.username}）`,
-                value: option.id,
-              }))
+          <!-- PLT-ORG-012 共用用户选择器（E06-T09 替换暂行负责人候选接口） -->
+          <UserSelector
+            :value="deptForm.leaderUserId"
+            @change="
+              (value) => (deptForm.leaderUserId = value as number | null)
             "
-            placeholder="输入姓名或账号搜索本院用户"
-            @search="loadLeaders"
           />
         </FormItem>
         <FormItem label="HIS 科室编码">

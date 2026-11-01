@@ -122,18 +122,6 @@ public interface OrgMapper {
 
     // ---- 负责人候选（E06-T02 暂行，PLT-ORG-012 共用选择器落地后由 E06-T09 接管）----
 
-    @Select(
-            """
-            SELECT id, username, display_name AS displayName
-            FROM sys_user
-            WHERE status = 'ENABLED'
-              AND (#{keyword} = '' OR username LIKE CONCAT('%', #{keyword}, '%')
-                   OR display_name LIKE CONCAT('%', #{keyword}, '%'))
-            ORDER BY id
-            LIMIT 50
-            """)
-    List<UserOptionRow> userOptions(@Param("keyword") String keyword);
-
     /** 负责人校验：必须是本院启用中的用户（不受候选下拉前 50 条限制）。 */
     @Select("SELECT id FROM sys_user WHERE id = #{id} AND status = 'ENABLED'")
     Long findEnabledUserId(@Param("id") long id);

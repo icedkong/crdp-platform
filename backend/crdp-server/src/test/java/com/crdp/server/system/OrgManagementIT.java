@@ -383,9 +383,9 @@ class OrgManagementIT {
                                 doctor,
                                 Map.of("orgId", 1, "code", "IT-D-401", "name", "示例科室"))));
 
-        // 负责人候选：管理员可见、医生不可见
-        assertEquals(0, codeOf(get("/api/hospital/system/orgs/user-options", admin)));
-        assertEquals(40300, codeOf(get("/api/hospital/system/orgs/user-options", doctor)));
+        // 负责人候选（暂行）已由 PLT-ORG-012 共用用户选择器替换（E06-T09）：接口移除、未登记默认拒绝 40307
+        assertEquals(40307, codeOf(get("/api/hospital/system/orgs/user-options", admin)));
+        assertEquals(40307, codeOf(get("/api/hospital/system/orgs/user-options", doctor)));
 
         // 跨租户：demob 建的院区不出现在 demoa 的树里（租户库隔离）
         String demobAdmin = adminTokenOf("demob");
