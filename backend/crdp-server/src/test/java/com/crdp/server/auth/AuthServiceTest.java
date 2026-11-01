@@ -215,7 +215,8 @@ class AuthServiceTest {
         when(tenantLookup.findByCode(TENANT_CODE))
                 .thenReturn(
                         Optional.of(
-                                new TenantRecord(TENANT_ID, TENANT_CODE, "虚构示例医院甲", "ENABLED")));
+                                new TenantRecord(
+                                        TENANT_ID, TENANT_CODE, "虚构示例医院甲", "ENABLED", false)));
         when(routing.hasTenant(TENANT_ID)).thenReturn(true);
         when(platformMapper.openedModules(TENANT_ID)).thenReturn(List.of("base"));
         when(platformMapper.listMenus("HOSPITAL")).thenReturn(List.of());
@@ -421,7 +422,8 @@ class AuthServiceTest {
         when(tenantLookup.findByCode(TENANT_CODE))
                 .thenReturn(
                         Optional.of(
-                                new TenantRecord(TENANT_ID, TENANT_CODE, "虚构示例医院甲", "SUSPENDED")));
+                                new TenantRecord(
+                                        TENANT_ID, TENANT_CODE, "虚构示例医院甲", "SUSPENDED", false)));
         ApiException ex = loginRejected(RIGHT_PASSWORD);
         assertEquals(40101, ex.code());
         assertEquals("租户、账号或密码不正确", ex.getMessage());
@@ -859,7 +861,8 @@ class AuthServiceTest {
     @Test
     void smsLoginCodesAreScopedPerTenant() {
         when(tenantLookup.findByCode("demob"))
-                .thenReturn(Optional.of(new TenantRecord(8L, "demob", "虚构示例医院乙", "ENABLED")));
+                .thenReturn(
+                        Optional.of(new TenantRecord(8L, "demob", "虚构示例医院乙", "ENABLED", false)));
         when(routing.hasTenant(8L)).thenReturn(true);
         when(cryptoService.blindIndex("sys-user-phone", PHONE)).thenReturn("idx-of-b");
         when(hospitalDirectory.findByPhoneIdx("idx-of-b")).thenReturn(Optional.empty());

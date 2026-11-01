@@ -129,6 +129,19 @@ public class SessionStore {
         return collect(tenantKey(tenantId));
     }
 
+    /**
+     * 吊销某租户的全部在线会话（PLT-TEN-016 停用处理：在线会话立即失效）。 人工停用与宽限期满自动停用（E05-T03）都走这里；平台侧会话与租户视角会话不在 「租户 →
+     * 令牌」索引里，不受影响（平台仍可进入租户视角排障）。返回被吊销的会话数。
+     */
+    public long revokeAllForTenant(long tenantId) {
+        long revoked = 0;
+        for (SessionPrincipal session : listForTenant(tenantId)) {
+            delete(session.token());
+            revoked++;
+        }
+        return revoked;
+    }
+
     /** 会话剩余有效期（取剩余空闲窗口与剩余绝对时长中的较小值）；已过期返回零。 */
     public Duration effectiveTtl(SessionPrincipal principal) {
         return effectiveTtl(principal, Instant.now().getEpochSecond());

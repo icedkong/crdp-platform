@@ -173,7 +173,8 @@ class PasswordResetServiceTest {
         when(tenantLookup.findByCode(TENANT_CODE))
                 .thenReturn(
                         Optional.of(
-                                new TenantRecord(TENANT_ID, TENANT_CODE, "虚构示例医院甲", "ENABLED")));
+                                new TenantRecord(
+                                        TENANT_ID, TENANT_CODE, "虚构示例医院甲", "ENABLED", false)));
         when(routing.hasTenant(TENANT_ID)).thenReturn(true);
         when(hospitalDirectory.find(USERNAME))
                 .thenReturn(Optional.of(account("ENABLED", OLD_HASH, PHONE_CIPHER)));

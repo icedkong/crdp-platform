@@ -49,5 +49,15 @@ public class TenantLookupCache {
                 TenantContext.callAsPlatform(() -> mapper.findTenantByCode(code)));
     }
 
+    /**
+     * 状态变更后立刻作废本节点的缓存（E05-T03）：人工流转与到期自动流转（转宽限 / 自动停用 / 恢复）都调用， 让登录闸门与宽限只读拦截尽快看到新状态； 其他节点仍靠 60 秒
+     * TTL 收敛（M1 单实例部署，见 ADR 0003 第 4 条）。
+     */
+    public void evict(String code) {
+        if (code != null) {
+            cache.remove(code);
+        }
+    }
+
     private record Entry(Optional<TenantRecord> tenant, Instant expiresAt) {}
 }

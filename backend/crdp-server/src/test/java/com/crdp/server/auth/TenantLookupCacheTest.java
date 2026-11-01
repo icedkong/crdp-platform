@@ -26,7 +26,7 @@ class TenantLookupCacheTest {
     @Test
     void cachesTheLookupResultForTheTtl() {
         when(mapper.findTenantByCode("demoa"))
-                .thenReturn(new TenantRecord(7L, "demoa", "虚构示例医院甲", "ENABLED"));
+                .thenReturn(new TenantRecord(7L, "demoa", "虚构示例医院甲", "ENABLED", false));
         TenantLookupCache cache = new TenantLookupCache(mapper, Duration.ofMinutes(10));
 
         Optional<TenantRecord> first = cache.findByCode("demoa");
@@ -50,7 +50,7 @@ class TenantLookupCacheTest {
     @Test
     void refreshesAfterExpiry() {
         when(mapper.findTenantByCode("demoa"))
-                .thenReturn(new TenantRecord(7L, "demoa", "虚构示例医院甲", "ENABLED"));
+                .thenReturn(new TenantRecord(7L, "demoa", "虚构示例医院甲", "ENABLED", false));
         TenantLookupCache cache = new TenantLookupCache(mapper, Duration.ofMillis(1));
 
         cache.findByCode("demoa");
