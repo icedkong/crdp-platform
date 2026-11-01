@@ -117,10 +117,22 @@ PLT-MOD-010/011 为后续规划，不实现。
 
 ## 7. 平台配置（PLT-CFG-001/003/005/006/007/009/010/011）
 
+> 字典与系统参数已实现（E06-T10，`DictParamOverrideIT`）：字典与项编码、参数键创建后不可改；字典项停用不删除；保存即作废定义缓存（租户端下一次读取即见新值，PLT-CFG-011 即时生效），全部写操作写平台审计。租户侧继承与覆盖接口见 `system.md` §4。
+
+| 方法 | 路径 | 权限 | 说明 | 需求 |
+|---|---|---|---|---|
+| GET | `/api/platform/dicts` | `platform:dict:edit` | **已实现（E06-T10）**。字典类型列表（含停用行）：`{code,name,description,status,itemCount,enabledItemCount,updatedAt}`；查看与维护同码（规格权限点表只有 edit 一个码） | PLT-CFG-001 |
+| POST | `/api/platform/dicts` | `platform:dict:edit` | **已实现**。新建：`{code,name,description?}`；编码全局唯一（40902）、小写字母开头 2–64 位 `[a-z][a-z0-9_]`、创建后不可改；写 DICT_CREATE 审计 | PLT-CFG-001 |
+| PUT | `/api/platform/dicts/{code}` | `platform:dict:edit` | **已实现**。维护名称 / 说明 / 停用启用（`status` 只能 ENABLED/DISABLED）；未知 40400；写 DICT_UPDATE 审计 | PLT-CFG-001 |
+| GET | `/api/platform/dicts/{code}/items` | `platform:dict:edit` | **已实现**。字典项（含停用行，按 sortNo、itemCode 升序）：`{itemCode,label,sortNo,status,updatedAt}` | PLT-CFG-001 |
+| POST | `/api/platform/dicts/{code}/items` | `platform:dict:edit` | **已实现**。新增项：`{itemCode,label,sortNo?}`；项编码字典内唯一（40902）、创建后不可改；新增项即时下发全部租户；写 DICT_ITEM_CREATE 审计 | PLT-CFG-001 |
+| PUT | `/api/platform/dicts/{code}/items/{itemCode}` | `platform:dict:edit` | **已实现**。维护文字 / 排序 / 停用启用（停用不删除）；写 DICT_ITEM_UPDATE 审计 | PLT-CFG-001 |
+| GET | `/api/platform/params` | `platform:param:edit` | **已实现（E06-T10）**。参数列表：`{paramKey,name,description,valueType(TEXT/NUMBER/BOOLEAN/ENUM/JSON),platformValue,tenantOverridable,valueRange,updatedAt}` | PLT-CFG-003 |
+| POST | `/api/platform/params` | `platform:param:edit` | **已实现**。新建：全部字段必填（说明可空）；参数键全局唯一（40902）、小写字母开头 3–64 位 `[a-z][a-z0-9.]`、创建后不可改；取值范围 JSON（NUMBER `{min,max}` 至少一端 / TEXT `{maxLength}` 1–512 / ENUM `{options[]}` 非空）可覆盖时必填（BOOLEAN/JSON 除外，范围本身非法 40001）；平台默认值也要过类型与范围校验（40001）；写 PARAM_CREATE 审计 | PLT-CFG-003 |
+| PUT | `/api/platform/params/{paramKey}` | `platform:param:edit` | **已实现**。维护名称 / 说明 / 值类型 / 平台默认值 / 层级（tenantOverridable）/ 取值范围（参数键不可改）；改为「平台锁定」不回写租户库——租户已覆盖的值即时失效并提示（`system.md` §4 stale），覆盖行保留、重新放开自动恢复；写 PARAM_UPDATE 审计（锁定流转在 detail 注明） | PLT-CFG-003、011 |
+
 | 资源 | 路径 | 权限 |
 |---|---|---|
-| 平台字典 | `/api/platform/dicts`、`/dicts/{code}/items` | `platform:dict:edit` |
-| 系统参数 | `/api/platform/params` | `platform:param:edit` |
 | 通知渠道与短信模板 | `/api/platform/notice/channels`、`/notice/templates` | `platform:notice:edit` |
 | Webhook | `/api/platform/webhooks`、`/webhooks/{id}/deliveries`、`.../deliveries/{id}/redeliver` | `platform:webhook:edit` |
 | 系统公告 | `/api/platform/announcements` | `platform:notice:edit` |
@@ -128,7 +140,7 @@ PLT-MOD-010/011 为后续规划，不实现。
 | 安全策略下限 | `/api/platform/security-policy`（密码策略、锁定、会话、二次认证场景） | `platform:security:edit` |
 | 配置模板 | `/api/platform/config-templates`（从某租户导出配置 → 应用到新租户；只导出注册表中标注为配置的表，引用用户的字段置空） | `platform:tenant:create` |
 
-配置变更写记录并说明生效方式（PLT-CFG-011）。
+配置变更写记录并说明生效方式（PLT-CFG-011）：字典 / 参数保存即作废平台定义缓存（`PlatformConfigCache`，60 秒 TTL + 保存即 evict，M1 单实例），租户端下一次读取即见新值；全部写操作写平台审计（DICT_* / PARAM_*）。
 
 ## 8. 平台工作台与审计
 

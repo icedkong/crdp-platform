@@ -71,6 +71,12 @@ public class TenantOnboardingService {
     private static final int TENANT_ADMIN_USER_EDIT_MENU_ID = 314;
 
     /**
+     * 「维护租户参数 / 维护租户字典」按钮（plt_menu 341 / 342，tenant:param:edit / tenant:dict:edit， 平台库
+     * V24，E06-T10）。老库由租户库 base V13 增量授予、local/dev 全新库由种子 V108 补授，这里覆盖 生产（无种子）。
+     */
+    private static final int[] TENANT_ADMIN_CONFIG_MENU_IDS = {341, 342};
+
+    /**
      * 开通请求：编码与医院名称必填；首个管理员在开通时提供，也可启用前经 E06 补设。 expire 为向导第 2 步的到期设置（E05-T02
      * /PLT-TEN-011），空表示长期有效；重试重入时不会改写已登记租户的到期设置。 modules 为向导第 2 步勾选的 业务模块（E05-T05 /PLT-MOD-004，base
      * 必开不传），null 表示重试重入——沿用上次已登记模块。
@@ -454,6 +460,22 @@ public class TenantOnboardingService {
                                         + TENANT_ADMIN_USER_EDIT_MENU_ID
                                         + ")",
                                 roleId);
+                    }
+                    // E06-T10 / PLT-CFG-002、004：机构设置下的参数 / 字典按钮同样授予。
+                    for (int menuId : TENANT_ADMIN_CONFIG_MENU_IDS) {
+                        Integer configGranted =
+                                platform.queryForObject(
+                                        "SELECT COUNT(*) FROM sys_role_menu WHERE role_id = ? AND menu_id = "
+                                                + menuId,
+                                        Integer.class,
+                                        roleId);
+                        if (configGranted == null || configGranted == 0) {
+                            platform.update(
+                                    "INSERT INTO sys_role_menu (role_id, menu_id) VALUES (?, "
+                                            + menuId
+                                            + ")",
+                                    roleId);
+                        }
                     }
                 });
     }

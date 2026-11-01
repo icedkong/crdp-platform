@@ -73,10 +73,25 @@ E06-T02 已实现（院区与科室树；病区字典属 `crdp-followup`，科�
 
 ## 4. 字典与参数（PLT-CFG-002/004、A-FLD-012、C-FLD-002/003）
 
+> 字典与参数已实现（E06-T10，`DictParamOverrideIT`；页面：机构设置「参数 / 字典」页签，pages.md §10）。字典是「平台定义、租户增量覆盖」模型：`cfg_dict` 只存本院自有字典，`cfg_dict_item` 的 PLATFORM 行是平台项在本院的停用标记、TENANT 行是本院自有项；生效集 =（平台项 − 本院停用）∪ 本院自有项，平台新增项自动出现。参数覆盖存 `cfg_param`（租户覆盖值），每次覆盖 / 恢复写 `cfg_param_log` 变更记录与租户审计（验收：租户覆盖平台默认值并留记录）。查看与维护同码。
+
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| GET | `/api/hospital/system/dicts` | `tenant:dict:edit` | **已实现（E06-T10）**。字典类型列表（平台继承 + 本院自有，按编码排序）：`{code,name,description,source(PLATFORM/TENANT),status,itemCount(生效项数),tenantItemCount,disabledPlatformCount,updatedAt}` |
+| POST | `/api/hospital/system/dicts` | `tenant:dict:edit` | **已实现**。新建本院字典 `{code,name,description?}`；编码本院唯一（含与平台字典冲突 40902）、`[a-z][a-z0-9_]` 2–64 位、创建后不可改；写 DICT_CREATE 审计 |
+| PUT | `/api/hospital/system/dicts/{code}` | `tenant:dict:edit` | **已实现**。维护本院字典（名称 / 说明 / 停用启用）；平台字典不可修改（40001）；未知 40400；写 DICT_UPDATE 审计 |
+| GET | `/api/hospital/system/dicts/{code}/items` | `tenant:dict:edit` | **已实现**。字典项（管理视角保留停用行可恢复，按 sortNo、itemCode 升序）：`{itemCode,label,sortNo,status,source,editable(平台项 false),updatedAt}` |
+| POST | `/api/hospital/system/dicts/{code}/items` | `tenant:dict:edit` | **已实现**。新增本院自有项 `{itemCode,label,sortNo?}`（加进平台字典或本院字典）；项编码在生效集内唯一（含平台项，40902）；写 DICT_ITEM_ADD 审计 |
+| PUT | `/api/hospital/system/dicts/{code}/items/{itemCode}` | `tenant:dict:edit` | **已实现**。本院自有项可改文字 / 排序 / 停用启用；平台项**只能停用 / 恢复**（只传 `status`；改文字或排序 40001，PLT-CFG-002「租户不能删除或修改平台字典项」）；写 DICT_ITEM_UPDATE 审计 |
+| GET | `/api/hospital/system/params` | `tenant:param:edit` | **已实现（E06-T10）**。参数列表（平台定义 + 本院覆盖状态，按参数键排序）：`{paramKey,name,description,valueType,platformValue,tenantOverridable,valueRange,overridden,tenantValue,effectiveValue,stale,updatedAt}`；`stale=true` 表示参数被平台锁定、本院覆盖失效（生效值回落平台值并提示，覆盖行保留） |
+| PUT | `/api/hospital/system/params/{paramKey}` | `tenant:param:edit` | **已实现**。覆盖平台默认值 `{value,reason?}`：取值须过类型与范围校验（NUMBER 闭区间 / ENUM 选项 / TEXT 长度 / BOOLEAN / JSON，40001）；平台锁定参数不可覆盖（40001）；未知 40400；reason ≤200 写记录；写 `cfg_param_log`（OVERRIDE）与 PARAM_OVERRIDE 审计 |
+| DELETE | `/api/hospital/system/params/{paramKey}` | `tenant:param:edit` | **已实现**。恢复平台默认值（删覆盖行，幂等）；有覆盖时写 `cfg_param_log`（RESET）与 PARAM_RESET 审计 |
+| GET | `/api/hospital/system/params/logs` | `tenant:param:edit` | **已实现**。覆盖变更记录（倒序，最近 100 条）：`[{paramKey,action(OVERRIDE/RESET),oldValue,newValue,reason,operatorId,createdAt}]` |
+
+平台字典 / 系统参数的平台端维护接口见 `platform.md` §7；平台保存即作废定义缓存（`PlatformConfigCache`），本院下一次读取即见新值（PLT-CFG-011 即时生效；平台参数被锁定后本院已覆盖的值失效并提示，重新放开自动恢复）。
+
 | 资源 | 路径 | 权限 |
 |---|---|---|
-| 租户字典 | `/api/hospital/system/dicts`、`/dicts/{code}/items`（`cfg_dict`、`cfg_dict_item`；条目停用不删除） | `tenant:dict:edit` |
-| 租户参数 | `/api/hospital/system/params`（`cfg_param`） | `tenant:param:edit` |
 | 个性化 | `/api/hospital/system/brand`（`cfg_brand`，E06-T11 已实现，见 §4.1） | `tenant:brand:edit` |
 | 安全设置 | `/api/hospital/system/security-policy`（不得低于平台下限） | `tenant:security:edit` |
 | Webhook | `/api/hospital/system/webhooks`（`cfg_webhook`，见 `notify.md`） | `tenant:webhook:edit` |
