@@ -87,12 +87,17 @@ PLT-MOD-010/011 为后续规划，不实现。
 
 ## 5. 平台账号与角色（PLT-ROLE-001..006、PLT-VIEW-005/006）
 
+> 角色与账号接口已实现（E06-T04，`PlatformRoleAccountMySqlIT`）：四个平台预置角色（平台管理员 / 实施人员 / 运维人员 / 客服支持）由种子 `V104` 预置默认权限（规格 §1 角色定义与 §8 默认视角权限），预置角色不可删除（不提供 DELETE），权限（菜单授权、视角六字段、状态）可由平台管理员调整；授权或状态变化即递增持有者权限版本（PLT-PERM-010，在线会话下一次请求重算），角色停用后其菜单不再进入持有者会话。账号手机号只回脱敏值；新建账号强制绑定手机号并置首次登录强制改密。
+
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| GET / POST / PUT | `/api/platform/accounts[/{id}]` | `platform:account:view` / `edit` | 手机号必填；负责租户多选（PLT-VIEW-006） |
-| POST | `/api/platform/accounts/{id}/reset-password` | `platform:account:reset` | 二次认证 |
-| GET / POST / PUT | `/api/platform/roles[/{id}]` | `platform:role:view` / `edit` | 平台预置 / 自定义角色；“租户视角”页签字段：`canEnter, visibleScope, tenantScope, canConfigure, canResetPassword, canEditBusinessData` |
-| GET | `/api/platform/role-templates` | `platform:role:view` | 业务角色模板（复制到租户内置角色，PLT-ROLE-004、005） |
+| GET / POST / PUT | `/api/platform/accounts[/{id}]` | `platform:account:view` / `edit` | **已实现（E06-T04）**。列表不分页（平台账号量级小）。新建：`{username, displayName, phone(必填，双因素), password(初始密码按平台策略校验 42200), roleIds}`；维护：`{displayName, phone?(留空不换绑，平台库内唯一 40901), roleIds(全部存在且启用), status}`；停用 / 摘除角色导致启用的 PLATFORM_ADMIN 持有账号少于 2 个时 40901（规格 §1「平台管理员至少 2 人，已确认」）；角色或状态变化递增权限版本；负责租户多选（PLT-VIEW-006）属 E20-T01，未实现 |
+| POST | `/api/platform/accounts/{id}/reset-password` | `platform:account:reset` | **已实现（E06-T04）**。生成一次性临时密码（响应 `data.temporaryPassword` 只返回一次），置首次登录强制改密、旧哈希入历史表、该账号全部会话失效并解除登录锁定；写 ACCOUNT_RESET 审计（不落口令） |
+| POST | `/api/platform/accounts/{id}/unlock` | `platform:account:reset` | **已实现（E06-T04）**。解除登录锁定（连续失败 5 次锁 30 分钟，可提前解锁）；写 ACCOUNT_UNLOCK 审计 |
+| GET / POST / PUT | `/api/platform/roles[/{id}]` | `platform:role:view` / `edit` | **已实现（E06-T04）**。角色视图 `{id, code, name, description, builtIn, status, view{canEnter, visibleScope∈CONFIG_ONLY/CONFIG_AND_BUSINESS, tenantScope∈ALL/RESPONSIBLE/SPECIFIED, canConfigure, canResetPassword, canEditBusiness}, menuIds(详情), holderCount, createdAt, updatedAt}`；新建自定义角色编码服务端生成（`CUSTOM_` 前缀，创建后不可改）；菜单授权只能是平台端启用菜单（40001）；`tenantScope=SPECIFIED` 暂 40001（指定租户清单由 E20-T01 落地，OQ-48）；不提供删除 |
+| GET | `/api/platform/roles/{id}/holders` | `platform:role:view` | **已实现（E06-T04）**。持有人列表（账号、姓名、账号状态） |
+| GET | `/api/platform/roles/menus` | `platform:role:view` | **已实现（E06-T04）**。可授权的平台端启用菜单 / 按钮（平铺带 parentId，角色页授权树数据源；不依赖 `platform:menu:view`） |
+| GET | `/api/platform/role-templates` | `platform:role:view` | 业务角色模板（复制到租户内置角色，PLT-ROLE-004、005，属 E06-T05） |
 
 ## 6. 租户视角（PLT-VIEW-001..018）
 

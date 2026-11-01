@@ -82,11 +82,13 @@ public interface PlatformMapper {
             """)
     List<String> accountRoles(@Param("accountId") long accountId);
 
+    /** 账号经角色并集得到的菜单：只统计启用角色（E06-T04 / PLT-ROLE-002「角色停用后，持有该角色的用户 立即失去对应权限」；停用角色的行保留，重新启用自动恢复）。 */
     @Select(
             """
             SELECT DISTINCT rm.menu_id
             FROM plt_role_menu rm
             JOIN plt_account_role ar ON ar.role_id = rm.role_id
+            JOIN plt_role r ON r.id = rm.role_id AND r.status = 'ENABLED'
             WHERE ar.account_id = #{accountId}
             """)
     List<Long> accountMenuIds(@Param("accountId") long accountId);
