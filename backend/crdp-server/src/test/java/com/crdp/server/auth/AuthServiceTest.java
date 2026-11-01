@@ -213,7 +213,8 @@ class AuthServiceTest {
                         properties,
                         captchaStore,
                         new com.crdp.framework.security.PermissionVersionStore(redis),
-                        scopeService);
+                        scopeService,
+                        new EffectivePermissionService(platformMapper, scopeService));
 
         when(tenantLookup.findByCode(TENANT_CODE))
                 .thenReturn(
@@ -237,6 +238,8 @@ class AuthServiceTest {
         when(platformMapper.accountMenuIds(PLATFORM_ACCOUNT_ID)).thenReturn(List.of(50L));
         when(platformMapper.listMenus("PLATFORM"))
                 .thenReturn(List.of(platformMenu(50L, "platform:tenant:view", "base")));
+        // E06-T06：平台端有效权限的模块全集来自 plt_module 登记（不再硬编码 base/followup）
+        when(platformMapper.listModuleCodes()).thenReturn(List.of("base", "followup"));
         when(passwordEncoder.matches(RIGHT_PASSWORD, PLATFORM_HASH)).thenReturn(true);
         when(passwordEncoder.matches(WRONG_PASSWORD, PLATFORM_HASH)).thenReturn(false);
 

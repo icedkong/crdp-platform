@@ -10,6 +10,7 @@ import com.crdp.framework.tenant.UnknownTenantDataSourceException;
 import com.crdp.framework.web.ApiException;
 import com.crdp.platform.infra.mapper.PlatformMapper;
 import com.crdp.platform.menu.MenuRow;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
@@ -265,7 +266,8 @@ public class MenuAdminService {
         if (!List.of("ENABLED", "DISABLED").contains(status)) {
             throw bad("status 状态只允许 ENABLED / DISABLED");
         }
-        boolean grantsChanged = !"ENABLED".equals(status) && "ENABLED".equals(row.getStatus());
+        // 启用 / 停用之间的任何切换都改变授权范围：停用收权、启用恢复，都要让持有人立即重算（E06-T06 / PLT-PERM-010）
+        boolean grantsChanged = "ENABLED".equals(status) != "ENABLED".equals(row.getStatus());
         row.setTitle(request.title());
         row.setRouteName(routeName);
         row.setPath(path);
@@ -275,6 +277,16 @@ public class MenuAdminService {
         row.setHidden(request.hidden() == null ? row.getHidden() : (request.hidden() ? 1 : 0));
         row.setStatus(status);
         TenantContext.callAsPlatform(() -> platformMapper.updateMenu(row));
+        int refreshedPlatformAccounts = 0;
+        int refreshedTenantUsers = 0;
+        if (grantsChanged) {
+            refreshedPlatformAccounts = refreshSessionsOf(row.getId());
+            // E06-T06 / PLT-PERM-010：医院端菜单停用后，持有它的租户用户也要重算——授权行保留在租户库，
+            // 靠启用菜单集合（listMenus）与可分配范围在重算时把它挤出（platform-spec §1「停用后不再进入授权范围」）
+            if ("HOSPITAL".equals(row.getSide())) {
+                refreshedTenantUsers = bumpTenantUsersGrantedMenu(row.getId());
+            }
+        }
         audit(
                 "MENU_UPDATE",
                 row.getId(),
@@ -282,10 +294,11 @@ public class MenuAdminService {
                         + typeText(row.getType())
                         + "："
                         + row.getTitle()
-                        + (grantsChanged ? "，停用后不再进入授权范围" : ""));
-        if (grantsChanged) {
-            refreshSessionsOf(row.getId());
-        }
+                        + (grantsChanged
+                                ? "，启用 / 停用切换改变授权范围；递增受影响用户版本 "
+                                        + (refreshedPlatformAccounts + refreshedTenantUsers)
+                                        + " 人"
+                                : ""));
         return TenantContext.callAsPlatform(() -> nodeOf(row.getId()));
     }
 
@@ -302,6 +315,9 @@ public class MenuAdminService {
         }
         List<Long> affectedAccounts =
                 TenantContext.callAsPlatform(() -> platformMapper.accountIdsGrantedMenu(id));
+        // 医院端菜单：先收集持有它的租户用户（清掉租户库授权行之后就查不到了），删除后统一递增版本
+        Map<Long, List<Long>> tenantUsers =
+                "HOSPITAL".equals(row.getSide()) ? collectTenantUsersGrantedMenu(id) : Map.of();
         TenantContext.callAsPlatform(() -> platformMapper.softDeleteMenu(id));
         int removedGrants =
                 TenantContext.callAsPlatform(() -> platformMapper.deleteRoleMenuGrants(id));
@@ -309,6 +325,7 @@ public class MenuAdminService {
         for (Long accountId : affectedAccounts) {
             permissionVersions.bump("PLATFORM", null, accountId);
         }
+        int refreshedTenantUsers = bumpTenantUsers(tenantUsers);
         audit(
                 "MENU_DELETE",
                 id,
@@ -322,7 +339,9 @@ public class MenuAdminService {
                         + tenantsCleaned[0]
                         + " 个（跳过不可达 "
                         + tenantsCleaned[1]
-                        + " 个）");
+                        + " 个）；递增受影响用户版本 "
+                        + (affectedAccounts.size() + refreshedTenantUsers)
+                        + " 人");
     }
 
     /** 逐租户删除 sys_role_menu 中对该菜单的引用；返回 [已清理租户数, 跳过租户数]。 */
@@ -399,12 +418,72 @@ public class MenuAdminService {
                 () -> !platformMapper.listModuleCodes().contains(moduleCode));
     }
 
-    /** 停用 / 删除后让持有该菜单的平台账号会话立即重算（权限码随停用从会话消失）。 */
-    private void refreshSessionsOf(long menuId) {
+    /** 停用 / 删除后让持有该菜单的平台账号会话立即重算（权限码随停用从会话消失）；返回递增的账号数。 */
+    private int refreshSessionsOf(long menuId) {
+        int bumped = 0;
         for (Long accountId :
                 TenantContext.callAsPlatform(() -> platformMapper.accountIdsGrantedMenu(menuId))) {
             permissionVersions.bump("PLATFORM", null, accountId);
+            bumped++;
         }
+        return bumped;
+    }
+
+    /**
+     * 递增「经启用角色持有该医院端菜单」的租户用户权限版本（E06-T06 / PLT-PERM-010）。 停用场景授权行仍在租户库，删除场景由调用方先行收集；
+     * 租户库不可达时跳过（与删除清理同口径，OQ-46 ③，下次同步收敛）。返回递增的用户数。
+     */
+    private int bumpTenantUsersGrantedMenu(long menuId) {
+        return bumpTenantUsers(collectTenantUsersGrantedMenu(menuId));
+    }
+
+    /** 逐租户收集持有该菜单的用户（角色须启用——停用角色的授权本就不生效，无需重算）。 */
+    private Map<Long, List<Long>> collectTenantUsersGrantedMenu(long menuId) {
+        Map<Long, List<Long>> usersByTenant = new LinkedHashMap<>();
+        // 与 cleanTenantRoleMenus 同一口径：除已注销外的全部租户，按可路由性跳过
+        List<Map<String, Object>> tenants =
+                TenantContext.callAsPlatform(
+                        () ->
+                                platform.queryForList(
+                                        "SELECT id, code FROM plt_tenant WHERE status <> 'CANCELLED'"));
+        for (Map<String, Object> tenant : tenants) {
+            long tenantId = ((Number) tenant.get("id")).longValue();
+            String code = String.valueOf(tenant.get("code"));
+            if (!routing.hasTenant(tenantId)) {
+                continue;
+            }
+            try {
+                usersByTenant.put(
+                        tenantId,
+                        TenantContext.callAsTenant(
+                                tenantId,
+                                code,
+                                () ->
+                                        platform.queryForList(
+                                                "SELECT DISTINCT ur.user_id"
+                                                        + " FROM sys_user_role ur"
+                                                        + " JOIN sys_role_menu rm ON rm.role_id = ur.role_id"
+                                                        + " JOIN sys_role r ON r.id = ur.role_id"
+                                                        + " AND r.status = 'ENABLED'"
+                                                        + " WHERE rm.menu_id = ?",
+                                                Long.class,
+                                                menuId)));
+            } catch (UnknownTenantDataSourceException | DataAccessException ex) {
+                log.info("菜单变更递增用户版本跳过不可达租户 tenant={} menuId={}", code, menuId);
+            }
+        }
+        return usersByTenant;
+    }
+
+    private int bumpTenantUsers(Map<Long, List<Long>> usersByTenant) {
+        int bumped = 0;
+        for (Map.Entry<Long, List<Long>> entry : usersByTenant.entrySet()) {
+            for (Long userId : entry.getValue()) {
+                permissionVersions.bump("HOSPITAL", entry.getKey(), userId);
+                bumped++;
+            }
+        }
+        return bumped;
     }
 
     private static void requireSide(String side) {

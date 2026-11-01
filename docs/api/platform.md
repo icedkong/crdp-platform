@@ -55,8 +55,8 @@ PLT-MOD-010/011 为后续规划，不实现。
 |---|---|---|---|---|
 | GET | `/api/platform/menus/tree?side=HOSPITAL\|PLATFORM` | `platform:menu:view` | **已实现（E05-T06）**。全量菜单树（含按钮与停用行；软删行不返回） | PLT-PERM-001、002、003 |
 | POST | `/api/platform/menus` | `platform:menu:edit` | **已实现（E05-T06）**。新建目录 / 菜单 / 按钮：`moduleCode` 必填且须已登记（PLT-PERM-002）；按钮必填全局唯一权限码（PLT-PERM-003，40001 校验）；菜单必填路由名 / 路径 / 视图；平台端新建的项 `source=CUSTOM` | PLT-PERM-001..003 |
-| PUT | `/api/platform/menus/{id}` | `platform:menu:edit` | **已实现（E05-T06）**。维护标题、图标、排序、隐藏、路由字段、停用；端别 / 类型 / 模块 / 权限码 / 来源不可改（权限码创建后不可改名，OQ-11）；停用递增受影响平台账号权限版本 | PLT-PERM-001、003 |
-| DELETE | `/api/platform/menus/{id}` | `platform:menu:edit` | **已实现（E05-T06）**。软删（status=DELETED）：移除 `plt_role_menu` 授予、逐租户清理 `sys_role_menu`（不可达跳过）、递增权限版本；有子项 40001 | PLT-PERM-001 |
+| PUT | `/api/platform/menus/{id}` | `platform:menu:edit` | **已实现（E05-T06）**。维护标题、图标、排序、隐藏、路由字段、停用；端别 / 类型 / 模块 / 权限码 / 来源不可改（权限码创建后不可改名，OQ-11）；启用 / 停用切换递增受影响用户权限版本——平台账号直接查 `plt_role_menu`，医院端菜单逐租户按「经启用角色持有该菜单」递增（E06-T06 / PLT-PERM-010） | PLT-PERM-001、003 |
+| DELETE | `/api/platform/menus/{id}` | `platform:menu:edit` | **已实现（E05-T06）**。软删（status=DELETED）：移除 `plt_role_menu` 授予、逐租户清理 `sys_role_menu`（不可达跳过）、递增受影响平台账号与租户用户权限版本（E06-T06：租户用户在清理前收集，删除后统一递增）；有子项 40001 | PLT-PERM-001 |
 | GET | `/api/platform/menus/sync/diff` | `platform:menu:view` | **已实现（E05-T06）**。清单差异（只读）：随包模块清单 vs 库内 `source=MANIFEST` 行——ADDED / CHANGED（结构字段）/ OFFLINE | PLT-PERM-011 |
 | POST | `/api/platform/menus/sync` | `platform:menu:edit` | **已实现（E05-T06）**。平台确认后应用差异：新增插入（停用 / 软删行按新增复活）、变更改结构字段（标题 / 排序等平台端维护值不覆盖）、下线置停用；写 MENU_SYNC 审计 | PLT-PERM-011 |
 | GET | `/api/platform/apis` | `platform:api:view` | **已实现（E05-T06）**。接口资源（方法 + 路径模式、权限码、模块、公共 / 审计级别 / 敏感级别 / 动作类型 QUERY/WRITE/EXPORT/DOWNLOAD、来源）；`moduleCode` / `permCode` 可选过滤，`unbound=true` 只看未绑定 | PLT-PERM-004 |
