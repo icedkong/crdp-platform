@@ -89,7 +89,8 @@ class PlatformTenantModuleMySqlIT {
         // 本 IT 产生的开通记录、配置与审计
         platform.update("DELETE FROM plt_tenant_module_log");
         platform.update("DELETE FROM plt_tenant_module_config");
-        platform.update(
+        AuditTableMaintenance.delete(
+                platform,
                 "DELETE FROM plt_audit_log WHERE event_type IN"
                         + " ('MODULE_OPEN', 'MODULE_CLOSE', 'MODULE_CONFIG')");
         // 临时依赖模块 rct（IT 内插入）

@@ -118,10 +118,12 @@ class PlatformTenantScopeMySqlIT {
                         + " ('tenant:user:export', '用户导出（含手机号等个人信息）'),"
                         + " ('followup:notice:batch', '批量群发通知（短信成本与骚扰风险）')");
         // 本 IT 的审计与租户 2 的模块关闭痕迹
-        platform.update(
+        AuditTableMaintenance.delete(
+                platform,
                 "DELETE FROM plt_audit_log WHERE event_type IN"
                         + " ('SCOPE_UPDATE', 'SCOPE_TEMPLATE_UPDATE', 'SENSITIVE_PERM_UPDATE')");
-        platform.update(
+        AuditTableMaintenance.delete(
+                platform,
                 "DELETE FROM plt_audit_log WHERE event_type = 'MODULE_CLOSE' AND target LIKE '%demob%'");
         platform.update("DELETE FROM plt_tenant_module_log WHERE tenant_id = 2");
         platform.update(

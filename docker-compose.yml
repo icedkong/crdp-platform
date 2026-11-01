@@ -5,6 +5,10 @@ services:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_0900_ai_ci
       - --innodb-buffer-pool-size=256M
+      # 开发/CI 关闭 binlog：应用账号（非 SUPER）创建审计只读触发器（V17/V26）时，
+      # binlog 开启需要 SUPER 或 log_bin_trust_function_creators=1（MySQL 1419）。
+      # 本地 / CI 无复制需求，直接关闭最简；生产由 RDS 参数组处置（运维 E22）。
+      - --skip-log-bin
     environment:
       MYSQL_ROOT_PASSWORD: "DevOnly#root2026"
       MYSQL_DATABASE: crdp_platform

@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.crdp.framework.tenant.TenantContext;
+import com.crdp.server.AuditTableMaintenance;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
@@ -68,7 +69,8 @@ class DictParamOverrideIT {
                     jdbc.update("DELETE FROM plt_param WHERE param_key = ?", PROBE_KEY);
                     jdbc.update("DELETE FROM plt_dict_item WHERE item_code = '9'");
                     jdbc.update("DELETE FROM plt_dict WHERE code = 'it_dict'");
-                    jdbc.update(
+                    AuditTableMaintenance.delete(
+                            jdbc,
                             "DELETE FROM plt_audit_log WHERE event_type LIKE 'PARAM_%'"
                                     + " OR event_type LIKE 'DICT_%'");
                 });
@@ -88,7 +90,8 @@ class DictParamOverrideIT {
                         jdbc.update("DELETE FROM cfg_param_log");
                         jdbc.update("DELETE FROM cfg_dict_item");
                         jdbc.update("DELETE FROM cfg_dict");
-                        jdbc.update(
+                        AuditTableMaintenance.delete(
+                                jdbc,
                                 "DELETE FROM aud_log WHERE event_type LIKE 'PARAM_%'"
                                         + " OR event_type LIKE 'DICT_%'");
                     });

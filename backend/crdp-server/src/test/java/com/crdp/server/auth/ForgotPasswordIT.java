@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.crdp.framework.crypto.CryptoService;
 import com.crdp.framework.notify.SmsCodeSender;
+import com.crdp.server.AuditTableMaintenance;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -96,8 +97,10 @@ class ForgotPasswordIT {
                                     + " (SELECT id FROM sys_user WHERE username = ?)",
                             USERNAME);
                     jdbc.update("DELETE FROM sys_user WHERE username = ?", USERNAME);
-                    jdbc.update("DELETE FROM aud_log WHERE target = ?", "sys_user:" + USERNAME);
-                    jdbc.update("DELETE FROM aud_login_log WHERE username = ?", USERNAME);
+                    AuditTableMaintenance.delete(
+                            jdbc, "DELETE FROM aud_log WHERE target = ?", "sys_user:" + USERNAME);
+                    AuditTableMaintenance.delete(
+                            jdbc, "DELETE FROM aud_login_log WHERE username = ?", USERNAME);
                     // 手机号信封加密 + 盲索引（SQL 里算不了 HMAC，走 CryptoService，purpose 与 sys_user 一致）
                     jdbc.update(
                             "INSERT INTO sys_user (username, display_name, password_hash, status,"

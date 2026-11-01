@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.crdp.framework.tenant.TenantContext;
+import com.crdp.server.AuditTableMaintenance;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
@@ -74,7 +75,8 @@ class UserPermissionPreviewIT {
                                 "DELETE rs FROM sys_role_scope rs JOIN sys_role r ON r.id = rs.role_id"
                                         + " WHERE r.code LIKE 'IT-R-P%'");
                         jdbc.update("DELETE FROM sys_role WHERE code LIKE 'IT-R-P%'");
-                        jdbc.update("DELETE FROM aud_log WHERE target LIKE 'sys_user:IT-P-%'");
+                        AuditTableMaintenance.delete(
+                                jdbc, "DELETE FROM aud_log WHERE target LIKE 'sys_user:IT-P-%'");
                     });
         }
     }
@@ -106,7 +108,8 @@ class UserPermissionPreviewIT {
                                 "DELETE rs FROM sys_role_scope rs JOIN sys_role r ON r.id = rs.role_id"
                                         + " WHERE r.code LIKE 'IT-R-P%'");
                         jdbc.update("DELETE FROM sys_role WHERE code LIKE 'IT-R-P%'");
-                        jdbc.update("DELETE FROM aud_log WHERE target LIKE 'sys_user:IT-P-%'");
+                        AuditTableMaintenance.delete(
+                                jdbc, "DELETE FROM aud_log WHERE target LIKE 'sys_user:IT-P-%'");
                     });
         }
     }

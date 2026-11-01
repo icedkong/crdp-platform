@@ -67,7 +67,8 @@ class PlatformModuleRegistryMySqlIT {
                 "UPDATE plt_module SET name = '随访',"
                         + " description = '医院 A、B、C 共用的随访模块，差异由模板和功能开关承担',"
                         + " status = 'ON' WHERE code = 'followup'");
-        platform.update(
+        AuditTableMaintenance.delete(
+                platform,
                 "DELETE FROM plt_audit_log WHERE event_type IN ('MODULE_UPDATE', 'MODULE_SYNC')"
                         + " AND target = 'plt_module:followup'");
         if (viewerCreated) {
