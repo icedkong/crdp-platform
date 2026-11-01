@@ -12,7 +12,7 @@
 - **OQ-12**：定论＝菜单 `followup:report:view`；上传 / 下载 / 删除 `followup:scan:upload` / `followup:scan:download` / `followup:scan:delete`。
 - **OQ-21**：定论＝按 UI 定稿（基线资料 / 随访记录 / 报告单 /（C 参数趋势）/ 沟通记录 / 操作日志；C 植入记录并入基线资料）。
 - **OQ-29～OQ-33**（排期类）：仍由人决定，本次未确认，不因本记录变化。
-- **OQ-11**：查证结论见该行（功能符合、字面不符，两个处置选项待拍板），**仍未定论**。
+- **OQ-11**：随后补拍板，**定论 B**——对齐规格改 `tenant:org:view`（种子 V103 迁移改名，E06+ 用 org 码），详见该行。
 
 ## 一、架构与工程
 
@@ -39,7 +39,7 @@
 
 | 编号 | 级别 | 问题 | 暂行做法 |
 |---|---|---|---|
-| OQ-11 | 🔴 | 种子 `tenant:dept:view` vs 规格 `tenant:org:view` | **查证（2026-11-01）**：规格原文只有权限点表两行——`tenant:org:view`「查看组织架构」、`tenant:org:edit`「维护院区与科室」（`platform-spec.md` §租户权限点）。现状：`tenant:dept:view` 仅一处引用（平台种子 V100 菜单行 33「科室管理」），组织架构接口 / 前端页面 / `dept:edit` 均未实现（E06+），演示租户亦无该码的角色授权。**结论：功能上符合需求（同一权限、无功能缺口），字面上与规格权限点表不符**。两个处置：A. 维持暂行（保留 dept 码，文档等价标注已做，E06+ 沿用 dept）；B. 对齐规格（趁引用面最小的一条 V1xx 迁移改菜单行 + 检查种子授权，E06+ 直接用 org 码）。README「权限码创建后不改」本意是防授权漂移，当前零授权，B 的风险窗口最低。**待用户拍板 A/B** |
+| OQ-11 | 🔴 | 种子 `tenant:dept:view` vs 规格 `tenant:org:view` | **已定论 B（2026-11-01 用户确认）**：对齐规格，`tenant:dept:view` → `tenant:org:view`（平台种子 V103 改菜单行 33 的 perm_code；零角色授权窗口下的经批准例外，E06+ 组织架构一律用 org 码）。查证过程与依据：规格原文只有权限点表两行——`tenant:org:view`「查看组织架构」、`tenant:org:edit`「维护院区与科室」；dept 码此前仅种子 V100 一处引用，接口 / 页面 / 授权均未实现。文档（system.md、pages.md）已同步 org 口径 |
 | OQ-12 | 🔴 | 全院报告单菜单：种子 `followup:report:view` vs 规格只有 `followup:scan:*` | 菜单用 `followup:report:view`；上传 / 下载 / 删除用 `followup:scan:upload/download/delete` |
 | OQ-13 | 🟡 | C 没有 `followup:plan:view/publish/enroll` | C 的计划与入组相关一律用 `followup:plan:edit` |
 | OQ-14 | 🟡 | 修改已提交随访记录：A 用 `followup:record:edit`，C 用 `followup:record:edit-submitted`；A 是否要求填写修改原因 | 按租户权限表各用各的码；C 原因必填，A 暂定必填（待医院 A 确认） |
