@@ -31,7 +31,8 @@ import org.springframework.stereotype.Service;
  * 按租户开通 / 关闭模块（E05-T05 / PLT-MOD-004、005，验收：开通后菜单可见，关闭后接口拒绝）。
  *
  * <p>开通按平台规格 §3「开通与关闭流程」执行：校验依赖与租户状态 → 只对该租户库执行该模块迁移（失败置 开通失败并写审计告警）→ 模块菜单进入租户授权范围（授予租户库
- * TENANT_ADMIN，业务角色模板随 E06 落地）→ 初始化模块配置默认值；关闭做影响评估、依赖校验与 二次确认（原因必填），只收回菜单与接口（{@code @RequireModule}
+ * TENANT_ADMIN）→ 初始化模块配置默认值并下发业务角色模板（E06-T05 / PLT-ROLE-005，{@link
+ * RoleTemplateService}）；关闭做影响评估、依赖校验与 二次确认（原因必填），只收回菜单与接口（{@code @RequireModule}
  * 40301），数据与租户库角色授权保留（重新开通自动恢复）。开通 / 关闭都递增 该院全部用户的权限版本号，在线会话下一次请求即重算 openedModules 快照——菜单立即可见 /
  * 消失，模块接口立即放行 / 拒绝（E04-T06 机制）。
  *
@@ -67,6 +68,7 @@ public class TenantModuleService {
     private final AuditLogger audit;
     private final SessionStore sessions;
     private final PermissionVersionStore permissionVersions;
+    private final RoleTemplateService roleTemplates;
 
     public TenantModuleService(
             JdbcTemplate platform,
@@ -75,7 +77,8 @@ public class TenantModuleService {
             TenantSchemaMigrator migrator,
             AuditLogger audit,
             SessionStore sessions,
-            PermissionVersionStore permissionVersions) {
+            PermissionVersionStore permissionVersions,
+            RoleTemplateService roleTemplates) {
         this.platform = platform;
         this.registry = registry;
         this.routing = routing;
@@ -83,6 +86,7 @@ public class TenantModuleService {
         this.audit = audit;
         this.sessions = sessions;
         this.permissionVersions = permissionVersions;
+        this.roleTemplates = roleTemplates;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -247,8 +251,10 @@ public class TenantModuleService {
                         // TENANT_ADMIN 直授保留为兜底，OQ-46 ①）
                         int grantedMenus =
                                 grantModuleMenusToTenantAdmin(tenantId, tenant, moduleCode);
-                        // 第 4 步：初始化模块配置默认值（已有覆盖值不覆盖）；业务角色模板随 E06 落地
+                        // 第 4 步：初始化模块配置默认值（已有覆盖值不覆盖）并下发业务角色模板（E06-T05 / PLT-ROLE-005）
                         int configDefaults = seedConfigDefaults(tenantId, moduleCode);
+                        int templatesIssued =
+                                seedRoleTemplates(tenantId, str(tenant.get("code")), moduleCode);
                         // 先置 OPEN（含版本与时间），再递增权限版本：会话重算读 openedModules 时必须已可见，
                         // 否则被刷新的会话会带着旧快照停在最新版本号上（开通后菜单不可见）
                         upsertState(tenantId, moduleCode, STATUS_OPEN, null);
@@ -274,7 +280,9 @@ public class TenantModuleService {
                                         + grantedMenus
                                         + " 项；配置默认值 "
                                         + configDefaults
-                                        + " 项；刷新 "
+                                        + " 项；下发角色模板 "
+                                        + templatesIssued
+                                        + " 个；刷新 "
                                         + refreshedUsers
                                         + " 个用户的权限版本");
                         audit.record(
@@ -289,7 +297,9 @@ public class TenantModuleService {
                                                         + migrationVersion
                                                         + "；授权菜单 "
                                                         + grantedMenus
-                                                        + " 项）"
+                                                        + " 项；角色模板 "
+                                                        + templatesIssued
+                                                        + " 个）"
                                                         + suffixReason(reason),
                                                 DETAIL_MAX)));
                         return new ChangeResult(
@@ -541,12 +551,13 @@ public class TenantModuleService {
                                 code);
                         grantModuleMenusToTenantAdmin(tenantId, tenant, code);
                         seedConfigDefaults(tenantId, code);
+                        int templates = seedRoleTemplates(tenantId, str(tenant.get("code")), code);
                         insertLog(
                                 tenantId,
                                 code,
                                 "OPEN",
                                 null,
-                                "新建租户开通（迁移版本 " + migrationVersion + "）");
+                                "新建租户开通（迁移版本 " + migrationVersion + "；角色模板 " + templates + " 个）");
                         opened.add(code);
                     }
                     audit.record(
@@ -928,6 +939,14 @@ public class TenantModuleService {
                             item.defaultValue());
         }
         return seeded;
+    }
+
+    /**
+     * 下发业务角色模板（PLT-MOD-004 第 4 步 / PLT-ROLE-005，E06-T05）：幂等，租户库不可达时按开通失败处理（与迁移同口径）。 base 没有登记模板，返回
+     * 0。
+     */
+    private int seedRoleTemplates(long tenantId, String tenantCode, String moduleCode) {
+        return roleTemplates.seedToTenant(tenantId, tenantCode, moduleCode);
     }
 
     /** 递增该租户全部用户的权限版本（E04-T06）：在线会话下一次请求重算 openedModules，菜单与模块接口立即生效。 */

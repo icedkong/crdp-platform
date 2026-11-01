@@ -55,20 +55,24 @@ public interface HospitalMapper {
             """)
     List<String> roles(@Param("userId") long userId);
 
+    /** 角色授权并集（E06-T05 起只统计启用角色：停用角色的菜单立即失效，PLT-ORG-004「停用角色」）。 */
     @Select(
             """
             SELECT DISTINCT rm.menu_id
             FROM sys_role_menu rm
-            JOIN sys_user_role ur ON ur.role_id = rm.role_id
+            JOIN sys_role r ON r.id = rm.role_id AND r.status = 'ENABLED'
+            JOIN sys_user_role ur ON ur.role_id = r.id
             WHERE ur.user_id = #{userId}
             """)
     List<Long> menuIds(@Param("userId") long userId);
 
+    /** 角色数据范围并集（与菜单同口径：只统计启用角色）。 */
     @Select(
             """
             SELECT DISTINCT s.scope_type
             FROM sys_role_scope s
-            JOIN sys_user_role ur ON ur.role_id = s.role_id
+            JOIN sys_role r ON r.id = s.role_id AND r.status = 'ENABLED'
+            JOIN sys_user_role ur ON ur.role_id = r.id
             WHERE ur.user_id = #{userId}
             """)
     List<String> scopeTypes(@Param("userId") long userId);

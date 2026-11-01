@@ -54,9 +54,12 @@ class PlatformTenantScopeMySqlIT {
     private static final long TENANT_B = 2L; // demob
 
     /** 期望可分配全集（base 10/30/31 + followup 模板默认 20/21/23，收回 22 随访任务）。 */
-    /** base 固定能力全集（V100 + V10/V11 的按钮 311/312/313 + V19 的按钮 331 + V21 的菜单 34 机构设置），收回请求必须原样带上。 */
+    /**
+     * base 固定能力全集（V100 + V10/V11 的按钮 311/312/313 + V19 的按钮 331 + V21 的菜单 34 机构设置 + V22 的按钮 321
+     * 维护角色与授权），收回请求必须原样带上。
+     */
     private static final List<Object> BASE_ALL =
-            List.of(10L, 30L, 31L, 32L, 33L, 34L, 311L, 312L, 313L, 331L);
+            List.of(10L, 30L, 31L, 32L, 33L, 34L, 311L, 312L, 313L, 321L, 331L);
 
     /** 期望可分配全集（base 全部 + followup 模板默认 20/21/23，收回 22 随访任务）。 */
     private static final List<Object> WITHOUT_TASK =
@@ -129,6 +132,13 @@ class PlatformTenantScopeMySqlIT {
                 "INSERT IGNORE INTO t_demoa.sys_role_menu (role_id, menu_id)"
                         + " SELECT r.id, 22 FROM t_demoa.sys_role r"
                         + " WHERE r.code IN ('TENANT_ADMIN', 'FOLLOWUP_DOCTOR')");
+        // E06-T05 模板角色的默认菜单授权恢复（种子 V106 的下发态，收回测试会清掉 sys_role_menu 行）
+        root.update(
+                "INSERT IGNORE INTO t_demoa.sys_role_menu (role_id, menu_id)"
+                        + " SELECT r.id, tm.menu_id FROM t_demoa.sys_role r"
+                        + " JOIN crdp_platform.plt_role_template t ON t.code = r.code"
+                        + " JOIN crdp_platform.plt_role_template_menu tm ON tm.template_id = t.id"
+                        + " WHERE r.role_type = 'TEMPLATE'");
         // 模块重开的兜底直授（OQ-46 ①）：TENANT_ADMIN 持有 followup 全部医院端菜单
         root.update(
                 "INSERT IGNORE INTO t_demoa.sys_role_menu (role_id, menu_id)"
@@ -383,8 +393,10 @@ class PlatformTenantScopeMySqlIT {
         assertEquals(22L, ((Number) removed.get(0).get("menuId")).longValue());
         assertEquals("followup:task:view", removed.get(0).get("permCode"));
         List<Map<String, Object>> roles = (List<Map<String, Object>>) preview.get("affectedRoles");
-        assertEquals(2, roles.size(), "种子里 TENANT_ADMIN 与 FOLLOWUP_DOCTOR 都持有 22");
-        assertEquals(2, ((Number) preview.get("affectedUserCount")).intValue());
+        // E06-T05 起，随访模板（随访员 / 责任医生 / 研究者 / CRC）默认也持有 22，共 6 个角色受影响
+        assertEquals(6, roles.size(), "TENANT_ADMIN、FOLLOWUP_DOCTOR 与 4 个随访模板都持有 22");
+        assertEquals(
+                2, ((Number) preview.get("affectedUserCount")).intValue(), "模板无成员，受影响用户仍是 2 人");
 
         // 保存（PLT-SCOPE-006、008）：自动收回租户库角色授权 + 受影响用户权限版本递增 + 变更记录
         Map<String, Object> change =
@@ -398,9 +410,10 @@ class PlatformTenantScopeMySqlIT {
                 List.of(22),
                 ((List<?>) change.get("removedMenuIds"))
                         .stream().map(n -> ((Number) n).intValue()).toList());
-        assertEquals(2, ((Number) change.get("revokedGrants")).intValue());
-        assertEquals(2, ((Number) change.get("revokedRoles")).intValue());
-        assertEquals(2, ((Number) change.get("refreshedUsers")).intValue());
+        assertEquals(
+                6, ((Number) change.get("revokedGrants")).intValue(), "6 个角色（含 4 个模板）的 22 授权同步收回");
+        assertEquals(6, ((Number) change.get("revokedRoles")).intValue());
+        assertEquals(2, ((Number) change.get("refreshedUsers")).intValue(), "模板无成员，权限版本只递增 2 名用户");
         assertEquals(
                 0,
                 root.queryForObject(
