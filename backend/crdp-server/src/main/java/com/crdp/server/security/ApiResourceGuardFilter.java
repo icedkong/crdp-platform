@@ -1,6 +1,8 @@
 package com.crdp.server.security;
 
+import com.crdp.framework.audit.DeniedOperationLogger;
 import com.crdp.framework.security.SessionPrincipal;
+import com.crdp.framework.web.ApiException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -36,10 +38,15 @@ public class ApiResourceGuardFilter extends OncePerRequestFilter {
 
     private final ApiResourceRegistry registry;
     private final ApiErrorWriter errors;
+    private final DeniedOperationLogger deniedLogger;
 
-    public ApiResourceGuardFilter(ApiResourceRegistry registry, ApiErrorWriter errors) {
+    public ApiResourceGuardFilter(
+            ApiResourceRegistry registry,
+            ApiErrorWriter errors,
+            DeniedOperationLogger deniedLogger) {
         this.registry = registry;
         this.errors = errors;
+        this.deniedLogger = deniedLogger;
     }
 
     @Override
@@ -84,6 +91,8 @@ public class ApiResourceGuardFilter extends OncePerRequestFilter {
                     uri,
                     permCode,
                     principal.userId());
+            // E08-T01 / audit.md §1：被拒请求写 result=DENIED 审计（过滤器层不经过全局异常处理器）
+            deniedLogger.onDenied(new ApiException(403, 40300, "没有权限"), request.getMethod(), uri);
             errors.write(response, 403, 40300, "没有权限");
             return;
         }

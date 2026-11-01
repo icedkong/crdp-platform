@@ -40,7 +40,11 @@ class GraceReadOnlyFilterTest {
 
     @BeforeEach
     void setUp() {
-        filter = new GraceReadOnlyFilter(errors, tenantLookup);
+        filter =
+                new GraceReadOnlyFilter(
+                        errors,
+                        tenantLookup,
+                        mock(com.crdp.framework.audit.DeniedOperationLogger.class));
         SecurityContextHolder.clearContext();
     }
 

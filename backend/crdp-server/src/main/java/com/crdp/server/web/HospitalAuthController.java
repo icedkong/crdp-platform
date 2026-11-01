@@ -91,7 +91,9 @@ public class HospitalAuthController {
                         request.username(),
                         request.password(),
                         new AuthService.CaptchaInput(request.captchaId(), request.captchaCode()),
-                        clientIp(httpRequest)));
+                        clientIp(httpRequest),
+                        // PLT-AUD-002：登录日志的「租户识别方式」扩展字段
+                        tenantIdentifier.identifyMethod(host, request.tenantCode())));
     }
 
     @Operation(
@@ -121,7 +123,11 @@ public class HospitalAuthController {
         String tenantCode = tenantIdentifier.resolve(host, request.tenantCode());
         return ApiResponse.ok(
                 authService.loginHospitalWithSms(
-                        tenantCode, request.phone(), request.code(), clientIp(httpRequest)));
+                        tenantCode,
+                        request.phone(),
+                        request.code(),
+                        clientIp(httpRequest),
+                        tenantIdentifier.identifyMethod(host, request.tenantCode())));
     }
 
     @Operation(summary = "双因素第二步。密码第一步返回 challengeId 时，验证短信验证码后换会话令牌。")

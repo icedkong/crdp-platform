@@ -3,6 +3,7 @@ package com.crdp.server.security;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
 
 import com.crdp.framework.security.ScopeSnapshot;
 import com.crdp.framework.security.SessionPrincipal;
@@ -45,7 +46,11 @@ class ApiResourceGuardFilterTest {
                                 "platform:tenant:view",
                                 false),
                         row("GET", "/api/broken/unbound", null, false)));
-        filter = new ApiResourceGuardFilter(registry, errors);
+        filter =
+                new ApiResourceGuardFilter(
+                        registry,
+                        errors,
+                        mock(com.crdp.framework.audit.DeniedOperationLogger.class));
         SecurityContextHolder.clearContext();
     }
 

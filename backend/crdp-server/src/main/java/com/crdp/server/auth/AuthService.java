@@ -1,5 +1,6 @@
 package com.crdp.server.auth;
 
+import com.crdp.framework.audit.AuditEntry;
 import com.crdp.framework.audit.AuditLogger;
 import com.crdp.framework.crypto.CryptoService;
 import com.crdp.framework.notify.SmsCodeSender;
@@ -121,6 +122,19 @@ public class AuthService {
 
     public LoginResult loginHospital(
             String tenantCode, String username, String password, CaptchaInput captcha, String ip) {
+        return loginHospital(tenantCode, username, password, captcha, ip, null);
+    }
+
+    /**
+     * @param tenantIdentifyMethod 审计字段（PLT-AUD-002）：SUBDOMAIN / INPUT / null（未知）
+     */
+    public LoginResult loginHospital(
+            String tenantCode,
+            String username,
+            String password,
+            CaptchaInput captcha,
+            String ip,
+            String tenantIdentifyMethod) {
         String bucket = "H:" + tenantCode + ":" + username.toLowerCase(Locale.ROOT);
         rateLimiter.check(bucket);
         requireCaptchaIfNeeded(bucket, captcha);
@@ -171,7 +185,7 @@ public class AuthService {
             rateLimiter.clear(bucket);
             return challengeTwoFactor("HOSPITAL", tenant, username, draft, account.phone());
         }
-        return issueHospitalSession(tenant, account, bucket, ip);
+        return issueHospitalSession(tenant, account, bucket, ip, "PASSWORD", tenantIdentifyMethod);
     }
 
     /** E04-T04 / PLT-AUTH-002：发送医院端登录短信验证码。无论手机号是否已绑定都返回成功（防探测）。 */
@@ -189,6 +203,14 @@ public class AuthService {
     /** E04-T04 / PLT-AUTH-002：短信验证码登录（手机号已绑定且本院唯一）。 */
     public LoginResult loginHospitalWithSms(
             String tenantCode, String phone, String code, String ip) {
+        return loginHospitalWithSms(tenantCode, phone, code, ip, null);
+    }
+
+    /**
+     * @param tenantIdentifyMethod 审计字段（PLT-AUD-002）：SUBDOMAIN / INPUT / null（未知）
+     */
+    public LoginResult loginHospitalWithSms(
+            String tenantCode, String phone, String code, String ip, String tenantIdentifyMethod) {
         String bucket = "HS:" + tenantCode + ":" + phone;
         rateLimiter.check(bucket);
         // 先校验验证码再查账号：验证码错误与手机号未绑定互不可区分
@@ -223,7 +245,7 @@ public class AuthService {
                     maskedPhone(phone),
                     account == null ? "unknown-phone" : "disabled-user");
         }
-        return issueHospitalSession(tenant, account, bucket, ip);
+        return issueHospitalSession(tenant, account, bucket, ip, "SMS", tenantIdentifyMethod);
     }
 
     public LoginResult loginPlatform(
@@ -273,17 +295,44 @@ public class AuthService {
             TenantContext.runAsTenant(
                     principal.tenantId(),
                     principal.tenantCode(),
-                    () -> auditLogger.loginAttempt(pending.username(), true, "2fa-ok"));
+                    () ->
+                            appendLoginAudit(
+                                    principal,
+                                    pending.username(),
+                                    "双因素验证通过，登录成功",
+                                    null,
+                                    "PASS",
+                                    "PASSWORD"));
         } else {
             TenantContext.runAsPlatform(
-                    () -> auditLogger.loginAttempt(pending.username(), true, "2fa-ok"));
+                    () ->
+                            appendLoginAudit(
+                                    principal,
+                                    pending.username(),
+                                    "双因素验证通过，登录成功",
+                                    null,
+                                    "PASS",
+                                    "PASSWORD"));
         }
         return LoginResult.issued(
                 principal.token(), "Bearer", sessionStore.effectiveTtl(principal).toSeconds());
     }
 
+    /** 登出（PLT-AUD-002「登出」）：先取会话写登录日志，再删除令牌。 */
     public void logout(String token) {
+        SessionPrincipal principal = sessionStore.find(token).orElse(null);
         sessionStore.delete(token);
+        if (principal == null) {
+            return;
+        }
+        if (principal.hospital()) {
+            TenantContext.runAsTenant(
+                    principal.tenantId(),
+                    principal.tenantCode(),
+                    () -> appendLogoutAudit(principal));
+        } else {
+            TenantContext.runAsPlatform(() -> appendLogoutAudit(principal));
+        }
     }
 
     // ---- 私有步骤 ----
@@ -313,6 +362,16 @@ public class AuthService {
 
     private LoginResult issueHospitalSession(
             TenantRecord tenant, HospitalAccount account, String bucket, String ip) {
+        return issueHospitalSession(tenant, account, bucket, ip, "PASSWORD", null);
+    }
+
+    private LoginResult issueHospitalSession(
+            TenantRecord tenant,
+            HospitalAccount account,
+            String bucket,
+            String ip,
+            String loginMethod,
+            String tenantIdentifyMethod) {
         SessionPrincipal principal =
                 hospitalDraft(tenant, account, ip).withToken(tokenGenerator.generate());
         sessionStore.save(principal);
@@ -321,7 +380,14 @@ public class AuthService {
         TenantContext.runAsTenant(
                 tenant.id(),
                 tenant.code(),
-                () -> auditLogger.loginAttempt(account.username(), true, "ok"));
+                () ->
+                        appendLoginAudit(
+                                principal,
+                                account.username(),
+                                "登录成功",
+                                tenantIdentifyMethod,
+                                "SKIP",
+                                loginMethod));
         return LoginResult.issued(
                 principal.token(), "Bearer", sessionStore.effectiveTtl(principal).toSeconds());
     }
@@ -332,7 +398,14 @@ public class AuthService {
         sessionStore.save(principal);
         rateLimiter.clear(bucket);
         TenantContext.runAsPlatform(
-                () -> auditLogger.loginAttempt(account.getUsername(), true, "ok"));
+                () ->
+                        appendLoginAudit(
+                                principal,
+                                account.getUsername(),
+                                "登录成功",
+                                null,
+                                "SKIP",
+                                "PASSWORD"));
         return LoginResult.issued(
                 principal.token(), "Bearer", sessionStore.effectiveTtl(principal).toSeconds());
     }
@@ -533,21 +606,31 @@ public class AuthService {
             String tenantCode,
             String username,
             String reason) {
-        rateLimiter.recordFailure(bucket);
+        boolean lockedNow = rateLimiter.recordFailure(bucket);
         log.info(
                 "login rejected side={} tenant={} username={} reason={}",
                 side,
                 tenantCode,
                 username,
                 reason);
+        Runnable auditWrite =
+                () -> {
+                    // E08-T01 / PLT-AUD-002：失败原因按规格落扩展字段 fail_reason
+                    auditLogger.loginAttempt(username, false, reason);
+                    if (lockedNow) {
+                        // 连续失败达到阈值触发锁定：登录日志记 LOCK 事件（PLT-AUD-002「锁定」）
+                        auditLogger.append(
+                                AuditEntry.login(username)
+                                        .action("LOCK")
+                                        .description("连续失败达到阈值，账号锁定")
+                                        .success()
+                                        .build());
+                    }
+                };
         if (tenantId == null) {
-            TenantContext.runAsPlatform(
-                    () -> auditLogger.loginAttempt(username, false, "rejected"));
+            TenantContext.runAsPlatform(auditWrite);
         } else {
-            TenantContext.runAsTenant(
-                    tenantId,
-                    tenantCode,
-                    () -> auditLogger.loginAttempt(username, false, "rejected"));
+            TenantContext.runAsTenant(tenantId, tenantCode, auditWrite);
         }
         // 提示不外露失败原因；data 只带计数派生信息（防探测：未知账号同样计数、同样提示）
         return new ApiException(
@@ -557,6 +640,47 @@ public class AuthService {
                 Map.of(
                         "captchaRequired", rateLimiter.captchaRequired(bucket),
                         "remainingAttempts", rateLimiter.remainingAttempts(bucket)));
+    }
+
+    /**
+     * 登录成功 / 登出 / 双因素通过的登录日志（PLT-AUD-002 扩展字段： 登录方式、租户识别方式、第二因素结果、会话 ID）。 须在正确的租户 /
+     * 平台上下文里调用，由写入服务决定落租户库还是平台库。
+     */
+    private void appendLoginAudit(
+            SessionPrincipal principal,
+            String username,
+            String description,
+            String tenantIdentifyMethod,
+            String secondFactorResult,
+            String loginMethod) {
+        auditLogger.append(
+                AuditEntry.login(username)
+                        .success()
+                        .description(description)
+                        .userId(principal.userId())
+                        .displayName(principal.displayName())
+                        .userType(principal.sessionType())
+                        .roleCodes(principal.roles())
+                        .ip(principal.ip())
+                        .loginMethod(loginMethod)
+                        .tenantIdentifyMethod(tenantIdentifyMethod)
+                        .secondFactorResult(secondFactorResult)
+                        .sessionId(principal.sessionId())
+                        .build());
+    }
+
+    private void appendLogoutAudit(SessionPrincipal principal) {
+        auditLogger.append(
+                AuditEntry.login(principal.username())
+                        .action("LOGOUT")
+                        .description("登出")
+                        .success()
+                        .userId(principal.userId())
+                        .displayName(principal.displayName())
+                        .userType(principal.sessionType())
+                        .roleCodes(principal.roles())
+                        .sessionId(principal.sessionId())
+                        .build());
     }
 
     /**

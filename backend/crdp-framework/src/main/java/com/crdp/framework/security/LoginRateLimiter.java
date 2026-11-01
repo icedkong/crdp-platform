@@ -50,18 +50,23 @@ public class LoginRateLimiter {
         return Math.max(0, properties.getLoginFailureLimit() - failures(bucket));
     }
 
-    public void recordFailure(String bucket) {
+    /** 记一次失败。返回是否「本次失败恰好触发锁定」（E08-T01 / PLT-AUD-002 登录日志的 LOCK 事件）。 */
+    public boolean recordFailure(String bucket) {
         String key = key(bucket);
         Long count = redis.opsForValue().increment(key);
         if (count == null) {
-            return;
+            return false;
         }
         if (count == 1L) {
             redis.expire(key, Duration.ofSeconds(properties.getLoginFailureWindowSeconds()));
-        } else if (count >= properties.getLoginFailureLimit()) {
+            return false;
+        }
+        if (count >= properties.getLoginFailureLimit()) {
             // 达到锁定阈值：把同一键的 TTL 改写为锁定时长（重复触发以最后一次为准）
             redis.expire(key, Duration.ofSeconds(properties.getLoginLockSeconds()));
+            return count == properties.getLoginFailureLimit();
         }
+        return false;
     }
 
     /** 成功登录清零失败计数（验证码要求一并解除）。 */

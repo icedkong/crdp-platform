@@ -1,5 +1,6 @@
 package com.crdp.server.platform;
 
+import com.crdp.framework.audit.AuditEntry;
 import com.crdp.framework.audit.AuditEvent;
 import com.crdp.framework.audit.AuditLogger;
 import com.crdp.framework.crypto.CryptoService;
@@ -368,6 +369,14 @@ public class PlatformAccountService {
                                     "UPDATE",
                                     "plt_account:" + username,
                                     "解锁平台账号登录锁定"));
+                    // PLT-AUD-002「解锁」：平台账号的解锁落平台库登录日志
+                    audit.append(
+                            AuditEntry.login(username)
+                                    .action("UNLOCK")
+                                    .description("平台管理员解锁登录锁定")
+                                    .success()
+                                    .userType("PLATFORM")
+                                    .build());
                     return Map.of("userId", id, "username", username, "unlocked", true);
                 });
     }

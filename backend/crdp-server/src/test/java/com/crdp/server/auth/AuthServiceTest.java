@@ -14,6 +14,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.crdp.framework.audit.AuditLogger;
+import com.crdp.framework.audit.AuditResult;
+import com.crdp.framework.audit.AuditType;
 import com.crdp.framework.crypto.CryptoService;
 import com.crdp.framework.notify.SmsCodeSender;
 import com.crdp.framework.security.CaptchaStore;
@@ -41,7 +43,6 @@ import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -414,8 +415,11 @@ class AuthServiceTest {
             assertEquals(40101, ex.code());
             assertEquals("租户、账号或密码不正确", ex.getMessage(), "失败原因不外露（防探测）");
         }
-        verify(auditLogger, org.mockito.Mockito.times(2)).loginAttempt(USERNAME, false, "rejected");
-        verify(auditLogger).loginAttempt("nobody.demo", false, "rejected");
+        // E08-T01 / PLT-AUD-002：失败原因按规格落登录日志 fail_reason（不再是笼统的 rejected）
+        verify(auditLogger).loginAttempt(USERNAME, false, "unknown-tenant");
+        verify(auditLogger).loginAttempt(USERNAME, false, "bad-password");
+        verify(auditLogger).loginAttempt("nobody.demo", false, "unknown-user");
+        verify(auditLogger).loginAttempt("ghost.demo", false, "bad-password");
     }
 
     @Test
@@ -555,7 +559,15 @@ class AuthServiceTest {
 
         service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null, null);
 
-        verify(auditLogger).loginAttempt(USERNAME, true, "ok");
+        verify(auditLogger)
+                .append(
+                        org.mockito.ArgumentMatchers.argThat(
+                                entry ->
+                                        entry.type() == AuditType.LOGIN
+                                                && USERNAME.equals(entry.username())
+                                                && entry.result() == AuditResult.SUCCESS
+                                                && "PASSWORD".equals(entry.loginMethod())
+                                                && entry.sessionId() != null));
         ApiException again = loginRejected(WRONG_PASSWORD);
         assertEquals(40101, again.code(), "成功登录必须清零失败计数：不清零时计数已达上限，这里会是 42900");
     }
@@ -653,13 +665,18 @@ class AuthServiceTest {
     @Test
     void auditLoginAttemptCarriesTheTenantContext() {
         service.loginHospital(TENANT_CODE, USERNAME, RIGHT_PASSWORD, null, null);
-        ArgumentCaptor<String> message = ArgumentCaptor.forClass(String.class);
+        // E08-T01 / PLT-AUD-002：登录日志带操作者、登录方式、租户识别方式、会话号
         verify(auditLogger)
-                .loginAttempt(
-                        org.mockito.ArgumentMatchers.eq(USERNAME),
-                        org.mockito.ArgumentMatchers.eq(true),
-                        message.capture());
-        assertEquals("ok", message.getValue());
+                .append(
+                        org.mockito.ArgumentMatchers.argThat(
+                                entry ->
+                                        entry != null
+                                                && entry.type() == AuditType.LOGIN
+                                                && USERNAME.equals(entry.username())
+                                                && entry.result() == AuditResult.SUCCESS
+                                                && "PASSWORD".equals(entry.loginMethod())
+                                                && entry.sessionId() != null
+                                                && entry.userId() != null));
     }
 
     // ---- E04-T03 / PLT-AUTH-005：平台端独立登录，两端账号互不能在对方端登录 ----
@@ -690,7 +707,15 @@ class AuthServiceTest {
         assertTrue(
                 principal.permissionCodes().contains("platform:tenant:view"),
                 "权限码来自平台菜单 ∩ 账号菜单 ∩ 已开通模块");
-        verify(auditLogger).loginAttempt(PLATFORM_USERNAME, true, "ok");
+        verify(auditLogger)
+                .append(
+                        org.mockito.ArgumentMatchers.argThat(
+                                entry ->
+                                        entry != null
+                                                && entry.type() == AuditType.LOGIN
+                                                && PLATFORM_USERNAME.equals(entry.username())
+                                                && entry.result() == AuditResult.SUCCESS
+                                                && entry.sessionId() != null));
     }
 
     @Test
@@ -794,7 +819,15 @@ class AuthServiceTest {
         assertTrue(session.isPresent());
         assertEquals(USERNAME, session.get().username());
         assertEquals(TENANT_CODE, session.get().tenantCode());
-        verify(auditLogger).loginAttempt(USERNAME, true, "ok");
+        verify(auditLogger)
+                .append(
+                        org.mockito.ArgumentMatchers.argThat(
+                                entry ->
+                                        entry != null
+                                                && entry.type() == AuditType.LOGIN
+                                                && USERNAME.equals(entry.username())
+                                                && "SMS".equals(entry.loginMethod())
+                                                && entry.result() == AuditResult.SUCCESS));
     }
 
     @Test
@@ -849,7 +882,7 @@ class AuthServiceTest {
 
         assertEquals(40101, ex.code());
         assertEquals("租户、账号或密码不正确", ex.getMessage(), "未绑定手机号与账号密码失败同口径");
-        verify(auditLogger).loginAttempt("139****0001", false, "rejected");
+        verify(auditLogger).loginAttempt("139****0001", false, "unknown-phone");
     }
 
     @Test
@@ -946,7 +979,15 @@ class AuthServiceTest {
         assertTrue(session.isPresent());
         assertTrue(session.get().platform(), "平台端双因素完成得到平台会话");
         assertEquals(PLATFORM_USERNAME, session.get().username());
-        verify(auditLogger).loginAttempt(PLATFORM_USERNAME, true, "2fa-ok");
+        verify(auditLogger)
+                .append(
+                        org.mockito.ArgumentMatchers.argThat(
+                                entry ->
+                                        entry != null
+                                                && entry.type() == AuditType.LOGIN
+                                                && PLATFORM_USERNAME.equals(entry.username())
+                                                && "PASS".equals(entry.secondFactorResult())
+                                                && entry.result() == AuditResult.SUCCESS));
     }
 
     @Test
@@ -1020,7 +1061,15 @@ class AuthServiceTest {
         assertTrue(session.isPresent());
         assertTrue(session.get().hospital());
         assertEquals(TENANT_CODE, session.get().tenantCode());
-        verify(auditLogger).loginAttempt(USERNAME, true, "2fa-ok");
+        verify(auditLogger)
+                .append(
+                        org.mockito.ArgumentMatchers.argThat(
+                                entry ->
+                                        entry != null
+                                                && entry.type() == AuditType.LOGIN
+                                                && USERNAME.equals(entry.username())
+                                                && "PASS".equals(entry.secondFactorResult())
+                                                && entry.result() == AuditResult.SUCCESS));
     }
 
     @Test

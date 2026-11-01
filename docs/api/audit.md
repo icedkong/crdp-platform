@@ -1,21 +1,22 @@
 # 审计日志（audit）
 
-> 后端：`crdp-framework`（审计切面 `@AuditLog` + 写入服务）、`crdp-system` / `crdp-platform`（查询）。表：`aud_operation_log`、`aud_login_log`、`aud_data_access_log`、`aud_platform_access_log`（仅平台库）。
+> 后端：`crdp-framework`（审计切面 `@AuditLog` + 写入服务 `AuditLogger`，E08-T01 已落地）、`crdp-system` / `crdp-platform`（查询，E08-T04）。
+> 表（E08-T01 起按规格字段写入）：租户库 `aud_log`（操作）、`aud_login_log`（登录）、`aud_data_access_log`（数据访问）；平台库 `plt_audit_log`（平台操作 / 租户控制面，含 `tenant_id` 供 PLT-TEN-022 按租户检索）、`aud_login_log`（平台账号登录 + 租户未识别的医院登录失败）、`aud_platform_access_log`（租户视角访问，仅平台库，医院端不可见）。
 > 页面：`/system/audit`（租户）、`/platform/audit`（平台）；患者详情「操作日志」页签。
-> 需求：PLT-AUD-001…012、PLT-VIEW（平台访问记录）。路径 **推断，待确认**。
+> 需求：PLT-AUD-001…012、PLT-VIEW（平台访问记录）。查询路径 **推断，待确认**（E08-T04 定稿）。
 
-## 1. 写入（后端约定，所有模块都要遵守）
+## 1. 写入（后端约定，所有模块都要遵守；E08-T01 已实现）
 
-- **只追加**：审计表只有 INSERT；无 UPDATE / DELETE 接口，应用账号对审计表只授 INSERT、SELECT（PLT-AUD-011）。
-- 每条：`id, tenantId, userId, userName, roleCodes, type(OPERATION|LOGIN|DATA_ACCESS|PLATFORM_ACCESS), module, action, objectType, objectId, result(SUCCESS|DENIED|FAIL), errorCode, ip, userAgent, traceId, before, after, reason, createdAt, prevHash, hash`。
-- `before/after` 中敏感值只存摘要（如“已变更”标记或哈希），不存明文（PLT-AUD-006）。
-- 防篡改：`hash = SHA-256(prevHash + 规范化内容)` 哈希链，或写 WORM 存储（PLT-AUD-008）；定时校验断链告警（PLT-AUD-009，P1）。
-- 必须记录的事件：增删改、配置 / 权限 / 状态变更（001）；登录成功失败、登出、锁定、解锁、强制下线、令牌异常（002）；查看明文、导出、打印、下载、批量查询（003）；平台租户视角的全部访问与被拒操作（004）。
-- 被拒绝的请求（40300/40301/40302/40303）也要写 `result=DENIED`。
-- 审计写入失败时：敏感操作（明文、导出、下载）整体失败返回 50000；普通操作记录告警但不回滚（推断，待确认）。
+- **只追加**：审计表只有 INSERT；无 UPDATE / DELETE 接口，应用账号对审计表只授 INSERT、SELECT（PLT-AUD-011；收紧数据库授权随 E08-T02「日志只读」落地）。
+- 统一入口 `AuditLogger.append(AuditEntry)`，四类 `type`：`OPERATION | LOGIN | DATA_ACCESS | PLATFORM_ACCESS`。规格通用字段：操作者（`userId/userName/displayName/userType/roleCodes`）、`module`、`action`、`objectType/objectId`（不记患者明文）、描述、变更前后值（`before_json/after_json`，敏感值只存摘要）、`result(SUCCESS|DENIED|FAIL)`、`errorCode/reason`、`ip/userAgent`、`traceId`、`viewSessionId`；扩展字段按类型：登录（`login_method/tenant_identify_method/second_factor_result/fail_reason/session_id`）、数据访问（`access_method(VIEW_PLAIN|EXPORT|PRINT|DOWNLOAD|BATCH_QUERY)/record_count/query_digest/file_hash`）、平台访问（`page` 及数据访问扩展）。操作者与请求上下文（IP 取 X-Forwarded-For 首段、终端、traceId）缺省由写入服务自动补全。
+- 声明式操作审计：app 层方法标 `@AuditLog(module, action, objectType, objectId="#id")`，切面按返回 / 异常写 `SUCCESS/DENIED/FAIL`（40300/40301/40302/40303/40304/40306 记 DENIED）；登录、数据访问、平台访问走编程式 `append`。
+- 兜底：`GlobalExceptionHandler` 与 `ApiResourceGuardFilter`（40300）、`GraceReadOnlyFilter`（40306）对已登录会话的拒绝请求补写 `result=DENIED` 的操作日志（描述含方法与路径）；匿名请求与 40101 不写。
+- 防篡改：表已含 `prev_hash/hash` 列，E08-T02 计算 `hash = SHA-256(prevHash + 规范化内容)` 哈希链并定时校验断链告警（PLT-AUD-008/009）。
+- 必须记录的事件：增删改、配置 / 权限 / 状态变更（001）；登录成功失败、登出、锁定（连续失败达阈值）、解锁、强制下线（002，落登录日志 `action=LOGIN/LOGOUT/LOCK/UNLOCK/KICK`）；查看明文、导出、打印、下载、批量查询（003）；平台租户视角的全部访问与被拒操作（004，仅平台库）。令牌刷新异常（002）随会话链路任务接入。
+- 写入失败：先重试一次；仍失败时登录、平台访问与敏感数据访问（明文 / 导出 / 打印 / 下载）整体失败返回 **50000**；普通操作与批量查询只记 ERROR 告警、业务不回滚。
 - 留存：在线 1 年后转归档（PLT-AUD-010）。
 
-## 2. 租户查询（`tenant:audit:view` / `tenant:audit:export`）
+## 2. 租户查询（`tenant:audit:view` / `tenant:audit:export`；E08-T04 实现）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -26,7 +27,7 @@
 
 租户侧**看不到**平台访问记录（PLT-AUD-004 仅存平台侧）。
 
-## 3. 平台查询（`platform:audit:view` / `export`）
+## 3. 平台查询（`platform:audit:view` / `export`；E08-T04 实现）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
