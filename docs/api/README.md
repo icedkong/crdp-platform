@@ -88,9 +88,10 @@
 ### 2.5 数据范围（必须遵守）
 
 - 所有读写患者及其下级数据（基线、记录、任务、报告单、沟通、植入）的查询都经过 `@DataScope` + `DataScopeInnerInterceptor`；**默认拒绝**：未声明范围直接 40302，空范围返回空结果。
+- **启动扫描（E07-T01）**：`DataScopeStartupScanner` 在应用启动阶段遍历全部 MyBatis 语句，访问受控表的 SELECT 未声明 `@DataScope` / `@IgnoreScope` 时启动直接失败（`DataScopeUndeclaredException`），不等运行时才 40302；SQL 无法解析求值时同样拒绝。
 - 单条资源不在范围内：返回 **40400**，不返回 40300（不暴露存在性）。
 - 列表、统计、导出、首页卡片使用同一套范围（A-WARD-004、C-WARD-005）。
-- `@IgnoreScope` 只允许用于平台元数据或系统作业，代码评审必须说明理由。
+- `@IgnoreScope` 只允许用于平台元数据或系统作业，代码评审必须说明理由；标在 Mapper 接口上可覆盖 MyBatis-Plus 注入的继承语句。
 
 ### 2.6 脱敏与明文
 
