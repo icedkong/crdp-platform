@@ -9,6 +9,7 @@ import com.crdp.framework.web.ApiResponse;
 import com.crdp.server.auth.AuthService;
 import com.crdp.server.auth.MenuQuery;
 import com.crdp.server.auth.PasswordChangeService;
+import com.crdp.server.auth.ReauthService;
 import com.crdp.server.auth.SessionAdminService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -29,6 +30,7 @@ public class PlatformAuthController {
 
     private final AuthService authService;
     private final PasswordChangeService passwordChangeService;
+    private final ReauthService reauthService;
     private final MenuQuery menuQuery;
     private final CaptchaStore captchaStore;
     private final SecurityProperties securityProperties;
@@ -37,12 +39,14 @@ public class PlatformAuthController {
     public PlatformAuthController(
             AuthService authService,
             PasswordChangeService passwordChangeService,
+            ReauthService reauthService,
             MenuQuery menuQuery,
             CaptchaStore captchaStore,
             SecurityProperties securityProperties,
             SessionAdminService sessionAdminService) {
         this.authService = authService;
         this.passwordChangeService = passwordChangeService;
+        this.reauthService = reauthService;
         this.menuQuery = menuQuery;
         this.captchaStore = captchaStore;
         this.securityProperties = securityProperties;
@@ -82,6 +86,18 @@ public class PlatformAuthController {
         passwordChangeService.changePlatform(
                 principal, request.oldPassword(), request.newPassword());
         return ApiResponse.ok(null);
+    }
+
+    @Operation(
+            summary =
+                    "敏感操作二次认证（PLT-AUTH-012，E04-T08，与医院端同构）：密码再次验证通过后签发 5 分钟有效、"
+                            + "绑定当前会话的 reauthToken；平台敏感接口（审计导出提交与下载）经 X-Reauth-Token"
+                            + " 请求头携带，缺失或过期 40304。密码错误 42200 且计入登录失败计数。")
+    @PostMapping("/api/platform/auth/reauth")
+    public ApiResponse<ReauthService.ReauthResult> reauth(
+            @Valid @RequestBody ReauthRequest request) {
+        return ApiResponse.ok(
+                reauthService.reauthPlatform(CurrentSession.requirePlatform(), request.password()));
     }
 
     @PostMapping("/api/platform/auth/logout")

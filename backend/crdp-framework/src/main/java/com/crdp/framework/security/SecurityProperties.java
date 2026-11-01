@@ -78,6 +78,9 @@ public class SecurityProperties {
      */
     private boolean platformTwoFactorEnabled = true;
 
+    /** 敏感操作二次认证令牌有效期，秒（E04-T08 / PLT-AUTH-012）。规格（auth.md）：5 分钟； 窗口内可多次使用，过期后敏感接口重新要求验证（40304）。 */
+    private int reauthTokenTtlSeconds = 300;
+
     public int getSessionIdleSeconds() {
         return sessionIdleSeconds;
     }
@@ -244,5 +247,13 @@ public class SecurityProperties {
 
     public void setPlatformTwoFactorEnabled(boolean platformTwoFactorEnabled) {
         this.platformTwoFactorEnabled = platformTwoFactorEnabled;
+    }
+
+    public int getReauthTokenTtlSeconds() {
+        return reauthTokenTtlSeconds;
+    }
+
+    public void setReauthTokenTtlSeconds(int reauthTokenTtlSeconds) {
+        this.reauthTokenTtlSeconds = reauthTokenTtlSeconds;
     }
 }

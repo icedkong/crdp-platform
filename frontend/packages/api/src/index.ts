@@ -227,6 +227,29 @@ export type {
   MenuUpdateRequest,
 } from './perm-resources';
 
+export {
+  platformAccountStatusText,
+  platformRoleStatusText,
+  platformRoleViewSummary,
+  platformTenantScopeText,
+  platformVisibleScopeText,
+  validatePlatformAccount,
+  validatePlatformRole,
+} from './platform-role';
+
+export type {
+  PlatformAccountResetResult,
+  PlatformAccountSaveRequest,
+  PlatformAccountView,
+  PlatformGrantMenuNode,
+  PlatformRoleHolder,
+  PlatformRoleSaveRequest,
+  PlatformRoleView,
+  PlatformRoleViewFields,
+  PlatformTenantScope,
+  PlatformVisibleScope,
+} from './platform-role';
+
 export interface CreateTenantRequest {
   /** 不填由后端自动生成（页面展示建议值可改）。 */
   adminDisplayName?: string;
@@ -561,27 +584,18 @@ export interface ModuleOpenLog {
   tenantName: string;
 }
 
+// E04-T08 / PLT-AUTH-012：敏感操作二次认证（明文查看、导出、下载、重置密码）
 export {
-  platformAccountStatusText,
-  platformRoleStatusText,
-  platformRoleViewSummary,
-  platformTenantScopeText,
-  platformVisibleScopeText,
-  validatePlatformAccount,
-  validatePlatformRole,
-} from './platform-role';
-export type {
-  PlatformAccountResetResult,
-  PlatformAccountSaveRequest,
-  PlatformAccountView,
-  PlatformGrantMenuNode,
-  PlatformRoleHolder,
-  PlatformRoleSaveRequest,
-  PlatformRoleView,
-  PlatformRoleViewFields,
-  PlatformTenantScope,
-  PlatformVisibleScope,
-} from './platform-role';
+  isReauthCancelled,
+  isReauthRequired,
+  REAUTH_HEADER,
+  REAUTH_REQUIRED_CODE,
+  ReauthCancelledError,
+  reauthHeaders,
+  ReauthTokenKeeper,
+  runWithReauth,
+} from './reauth';
+export type { ReauthFlowDeps, ReauthResult } from './reauth';
 
 export type { OnlineSessionView } from './session';
 export {

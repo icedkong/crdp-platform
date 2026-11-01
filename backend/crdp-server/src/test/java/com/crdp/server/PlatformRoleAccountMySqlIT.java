@@ -452,9 +452,13 @@ class PlatformRoleAccountMySqlIT {
         long opsAccount = accountIdByUsername("it.ops.demo");
         String opsToken = login("it.ops.demo", NEW_PASSWORD + "B");
 
-        // 重置：一次性临时密码；旧会话全失效；锁定一并解除
+        // 重置：一次性临时密码；旧会话全失效；锁定一并解除。
+        // 敏感操作需二次认证（E04-T08 / PLT-AUTH-012）：X-Reauth-Token 由 /auth/reauth 换取
         Map<?, ?> reset =
-                post(Map.of(), "/api/platform/accounts/" + opsAccount + "/reset-password", token);
+                postReauth(
+                        Map.of(),
+                        "/api/platform/accounts/" + opsAccount + "/reset-password",
+                        token);
         assertEquals(0, codeOf(reset), String.valueOf(reset.get("message")));
         String temporary = (String) dataOf(reset).get("temporaryPassword");
         assertNotNull(temporary);
@@ -621,6 +625,18 @@ class PlatformRoleAccountMySqlIT {
         if (token != null) {
             headers.setBearerAuth(token);
         }
+        return rest.postForEntity(path, new HttpEntity<>(body, headers), Map.class).getBody();
+    }
+
+    /** 敏感操作（E04-T08 / PLT-AUTH-012）：先二次认证换 reauthToken，再携带 X-Reauth-Token 调用。 */
+    private Map<?, ?> postReauth(Map<String, Object> body, String path, String token) {
+        Map<?, ?> reauth =
+                post(Map.of("password", ADMIN_PASSWORD), "/api/platform/auth/reauth", token);
+        assertEquals(0, codeOf(reauth), "二次认证失败：" + String.valueOf(reauth.get("message")));
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.setBearerAuth(token);
+        headers.set("X-Reauth-Token", (String) dataOf(reauth).get("reauthToken"));
         return rest.postForEntity(path, new HttpEntity<>(body, headers), Map.class).getBody();
     }
 

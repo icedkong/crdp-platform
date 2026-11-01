@@ -319,7 +319,7 @@ class AuditQueryExportMySqlIT {
     void tenantAdminSelfExportSkipsApprovalAndIsAudited() {
         String token = login(ADMIN);
         Map<?, ?> submittedResponse =
-                post(
+                postReauth(
                         "/api/hospital/system/audit/exports",
                         token,
                         Map.of(
@@ -329,8 +329,7 @@ class AuditQueryExportMySqlIT {
                                                 "startTime", windowStart(),
                                                 "endTime", windowEnd(),
                                                 "module", MARKER),
-                                "reason", "E08-T04 用例（示例）"),
-                        null);
+                                "reason", "E08-T04 用例（示例）"));
         assertEquals(0, codeOf(submittedResponse), "提交失败：" + submittedResponse);
         Map<?, ?> submitted = data(submittedResponse);
         assertEquals("GENERATING", submitted.get("status"), "租户管理员本人导出无需审批");
@@ -371,7 +370,7 @@ class AuditQueryExportMySqlIT {
     void normalUserExportNeedsTenantAdminApproval() {
         String token = login(USER);
         Map<?, ?> submittedResponse =
-                post(
+                postReauth(
                         "/api/hospital/system/audit/exports",
                         token,
                         Map.of(
@@ -381,21 +380,21 @@ class AuditQueryExportMySqlIT {
                                                 "startTime", windowStart(),
                                                 "endTime", windowEnd(),
                                                 "module", MARKER),
-                                "reason", "E08-T04 审批用例（示例）"),
-                        null);
+                                "reason", "E08-T04 审批用例（示例）"));
         assertEquals(0, codeOf(submittedResponse), "提交失败：" + submittedResponse);
         Map<?, ?> submitted = data(submittedResponse);
         assertEquals("PENDING_APPROVAL", submitted.get("status"));
         long exportId = ((Number) submitted.get("exportId")).longValue();
 
-        // 未审批时下载 → 40901（import-export.md §4）
+        // 未审批时下载（已带二次认证头，业务规则 40901 不被 40304 掩盖）→ 40901（import-export.md §4）
         assertEquals(
                 40901,
                 codeOf(
                         get(
                                 "/api/hospital/system/audit/exports/" + exportId + "/download",
                                 token,
-                                null)));
+                                null,
+                                reauth(token))));
 
         // 普通用户无审批权限 → 40300
         assertEquals(
@@ -455,7 +454,7 @@ class AuditQueryExportMySqlIT {
     void platformExportRequiresAnotherPlatformAdmin() {
         String admin = loginPlatform("platform.admin");
         Map<?, ?> submittedResponse =
-                post(
+                postReauth(
                         "/api/platform/audit/exports",
                         admin,
                         Map.of(
@@ -465,8 +464,7 @@ class AuditQueryExportMySqlIT {
                                                 "startTime", windowStart(),
                                                 "endTime", windowEnd(),
                                                 "module", MARKER),
-                                "reason", "E08-T04 平台导出（示例）"),
-                        null);
+                                "reason", "E08-T04 平台导出（示例）"));
         assertEquals(0, codeOf(submittedResponse), "提交失败：" + submittedResponse);
         Map<?, ?> submitted = data(submittedResponse);
         assertEquals("PENDING_APPROVAL", submitted.get("status"), "平台账号导出一律待审批");
@@ -596,6 +594,47 @@ class AuditQueryExportMySqlIT {
         awaitStatus("/api/platform/audit/exports", token, exportId);
     }
 
+    /** 医院端二次认证（E04-T08 / PLT-AUTH-012）：密码换 5 分钟有效的 reauthToken。 */
+    private String reauth(String token) {
+        Map<?, ?> response =
+                post("/api/hospital/auth/reauth", token, Map.of("password", PASSWORD), null);
+        assertEquals(0, codeOf(response), "二次认证失败：" + response);
+        return (String) data(response).get("reauthToken");
+    }
+
+    /** 平台端二次认证（与医院端同构）。 */
+    private String reauthPlatform(String token) {
+        Map<?, ?> response =
+                post("/api/platform/auth/reauth", token, Map.of("password", PASSWORD), null);
+        assertEquals(0, codeOf(response), "二次认证失败：" + response);
+        return (String) data(response).get("reauthToken");
+    }
+
+    /** 敏感接口调用：携带 X-Reauth-Token（提交审计导出等，缺失 40304）。按端别选二次认证口。 */
+    private Map<?, ?> postReauth(String path, String token, Map<String, Object> body) {
+        String reauthToken =
+                path.startsWith("/api/platform/") ? reauthPlatform(token) : reauth(token);
+        return post(path, token, body, null, reauthToken);
+    }
+
+    private byte[] downloadTenant(String token, long exportId) {
+        return rest.exchange(
+                        "/api/hospital/system/audit/exports/" + exportId + "/download",
+                        HttpMethod.GET,
+                        new HttpEntity<>(jsonHeaders(token, reauth(token))),
+                        byte[].class)
+                .getBody();
+    }
+
+    private byte[] downloadPlatform(String token, long exportId) {
+        return rest.exchange(
+                        "/api/platform/audit/exports/" + exportId + "/download",
+                        HttpMethod.GET,
+                        new HttpEntity<>(jsonHeaders(token, reauthPlatform(token))),
+                        byte[].class)
+                .getBody();
+    }
+
     private void awaitStatus(String listPath, String token, long exportId) {
         long deadline = System.currentTimeMillis() + 15_000;
         while (System.currentTimeMillis() < deadline) {
@@ -619,26 +658,13 @@ class AuditQueryExportMySqlIT {
         throw new AssertionError("导出未在 15 秒内生成完成");
     }
 
-    private byte[] downloadTenant(String token, long exportId) {
-        return rest.exchange(
-                        "/api/hospital/system/audit/exports/" + exportId + "/download",
-                        HttpMethod.GET,
-                        new HttpEntity<>(jsonHeaders(token)),
-                        byte[].class)
-                .getBody();
-    }
-
-    private byte[] downloadPlatform(String token, long exportId) {
-        return rest.exchange(
-                        "/api/platform/audit/exports/" + exportId + "/download",
-                        HttpMethod.GET,
-                        new HttpEntity<>(jsonHeaders(token)),
-                        byte[].class)
-                .getBody();
-    }
-
     private Map<?, ?> post(String path, String token, Map<String, Object> body, String ip) {
-        HttpHeaders headers = jsonHeaders(token);
+        return post(path, token, body, ip, null);
+    }
+
+    private Map<?, ?> post(
+            String path, String token, Map<String, Object> body, String ip, String reauthToken) {
+        HttpHeaders headers = jsonHeaders(token, reauthToken);
         if (ip != null) {
             headers.set("X-Forwarded-For", ip);
         }
@@ -646,7 +672,11 @@ class AuditQueryExportMySqlIT {
     }
 
     private Map<?, ?> get(String path, String token, String ip) {
-        HttpHeaders headers = jsonHeaders(token);
+        return get(path, token, ip, null);
+    }
+
+    private Map<?, ?> get(String path, String token, String ip, String reauthToken) {
+        HttpHeaders headers = jsonHeaders(token, reauthToken);
         if (ip != null) {
             headers.set("X-Forwarded-For", ip);
         }
@@ -654,10 +684,17 @@ class AuditQueryExportMySqlIT {
     }
 
     private HttpHeaders jsonHeaders(String token) {
+        return jsonHeaders(token, null);
+    }
+
+    private HttpHeaders jsonHeaders(String token, String reauthToken) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         if (token != null) {
             headers.setBearerAuth(token);
+        }
+        if (reauthToken != null) {
+            headers.set("X-Reauth-Token", reauthToken);
         }
         headers.set("User-Agent", "IT-E08T04-UA/1.0");
         return headers;

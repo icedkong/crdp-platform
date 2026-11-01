@@ -1,5 +1,6 @@
 package com.crdp.server.web;
 
+import com.crdp.framework.security.RequireReauth;
 import com.crdp.framework.security.RequiresPermission;
 import com.crdp.framework.web.ApiResponse;
 import com.crdp.server.platform.PlatformAuditExportService;
@@ -69,9 +70,13 @@ public class PlatformAuditController {
         return ApiResponse.ok(query.integrity(tenantId));
     }
 
-    @Operation(summary = "提交平台审计导出（PLT-AUD-007）：一律待平台管理员审批，申请人不能自审；导出本身记审计")
+    @Operation(
+            summary =
+                    "提交平台审计导出（PLT-AUD-007）：一律待平台管理员审批，申请人不能自审；导出本身记审计。"
+                            + "敏感操作：需二次认证（X-Reauth-Token，E04-T08 / PLT-AUTH-012）")
     @PostMapping("/api/platform/audit/exports")
     @RequiresPermission("platform:audit:export")
+    @RequireReauth("提交平台审计导出")
     public ApiResponse<ExportSubmitted> submit(@RequestBody ExportRequest request) {
         return ApiResponse.ok(exports.submit(request));
     }
@@ -110,9 +115,13 @@ public class PlatformAuditController {
         return ApiResponse.ok(exports.reject(id, action));
     }
 
-    @Operation(summary = "下载导出文件：仅申请人，READY 且 24 小时内有效；每次下载写 DATA_ACCESS 审计")
+    @Operation(
+            summary =
+                    "下载导出文件：仅申请人，READY 且 24 小时内有效；每次下载写 DATA_ACCESS 审计。"
+                            + "敏感操作：需二次认证（X-Reauth-Token，E04-T08 / PLT-AUTH-012）")
     @GetMapping("/api/platform/audit/exports/{id}/download")
     @RequiresPermission("platform:audit:export")
+    @RequireReauth("下载平台审计导出文件")
     public ResponseEntity<byte[]> download(@PathVariable("id") long id) {
         PlatformAuditExportService.DownloadFile file = exports.download(id);
         return ResponseEntity.ok()

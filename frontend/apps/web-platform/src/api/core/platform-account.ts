@@ -32,11 +32,15 @@ export function updatePlatformAccount(
   );
 }
 
-/** 重置密码：生成一次性临时密码，首次登录强制改密，该账号全部会话失效并解除锁定。 */
-export function resetPlatformAccountPassword(id: number) {
+/** 重置密码：生成一次性临时密码，首次登录强制改密，该账号全部会话失效并解除锁定。敏感操作：需二次认证（X-Reauth-Token，E04-T08）。 */
+export function resetPlatformAccountPassword(
+  id: number,
+  headers?: Record<string, string>,
+) {
   return requestClient.post<PlatformAccountResetResult>(
     apiPath(`/accounts/${id}/reset-password`),
     {},
+    { headers },
   );
 }
 

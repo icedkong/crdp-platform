@@ -6,6 +6,7 @@ import { useRouter } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
 
+import { isReauthCancelled } from '@crdp/api';
 import { StatusTag } from '@crdp/status-tag';
 import { breakpoints } from '@crdp/tokens';
 import {
@@ -24,6 +25,7 @@ import {
   resetPlatformAccountPassword,
   unlockPlatformAccount,
 } from '#/api/core/platform-account';
+import ReauthModal from '#/components/reauth-modal.vue';
 import { usePermission } from '#/reference/use-permission';
 
 import {
@@ -54,6 +56,8 @@ const editTarget = ref<null | PlatformAccountView>(null);
 const resetConfirm = ref<null | PlatformAccountView>(null);
 const resetResult = ref<null | { lines: string[]; temporary: string }>(null);
 const resetting = ref(false);
+// E04-T08 / PLT-AUTH-012：重置密码是敏感操作，先二次认证（X-Reauth-Token）
+const reauthModal = ref<InstanceType<typeof ReauthModal>>();
 
 const columns = [
   { dataIndex: 'username', title: '账号' },
@@ -99,18 +103,27 @@ function openEdit(row: PlatformAccountView) {
 }
 
 async function confirmReset() {
-  if (!resetConfirm.value) return;
+  const target = resetConfirm.value;
+  if (!target) return;
   resetting.value = true;
   try {
-    const result = await resetPlatformAccountPassword(resetConfirm.value.id);
+    // 先弹二次认证（密码换 X-Reauth-Token）再发起重置；取消则保持确认弹窗
+    const result = await reauthModal.value?.run((headers) =>
+      resetPlatformAccountPassword(target.id, headers),
+    );
+    if (!result) {
+      return;
+    }
     resetResult.value = {
       lines: resetResultLines(result.temporaryPassword),
       temporary: result.temporaryPassword,
     };
   } catch (error) {
-    message.error(
-      `重置失败：${error instanceof Error ? error.message : String(error)}`,
-    );
+    if (!isReauthCancelled(error)) {
+      message.error(
+        `重置失败：${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   } finally {
     resetting.value = false;
   }
@@ -271,6 +284,9 @@ onUnmounted(() => window.removeEventListener('resize', read));
         <Button type="primary" @click="closeReset">我已保存</Button>
       </div>
     </Modal>
+
+    <!-- E04-T08 / PLT-AUTH-012：敏感操作二次认证（重置账号密码） -->
+    <ReauthModal ref="reauthModal" />
   </Page>
 </template>
 

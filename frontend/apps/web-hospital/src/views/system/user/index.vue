@@ -46,6 +46,7 @@ import {
   userDetail,
   wardOptions,
 } from '#/api/core/user';
+import ReauthModal from '#/components/reauth-modal.vue';
 import { useBreakpoint } from '#/reference/use-breakpoint';
 import { usePermission } from '#/reference/use-permission';
 
@@ -293,7 +294,7 @@ async function submitEditor() {
   }
 }
 
-// ---- 重置密码（PLT-ORG-008）：临时密码只下发一次 ----
+// ---- 重置密码（PLT-ORG-008）：临时密码只下发一次；敏感操作需二次认证（E04-T08）----
 
 const passwordResult = reactive({
   open: false,
@@ -307,6 +308,8 @@ const resetConfirm = reactive({
   row: null as null | TenantUserView,
 });
 
+const reauthModal = ref<InstanceType<typeof ReauthModal>>();
+
 function openReset(row: TenantUserView) {
   resetConfirm.open = true;
   resetConfirm.row = row;
@@ -316,7 +319,13 @@ async function submitReset() {
   const row = resetConfirm.row;
   if (!row) return;
   try {
-    const result = await resetUserPassword(row.id);
+    // 先弹二次认证（密码换 X-Reauth-Token）再发起重置；取消或失败保持确认弹窗
+    const result = await reauthModal.value?.run((headers) =>
+      resetUserPassword(row.id, headers),
+    );
+    if (!result) {
+      return;
+    }
     resetConfirm.open = false;
     passwordResult.open = true;
     passwordResult.kind = '临时密码';
@@ -324,7 +333,7 @@ async function submitReset() {
     passwordResult.temporaryPassword = result.temporaryPassword;
     await reload();
   } catch {
-    // 统一拦截器已提示
+    // 用户取消二次认证静默返回；其余错误统一拦截器已提示
   }
 }
 
@@ -778,6 +787,9 @@ const textSecondary = colors.textSecondary;
 
     <!-- 权限预览抽屉（E06-T09）：菜单、权限码与数据范围（含病区）及来源角色 -->
     <PermissionPreviewDrawer v-model:open="preview.open" :user="preview.row" />
+
+    <!-- E04-T08 / PLT-AUTH-012：敏感操作二次认证（重置密码） -->
+    <ReauthModal ref="reauthModal" />
   </div>
 </template>
 
