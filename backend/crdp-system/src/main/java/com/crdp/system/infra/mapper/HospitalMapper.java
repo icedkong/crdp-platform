@@ -102,6 +102,20 @@ public interface HospitalMapper {
             """)
     List<Long> customDeptIds(@Param("userId") long userId);
 
+    /**
+     * 角色字段策略显式覆盖并集（E07-T04 / PLT-PERM-009 生效）：只统计启用角色（停用角色的覆盖立即失效， 与菜单 / 范围同口径）；多角色同字段的多行由
+     * FieldPolicySnapshot.merge「取最宽松」归并，未覆盖字段回落平台默认。
+     */
+    @Select(
+            """
+            SELECT DISTINCT fp.resource AS resource, fp.field AS field, fp.policy AS policy
+            FROM sys_role_field_policy fp
+            JOIN sys_role r ON r.id = fp.role_id AND r.status = 'ENABLED'
+            JOIN sys_user_role ur ON ur.role_id = r.id
+            WHERE ur.user_id = #{userId}
+            """)
+    List<RoleFieldPolicyRow> fieldPolicies(@Param("userId") long userId);
+
     // ---- E04-T05 / PLT-AUTH-006、010：自助改密 ----
 
     /** 改密落库：清强制改密标记并把 password_updated_at 推到现在（有效期 90 天从此重算）。 */

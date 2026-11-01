@@ -658,6 +658,7 @@ export {
 } from './tenant-user';
 
 export type {
+  FieldPolicyPreviewView,
   MenuPreviewNode,
   MenuPreviewRow,
   ScopeDeptView,
