@@ -1,7 +1,9 @@
 package com.crdp.server.web;
 
 import com.crdp.framework.security.RequiresPermission;
+import com.crdp.framework.web.ApiException;
 import com.crdp.framework.web.ApiResponse;
+import com.crdp.system.org.DeptImportService;
 import com.crdp.system.org.OrgAdminService;
 import com.crdp.system.org.OrgAdminService.DeptImpactView;
 import com.crdp.system.org.OrgAdminService.DeptSave;
@@ -14,13 +16,18 @@ import com.crdp.system.org.OrgAdminService.StatusChange;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.constraints.Size;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 /**
  * E06-T02 / PLT-ORG-001、002：医院端组织架构（院区与科室树）维护接口。 路径与 docs/api/system.md §1 同步（原「推断，待确认」按本实现定稿：院区
@@ -32,9 +39,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class HospitalOrgController {
 
     private final OrgAdminService service;
+    private final DeptImportService importService;
 
-    public HospitalOrgController(OrgAdminService service) {
+    public HospitalOrgController(OrgAdminService service, DeptImportService importService) {
         this.service = service;
+        this.importService = importService;
     }
 
     /** 院区与科室树。singleOrg=true 表示本院启用院区 ≤ 1，前端可隐藏院区层级（PLT-ORG-001）。 */
@@ -58,6 +67,46 @@ public class HospitalOrgController {
     @RequiresPermission("tenant:org:edit")
     public ApiResponse<DeptImpactView> deptImpact(@PathVariable long deptId) {
         return ApiResponse.ok(service.deptImpact(deptId));
+    }
+
+    // ---- 科室批量导入（E06-T03 / PLT-ORG-003）----
+
+    @Operation(summary = "科室导入模板：表头 + 两行示例（全部虚构数据），xlsx 单工作表")
+    @GetMapping("/api/hospital/system/orgs/import-template")
+    @RequiresPermission("tenant:org:edit")
+    public ResponseEntity<byte[]> importTemplate() {
+        return xlsx("科室导入模板.xlsx", importService.template());
+    }
+
+    @Operation(
+            summary =
+                    "科室批量导入（PLT-ORG-003）：上传 xlsx，逐行校验并落库，单行失败不影响其他行；"
+                            + "返回逐行结果（CREATED / UPDATED / FAILED 与原因）；写 ORG_IMPORT 审计")
+    @PostMapping("/api/hospital/system/orgs/import")
+    @RequiresPermission("tenant:org:edit")
+    public ApiResponse<DeptImportService.ImportReport> importDepts(
+            @RequestPart("file") MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            throw new ApiException(400, 40001, "请选择要导入的 xlsx 文件");
+        }
+        try (java.io.InputStream in = file.getInputStream()) {
+            return ApiResponse.ok(importService.importDepts(in));
+        } catch (java.io.IOException ex) {
+            throw new ApiException(400, 40001, "文件读取失败，请重新上传");
+        }
+    }
+
+    private static ResponseEntity<byte[]> xlsx(String filename, byte[] body) {
+        return ResponseEntity.ok()
+                .header(
+                        HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename*=UTF-8''"
+                                + java.net.URLEncoder.encode(
+                                        filename, java.nio.charset.StandardCharsets.UTF_8))
+                .contentType(
+                        MediaType.parseMediaType(
+                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .body(body);
     }
 
     // ---- 院区（sys_org）----

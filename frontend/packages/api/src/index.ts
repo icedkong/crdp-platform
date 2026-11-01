@@ -133,6 +133,18 @@ export type {
   TenantParamView,
 } from './config';
 export {
+  DEPT_IMPORT_COLUMNS,
+  deptImportActionText,
+  deptImportSummary,
+  failedRows,
+  isXlsxFile,
+} from './dept-import';
+export type {
+  DeptImportAction,
+  DeptImportReport,
+  DeptImportRowResult,
+} from './dept-import';
+export {
   EXPIRE_TYPE_TEXT,
   MODULE_LOG_ACTION_TEXT,
   MODULE_SHELF_OPTIONS,

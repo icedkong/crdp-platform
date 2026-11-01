@@ -1,7 +1,7 @@
 # 医院端系统管理接口（system）
 
 > 后端：`crdp-system`（用户、角色、组织、字典、参数、通知配置）；病区相关字段在 `crdp-followup` 使用。前缀 `/api/hospital/system/`。
-> 页面：`docs/design/pages.md` §10。E06-T02 已落地的组织接口见 §1（原「推断，待确认」已按实现定稿：院区 `/orgs`、科室 `/depts` 分资源）；§2 用户、§3 角色、§4 字典参数已随 E06-T05/T07/T09/T10/T11 落地。
+> 页面：`docs/design/pages.md` §10。E06-T02 已落地的组织接口见 §1（原「推断，待确认」已按实现定稿：院区 `/orgs`、科室 `/depts` 分资源；科室批量导入随 E06-T03 落地）；§2 用户、§3 角色、§4 字典参数已随 E06-T05/T07/T09/T10/T11 落地。
 > 菜单种子现有权限码：`tenant:user:view`、`tenant:role:view`、`tenant:org:view` / `tenant:org:edit`（view 原种子 `tenant:dept:view`，OQ-11 定论 B 由 V103 改名对齐规格；edit 为平台库 V19 新增按钮 331）。
 
 ## 1. 组织：院区、科室、病区（PLT-ORG-001..003、A-WARD-001/008、C-WARD-001/008）
@@ -18,12 +18,13 @@ E06-T02 已实现（院区与科室树；病区字典属 `crdp-followup`，科�
 | PUT | `/api/hospital/system/depts/{deptId}` | `tenant:org:edit` | 编辑 / 移动科室（整对象更新）：名称、类型、负责人（必须是本院启用用户）、HIS 编码、排序、所属院区与上级；移入自己子树、上级与院区不一致、上级不存在 → 40901；写 `DEPT_UPDATE` 审计 |
 | POST | `/api/hospital/system/depts/{deptId}/status` | `tenant:org:edit` | 停用 / 启用：同院区口径；有启用中的下级科室时 40901；停用科室不再出现在业务选择器（树中保留）；写 `DEPT_STATUS` 审计 |
 | GET | `/api/hospital/system/depts/{deptId}/impact` | `tenant:org:edit` | 科室停用影响面：`{ memberCount, childCount, enabledChildCount }` |
+| GET | `/api/hospital/system/orgs/import-template` | `tenant:org:edit` | **已实现（E06-T03 / PLT-ORG-003）**。科室导入模板下载：xlsx 单工作表，表头 `院区编码、科室编码、上级科室编码、科室名称、科室类型、HIS科室编码、负责人账号、排序` + 两行示例（全部虚构数据） |
+| POST | `/api/hospital/system/orgs/import` | `tenant:org:edit` | **已实现（E06-T03 / PLT-ORG-003）**。科室批量导入（multipart `file`，≤1000 行）：同步一次性模型（OQ-52）——上传即逐行校验并落库，**单行失败不影响其他行**，返回 `{ total, created, updated, failed, rows[{ rowNo, code, action(CREATED\|UPDATED\|FAILED), message }] }`；表头不符 / 无数据行 / 超 1000 行 / 非 xlsx → 40001。规则：院区须已存在；科室编码存在即更新，不存在即新增；上级科室编码可引用库内或**同文件任意位置**的编码（空 = 院区顶层），自引用与循环引用报错；不能借导入跨院区移动；负责人账号须为本院启用用户；写 `ORG_IMPORT` 作业级审计。HIS 同步接口待医院确认（规格原文），首期只做 Excel |
 
 未实现（后续任务）：
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| POST | `/api/hospital/system/orgs/import` | `tenant:org:edit` | 科室导入（Excel，见 `import-export.md`；E06-T03） |
 | GET / POST / PUT | `/api/hospital/followup/wards[/{id}]` | `followup:ward:edit` | 病区字典：名称、编码、默认随访负责人、停用（A-WARD-001、008；C-WARD-001） |
 | GET / PUT | `/api/hospital/followup/wards/aliases` | `followup:ward:edit` | 病区值映射（导入时原值 → 病区，`ward_alias`，A-WARD-006） |
 | GET | `/api/hospital/followup/wards/{id}/members` | `followup:ward:edit` | 成员与患者数 |
@@ -141,6 +142,16 @@ E06-T02 已实现（院区与科室树；病区字典属 `crdp-followup`，科�
 | GET | `/api/hospital/system/sessions` | `tenant:session:view` | 本院全部在线会话：`{ sessionId, userId, username, displayName, ip, issuedAt, lastActiveAt }`；`sessionId` 由令牌哈希单向推导，接口不返回令牌 |
 | POST | `/api/hospital/system/sessions/{sessionId}/kick` | `tenant:session:kick` | 强制下线：被下线令牌下次请求 40100；写审计 `SESSION_KICK`；会话号不存在 40400 |
 
-## 9. 组织与用户变更事件（PLT-ORG-013）
+## 9. 组织与用户变更事件（PLT-ORG-013；E06-T03 已实现落表，分发随 E09）
 
-用户停用、转科、角色变化通过 `sys_outbox` 发布领域事件；随访模块订阅后处理责任人重分配提示（不自动改派，推断，待确认）。
+用户停用 / 离职、调岗（主科室变化）、角色变化、科室停用、院区停用在**同一事务**内写入租户库 `sys_outbox`（base 迁移 V14：`event_type / payload(JSON) / status='PENDING' / created_at`；框架 `JdbcOutboxPublisher` 替换 M0 占位，只能在租户上下文调用）；分发（PENDING → SENT、投递订阅方）属 E09 通知任务，随访模块订阅后提示责任人转交、**不自动改派**（OQ-10）。信封统一 `tenantCode / operatorId / occurredAt(ISO-8601 北京时间)`，另带 `reason`（停用 / 离职时如填）：
+
+| 事件类型 | 触发 | 专有负载 |
+|---|---|---|
+| `user.disabled` / `user.resigned` | 用户停用 / 离职（会话已下线） | `userId / username / displayName` |
+| `user.dept_changed` | 编辑后主科室变化 | `previousMainDept / newMainDept（{id,name}）` |
+| `user.roles_changed` | 编辑后角色集合变化 | `previousRoleCodes / newRoleCodes` |
+| `dept.disabled` | 科室停用 | `deptId / deptCode / deptName / orgId / orgName` |
+| `org.disabled` | 院区停用 | `orgId / orgCode / orgName` |
+
+病区停用事件随病区管理任务（crdp-followup ward）同表发布。

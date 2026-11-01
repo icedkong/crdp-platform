@@ -1,5 +1,6 @@
 <script lang="ts" setup>
 import type {
+  DeptImportReport,
   DeptNodeView,
   DeptSaveRequest,
   OrgCampusNode,
@@ -9,9 +10,17 @@ import type {
 
 import type { DropTarget } from './org-tree';
 
-import { computed, ref, watch } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 
-import { DEPT_TYPE_OPTIONS, orgStatusText } from '@crdp/api';
+import {
+  DEPT_IMPORT_COLUMNS,
+  DEPT_TYPE_OPTIONS,
+  deptImportActionText,
+  deptImportSummary,
+  failedRows,
+  isXlsxFile,
+  orgStatusText,
+} from '@crdp/api';
 import { StatusTag } from '@crdp/status-tag';
 import { colors, sizes } from '@crdp/tokens';
 import {
@@ -30,8 +39,10 @@ import {
   Select,
   Space,
   Spin,
+  Table,
   Tree,
   TreeSelect,
+  Upload,
 } from 'ant-design-vue';
 
 import {
@@ -40,6 +51,8 @@ import {
   createDept,
   createOrg,
   deptImpact,
+  downloadDeptImportTemplate,
+  importDepts,
   orgImpact,
   orgTree,
   updateDept,
@@ -314,6 +327,62 @@ function parentTreeData(): Array<{
       value: number;
     }>),
   ];
+}
+
+// ---- 批量导入（E06-T03 / PLT-ORG-003）：模板下载 → 上传 → 逐行结果 ----
+
+const importResultColumns = [
+  { dataIndex: 'rowNo', title: '行号', width: 80 },
+  { dataIndex: 'code', title: '科室编码', width: 180 },
+  { dataIndex: 'action', title: '结果', width: 90 },
+  { dataIndex: 'message', title: '原因' },
+];
+
+const importState = reactive({
+  open: false,
+  file: null as File | null,
+  submitting: false,
+  report: null as DeptImportReport | null,
+});
+
+function openImport() {
+  importState.open = true;
+  importState.file = null;
+  importState.submitting = false;
+  importState.report = null;
+}
+
+function onFileSelected(file: File) {
+  if (!isXlsxFile(file)) {
+    message.warning('只支持 .xlsx 文件，请使用下载的模板填写');
+    return false;
+  }
+  importState.file = file;
+  importState.report = null;
+  return false; // 阻止自动上传，点「开始导入」再提交
+}
+
+async function submitImport() {
+  const file = importState.file;
+  if (!file) {
+    message.warning('请先选择要导入的 xlsx 文件');
+    return;
+  }
+  importState.submitting = true;
+  try {
+    const report = await importDepts(file);
+    importState.report = report;
+    if (report.failed === 0) {
+      message.success('导入完成，全部行已生效');
+    } else {
+      message.warning(`导入完成，${report.failed} 行失败（见下方明细）`);
+    }
+    await load();
+  } catch {
+    // 统一拦截器已提示（表头不符 40001 等）；保持弹窗供修正后重试
+  } finally {
+    importState.submitting = false;
+  }
 }
 
 function openDeptCreate(parent: DeptNodeView | null) {
@@ -604,6 +673,9 @@ const textSecondary = colors.textSecondary;
               >
                 新增科室
               </Button>
+              <Button data-testid="import-depts" @click="openImport">
+                批量导入
+              </Button>
             </template>
           </div>
           <Spin :spinning="loading">
@@ -731,6 +803,73 @@ const textSecondary = colors.textSecondary;
         </div>
       </div>
     </Card>
+
+    <!-- 批量导入（E06-T03 / PLT-ORG-003）：模板下载 + 上传 + 逐行结果 -->
+    <Modal
+      v-model:open="importState.open"
+      :confirm-loading="importState.submitting"
+      :footer="null"
+      :width="modalWidth"
+      title="批量导入科室"
+    >
+      <Alert
+        class="mb-3"
+        message="按模板列填写：院区须已存在；科室编码已存在即更新；上级科室编码可留空（院区顶层）或引用库内 / 本文件中的编码；负责人须为本院启用用户的账号。单行失败不影响其他行。"
+        show-icon
+        type="info"
+      />
+      <div class="import-actions">
+        <Button @click="downloadDeptImportTemplate()">下载模板（xlsx）</Button>
+        <Upload
+          accept=".xlsx"
+          :before-upload="onFileSelected"
+          :file-list="[]"
+          :max-count="1"
+          :show-upload-list="false"
+        >
+          <Button>选择文件</Button>
+        </Upload>
+        <Button
+          danger
+          :disabled="!importState.file"
+          :loading="importState.submitting"
+          type="primary"
+          @click="submitImport"
+        >
+          开始导入
+        </Button>
+      </div>
+      <p v-if="importState.file" class="import-file">
+        已选择：{{ importState.file.name }}
+      </p>
+      <template v-if="importState.report">
+        <Alert
+          class="mb-3"
+          :message="deptImportSummary(importState.report)"
+          show-icon
+          :type="importState.report.failed > 0 ? 'warning' : 'success'"
+        />
+        <template v-if="failedRows(importState.report).length > 0">
+          <p class="import-failed-title">失败行明细（未导入）：</p>
+          <Table
+            :columns="importResultColumns"
+            :data-source="failedRows(importState.report)"
+            :pagination="false"
+            :row-key="(row) => row.rowNo"
+            size="small"
+          >
+            <template #bodyCell="{ column, record }">
+              <template v-if="column.dataIndex === 'action'">
+                {{ deptImportActionText(record.action) }}
+              </template>
+            </template>
+          </Table>
+        </template>
+      </template>
+      <div v-else class="import-columns">
+        模板列：{{ DEPT_IMPORT_COLUMNS.join('、') }}
+      </div>
+    </Modal>
 
     <!-- 院区新增 / 编辑（520 短表单，design-system §6.1/§7） -->
     <Modal
@@ -961,6 +1100,32 @@ const textSecondary = colors.textSecondary;
   display: flex;
   gap: 8px;
   margin-bottom: 12px;
+}
+
+.mb-3 {
+  margin-bottom: 12px;
+}
+
+.import-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.import-file {
+  margin: 8px 0 0;
+  font-size: 13px;
+}
+
+.import-failed-title {
+  margin: 0 0 4px;
+  font-size: 13px;
+}
+
+.import-columns {
+  margin-top: 12px;
+  font-size: 12px;
 }
 
 .node-status {

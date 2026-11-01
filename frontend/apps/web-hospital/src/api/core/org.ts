@@ -1,5 +1,6 @@
 import type {
   DeptImpactView,
+  DeptImportReport,
   DeptSaveRequest,
   DeptView,
   OrgImpactView,
@@ -32,6 +33,40 @@ export function orgImpact(orgId: number) {
 export function deptImpact(deptId: number) {
   return requestClient.get<DeptImpactView>(
     apiPath(`/system/depts/${deptId}/impact`),
+  );
+}
+
+/**
+ * 下载科室导入模板（E06-T03 / PLT-ORG-003）：xlsx 单工作表，表头 + 两行示例（全部虚构数据）。
+ * 浏览器端触发保存（Content-Disposition 的 UTF-8 文件名）。
+ */
+export async function downloadDeptImportTemplate() {
+  const response = await requestClient.download(
+    apiPath('/system/orgs/import-template'),
+    { responseReturn: 'raw' },
+  );
+  const disposition = String(response.headers?.['content-disposition'] ?? '');
+  const encoded = /filename\*=UTF-8''([^;]+)/.exec(disposition)?.[1];
+  const filename = encoded ? decodeURIComponent(encoded) : '科室导入模板.xlsx';
+  const blob = response.data as Blob;
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * 科室批量导入（E06-T03 / PLT-ORG-003）：上传 xlsx，逐行校验并落库，单行失败不影响
+ * 其他行；返回逐行结果（CREATED / UPDATED / FAILED 与原因）。权限 tenant:org:edit。
+ */
+export function importDepts(file: File) {
+  const form = new FormData();
+  form.append('file', file);
+  return requestClient.post<DeptImportReport>(
+    apiPath('/system/orgs/import'),
+    form,
   );
 }
 
