@@ -77,6 +77,12 @@ public class TenantOnboardingService {
     private static final int[] TENANT_ADMIN_CONFIG_MENU_IDS = {341, 342};
 
     /**
+     * 「审计中心」菜单与导出按钮（plt_menu 35 / 351 / 352，tenant:audit:view / export / export:approve， 平台库
+     * V28，E08-T04）。老库由租户库 base V19 增量授予、local/dev 全新库由种子 V109 补授，这里覆盖 生产（无种子）。
+     */
+    private static final int[] TENANT_ADMIN_AUDIT_MENU_IDS = {35, 351, 352};
+
+    /**
      * 开通请求：编码与医院名称必填；首个管理员在开通时提供，也可启用前经 E06 补设。 expire 为向导第 2 步的到期设置（E05-T02
      * /PLT-TEN-011），空表示长期有效；重试重入时不会改写已登记租户的到期设置。 modules 为向导第 2 步勾选的 业务模块（E05-T05 /PLT-MOD-004，base
      * 必开不传），null 表示重试重入——沿用上次已登记模块。
@@ -470,6 +476,22 @@ public class TenantOnboardingService {
                                         Integer.class,
                                         roleId);
                         if (configGranted == null || configGranted == 0) {
+                            platform.update(
+                                    "INSERT INTO sys_role_menu (role_id, menu_id) VALUES (?, "
+                                            + menuId
+                                            + ")",
+                                    roleId);
+                        }
+                    }
+                    // E08-T04 / PLT-AUD-005~007：审计中心菜单与导出 / 审批按钮同样授予。
+                    for (int menuId : TENANT_ADMIN_AUDIT_MENU_IDS) {
+                        Integer auditGranted =
+                                platform.queryForObject(
+                                        "SELECT COUNT(*) FROM sys_role_menu WHERE role_id = ? AND menu_id = "
+                                                + menuId,
+                                        Integer.class,
+                                        roleId);
+                        if (auditGranted == null || auditGranted == 0) {
                             platform.update(
                                     "INSERT INTO sys_role_menu (role_id, menu_id) VALUES (?, "
                                             + menuId
