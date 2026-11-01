@@ -105,11 +105,15 @@ export function changeUserStatus(
   );
 }
 
-/** 重置密码：一次性临时密码（响应只返回一次），首登强制改密，全部会话失效并解锁。 */
-export function resetUserPassword(userId: number) {
+/** 重置密码：一次性临时密码（响应只返回一次），首登强制改密，全部会话失效并解锁。敏感操作：需二次认证（X-Reauth-Token，E04-T08）。 */
+export function resetUserPassword(
+  userId: number,
+  headers?: Record<string, string>,
+) {
   return requestClient.post<TenantUserResetResult>(
     apiPath(`/system/users/${userId}/reset-password`),
     {},
+    { headers },
   );
 }
 

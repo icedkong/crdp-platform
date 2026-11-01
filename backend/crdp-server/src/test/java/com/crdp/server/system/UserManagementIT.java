@@ -527,9 +527,13 @@ class UserManagementIT {
         String token = hospitalToken("demoa", "IT-U-3", temporaryOf("IT-U-3"));
         assertEquals(0, codeOf(get("/api/hospital/auth/me", token)));
 
-        // 重置：临时密码只下发一次、强制改密、旧哈希入历史、全部会话失效、解除锁定
+        // 重置：临时密码只下发一次、强制改密、旧哈希入历史、全部会话失效、解除锁定。
+        // 敏感操作需二次认证（E04-T08 / PLT-AUTH-012）：X-Reauth-Token 由 /auth/reauth 换取
         Map<?, ?> reset =
-                post("/api/hospital/system/users/" + userId + "/reset-password", admin, Map.of());
+                postReauth(
+                        "/api/hospital/system/users/" + userId + "/reset-password",
+                        admin,
+                        Map.of());
         assertEquals(0, codeOf(reset));
         String temporary = String.valueOf(data(reset).get("temporaryPassword"));
         assertFalse(temporary.isBlank());
@@ -762,6 +766,17 @@ class UserManagementIT {
         if (token != null) {
             headers.setBearerAuth(token);
         }
+        return rest.postForEntity(path, new HttpEntity<>(body, headers), Map.class).getBody();
+    }
+
+    /** 敏感操作（E04-T08 / PLT-AUTH-012）：先二次认证换 reauthToken，再携带 X-Reauth-Token 调用。 */
+    private Map<?, ?> postReauth(String path, String token, Map<String, Object> body) {
+        Map<?, ?> reauth = post("/api/hospital/auth/reauth", token, Map.of("password", PASSWORD));
+        assertEquals(0, codeOf(reauth), "二次认证失败：" + reauth);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.setBearerAuth(token);
+        headers.set("X-Reauth-Token", (String) data(reauth).get("reauthToken"));
         return rest.postForEntity(path, new HttpEntity<>(body, headers), Map.class).getBody();
     }
 

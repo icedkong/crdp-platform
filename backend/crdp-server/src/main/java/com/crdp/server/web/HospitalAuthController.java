@@ -11,6 +11,7 @@ import com.crdp.server.auth.LoginBrandService;
 import com.crdp.server.auth.MenuQuery;
 import com.crdp.server.auth.PasswordChangeService;
 import com.crdp.server.auth.PasswordResetService;
+import com.crdp.server.auth.ReauthService;
 import com.crdp.server.auth.SessionAdminService;
 import com.crdp.server.auth.TenantIdentifier;
 import io.swagger.v3.oas.annotations.Operation;
@@ -37,6 +38,7 @@ public class HospitalAuthController {
     private final AuthService authService;
     private final PasswordChangeService passwordChangeService;
     private final PasswordResetService passwordResetService;
+    private final ReauthService reauthService;
     private final MenuQuery menuQuery;
     private final TenantIdentifier tenantIdentifier;
     private final CaptchaStore captchaStore;
@@ -48,6 +50,7 @@ public class HospitalAuthController {
             AuthService authService,
             PasswordChangeService passwordChangeService,
             PasswordResetService passwordResetService,
+            ReauthService reauthService,
             MenuQuery menuQuery,
             TenantIdentifier tenantIdentifier,
             CaptchaStore captchaStore,
@@ -57,6 +60,7 @@ public class HospitalAuthController {
         this.authService = authService;
         this.passwordChangeService = passwordChangeService;
         this.passwordResetService = passwordResetService;
+        this.reauthService = reauthService;
         this.menuQuery = menuQuery;
         this.tenantIdentifier = tenantIdentifier;
         this.captchaStore = captchaStore;
@@ -144,6 +148,18 @@ public class HospitalAuthController {
         passwordChangeService.changeHospital(
                 principal, request.oldPassword(), request.newPassword());
         return ApiResponse.ok(null);
+    }
+
+    @Operation(
+            summary =
+                    "敏感操作二次认证（PLT-AUTH-012，E04-T08）：密码再次验证通过后签发 5 分钟有效、"
+                            + "绑定当前会话的 reauthToken；敏感接口（明文查看、导出、下载、重置密码）"
+                            + "经 X-Reauth-Token 请求头携带，缺失或过期 40304。密码错误 42200 且计入登录失败计数。")
+    @PostMapping("/api/hospital/auth/reauth")
+    public ApiResponse<ReauthService.ReauthResult> reauth(
+            @Valid @RequestBody ReauthRequest request) {
+        return ApiResponse.ok(
+                reauthService.reauthHospital(CurrentSession.requireHospital(), request.password()));
     }
 
     @Operation(

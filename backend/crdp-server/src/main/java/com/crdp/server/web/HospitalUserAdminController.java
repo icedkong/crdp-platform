@@ -1,6 +1,7 @@
 package com.crdp.server.web;
 
 import com.crdp.framework.security.PublicApi;
+import com.crdp.framework.security.RequireReauth;
 import com.crdp.framework.security.RequiresPermission;
 import com.crdp.framework.web.ApiResponse;
 import com.crdp.server.auth.UserAdminService;
@@ -108,9 +109,12 @@ public class HospitalUserAdminController {
     @Operation(
             summary =
                     "重置密码（PLT-ORG-008）：生成一次性临时密码（响应只返回一次），置「首次登录强制改密」，"
-                            + "旧哈希入历史表，该账号全部会话失效并解除登录锁定；写 USER_RESET_PASSWORD 审计")
+                            + "旧哈希入历史表，该账号全部会话失效并解除登录锁定；写 USER_RESET_PASSWORD 审计。"
+                            + "敏感操作：需二次认证（X-Reauth-Token，E04-T08 / PLT-AUTH-012，"
+                            + "原「权限码 + 确认弹窗把关（推断，待确认）」随敏感操作框架落地收敛为二次认证）")
     @PostMapping("/api/hospital/system/users/{id}/reset-password")
     @RequiresPermission("tenant:user:reset")
+    @RequireReauth("重置用户密码")
     public ApiResponse<ResetPasswordResult> resetPassword(@PathVariable("id") long id) {
         return ApiResponse.ok(service.resetPassword(id));
     }

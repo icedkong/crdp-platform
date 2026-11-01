@@ -10,6 +10,7 @@ import {
   auditResultText,
   buildAuditSearchCondition,
   exportDownloadHint,
+  isReauthCancelled,
   jobExportStatusColor,
   jobExportStatusText,
   PLATFORM_AUDIT_TABS,
@@ -51,6 +52,7 @@ import {
   searchPlatformAuditLogs,
   submitPlatformAuditExport,
 } from '#/api/core/audit';
+import ReauthModal from '#/components/reauth-modal.vue';
 import { usePermission } from '#/reference/use-permission';
 
 import {
@@ -190,6 +192,7 @@ async function openIntegrity() {
 const exportVisible = ref(false);
 const exportLoading = ref(false);
 const exportForm = reactive({ range: [] as string[], reason: '' });
+const reauthModal = ref<InstanceType<typeof ReauthModal>>();
 
 function openExport() {
   exportForm.range = [...filter.range];
@@ -207,21 +210,30 @@ async function submitExport() {
   }
   exportLoading.value = true;
   try {
-    await submitPlatformAuditExport({
-      condition: buildAuditSearchCondition({
-        endTime: end,
-        module: filter.module || undefined,
-        startTime: start,
-        tenantId: filter.tenantId,
-      }),
-      reason: exportForm.reason || undefined,
-      type: tab.value,
-    });
+    // E04-T08 / PLT-AUTH-012：导出提交是敏感操作，先二次认证（X-Reauth-Token）
+    await reauthModal.value?.run((headers) =>
+      submitPlatformAuditExport(
+        {
+          condition: buildAuditSearchCondition({
+            endTime: end,
+            module: filter.module || undefined,
+            startTime: start,
+            tenantId: filter.tenantId,
+          }),
+          reason: exportForm.reason || undefined,
+          type: tab.value,
+        },
+        headers,
+      ),
+    );
     exportVisible.value = false;
     message.success('导出申请已提交，待另一名平台管理员审批');
     exportsVisible.value = true;
     reloadExports();
   } catch (error_) {
+    if (isReauthCancelled(error_)) {
+      return;
+    }
     message.error((error_ as { message?: string }).message ?? '提交失败');
   } finally {
     exportLoading.value = false;
@@ -244,12 +256,19 @@ async function reloadExports() {
 
 async function download(job: Record<string, any>) {
   try {
-    await downloadPlatformAuditExport(
-      Number(job.id),
-      String(job.fileName ?? ''),
+    // 下载同为敏感操作（E04-T08）：二次认证窗口内复用同一令牌
+    await reauthModal.value?.run((headers) =>
+      downloadPlatformAuditExport(
+        Number(job.id),
+        String(job.fileName ?? ''),
+        headers,
+      ),
     );
     reloadExports();
   } catch (error) {
+    if (isReauthCancelled(error)) {
+      return;
+    }
     message.error((error as { message?: string }).message ?? '下载失败');
   }
 }
@@ -695,6 +714,9 @@ const approvalColumns = [
         :rows="3"
       />
     </Modal>
+
+    <!-- E04-T08 / PLT-AUTH-012：敏感操作二次认证（导出提交 / 下载） -->
+    <ReauthModal ref="reauthModal" />
   </div>
 </template>
 

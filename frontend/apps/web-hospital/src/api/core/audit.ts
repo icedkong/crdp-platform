@@ -39,11 +39,15 @@ export function patientLogs(patientId: number, pageNo = 1, pageSize = 20) {
   );
 }
 
-/** 提交审计导出（PLT-AUD-007）：租户管理员免审批，普通用户待审批。 */
-export function submitAuditExport(data: AuditExportRequest) {
+/** 提交审计导出（PLT-AUD-007）：租户管理员免审批，普通用户待审批。敏感操作：需二次认证（X-Reauth-Token，E04-T08）。 */
+export function submitAuditExport(
+  data: AuditExportRequest,
+  headers?: Record<string, string>,
+) {
   return requestClient.post<AuditExportSubmitted>(
     apiPath('/system/audit/exports'),
     data,
+    { headers },
   );
 }
 
@@ -81,13 +85,20 @@ export function rejectExport(id: number, comment?: string) {
   });
 }
 
-/** 下载导出文件（仅申请人，24 小时内有效）；鉴权头手工附加（响应是文件流，无统一信封）。 */
-export async function downloadAuditExport(id: number, fileName: string) {
+/** 下载导出文件（仅申请人，24 小时内有效）；鉴权头手工附加（响应是文件流，无统一信封）。敏感操作：需二次认证（E04-T08）。 */
+export async function downloadAuditExport(
+  id: number,
+  fileName: string,
+  headers: Record<string, string> = {},
+) {
   const token = useAccessStore().accessToken;
   const response = await fetch(
     apiPath(`/system/audit/exports/${id}/download`),
     {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...headers,
+      },
     },
   );
   if (!response.ok) {

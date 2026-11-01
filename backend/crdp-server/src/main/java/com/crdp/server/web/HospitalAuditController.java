@@ -1,5 +1,6 @@
 package com.crdp.server.web;
 
+import com.crdp.framework.security.RequireReauth;
 import com.crdp.framework.security.RequiresPermission;
 import com.crdp.framework.web.ApiResponse;
 import com.crdp.server.system.audit.AuditTables;
@@ -69,9 +70,13 @@ public class HospitalAuditController {
         return ApiResponse.ok(query.patientLogs(id, pageNo, pageSize));
     }
 
-    @Operation(summary = "提交审计导出（PLT-AUD-007）：租户管理员免审批直接生成；普通用户待租户管理员审批；导出本身记审计")
+    @Operation(
+            summary =
+                    "提交审计导出（PLT-AUD-007）：租户管理员免审批直接生成；普通用户待租户管理员审批；导出本身记审计。"
+                            + "敏感操作：需二次认证（X-Reauth-Token，E04-T08 / PLT-AUTH-012）")
     @PostMapping("/api/hospital/system/audit/exports")
     @RequiresPermission("tenant:audit:export")
+    @RequireReauth("提交审计导出")
     public ApiResponse<ExportSubmitted> submit(@RequestBody ExportRequest request) {
         return ApiResponse.ok(exports.submit(request));
     }
@@ -110,9 +115,13 @@ public class HospitalAuditController {
         return ApiResponse.ok(exports.reject(id, action));
     }
 
-    @Operation(summary = "下载导出文件：仅申请人，READY 且 24 小时内有效；每次下载写 DATA_ACCESS 审计")
+    @Operation(
+            summary =
+                    "下载导出文件：仅申请人，READY 且 24 小时内有效；每次下载写 DATA_ACCESS 审计。"
+                            + "敏感操作：需二次认证（X-Reauth-Token，E04-T08 / PLT-AUTH-012）")
     @GetMapping("/api/hospital/system/audit/exports/{id}/download")
     @RequiresPermission("tenant:audit:export")
+    @RequireReauth("下载审计导出文件")
     public ResponseEntity<byte[]> download(@PathVariable("id") long id) {
         HospitalAuditExportService.DownloadFile file = exports.download(id);
         return ResponseEntity.ok()

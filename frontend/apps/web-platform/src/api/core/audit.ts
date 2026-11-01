@@ -40,11 +40,15 @@ export function platformAuditIntegrity(tenantId?: number) {
   });
 }
 
-/** 提交平台审计导出：一律待平台管理员审批（PLT-AUD-007 已确认）。 */
-export function submitPlatformAuditExport(data: AuditExportRequest) {
+/** 提交平台审计导出：一律待平台管理员审批（PLT-AUD-007 已确认）。敏感操作：需二次认证（X-Reauth-Token，E04-T08）。 */
+export function submitPlatformAuditExport(
+  data: AuditExportRequest,
+  headers?: Record<string, string>,
+) {
   return requestClient.post<AuditExportSubmitted>(
     apiPath('/audit/exports'),
     data,
+    { headers },
   );
 }
 
@@ -83,10 +87,14 @@ export function rejectPlatformExport(id: number, comment?: string) {
 export async function downloadPlatformAuditExport(
   id: number,
   fileName: string,
+  headers: Record<string, string> = {},
 ) {
   const token = useAccessStore().accessToken;
   const response = await fetch(apiPath(`/audit/exports/${id}/download`), {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...headers,
+    },
   });
   if (!response.ok) {
     throw new Error(`下载失败（${response.status}）`);

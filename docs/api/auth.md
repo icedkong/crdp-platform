@@ -35,6 +35,8 @@
 | GET | `/api/hospital/auth/tenant?code=` | 免登录 | — | `TenantBrandView { tenantName, logoUrl, loginBgUrl, themeColor, themeColorHex, copyright, identified, loginMethods[] }`（登录页租户识别：显示名称取本院个性化 `cfg_brand.display_name`，未配置回落平台租户名称；租户不存在 / 未启用也返回通用默认值，不暴露存在性；公开口按 IP 每小时限流，超限 42900。E06-T11 / PLT-CFG-008、PLT-AUTH-004） |
 | GET | `/api/hospital/system/sessions` | `tenant:session:view` | — | `OnlineSession[]`（本院全部在线会话，`current` 恒 false；见 `system.md` §8） |
 | POST | `/api/hospital/system/sessions/{sessionId}/kick` | `tenant:session:kick` | — | `OnlineSession`（强制下线，写审计 `SESSION_KICK`；被下线令牌下次请求 40100） |
+| POST | `/api/hospital/auth/reauth` | 登录 | `ReauthRequest { password }`（8–64 位） | `ReauthResult { reauthToken, expiresInSeconds }`（E04-T08 已实现，两端同构；见下方「敏感操作二次认证」） |
+| POST | `/api/platform/auth/reauth` | 登录 | `ReauthRequest` | `ReauthResult`（平台端同构） |
 | GET | `/api/platform/auth/sessions` | 登录 | — | `OnlineSession[]`（平台端同构） |
 | DELETE | `/api/platform/auth/sessions/{sessionId}` | 登录 | — | `OnlineSession`（平台端同构） |
 
@@ -86,6 +88,11 @@
   - 重置验证码与登录验证码**分命名空间**（Redis `reset:租户:手机号` vs `login:租户:手机号`）：钓鱼拿到的登录验证码不能重置密码；A 院的码同样不能在 B 院用。
   - 第二步 `/auth/password/reset`：未知租户 / 未知账号 / 停用账号 / 未绑定手机号 / 验证码错误 / 过期统一 **40102**（不区分存在性）；重置尝试按「HR:租户编码:账号」分桶计数，连续失败达上限 42900（连续多次锁定 30 分钟），成功后清零。校验顺序：失败计数 → 账号（统一 40102）→ 验证码（一次一用）→ 密码策略（42200，列明全部不满足项）→ 历史密码（不得与最近 5 次相同，42200）；策略与历史的 42200 只在验证码通过后给出，避免借「弱密码是否被报 42200」探测账号存在——代价是策略不达标也会消耗验证码，需重新获取。
   - 重置成功：落新哈希、旧哈希入 `sys_password_history`、**该账号全部会话失效**（免登录流程没有「当前会话」可保留）、清登录失败计数、写审计 `USER_PASSWORD_RESET`（不落新旧口令与哈希）；被拒绝的重置尝试写登录日志（`aud_login_log`，message=`password-reset-rejected`）。用户自选新密码已满足策略，**不**置「首次登录强制改密」标记（该标记用于管理员下发的随机密码）。
+- 敏感操作二次认证（E04-T08 / PLT-AUTH-012，两端同构；`crdp.security.reauth-token-ttl-seconds`，默认 300 秒）：
+  - 敏感接口在 Controller 方法上标注 `@RequireReauth`（拦截器 `ReauthInterceptor`），请求须携带请求头 **`X-Reauth-Token`**：缺失、过期（Redis TTL 到期）或**换个会话携带**（令牌绑定签发会话的会话号）一律 **40304**「敏感操作需二次认证，请重新验证身份」，并写 result=DENIED 操作日志（audit.md §1，与 40300 同口径）。校验顺序：权限码（40300）在前、二次认证（40304）在后。
+  - `POST /auth/reauth`：会话内用密码再次验证（医院端在本院库、平台端在平台库），通过签发 reauthToken（256 位随机不透明值，与登录令牌同规格）并返回 `expiresInSeconds`；窗口内**可多次使用**（导出提交后紧接着下载），不做一次性消费。登出 / 被下线 / 重新登录后旧 reauthToken 自然失效（绑定会话号，无需显式吊销）。
+  - 防爆破：密码错误与账号中途消失统一 **42200**「密码不正确」（`data.remainingAttempts`），失败计入**与登录同一只失败桶**（`H:租户:账号` / `P:账号`）——连续失败达上限同样 42900 锁 30 分钟且波及登录本身；验证通过清零计数。通过 / 失败各写一条登录日志（`action=REAUTH`、`loginMethod=PASSWORD`，PLT-AUD-002 口径），不落口令材料。
+  - 已接入：审计导出提交与下载（两端，audit.md §2/§3）、重置用户密码（`system.md` §2）与重置平台账号密码（`platform.md`）；患者明文查看接口随 E07-T05 落地时接入（见 OQ-57）。前端 `ReauthModal`（两端）统一弹密码框、令牌只存内存（5 分钟窗口复用，收到 40304 自动作废重验一次，取消静默中止）。
 
 ## 2. 需要新增的接口（推断，待确认）
 
@@ -93,9 +100,8 @@
 <!-- E04-T05 已实现并移至第 1 节：/auth/captcha（两端）、/auth/password（两端）、/system/users/{id}/unlock -->
 <!-- E04-T07 已实现并移至第 1 节：/auth/password/forgot、/auth/password/reset（医院端；平台端忘记密码暂不做，见 OQ-41） -->
 <!-- E06-T11 已实现并移至第 1 节：/auth/tenant?code=（登录页租户识别，PLT-CFG-008、PLT-AUTH-004） -->
-| POST | `/api/hospital/auth/reauth` | 敏感操作二次认证，返回 5 分钟有效的 `reauthToken`，敏感接口通过请求头 `X-Reauth-Token` 携带；缺失时返回 40304 | PLT-AUTH-012 |
+<!-- E04-T08 已实现并移至第 1 节：/auth/reauth（两端，敏感操作二次认证 PLT-AUTH-012，X-Reauth-Token / 40304） -->
 | GET | `/api/hospital/auth/features` | 当前租户功能开关 `{ [featureCode]: boolean }`；或把 `features` 并入 `me`（二选一，见 OQ-03） | 技术方案“各院功能不同怎么办” |
-| — | 平台端 | `/api/platform/auth/reauth`、`/auth/features` 同构待定 | PLT-AUTH-005 |
 
 ### 2.1 `me` 建议扩展字段（推断，待确认）
 
@@ -129,6 +135,7 @@ interface MeResponseExt extends MeResponse {
 - E04-T05：密码策略（`PasswordPolicyTest`）、图形验证码一次一密与限流（`CaptchaStoreTest`）、3 次验证码 / 5 次锁定 / 解锁（`LoginRateLimiterTest`、`AuthServiceTest`）、强制改密标记随会话与双因素保留（`AuthServiceTest`）、40305 放行清单（`MustChangePasswordFilterTest`）、改密校验顺序与会话处理（`PasswordChangeServiceTest`）；端到端（验证码→锁定→管理员解锁、初始密码强制改密、改密后其他会话失效、密码到期、平台端镜像）在 `PasswordAndLockoutIT`。前端策略提示与失败 data 解析在 `packages/api` 的 `password-policy.spec.ts`、`login-rejection.spec.ts`。
 - E04-T06：空闲 / 绝对超时与滑动续期、两级索引与踢线、权限版本重算保留令牌（`SessionStoreTest`、`PermissionVersionStoreTest`）；过滤器版本落后重算 / 账号失效删会话（`TokenAuthenticationFilterTest`）；在线列表、强制下线、本人会话与 40400 / 40300（`SessionAdminServiceTest`）；单端登录、IP 与空闲窗口、登录带当前版本（`AuthServiceTest`）；端到端（在线用户→强制下线→旧令牌 40100、改权限 + 递增版本→旧令牌下次请求即按新权限执行、单端登录、平台端本人会话）在 `SessionAdminAndPermissionVersionIT`（CRDP_IT_MYSQL_PORT 存在时运行）。
 - E04-T07：发码到绑定手机号与防探测静默（`PasswordResetServiceTest`）、未知账号 / 停用 / 未绑定与验证码错误统一 40102、登录验证码不能重置密码（命名空间隔离）、验证码一次一用、策略与历史密码校验、全部会话吊销、审计不含口令材料；端到端（忘记密码→重置→旧密码 40101 / 新密码登录 / 旧令牌 40100、未知账号冷却行为一致、弱密码 42200 且验证码被消耗、登录码不可重置）在 `ForgotPasswordIT`（CRDP_IT_MYSQL_PORT 存在时运行）。前端步骤门控（获取验证码 / 提交重置）在 `apps/web-hospital` 的 `forgot-password-flow.spec.ts`。
+- E04-T08（敏感操作二次认证）：令牌签发与会话绑定、TTL 取配置、缺失 / 伪造 / 换会话一律无效（`ReauthStoreTest`）；密码错误 42200 带剩余次数并计入登录失败桶、锁定期间正确密码也 42900、账号中途消失同口径拒绝、通过写 REAUTH 登录日志（`ReauthServiceTest`）；拦截器对 `@RequireReauth` 方法缺头 40304 + DENIED 审计、有效头放行、未标注方法与匿名请求不受影响、权限码在前（`ReauthInterceptorTest`）；端到端（错误密码→正确密码签发、导出提交 / 下载 / 重置密码缺头 40304、DENIED 审计落库、同窗口复用、跨会话携带无效、平台端同构）在 `ReauthFlowIT`（CRDP_IT_MYSQL_PORT 存在时运行）。前端内存令牌（窗口 / 过期 / 作废）、40304 识别、重验一次与取消中止在 `packages/api` 的 `reauth.spec.ts`。
 - E04-T09（认证安全加固用例，攻击者视角端到端，`AuthSecurityHardeningIT`，CRDP_IT_MYSQL_PORT 存在时运行）：
   - **爆破**：口令爆破完整阶梯（3 次验证码墙 → 5 次锁定，锁定期间正确口令也不放行，桶按账号隔离不影响同院他人）；同一攻击序列打真实账号与未知账号，每次响应 code / message / data 全等（`lockedSeconds` 随时间递减除外，非存在性信号）；短信登录验证码 / 双因素验证码 / 重置验证码连续输错 5 次即作废（真码也登不进来，6 位码不可穷举）；重置入口连续失败按「HR:租户:账号」锁定 42900；取图接口按 IP 每小时 60 张限流。
   - **令牌泄露**：令牌不透明（两次登录不同、base64url 43 字符非 JWT、不携带账号 / 租户材料）；`me` / `codes` / `menus` / `sessions` 任何响应不回显令牌，会话号是 16 位十六进制单向摘要；本人按会话号吊销被窃会话后，被窃令牌下次请求 40100。

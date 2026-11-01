@@ -92,7 +92,7 @@ PLT-MOD-010/011 为后续规划，不实现。
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
 | GET / POST / PUT | `/api/platform/accounts[/{id}]` | `platform:account:view` / `edit` | **已实现（E06-T04）**。列表不分页（平台账号量级小）。新建：`{username, displayName, phone(必填，双因素), password(初始密码按平台策略校验 42200), roleIds}`；维护：`{displayName, phone?(留空不换绑，平台库内唯一 40901), roleIds(全部存在且启用), status}`；停用 / 摘除角色导致启用的 PLATFORM_ADMIN 持有账号少于 2 个时 40901（规格 §1「平台管理员至少 2 人，已确认」）；角色或状态变化递增权限版本；负责租户多选（PLT-VIEW-006）属 E20-T01，未实现 |
-| POST | `/api/platform/accounts/{id}/reset-password` | `platform:account:reset` | **已实现（E06-T04）**。生成一次性临时密码（响应 `data.temporaryPassword` 只返回一次），置首次登录强制改密、旧哈希入历史表、该账号全部会话失效并解除登录锁定；写 ACCOUNT_RESET 审计（不落口令） |
+| POST | `/api/platform/accounts/{id}/reset-password` | `platform:account:reset` | **已实现（E06-T04）**。生成一次性临时密码（响应 `data.temporaryPassword` 只返回一次），置首次登录强制改密、旧哈希入历史表、该账号全部会话失效并解除登录锁定；写 ACCOUNT_RESET 审计（不落口令）。敏感操作需二次认证：`X-Reauth-Token`（PLT-AUTH-012，E04-T08 已落地；缺头 40304） |
 | POST | `/api/platform/accounts/{id}/unlock` | `platform:account:reset` | **已实现（E06-T04）**。解除登录锁定（连续失败 5 次锁 30 分钟，可提前解锁）；写 ACCOUNT_UNLOCK 审计 |
 | GET / POST / PUT | `/api/platform/roles[/{id}]` | `platform:role:view` / `edit` | **已实现（E06-T04）**。角色视图 `{id, code, name, description, builtIn, status, view{canEnter, visibleScope∈CONFIG_ONLY/CONFIG_AND_BUSINESS, tenantScope∈ALL/RESPONSIBLE/SPECIFIED, canConfigure, canResetPassword, canEditBusiness}, menuIds(详情), holderCount, createdAt, updatedAt}`；新建自定义角色编码服务端生成（`CUSTOM_` 前缀，创建后不可改）；菜单授权只能是平台端启用菜单（40001）；`tenantScope=SPECIFIED` 暂 40001（指定租户清单由 E20-T01 落地，OQ-48）；不提供删除 |
 | GET | `/api/platform/roles/{id}/holders` | `platform:role:view` | **已实现（E06-T04）**。持有人列表（账号、姓名、账号状态） |
