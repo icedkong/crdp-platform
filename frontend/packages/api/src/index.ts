@@ -584,15 +584,21 @@ export type { OnlineSessionView } from './session';
 
 export {
   TENANT_ROLE_SCOPE_OPTIONS,
+  tenantFieldPolicyText,
   tenantRoleScopeTypeText,
   tenantRoleTypeHint,
   tenantRoleTypeText,
 } from './tenant-role';
 export type {
+  FieldPolicy,
   RoleScopeType,
   RoleStatus,
   RoleType,
   TenantRoleCopyRequest,
+  TenantRoleFieldPoliciesSaveRequest,
+  TenantRoleFieldPoliciesView,
+  TenantRoleFieldPolicyEntry,
+  TenantRoleFieldPolicySaveItem,
   TenantRoleFromTemplateRequest,
   TenantRoleMembersView,
   TenantRoleMemberView,

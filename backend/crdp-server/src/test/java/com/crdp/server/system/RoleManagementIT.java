@@ -80,8 +80,11 @@ class RoleManagementIT {
                                 "DELETE rd FROM sys_role_scope_dept rd JOIN sys_role r ON r.id = rd.role_id"
                                         + " WHERE r.code LIKE 'ITR-%'");
                         jdbc.update(
-                                "DELETE ur FROM sys_user_role ur JOIN sys_role r ON r.id = ur.role_id"
+                                "DELETE rd FROM sys_role_scope_dept rd JOIN sys_role r ON r.id = rd.role_id"
                                         + " WHERE r.code LIKE 'ITR-%'");
+                        jdbc.update(
+                                "DELETE fp FROM sys_role_field_policy fp JOIN sys_role r ON r.id ="
+                                        + " fp.role_id WHERE r.code LIKE 'ITR-%'");
                         jdbc.update("DELETE FROM sys_role WHERE code LIKE 'ITR-%'");
                         jdbc.update("DELETE FROM aud_log WHERE event_type LIKE 'ROLE_%'");
                     });
@@ -603,6 +606,7 @@ class RoleManagementIT {
         String doctor = hospitalToken("demoa", "doctor.demo");
         assertEquals(40300, code(get("/api/hospital/system/roles", doctor)));
         assertEquals(40300, code(get("/api/hospital/system/roles/1/menus", doctor)));
+        assertEquals(40300, code(get("/api/hospital/system/roles/1/field-policies", doctor)));
 
         String admin = adminToken("demoa");
         assertEquals(40400, code(get("/api/hospital/system/roles/999999/menus", admin)));
@@ -624,6 +628,163 @@ class RoleManagementIT {
         assertTrue(
                 demobRoles.stream().anyMatch(role -> "TENANT_ADMIN".equals(role.get("code"))),
                 "demob 有自己的内置角色");
+    }
+
+    @Test
+    @Order(7)
+    void fieldPolicyTabSavesOverlayAndFallsBackToPlatformDefault() {
+        String token = adminToken("demoa");
+        Map<?, ?> created =
+                post(
+                        "/api/hospital/system/roles",
+                        token,
+                        Map.of("code", "ITR-FIELD", "name", "IT 字段策略角色（示例）"));
+        assertEquals(0, code(created));
+        long roleId = ((Number) data(created).get("id")).longValue();
+
+        // 页签视图：敏感字段目录（患者身份五位字段），未配置时全部为平台默认 MASKED
+        Map<?, ?> view =
+                data(get("/api/hospital/system/roles/" + roleId + "/field-policies", token));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> fields = (List<Map<String, Object>>) view.get("fields");
+        assertEquals(5, fields.size(), "敏感字段目录应含 5 个患者身份字段：" + fields);
+        assertTrue(
+                fields.stream().allMatch(field -> "MASKED".equals(field.get("policy"))),
+                "未配置的角色应回落平台默认（脱敏）");
+
+        // 校验失败：字段不在目录 / 非法策略值（40001）
+        assertEquals(
+                40001,
+                code(
+                        put(
+                                "/api/hospital/system/roles/" + roleId + "/field-policies",
+                                token,
+                                Map.of(
+                                        "policies",
+                                        List.of(
+                                                Map.of(
+                                                        "resource",
+                                                        "patient",
+                                                        "field",
+                                                        "nickname",
+                                                        "policy",
+                                                        "VISIBLE"))))));
+        assertEquals(
+                40001,
+                code(
+                        put(
+                                "/api/hospital/system/roles/" + roleId + "/field-policies",
+                                token,
+                                Map.of(
+                                        "policies",
+                                        List.of(
+                                                Map.of(
+                                                        "resource",
+                                                        "patient",
+                                                        "field",
+                                                        "name",
+                                                        "policy",
+                                                        "PLAIN"))))));
+        // 模板角色只读（40901）
+        long templateId = roleId("demoa", "FOLLOWUP_NURSE");
+        assertEquals(
+                40901,
+                code(
+                        put(
+                                "/api/hospital/system/roles/" + templateId + "/field-policies",
+                                token,
+                                Map.of(
+                                        "policies",
+                                        List.of(
+                                                Map.of(
+                                                        "resource",
+                                                        "patient",
+                                                        "field",
+                                                        "name",
+                                                        "policy",
+                                                        "VISIBLE"))))));
+
+        // 保存覆盖：姓名可见、手机号隐藏；其余继续跟随默认
+        assertEquals(
+                0,
+                code(
+                        put(
+                                "/api/hospital/system/roles/" + roleId + "/field-policies",
+                                token,
+                                Map.of(
+                                        "policies",
+                                        List.of(
+                                                Map.of(
+                                                        "resource", "patient",
+                                                        "field", "name",
+                                                        "policy", "VISIBLE"),
+                                                Map.of(
+                                                        "resource", "patient",
+                                                        "field", "phone",
+                                                        "policy", "HIDDEN"))))));
+        Map<?, ?> saved =
+                data(get("/api/hospital/system/roles/" + roleId + "/field-policies", token));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> savedFields = (List<Map<String, Object>>) saved.get("fields");
+        assertTrue(
+                savedFields.stream()
+                        .anyMatch(
+                                field ->
+                                        "name".equals(field.get("field"))
+                                                && "VISIBLE".equals(field.get("policy"))
+                                                && Boolean.TRUE.equals(field.get("overridden"))),
+                "姓名应覆盖为可见：" + savedFields);
+        assertTrue(
+                savedFields.stream()
+                        .anyMatch(
+                                field ->
+                                        "phone".equals(field.get("field"))
+                                                && "HIDDEN".equals(field.get("policy"))),
+                "手机号应覆盖为隐藏：" + savedFields);
+        assertTrue(
+                savedFields.stream()
+                        .anyMatch(
+                                field ->
+                                        "idCard".equals(field.get("field"))
+                                                && "MASKED".equals(field.get("policy"))
+                                                && Boolean.FALSE.equals(field.get("overridden"))),
+                "未覆盖字段应继续跟随平台默认：" + savedFields);
+        // 存储与审计留痕（ROLE_FIELD_POLICY）
+        Integer rows =
+                runInTenant(
+                        "demoa",
+                        () ->
+                                jdbc.queryForObject(
+                                        "SELECT COUNT(*) FROM sys_role_field_policy WHERE role_id = ?",
+                                        Integer.class,
+                                        roleId));
+        assertEquals(2, rows);
+        Integer audits =
+                runInTenant(
+                        "demoa",
+                        () ->
+                                jdbc.queryForObject(
+                                        "SELECT COUNT(*) FROM aud_log WHERE event_type ="
+                                                + " 'ROLE_FIELD_POLICY'",
+                                        Integer.class));
+        assertTrue(audits != null && audits >= 1, "字段策略保存应写审计，实际 " + audits);
+
+        // 空清单 = 全部回落平台默认
+        assertEquals(
+                0,
+                code(
+                        put(
+                                "/api/hospital/system/roles/" + roleId + "/field-policies",
+                                token,
+                                Map.of("policies", List.of()))));
+        Map<?, ?> reset =
+                data(get("/api/hospital/system/roles/" + roleId + "/field-policies", token));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> resetFields = (List<Map<String, Object>>) reset.get("fields");
+        assertTrue(
+                resetFields.stream()
+                        .noneMatch(field -> Boolean.TRUE.equals(field.get("overridden"))),
+                "空清单保存后不应再有覆盖项：" + resetFields);
     }
 
     // ---------------------------------------------------------------- 基础设施

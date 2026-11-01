@@ -5,6 +5,8 @@ import com.crdp.framework.web.ApiException;
 import com.crdp.framework.web.ApiResponse;
 import com.crdp.server.system.role.RoleAdminService;
 import com.crdp.server.system.role.RoleAdminService.CopyRequest;
+import com.crdp.server.system.role.RoleAdminService.FieldPolicyItem;
+import com.crdp.server.system.role.RoleAdminService.RoleFieldPoliciesView;
 import com.crdp.server.system.role.RoleAdminService.RoleMembersView;
 import com.crdp.server.system.role.RoleAdminService.RoleMenusView;
 import com.crdp.server.system.role.RoleAdminService.RoleSave;
@@ -154,6 +156,32 @@ public class HospitalRoleController {
     public ApiResponse<RoleMembersView> members(@PathVariable long roleId) {
         return ApiResponse.ok(service.membersView(roleId));
     }
+
+    @Operation(
+            summary =
+                    "字段策略页签（E07-T06 / PLT-PERM-009）：敏感字段目录 + 本角色生效策略"
+                            + "（未覆盖项回落平台默认 MASKED；多角色合并随 E07-T04）")
+    @GetMapping("/api/hospital/system/roles/{roleId}/field-policies")
+    @RequiresPermission("tenant:role:edit")
+    public ApiResponse<RoleFieldPoliciesView> fieldPolicies(@PathVariable long roleId) {
+        return ApiResponse.ok(service.fieldPoliciesView(roleId));
+    }
+
+    @Operation(
+            summary =
+                    "保存字段策略（E07-T06 / PLT-PERM-009）：全量覆盖显式覆盖项（空数组即全部回落平台默认）；"
+                            + "仅自定义角色（40901），字段须在敏感字段目录内、策略 ∈ VISIBLE / MASKED / HIDDEN（40001）；"
+                            + "写 ROLE_FIELD_POLICY 审计并递增成员权限版本")
+    @PutMapping("/api/hospital/system/roles/{roleId}/field-policies")
+    @RequiresPermission("tenant:role:edit")
+    public ApiResponse<RoleView> updateFieldPolicies(
+            @PathVariable long roleId, @RequestBody FieldPoliciesSaveRequest request) {
+        return ApiResponse.ok(
+                service.updateFieldPolicies(roleId, request == null ? null : request.policies()));
+    }
+
+    /** 字段策略保存请求：显式覆盖项全量覆盖（不在清单内的字段回落平台默认）。 */
+    public record FieldPoliciesSaveRequest(List<FieldPolicyItem> policies) {}
 
     @Operation(
             summary =

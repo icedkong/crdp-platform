@@ -146,4 +146,49 @@ export const TENANT_ROLE_SCOPE_OPTIONS: Array<{
   { type: 'DEPT', requiresDeptIds: false },
   { type: 'SELF', requiresDeptIds: false },
   { type: 'CUSTOM_DEPT', requiresDeptIds: true },
+  // 研究项目扩展类型（E07-T03 / PLT-PERM-008）：成员项目经扩展点取数，空实现下不放宽任何数据
+  { type: 'RESEARCH_PROJECT', requiresDeptIds: false },
 ];
+
+/**
+ * 字段策略（E07-T06 / PLT-PERM-009 配置页）：可见 / 脱敏 / 隐藏；只读与可编辑层级、
+ * 多角色「取最宽松」合并与脱敏序列化随 E07-T04 / T05 落地。
+ */
+export type FieldPolicy = 'HIDDEN' | 'MASKED' | 'VISIBLE';
+
+/** 字段策略页签行：敏感字段目录 + 本角色生效策略（overridden=false 表示跟随平台默认）。 */
+export interface TenantRoleFieldPolicyEntry {
+  defaultPolicy: FieldPolicy;
+  field: string;
+  label: string;
+  overridden: boolean;
+  policy: FieldPolicy;
+  resource: string;
+}
+
+/** 字段策略页签视图（GET /system/roles/{id}/field-policies）。 */
+export interface TenantRoleFieldPoliciesView {
+  fields: TenantRoleFieldPolicyEntry[];
+  role: TenantRoleView;
+}
+
+/** 显式覆盖项（全量覆盖保存；不在清单内的字段回落平台默认）。 */
+export interface TenantRoleFieldPolicySaveItem {
+  field: string;
+  policy: FieldPolicy;
+  resource: string;
+}
+
+export interface TenantRoleFieldPoliciesSaveRequest {
+  policies: TenantRoleFieldPolicySaveItem[];
+}
+
+/** 字段策略文案（下拉与表格展示）。 */
+export function tenantFieldPolicyText(policy: FieldPolicy): string {
+  const texts: Record<FieldPolicy, string> = {
+    HIDDEN: '隐藏',
+    MASKED: '脱敏',
+    VISIBLE: '可见',
+  };
+  return texts[policy];
+}

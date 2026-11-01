@@ -1,5 +1,7 @@
 import type {
   TenantRoleCopyRequest,
+  TenantRoleFieldPoliciesSaveRequest,
+  TenantRoleFieldPoliciesView,
   TenantRoleFromTemplateRequest,
   TenantRoleMembersView,
   TenantRoleMenusView,
@@ -114,5 +116,23 @@ export function updateRoleMembers(roleId: number, userIds: number[]) {
   return requestClient.put<TenantRoleMembersView>(
     apiPath(`/system/roles/${roleId}/members`),
     { userIds },
+  );
+}
+
+/** 字段策略页签（E07-T06 / PLT-PERM-009）：敏感字段目录 + 本角色生效策略。 */
+export function roleFieldPolicies(roleId: number) {
+  return requestClient.get<TenantRoleFieldPoliciesView>(
+    apiPath(`/system/roles/${roleId}/field-policies`),
+  );
+}
+
+/** 保存字段策略（显式覆盖项全量覆盖）：空清单即全部回落平台默认。 */
+export function updateRoleFieldPolicies(
+  roleId: number,
+  data: TenantRoleFieldPoliciesSaveRequest,
+) {
+  return requestClient.put<TenantRoleView>(
+    apiPath(`/system/roles/${roleId}/field-policies`),
+    data,
   );
 }

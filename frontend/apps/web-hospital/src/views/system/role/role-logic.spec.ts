@@ -1,5 +1,6 @@
 import type {
   RoleScopeType,
+  TenantRoleFieldPolicyEntry,
   TenantRoleMenuNode,
   TenantRoleView,
 } from '@crdp/api';
@@ -10,6 +11,11 @@ import {
   checkedMenuIds,
   copyNameSuggestion,
   deptTreeOptions,
+  fieldPolicyDirty,
+  fieldPolicyDraftOf,
+  fieldPolicyKey,
+  fieldPolicyRowOptions,
+  fieldPolicySaveItems,
   filterRoles,
   isCustomRole,
   isScopeTypeRequiresDept,
@@ -203,6 +209,7 @@ describe('e06-T05 菜单树与数据范围', () => {
       'ALL',
       'CUSTOM_DEPT',
       'DEPT',
+      'RESEARCH_PROJECT',
       'RESPONSIBLE_DEPT',
       'RESPONSIBLE_PATIENT',
       'SELF',
@@ -257,5 +264,82 @@ describe('e06-T05 菜单树与数据范围', () => {
     expect(campus?.value).toBe(-1);
     expect(campus?.children[0]?.value).toBe(11);
     expect(campus?.children[0]?.children[0]?.title).toBe('CCU');
+  });
+});
+
+describe('e07-T06 字段策略页签（PLT-PERM-009）', () => {
+  function field(
+    overrides: Partial<TenantRoleFieldPolicyEntry>,
+  ): TenantRoleFieldPolicyEntry {
+    return {
+      defaultPolicy: 'MASKED',
+      field: 'name',
+      label: '姓名',
+      overridden: false,
+      policy: 'MASKED',
+      resource: 'patient',
+      ...overrides,
+    };
+  }
+
+  const fields = [
+    field({ overridden: true, policy: 'VISIBLE' }),
+    field({ field: 'phone', label: '手机号' }),
+    field({ field: 'idCard', label: '证件号' }),
+  ];
+
+  it('初始草稿：覆盖项取覆盖值，未覆盖项为跟随默认', () => {
+    expect(fieldPolicyDraftOf(fields)).toEqual({
+      'patient.idCard': 'DEFAULT',
+      'patient.name': 'VISIBLE',
+      'patient.phone': 'DEFAULT',
+    });
+  });
+
+  it('保存载荷只提交显式覆盖项（跟随默认不落行，即回落平台默认）', () => {
+    const draft = fieldPolicyDraftOf(fields);
+    expect(fieldPolicySaveItems(draft)).toEqual([
+      { field: 'name', policy: 'VISIBLE', resource: 'patient' },
+    ]);
+    // 全部跟随默认 → 空清单（后端全量覆盖语义 = 清空覆盖）
+    const allDefault = {
+      'patient.idCard': 'DEFAULT',
+      'patient.name': 'DEFAULT',
+      'patient.phone': 'DEFAULT',
+    } as const;
+    expect(fieldPolicySaveItems(allDefault)).toEqual([]);
+    // 显式改一项隐藏
+    const hidden = { ...allDefault, 'patient.phone': 'HIDDEN' } as const;
+    expect(fieldPolicySaveItems(hidden)).toEqual([
+      { field: 'phone', policy: 'HIDDEN', resource: 'patient' },
+    ]);
+  });
+
+  it('行内下拉选项带平台默认值说明', () => {
+    const phone = fields[1];
+    if (!phone) throw new Error('测试夹具缺失');
+    const options = fieldPolicyRowOptions(phone);
+    expect(options[0]).toEqual({
+      label: '跟随平台默认（脱敏）',
+      value: 'DEFAULT',
+    });
+    expect(options.map((option) => option.value)).toEqual([
+      'DEFAULT',
+      'VISIBLE',
+      'MASKED',
+      'HIDDEN',
+    ]);
+  });
+
+  it('未保存修改时视为脏（保存按钮可用性）', () => {
+    const draft = fieldPolicyDraftOf(fields);
+    expect(fieldPolicyDirty(fields, draft)).toBe(false);
+    expect(
+      fieldPolicyDirty(fields, { ...draft, 'patient.phone': 'HIDDEN' }),
+    ).toBe(true);
+  });
+
+  it('字段键 resource.field 定位目录项', () => {
+    expect(fieldPolicyKey('patient', 'name')).toBe('patient.name');
   });
 });

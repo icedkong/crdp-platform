@@ -1,7 +1,9 @@
 package com.crdp.server.system.role;
 
+import com.crdp.framework.audit.AuditEntry;
 import com.crdp.framework.audit.AuditEvent;
 import com.crdp.framework.audit.AuditLogger;
+import com.crdp.framework.fieldpolicy.SensitiveFieldCatalog;
 import com.crdp.framework.security.CurrentSession;
 import com.crdp.framework.security.PermissionVersionStore;
 import com.crdp.framework.tenant.TenantContext;
@@ -13,6 +15,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -26,8 +29,8 @@ import org.springframework.stereotype.Service;
  * 菜单授权只能在平台可分配范围内（超出 40001，会话层交集兜底 E05-T07）；数据范围存 sys_role_scope（多类型并集，登录侧由 HospitalDirectory
  * 归并成快照、查询侧由拦截器按病区 / 科室 / 本人 OR 改写，E07-T02 已生效），自定义科室（CUSTOM_DEPT）清单存 sys_role_scope_dept。
  *
- * <p>授权 / 成员 / 状态变更后递增受影响用户的权限版本（PLT-PERM-010 / OQ-40 ①），在线会话下一次请求即按新权限重算。 字段策略页签随 E07-T04 / T06
- * 落地（pages.md §10 角色管理四页签的最后一页）。
+ * <p>授权 / 成员 / 状态变更后递增受影响用户的权限版本（PLT-PERM-010 / OQ-40 ①），在线会话下一次请求即按新权限重算。 字段策略覆盖存
+ * sys_role_field_policy（E07-T06 落地，pages.md §10 角色管理四页签之一）；多角色「取最宽松」合并与脱敏序列化随 E07-T04 / T05。
  */
 @Service
 public class RoleAdminService {
@@ -119,6 +122,22 @@ public class RoleAdminService {
     public record RoleMemberView(long userId, String username, String displayName, String status) {}
 
     public record RoleMembersView(RoleView role, List<RoleMemberView> members) {}
+
+    // ---------------------------------------------------------------- 字段策略（E07-T06 / PLT-PERM-009）
+
+    /** 字段策略覆盖项（全量覆盖保存；不在清单里的字段跟随平台默认）。 */
+    public record FieldPolicyItem(String resource, String field, String policy) {}
+
+    /** 字段策略页签视图：敏感字段目录 + 该角色的生效策略（覆盖值或平台默认）。 */
+    public record FieldPolicyEntryView(
+            String resource,
+            String field,
+            String label,
+            String defaultPolicy,
+            String policy,
+            boolean overridden) {}
+
+    public record RoleFieldPoliciesView(RoleView role, List<FieldPolicyEntryView> fields) {}
 
     // ---------------------------------------------------------------- 查询
 
@@ -300,6 +319,7 @@ public class RoleAdminService {
         jdbc.update("DELETE FROM sys_role_menu WHERE role_id = ?", roleId);
         jdbc.update("DELETE FROM sys_role_scope WHERE role_id = ?", roleId);
         jdbc.update("DELETE FROM sys_role_scope_dept WHERE role_id = ?", roleId);
+        jdbc.update("DELETE FROM sys_role_field_policy WHERE role_id = ?", roleId);
         jdbc.update("DELETE FROM sys_user_role WHERE role_id = ?", roleId);
         jdbc.update("DELETE FROM sys_role WHERE id = ?", roleId);
         audit(
@@ -401,6 +421,135 @@ public class RoleAdminService {
                         + refreshed
                         + " 人");
         return viewByCode(str(row.get("code")));
+    }
+
+    // ---------------------------------------------------------------- 字段策略（E07-T06 / PLT-PERM-009；
+    // 多角色「取最宽松」合并与脱敏序列化随 E07-T04 / T05）
+
+    /** 字段策略页签：敏感字段目录（{@link SensitiveFieldCatalog}）+ 本角色的生效策略。 */
+    public RoleFieldPoliciesView fieldPoliciesView(long roleId) {
+        RoleView role =
+                toView(
+                        roleRow(roleId),
+                        countsByRole("sys_user_role"),
+                        countsByRole("sys_role_menu"));
+        Map<String, String> overrides = fieldPolicyOverrides(roleId);
+        List<FieldPolicyEntryView> fields =
+                SensitiveFieldCatalog.all().stream()
+                        .map(
+                                entry -> {
+                                    String explicit = overrides.get(entry.key());
+                                    return new FieldPolicyEntryView(
+                                            entry.resource(),
+                                            entry.field(),
+                                            entry.label(),
+                                            entry.defaultPolicy(),
+                                            explicit == null ? entry.defaultPolicy() : explicit,
+                                            explicit != null);
+                                })
+                        .toList();
+        return new RoleFieldPoliciesView(role, fields);
+    }
+
+    /**
+     * 保存字段策略（全量覆盖显式覆盖项，清单外的字段回落平台默认）：仅自定义角色；条目必须命中敏感字段目录、 策略取 VISIBLE / MASKED /
+     * HIDDEN（40001）；平台上限（PLT-SCOPE-007）为 P2 后续规划暂不校验。写 ROLE_FIELD_POLICY 审计并递增成员权限版本。
+     */
+    public RoleView updateFieldPolicies(long roleId, List<FieldPolicyItem> policies) {
+        Map<String, Object> row = editableCustomRole(roleId, "配置字段策略");
+        if (policies == null) {
+            throw bad("policies 不能为空（空数组表示全部回落平台默认策略）");
+        }
+        Map<String, FieldPolicyItem> desired = new LinkedHashMap<>();
+        for (FieldPolicyItem item : policies) {
+            String resource = item == null || item.resource() == null ? "" : item.resource().trim();
+            String field = item == null || item.field() == null ? "" : item.field().trim();
+            String policy = item == null || item.policy() == null ? "" : item.policy().trim();
+            if (SensitiveFieldCatalog.find(resource, field).isEmpty()) {
+                throw bad("字段不在敏感字段清单内：" + resource + "." + field);
+            }
+            if (!SensitiveFieldCatalog.POLICIES.contains(policy)) {
+                throw bad(
+                        "字段策略只允许 VISIBLE / MASKED / HIDDEN："
+                                + resource
+                                + "."
+                                + field
+                                + " = "
+                                + policy);
+            }
+            String key = resource + "." + field;
+            if (desired.put(key, new FieldPolicyItem(resource, field, policy)) != null) {
+                throw bad("字段策略重复：" + key);
+            }
+        }
+        Map<String, String> before = fieldPolicyOverrides(roleId);
+        jdbc.update("DELETE FROM sys_role_field_policy WHERE role_id = ?", roleId);
+        for (FieldPolicyItem item : desired.values()) {
+            jdbc.update(
+                    "INSERT INTO sys_role_field_policy (role_id, resource, field, policy)"
+                            + " VALUES (?, ?, ?, ?)",
+                    roleId,
+                    item.resource(),
+                    item.field(),
+                    item.policy());
+        }
+        int refreshed = refreshMembers(List.of(roleId)).size();
+        audit.append(
+                AuditEntry.operation("system", "ROLE_FIELD_POLICY")
+                        .eventType("ROLE_FIELD_POLICY")
+                        .objectType("sys_role")
+                        .objectId(str(row.get("code")))
+                        .description(
+                                "角色「"
+                                        + str(row.get("name"))
+                                        + "」字段策略覆盖 "
+                                        + desired.size()
+                                        + " 项（"
+                                        + desired.values().stream()
+                                                .map(
+                                                        item ->
+                                                                item.resource()
+                                                                        + "."
+                                                                        + item.field()
+                                                                        + "→"
+                                                                        + item.policy())
+                                                .collect(Collectors.joining("、"))
+                                        + "）；影响的成员 "
+                                        + refreshed
+                                        + " 人")
+                        .beforeJson(policySummary(before))
+                        .afterJson(
+                                policySummary(
+                                        desired.entrySet().stream()
+                                                .collect(
+                                                        Collectors.toMap(
+                                                                Map.Entry::getKey,
+                                                                e -> e.getValue().policy()))))
+                        .success()
+                        .build());
+        return viewByCode(str(row.get("code")));
+    }
+
+    private Map<String, String> fieldPolicyOverrides(long roleId) {
+        Map<String, String> overrides = new LinkedHashMap<>();
+        for (Map<String, Object> fieldPolicyRow :
+                jdbc.queryForList(
+                        "SELECT resource, field, policy FROM sys_role_field_policy WHERE role_id = ?",
+                        roleId)) {
+            overrides.put(
+                    str(fieldPolicyRow.get("resource")) + "." + str(fieldPolicyRow.get("field")),
+                    str(fieldPolicyRow.get("policy")));
+        }
+        return overrides;
+    }
+
+    private static String policySummary(Map<String, String> overrides) {
+        if (overrides.isEmpty()) {
+            return "{}";
+        }
+        return overrides.entrySet().stream()
+                .map(entry -> "\"" + entry.getKey() + "\":\"" + entry.getValue() + "\"")
+                .collect(Collectors.joining(",", "{", "}"));
     }
 
     // ---------------------------------------------------------------- 成员（PLT-ORG-004 编辑页「成员」页签）
@@ -591,6 +740,19 @@ public class RoleAdminService {
                     "INSERT INTO sys_role_scope_dept (role_id, dept_id) VALUES (?, ?)",
                     targetId,
                     deptId);
+        }
+        // 字段策略覆盖一并复制（E07-T06：复制内容 = 菜单 + 数据范围 + 自定义科室 + 字段策略）
+        for (Map<String, Object> fieldPolicy :
+                jdbc.queryForList(
+                        "SELECT resource, field, policy FROM sys_role_field_policy WHERE role_id = ?",
+                        sourceId)) {
+            jdbc.update(
+                    "INSERT INTO sys_role_field_policy (role_id, resource, field, policy)"
+                            + " VALUES (?, ?, ?, ?)",
+                    targetId,
+                    str(fieldPolicy.get("resource")),
+                    str(fieldPolicy.get("field")),
+                    str(fieldPolicy.get("policy")));
         }
         boolean fromTemplate = TYPE_TEMPLATE.equals(str(source.get("role_type")));
         audit(

@@ -61,9 +61,9 @@ E06-T02 已实现（院区与科室树；病区字典属 `crdp-followup`，科�
 | GET / PUT | `/api/hospital/system/roles/{id}/scope` | `tenant:role:view` / `edit` | 数据范围类型（多选取并集）：`ALL / WARD / RESPONSIBLE_DEPT / RESPONSIBLE_PATIENT / DEPT / SELF / CUSTOM_DEPT`（平台定义七种，与 `HospitalDirectory` 同口径；生效计算已由 E07-T02 落地：WARD/RESPONSIBLE_DEPT 取用户负责清单、DEPT 取主科室、CUSTOM_DEPT 取本角色科室清单，多角色并集，病区与科室在 SQL 改写中 OR 组合）与 `RESEARCH_PROJECT`（研究项目扩展类型，E07-T03 / PLT-PERM-008：成员项目经扩展点 `ResearchProjectScopeProvider` 冻结进快照，规则由 rct 模块实现；空实现下该分支不放宽任何数据，见 `README.md` §2.5 与 OQ-53）；`CUSTOM_DEPT` 必须带 `customDeptIds[]`（本院科室，不存在 40400） |
 | GET / PUT | `/api/hospital/system/roles/{id}/members` | `tenant:role:view` / `edit` | 成员（全量覆盖 `userIds[]`）；模板角色不可直接分配（40901，先复制）；不能移除最后一名启用的租户管理员（40901）；加入的用户必须是启用状态 |
 | POST | `/api/hospital/system/roles/from-template` | `tenant:role:edit` | 应用业务角色模板（PLT-ORG-005）：`{ templateId, code, name, description? }` → 复制生成自定义角色（菜单与范围随模板带来） |
-| GET | `/api/hospital/system/roles/{id}/field-policies` | `tenant:role:edit` | 字段策略：`VISIBLE / MASKED / HIDDEN`，不能宽于平台上限（PLT-SCOPE-007）——**随 E07-T04 / T06 落地** |
+| GET / PUT | `/api/hospital/system/roles/{id}/field-policies` | `tenant:role:edit` | **已实现（E07-T06 / PLT-PERM-009）**。字段策略页签：GET `{ role, fields[] }`（敏感字段目录 `resource/field/label/defaultPolicy` + 本角色生效 `policy` 与 `overridden`；目录为患者身份五位字段「姓名、证件号、手机号、病案号（病历号）、住址」，framework `SensitiveFieldCatalog`，平台默认一律 `MASKED`）；PUT `{ policies: [{resource, field, policy}] }` 全量覆盖显式覆盖项，空清单 = 全部回落平台默认。仅自定义角色（内置与模板 40901）；字段须在目录内、策略 ∈ `VISIBLE / MASKED / HIDDEN`（40001）；写 `ROLE_FIELD_POLICY` 审计并递增成员权限版本；复制角色一并带走覆盖项。多角色同字段「取最宽松」合并与脱敏序列化随 E07-T04 / T05；「不能宽于平台上限」随 PLT-SCOPE-007（P2 后续规划）暂不校验 |
 
-保存角色授权 / 成员 / 状态后递增受影响用户的 `permissionVersion`（PLT-PERM-010），在线会话下一次请求即按新权限重算；全部写租户库审计（`ROLE_CREATE` / `ROLE_UPDATE` / `ROLE_COPY` / `ROLE_STATUS` / `ROLE_DELETE` / `ROLE_MENUS` / `ROLE_SCOPE` / `ROLE_MEMBERS`）。租户管理员全院可见（A-WARD-007、C-WARD-007）。
+保存角色授权 / 成员 / 状态后递增受影响用户的 `permissionVersion`（PLT-PERM-010），在线会话下一次请求即按新权限重算；全部写租户库审计（`ROLE_CREATE` / `ROLE_UPDATE` / `ROLE_COPY` / `ROLE_STATUS` / `ROLE_DELETE` / `ROLE_MENUS` / `ROLE_SCOPE` / `ROLE_FIELD_POLICY` / `ROLE_MEMBERS`）。租户管理员全院可见（A-WARD-007、C-WARD-007）。
 
 ### 3.1 业务角色模板（PLT-ROLE-005，E06-T05）
 

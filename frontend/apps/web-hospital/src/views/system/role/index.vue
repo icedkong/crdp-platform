@@ -2,15 +2,22 @@
 import type {
   OrgTreeView,
   RoleScopeType,
+  TenantRoleFieldPolicyEntry,
   TenantRoleMemberView,
   TenantRoleMenuNode,
   TenantRoleView,
 } from '@crdp/api';
 
+import type { FieldPolicyDraft } from './role-logic';
+
 import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
 
-import { tenantRoleScopeTypeText } from '@crdp/api';
+import {
+  TENANT_ROLE_SCOPE_OPTIONS,
+  tenantFieldPolicyText,
+  tenantRoleScopeTypeText,
+} from '@crdp/api';
 import { StatusTag } from '@crdp/status-tag';
 import { colors, sizes } from '@crdp/tokens';
 import {
@@ -45,11 +52,13 @@ import {
   createRole,
   deleteRole,
   listRoles,
+  roleFieldPolicies,
   roleFromTemplate,
   roleMembers,
   roleMenus,
   roleScope,
   updateRole,
+  updateRoleFieldPolicies,
   updateRoleMembers,
   updateRoleMenus,
   updateRoleScope,
@@ -62,6 +71,11 @@ import {
   checkedMenuIds,
   copyNameSuggestion,
   deptTreeOptions,
+  fieldPolicyDirty,
+  fieldPolicyDraftOf,
+  fieldPolicyKey,
+  fieldPolicyRowOptions,
+  fieldPolicySaveItems,
   filterRoles,
   isCustomRole,
   isScopeTypeRequiresDept,
@@ -77,9 +91,10 @@ defineOptions({ name: 'HospitalRole' });
 
 /**
  * 角色管理（E06-T05 / PLT-ORG-004、005 · pages.md §10）：列表（内置 / 模板 / 自定义）+
- * 编辑抽屉三页签（菜单按钮仅可分配范围 / 数据范围 / 成员）+ 复制与模板应用 + 停用。
- * 字段策略页签随字段级权限（E07）开放，本页先占位说明。查看 tenant:role:view，维护 tenant:role:edit。
- * 内置角色不可删、不可改权限；模板只读，复制后调整；停用对在线会话即时生效。
+ * 编辑抽屉四页签（菜单按钮仅可分配范围 / 数据范围 / 字段策略 / 成员）+ 复制与模板应用 + 停用。
+ * 数据范围含研究项目扩展类型（E07-T03，空实现不放宽数据）；字段策略页签 E07-T06 开放：
+ * 敏感字段按角色选可见 / 脱敏 / 隐藏或跟随平台默认，多角色合并与脱敏序列化随 E07-T04 / T05 生效。
+ * 查看 tenant:role:view，维护 tenant:role:edit；内置角色不可删、不可改权限；模板只读，复制后调整。
  */
 const router = useRouter();
 const { isMobile } = useBreakpoint();
@@ -313,12 +328,12 @@ async function removeRole(row: TenantRoleView) {
   }
 }
 
-// ---- 编辑抽屉：菜单按钮 / 数据范围 / 成员（字段策略随 E07 开放）----
+// ---- 编辑抽屉：菜单按钮 / 数据范围 / 字段策略 / 成员（pages.md §10 四页签）----
 
 const editor = ref({
   open: false,
   role: null as null | TenantRoleView,
-  tab: 'menus' as 'members' | 'menus' | 'scope',
+  tab: 'menus' as 'fields' | 'members' | 'menus' | 'scope',
   menus: [] as TenantRoleMenuNode[],
   menuChecked: [] as number[],
   menusSaving: false,
@@ -326,12 +341,22 @@ const editor = ref({
   scopeDeptIds: [] as number[],
   orgTree: { orgs: [], singleOrg: false } as OrgTreeView,
   scopeSaving: false,
+  fields: [] as TenantRoleFieldPolicyEntry[],
+  fieldDraft: {} as FieldPolicyDraft,
+  fieldsSaving: false,
   members: [] as TenantRoleMemberView[],
   memberIds: [] as number[],
   membersSaving: false,
 });
 
 const editorRole = computed(() => editor.value.role);
+
+const fieldPolicyColumns = [
+  { dataIndex: 'label', title: '敏感字段', width: 150 },
+  { dataIndex: 'code', title: '字段编码', width: 220 },
+  { dataIndex: 'defaultPolicy', title: '平台默认', width: 110 },
+  { dataIndex: 'policy', title: '本角色策略' },
+];
 
 async function openEditor(row: TenantRoleView) {
   editor.value = {
@@ -345,6 +370,9 @@ async function openEditor(row: TenantRoleView) {
     scopeDeptIds: [],
     orgTree: editor.value.orgTree,
     scopeSaving: false,
+    fields: [],
+    fieldDraft: {},
+    fieldsSaving: false,
     members: [],
     memberIds: [],
     membersSaving: false,
@@ -352,6 +380,7 @@ async function openEditor(row: TenantRoleView) {
   await Promise.all([
     loadEditorMenus(),
     loadEditorScope(),
+    loadEditorFields(),
     loadEditorMembers(),
   ]);
 }
@@ -426,6 +455,36 @@ async function saveScope() {
   }
 }
 
+async function loadEditorFields() {
+  const role = editor.value.role;
+  if (!role) return;
+  try {
+    const view = await roleFieldPolicies(role.id);
+    editor.value.fields = view.fields;
+    editor.value.fieldDraft = fieldPolicyDraftOf(view.fields);
+  } catch {
+    // 统一拦截器已提示
+  }
+}
+
+async function saveFields() {
+  const state = editor.value;
+  const role = state.role;
+  if (!role) return;
+  state.fieldsSaving = true;
+  try {
+    await updateRoleFieldPolicies(role.id, {
+      policies: fieldPolicySaveItems(state.fieldDraft),
+    });
+    await loadEditorFields();
+    message.success('字段策略已保存，在线成员的下一次请求即生效');
+  } catch {
+    // 统一拦截器已提示
+  } finally {
+    state.fieldsSaving = false;
+  }
+}
+
 async function loadEditorMembers() {
   const role = editor.value.role;
   if (!role) return;
@@ -468,18 +527,12 @@ function toggleMember(userId: number, checked: boolean) {
   editor.value.memberIds = [...ids];
 }
 
-const scopeOptions: Array<{ label: string; value: RoleScopeType }> = [
-  'ALL',
-  'WARD',
-  'RESPONSIBLE_DEPT',
-  'RESPONSIBLE_PATIENT',
-  'DEPT',
-  'SELF',
-  'CUSTOM_DEPT',
-].map((type) => ({
-  label: tenantRoleScopeTypeText(type as RoleScopeType),
-  value: type as RoleScopeType,
-}));
+/** 数据范围选项（七种平台口径 + 研究项目扩展类型，E07-T03 / PLT-PERM-008）。 */
+const scopeOptions: Array<{ label: string; value: RoleScopeType }> =
+  TENANT_ROLE_SCOPE_OPTIONS.map((option) => ({
+    label: tenantRoleScopeTypeText(option.type),
+    value: option.type,
+  }));
 
 const title = '角色管理';
 const modalWidth = sizes.modal.simple;
@@ -626,7 +679,7 @@ const textSecondary = colors.textSecondary;
       </Table>
       <div class="legend">
         <Tag>模板角色只读（PLT-ORG-005：复制后调整）</Tag>
-        <Tag>字段策略页签随字段级权限（E07）开放</Tag>
+        <Tag>字段策略未覆盖项跟随平台默认（脱敏）</Tag>
       </div>
     </Card>
 
@@ -782,7 +835,7 @@ const textSecondary = colors.textSecondary;
       </Form>
     </Modal>
 
-    <!-- 编辑抽屉：菜单按钮 / 数据范围 / 成员（pages.md §10；字段策略随 E07） -->
+    <!-- 编辑抽屉：菜单按钮 / 数据范围 / 字段策略 / 成员（pages.md §10 四页签） -->
     <Modal
       v-model:open="editor.open"
       :confirm-loading="false"
@@ -826,7 +879,7 @@ const textSecondary = colors.textSecondary;
         <TabPane key="scope" tab="数据范围">
           <Alert
             class="mb-3"
-            message="多选取并集；「本人负责病区 / 科室」按用户个人设置取值，不在角色上勾选；生效口径见 E07。"
+            message="多选取并集；「本人负责病区 / 科室」按用户个人设置取值，不在角色上勾选；「研究项目」按本人为成员的项目取数（rct 模块上线前不放宽任何数据）。"
             show-icon
             type="info"
           />
@@ -836,6 +889,7 @@ const textSecondary = colors.textSecondary;
                 v-for="option in scopeOptions"
                 :key="option.value"
                 :value="option.value"
+                :data-testid="`scope-type-${option.value}`"
               >
                 {{ option.label }}
               </Checkbox>
@@ -865,6 +919,66 @@ const textSecondary = colors.textSecondary;
               @click="saveScope"
             >
               保存数据范围
+            </Button>
+          </div>
+        </TabPane>
+        <TabPane key="fields" tab="字段策略">
+          <Alert
+            class="mb-3"
+            message="敏感字段按角色选可见 / 脱敏 / 隐藏，未覆盖项跟随平台默认（脱敏）；多角色同字段取最宽松，脱敏与明文查看随字段级权限任务（E07-T04 / T05）生效。"
+            show-icon
+            type="info"
+          />
+          <Empty
+            v-if="editor.fields.length === 0"
+            :image="Empty.PRESENTED_IMAGE_SIMPLE"
+            description="没有可配置的敏感字段"
+          />
+          <Table
+            v-else
+            :columns="fieldPolicyColumns"
+            :data-source="editor.fields"
+            :loading="editor.fieldsSaving"
+            :pagination="false"
+            :row-key="
+              (row: TenantRoleFieldPolicyEntry) =>
+                fieldPolicyKey(row.resource, row.field)
+            "
+            size="middle"
+          >
+            <template #bodyCell="{ column, record }">
+              <template v-if="column.dataIndex === 'label'">
+                {{ record.label }}
+                <Tag v-if="record.overridden" color="blue"> 已覆盖 </Tag>
+              </template>
+              <span v-else-if="column.dataIndex === 'code'" class="code">
+                {{ fieldPolicyKey(record.resource, record.field) }}
+              </span>
+              <span v-else-if="column.dataIndex === 'defaultPolicy'">
+                {{ tenantFieldPolicyText(record.defaultPolicy) }}
+              </span>
+              <template v-else-if="column.dataIndex === 'policy'">
+                <Select
+                  v-model:value="
+                    editor.fieldDraft[
+                      fieldPolicyKey(record.resource, record.field)
+                    ]
+                  "
+                  :options="fieldPolicyRowOptions(record)"
+                  :style="{ width: '220px' }"
+                  :data-testid="`field-policy-${record.field}`"
+                />
+              </template>
+            </template>
+          </Table>
+          <div class="tab-actions">
+            <Button
+              type="primary"
+              :loading="editor.fieldsSaving"
+              :disabled="!fieldPolicyDirty(editor.fields, editor.fieldDraft)"
+              @click="saveFields"
+            >
+              保存字段策略
             </Button>
           </div>
         </TabPane>
@@ -908,13 +1022,6 @@ const textSecondary = colors.textSecondary;
               保存成员
             </Button>
           </div>
-        </TabPane>
-        <TabPane key="fields" tab="字段策略" disabled>
-          <Alert
-            message="字段级权限与字段策略配置随字段策略任务（E07）开放，未配置的角色取平台默认策略。"
-            show-icon
-            type="info"
-          />
         </TabPane>
       </Tabs>
     </Modal>
