@@ -584,5 +584,24 @@ export type {
   TenantScopeView,
 } from './tenant-scope';
 
+export {
+  nextStatusActions,
+  USER_STATUS_OPTIONS,
+  USER_STATUS_TEXT,
+  userStatusText,
+} from './tenant-user';
+export type {
+  TenantUserCreated,
+  TenantUserCreateRequest,
+  TenantUserDetailView,
+  TenantUserPage,
+  TenantUserResetResult,
+  TenantUserStatusRequest,
+  TenantUserUpdateRequest,
+  TenantUserView,
+  UserStatus,
+  WardOptionView,
+} from './tenant-user';
+
 export { menuNodesToRoutes, menuNodeToRoute, toIconifyIcon } from './vben-menu';
 export type { VbenMenuRoute } from './vben-menu';

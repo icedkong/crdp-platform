@@ -55,11 +55,11 @@ class PlatformTenantScopeMySqlIT {
 
     /** 期望可分配全集（base 10/30/31 + followup 模板默认 20/21/23，收回 22 随访任务）。 */
     /**
-     * base 固定能力全集（V100 + V10/V11 的按钮 311/312/313 + V19 的按钮 331 + V21 的菜单 34 机构设置 + V22 的按钮 321
-     * 维护角色与授权），收回请求必须原样带上。
+     * base 固定能力全集（V100 + V10/V11 的按钮 311/312/313 + V23 的按钮 314 用户维护 + V19 的按钮 331 + V21 的菜单 34 机构设置
+     * + V22 的按钮 321 维护角色与授权），收回请求必须原样带上。
      */
     private static final List<Object> BASE_ALL =
-            List.of(10L, 30L, 31L, 32L, 33L, 34L, 311L, 312L, 313L, 321L, 331L);
+            List.of(10L, 30L, 31L, 32L, 33L, 34L, 311L, 312L, 313L, 314L, 321L, 331L);
 
     /** 期望可分配全集（base 全部 + followup 模板默认 20/21/23，收回 22 随访任务）。 */
     private static final List<Object> WITHOUT_TASK =

@@ -67,6 +67,9 @@ public class TenantOnboardingService {
      */
     private static final int TENANT_ADMIN_ROLE_EDIT_MENU_ID = 321;
 
+    /** 「新建、编辑、停用与离职用户」按钮（plt_menu 314，tenant:user:edit，平台库 V23，E06-T07）。 */
+    private static final int TENANT_ADMIN_USER_EDIT_MENU_ID = 314;
+
     /**
      * 开通请求：编码与医院名称必填；首个管理员在开通时提供，也可启用前经 E06 补设。 expire 为向导第 2 步的到期设置（E05-T02
      * /PLT-TEN-011），空表示长期有效；重试重入时不会改写已登记租户的到期设置。 modules 为向导第 2 步勾选的 业务模块（E05-T05 /PLT-MOD-004，base
@@ -434,6 +437,21 @@ public class TenantOnboardingService {
                         platform.update(
                                 "INSERT INTO sys_role_menu (role_id, menu_id) VALUES (?, "
                                         + TENANT_ADMIN_ROLE_EDIT_MENU_ID
+                                        + ")",
+                                roleId);
+                    }
+                    // E06-T07 / PLT-ORG-006：「新建、编辑、停用与离职用户」按钮（plt_menu 314，
+                    // tenant:user:edit）同样授予；老库由租户库 base V12 授予、local/dev 全新库由种子 V107 兜底。
+                    Integer userEditGranted =
+                            platform.queryForObject(
+                                    "SELECT COUNT(*) FROM sys_role_menu WHERE role_id = ? AND menu_id = "
+                                            + TENANT_ADMIN_USER_EDIT_MENU_ID,
+                                    Integer.class,
+                                    roleId);
+                    if (userEditGranted == null || userEditGranted == 0) {
+                        platform.update(
+                                "INSERT INTO sys_role_menu (role_id, menu_id) VALUES (?, "
+                                        + TENANT_ADMIN_USER_EDIT_MENU_ID
                                         + ")",
                                 roleId);
                     }
