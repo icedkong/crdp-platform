@@ -29,19 +29,23 @@ E06-T02 已实现（院区与科室树；病区字典属 `crdp-followup`，科�
 | GET / PUT | `/api/hospital/followup/wards/aliases` | `followup:ward:edit` | 病区值映射（导入时原值 → 病区，`ward_alias`，A-WARD-006） |
 | GET | `/api/hospital/followup/wards/{id}/members` | `followup:ward:edit` | 成员与患者数 |
 
-## 2. 用户（PLT-ORG-006..012、A-WARD-002、C-WARD-003）
+## 2. 用户（PLT-ORG-006..012、A-WARD-002、C-WARD-003；E06-T07 已实现列表 / 详情 / 新建 / 编辑 / 状态 / 重置 / 解锁）
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| GET | `/api/hospital/system/users` | `tenant:user:view` | 分页；筛选 `keyword, deptId, wardId, roleId, status`；手机号脱敏 |
-| POST | `/api/hospital/system/users` | `tenant:user:edit` | 超过用户数配额返回 40901「已达用户数上限」（PLT-ORG-010） |
-| PUT | `/api/hospital/system/users/{id}` | `tenant:user:edit` | 含 `roleIds[]`、`wardIds[]`（A 负责病区）/ `deptScopeIds[]`（C 负责科室或病区） |
-| POST | `/api/hospital/system/users/{id}/status` | `tenant:user:edit` | 启用 / 停用；停用同时下线其会话 |
-| POST | `/api/hospital/system/users/{id}/reset-password` | `tenant:user:reset` | 生成临时密码，首次登录强制改密；二次认证 |
-| POST | `/api/hospital/system/users/{id}/unlock` | `tenant:user:reset` | 解锁 |
-| GET | `/api/hospital/system/users/{id}/effective-permissions` | `tenant:user:view` | 权限预览：菜单、按钮、数据范围（含病区）、字段策略（PLT-ORG-009、A-WARD-009） |
-| POST | `/api/hospital/system/users/import` | `tenant:user:import` | 批量导入（PLT-ORG-007） |
-| GET | `/api/hospital/system/users/options?keyword=&deptId=` | 登录 | 用户选择器（只返回 id、显示名、科室；PLT-ORG-012） |
+| GET | `/api/hospital/system/users` | `tenant:user:view` | 分页（`pageNo` 从 1、`pageSize` 默认 20 上限 100）；筛选 `keyword`（账号 / 姓名 / 工号）、`deptId`（主科室或负责科室命中）、`wardId`、`roleId`、`status`；手机号脱敏（`139****1001`），附 `mainDeptName` 与启用角色的 `roleNames` |
+| GET | `/api/hospital/system/users/{id}` | `tenant:user:view` | 编辑回显：`roleIds[]`、`wardIds[]`（负责病区，A-WARD-002）、`deptScopeIds[]`（负责科室，C-WARD-003）、`mainDeptId`、`staffNo`；未知用户 40400 |
+| POST | `/api/hospital/system/users` | `tenant:user:edit` | `{ username, displayName, staffNo?, phone, mainDeptId, roleIds[], wardIds?, deptScopeIds? }`；账号 / 手机号本院唯一（40902）；模板角色不可直接分配（40901）；科室 / 病区 / 角色不存在 40400；初始密码由系统生成、**只随本次响应下发一次**（`temporaryPassword`），首登强制改密；写 `USER_CREATE` 审计。用户数配额（PLT-ORG-010）随后续任务接入 |
+| PUT | `/api/hospital/system/users/{id}` | `tenant:user:edit` | 全量覆盖 `{ displayName, staffNo?, phone?, mainDeptId, roleIds[], wardIds[], deptScopeIds[] }`；账号不可改；`phone` 省略＝保持不变、传值＝换绑（本院唯一 40902）；不能移除最后一名启用租户管理员的租户管理员角色（40901）；保存后递增 `permissionVersion`（负责病区 / 科室 / 角色变更立即生效）；写 `USER_UPDATE` 审计 |
+| POST | `/api/hospital/system/users/{id}/status` | `tenant:user:edit` | `action=ENABLE\|DISABLE\|RESIGN`，reason ≤200；启用 ⇄ 停用、启用 → 离职（**终态**，不能再启用）；停用与离职立即吊销全部会话；最后一名启用的租户管理员不可停用 / 离职（40901）；写 `USER_STATUS` 审计 |
+| POST | `/api/hospital/system/users/{id}/reset-password` | `tenant:user:reset` | 生成一次性临时密码（响应只返回一次），置「首登强制改密」、旧哈希入历史表、该账号全部会话失效并解除登录锁定；写 `USER_RESET_PASSWORD` 审计。二次认证（PLT-AUTH-012）随敏感操作框架落地，本接口暂以权限码 + 确认弹窗把关（推断，待确认） |
+| POST | `/api/hospital/system/users/{id}/unlock` | `tenant:user:reset` | 解锁（E04-T05 落地，清登录失败计数桶）；写 `USER_UNLOCK` 审计 |
+| GET | `/api/hospital/system/wards/options` | `tenant:user:view` | 病区候选（用户编辑页「负责病区」多选，只读启用项；病区字典维护属病区管理任务，届时替换） |
+| GET | `/api/hospital/system/users/{id}/effective-permissions` | `tenant:user:view` | 权限预览：菜单、按钮、数据范围（含病区）、字段策略（PLT-ORG-009、A-WARD-009）——**随 E06-T09 落地** |
+| POST | `/api/hospital/system/users/import` | `tenant:user:import` | 批量导入（PLT-ORG-007）——**随 E06-T08 落地** |
+| GET | `/api/hospital/system/users/options?keyword=&deptId=` | 登录 | 用户选择器（只返回 id、显示名、科室；PLT-ORG-012）——随 E06-T09 落地，暂用 §1 `/orgs/user-options` |
+
+用户状态取值 `ENABLED / DISABLED / RESIGNED`（「锁定」是登录侧 Redis 计数的瞬时态，不落 `sys_user.status`，列表不展示，解锁按钮常显）。`sys_user` 新增 `staff_no`、`main_dept_id`（租户库 V12）；负责病区 `sys_user_ward` 与负责科室 `sys_user_dept_scope` 沿用 V1 表，按用户全量覆盖。兼职科室、岗位 / 职称、账号有效期分别随字典（E06-T10）与数据范围生效计算（E07-T02）落地；离职转办事件随 E06-T03。
 
 ## 3. 角色与数据范围（PLT-ORG-004/005、PLT-ROLE-004/005、PLT-PERM-007..009、A-WARD-003、C-WARD-004；E06-T05 已实现）
 

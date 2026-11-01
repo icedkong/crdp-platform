@@ -229,6 +229,7 @@ export const statusTone: Record<string, StatusTone> = {
   // 租户（PLT-TEN-010 七态；开通中是向导阶段的初始态，components.md tenant 行的补充）
   试用: 'processing',
   启用: 'success',
+  离职: 'default', // 用户管理（PLT-ORG-006 终态）
   宽限期: 'warning',
   停用: 'error',
   注销中: 'warning',
