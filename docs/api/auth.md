@@ -31,6 +31,7 @@
 | POST | `/api/hospital/system/users/{id}/unlock` | `tenant:user:reset` | — | `{ userId, username, unlocked: true }`（管理员解锁登录锁定） |
 | GET | `/api/hospital/auth/sessions` | 登录 | — | `OnlineSession[] { sessionId, userId, username, displayName, ip, issuedAt, lastActiveAt, current }`（本人在线会话；`sessionId` 由令牌哈希单向推导，不返回令牌） |
 | DELETE | `/api/hospital/auth/sessions/{sessionId}` | 登录 | — | `OnlineSession`（下线自己的某个会话；被下线令牌下次请求 40100；写审计 `SESSION_REVOKE`） |
+| GET | `/api/hospital/auth/tenant-state` | 登录 | — | `TenantStateView { tenantId, code, name, status, expireType, expireAt, daysLeft, graceReadOnly }`（本院服务状态，宽限期续费提示的数据源；`daysLeft` 含到期当天为 0，已到期或长期有效为 null。E05-T03 / PLT-TEN-012） |
 | GET | `/api/hospital/system/sessions` | `tenant:session:view` | — | `OnlineSession[]`（本院全部在线会话，`current` 恒 false；见 `system.md` §8） |
 | POST | `/api/hospital/system/sessions/{sessionId}/kick` | `tenant:session:kick` | — | `OnlineSession`（强制下线，写审计 `SESSION_KICK`；被下线令牌下次请求 40100） |
 | GET | `/api/platform/auth/sessions` | 登录 | — | `OnlineSession[]`（平台端同构） |

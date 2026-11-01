@@ -5,6 +5,7 @@ import com.crdp.framework.web.ApiResponse;
 import com.crdp.server.config.TenantOnboardingService;
 import com.crdp.server.platform.TenantDirectoryService;
 import com.crdp.server.platform.TenantLifecycleService;
+import com.crdp.server.platform.TenantSuspensionService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.security.SecureRandom;
@@ -36,15 +37,18 @@ public class PlatformTenantController {
     private final TenantOnboardingService onboardingService;
     private final TenantDirectoryService directoryService;
     private final TenantLifecycleService lifecycleService;
+    private final TenantSuspensionService suspensionService;
     private final SecureRandom random = new SecureRandom();
 
     public PlatformTenantController(
             TenantOnboardingService onboardingService,
             TenantDirectoryService directoryService,
-            TenantLifecycleService lifecycleService) {
+            TenantLifecycleService lifecycleService,
+            TenantSuspensionService suspensionService) {
         this.onboardingService = onboardingService;
         this.directoryService = directoryService;
         this.lifecycleService = lifecycleService;
+        this.suspensionService = suspensionService;
     }
 
     /** 新建租户请求：到期设置五项可整体省略（默认长期有效）；有到期日时到期日必填且须晚于当天， 提醒节点 / 宽限期缺省取默认值（30、7、1 天与 15 天）。 */
@@ -131,6 +135,17 @@ public class PlatformTenantController {
             @PathVariable long tenantId,
             @RequestBody TenantLifecycleService.ExpireRequest request) {
         return ApiResponse.ok(lifecycleService.applyExpiry(tenantId, request));
+    }
+
+    @Operation(
+            summary =
+                    "停用时段（PLT-TEN-017 底座，E05-T03）：倒序列出该租户每次停用的时段（restoredAt 为空 = 仍在停用中）、"
+                            + "原因类别（人工 / 宽限期满自动）与恢复途径；停用补偿（任务标记“停用期间未执行”）由业务模块按时段推导（E14-T06）")
+    @GetMapping("/{tenantId}/suspensions")
+    @RequiresPermission("platform:tenant:view")
+    public ApiResponse<List<TenantSuspensionService.SuspensionView>> suspensions(
+            @PathVariable long tenantId) {
+        return ApiResponse.ok(suspensionService.suspensionsOf(tenantId));
     }
 
     @Operation(summary = "新建租户：立即触发开通编排（可重入，失败重试即重提交）；到期设置随本任务接入（PLT-TEN-011）")

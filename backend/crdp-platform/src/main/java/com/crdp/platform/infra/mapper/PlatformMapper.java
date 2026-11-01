@@ -14,7 +14,7 @@ public interface PlatformMapper {
 
     @Select(
             """
-            SELECT id, code, name, status
+            SELECT id, code, name, status, grace_read_only AS graceReadOnly
             FROM plt_tenant
             WHERE code = #{code}
             """)

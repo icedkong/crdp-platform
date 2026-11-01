@@ -27,6 +27,7 @@ public class SecurityConfig {
             HttpSecurity http,
             TokenAuthenticationFilter tokenFilter,
             MustChangePasswordFilter mustChangePasswordFilter,
+            GraceReadOnlyFilter graceReadOnlyFilter,
             ApiErrorWriter errors)
             throws Exception {
         http.csrf(AbstractHttpConfigurer::disable)
@@ -100,7 +101,9 @@ public class SecurityConfig {
                                         .authenticated())
                 .addFilterBefore(tokenFilter, UsernamePasswordAuthenticationFilter.class)
                 // E04-T05 / PLT-AUTH-010：强制改密会话除改密 / 登出 / me 外一律 40305（放在令牌认证之后）
-                .addFilterAfter(mustChangePasswordFilter, TokenAuthenticationFilter.class);
+                .addFilterAfter(mustChangePasswordFilter, TokenAuthenticationFilter.class)
+                // E05-T03 / PLT-TEN-011、012：宽限期只读的租户，医院端写请求一律 40306（读照常、auth 前缀放行）
+                .addFilterAfter(graceReadOnlyFilter, MustChangePasswordFilter.class);
         return http.build();
     }
 

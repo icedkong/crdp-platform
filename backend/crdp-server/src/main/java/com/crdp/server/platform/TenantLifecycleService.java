@@ -8,6 +8,7 @@ import com.crdp.framework.tenant.TenantContext;
 import com.crdp.framework.tenant.TenantRoutingDataSource;
 import com.crdp.framework.tenant.UnknownTenantDataSourceException;
 import com.crdp.framework.web.ApiException;
+import com.crdp.server.auth.TenantLookupCache;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -22,9 +23,10 @@ import org.springframework.stereotype.Service;
  * 租户生命周期（E05-T02 / PLT-TEN-010、011、013，验收：状态流转按规格，续期即恢复）。
  *
  * <p>状态流转严格按平台规格第 2 章状态图：本任务提供人工可达的三条边——转正（试用→启用）、手动停用（启用→停用）、恢复（停用→启用）； 到期进入宽限期与宽限期满自动停用是
- * E05-T03（PLT-TEN-012），注销流转是 E05-T08（PLT-TEN-018..021）。到期设置按租户配置到期类型、提醒节点、
- * 宽限期天数与宽限期是否只读（已确认项）；长期有效租户不提醒、不进入宽限期，三项清空。续期（修改到期日或改为长期有效）时，宽限期或停用中的
- * 租户立即恢复启用。人工变更一律填原因并写平台审计（TENANT_STATUS / TENANT_EXPIRE，不落敏感明文——本域只有状态与日期）。
+ * E05-T03（PLT-TEN-012，见 {@link TenantExpiryService}），注销流转是 E05-T08（PLT-TEN-018..021）。
+ * 到期设置按租户配置到期类型、提醒节点、 宽限期天数与宽限期是否只读（已确认项）；长期有效租户不提醒、不进入宽限期，三项清空。续期（修改到期日或改为长期有效）时，宽限期或停用中的
+ * 租户立即恢复启用。人工变更一律填原因并写平台审计（TENANT_STATUS / TENANT_EXPIRE，不落敏感明文——本域只有状态与日期）。 停用处理（吊销会话、停用时段开段 /
+ * 关段）与恢复关段由 E05-T03 的 {@link TenantSuspensionService} 承接（PLT-TEN-016、017）。
  */
 @Service
 public class TenantLifecycleService {
@@ -46,16 +48,22 @@ public class TenantLifecycleService {
     private final TenantRoutingDataSource routing;
     private final SessionStore sessions;
     private final AuditLogger audit;
+    private final TenantSuspensionService suspensions;
+    private final TenantLookupCache tenantLookup;
 
     public TenantLifecycleService(
             JdbcTemplate platform,
             TenantRoutingDataSource routing,
             SessionStore sessions,
-            AuditLogger audit) {
+            AuditLogger audit,
+            TenantSuspensionService suspensions,
+            TenantLookupCache tenantLookup) {
         this.platform = platform;
         this.routing = routing;
         this.sessions = sessions;
         this.audit = audit;
+        this.suspensions = suspensions;
+        this.tenantLookup = tenantLookup;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -152,6 +160,20 @@ public class TenantLifecycleService {
                     if (updated == 0) {
                         throw new ApiException(409, 40901, "租户状态已变化，请刷新后重试");
                     }
+                    tenantLookup.evict(str(row.get("code")));
+                    // E05-T03 / PLT-TEN-016：停用即吊销在线会话并记停用时段；恢复（停用→启用）关闭时段
+                    long revokedSessions = 0;
+                    if ("DISABLED".equals(target)) {
+                        revokedSessions =
+                                suspensions.onDisabled(
+                                        tenantId,
+                                        TenantSuspensionService.CAUSE_MANUAL,
+                                        "人工停用；原因：" + reason);
+                    } else {
+                        suspensions.onRestored(
+                                tenantId, TenantSuspensionService.RESTORE_MANUAL_ENABLE);
+                    }
+                    long onlineAfter = sessions.listForTenant(tenantId).size();
                     audit.record(
                             new AuditEvent(
                                     "TENANT_STATUS",
@@ -160,13 +182,17 @@ public class TenantLifecycleService {
                                             .orElse(null),
                                     "UPDATE",
                                     "plt_tenant:" + row.get("code"),
-                                    "状态 " + current + "→" + target + "；原因：" + reason));
+                                    "状态 "
+                                            + current
+                                            + "→"
+                                            + target
+                                            + (revokedSessions > 0
+                                                    ? "；吊销会话 " + revokedSessions + " 个"
+                                                    : "")
+                                            + "；原因："
+                                            + reason));
                     return new StatusResult(
-                            tenantId,
-                            str(row.get("code")),
-                            current,
-                            target,
-                            sessions.listForTenant(tenantId).size());
+                            tenantId, str(row.get("code")), current, target, onlineAfter);
                 });
     }
 
@@ -202,6 +228,12 @@ public class TenantLifecycleService {
                     List<String> detail = new ArrayList<>(changed);
                     if (!newStatus.equals(currentStatus)) {
                         detail.add(0, "状态 " + currentStatus + "→" + newStatus + "（续期即恢复）");
+                        tenantLookup.evict(str(row.get("code")));
+                        // E05-T03 / PLT-TEN-017：停用中续期恢复，关闭停用时段（停用补偿的推导依据）
+                        if ("DISABLED".equals(currentStatus)) {
+                            suspensions.onRestored(
+                                    tenantId, TenantSuspensionService.RESTORE_RENEWAL);
+                        }
                     }
                     detail.add("原因：" + reason);
                     audit.record(
