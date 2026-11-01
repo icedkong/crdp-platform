@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.crdp.framework.tenant.TenantContext;
+import com.crdp.server.AuditTableMaintenance;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -45,7 +46,8 @@ class OrgManagementIT {
                     () -> {
                         jdbc.update("DELETE FROM sys_dept WHERE code LIKE 'IT-D-%'");
                         jdbc.update("DELETE FROM sys_org WHERE code LIKE 'IT-ORG-%'");
-                        jdbc.update(
+                        AuditTableMaintenance.delete(
+                                jdbc,
                                 "DELETE FROM aud_log WHERE event_type IN"
                                         + " ('ORG_CREATE','ORG_UPDATE','ORG_STATUS','DEPT_CREATE','DEPT_UPDATE','DEPT_STATUS')");
                     });

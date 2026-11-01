@@ -115,7 +115,13 @@ class TenantOnboardingServiceMySqlIT {
                         new com.crdp.platform.module.ModuleRegistry(),
                         routing,
                         new TenantSchemaMigrator(new MockEnvironment(), new CryptoProperties()),
-                        new com.crdp.framework.audit.JdbcAuditLogger(new JdbcTemplate(routing)),
+                        new com.crdp.framework.audit.JdbcAuditLogger(
+                                new JdbcTemplate(routing),
+                                new com.crdp.framework.audit.AuditChainWriter(
+                                        new JdbcTemplate(routing),
+                                        new com.crdp.framework.crypto.Sha256DigestService(),
+                                        new org.springframework.jdbc.datasource
+                                                .DataSourceTransactionManager(routing))),
                         null,
                         null,
                         new com.crdp.server.platform.RoleTemplateService(
@@ -187,11 +193,12 @@ class TenantOnboardingServiceMySqlIT {
                 // E06-T10 增加 V13（租户字典 / 参数覆盖表 + 参数、字典按钮授权）；
                 // E06-T03 增加 V14（sys_outbox 事务外发箱）；
                 // E08-T01 增加 V15（审计规格字段：aud_log / aud_login_log 扩展列 + aud_data_access_log）；
-                // E07-T06 增加 V16（角色字段策略覆盖表 sys_role_field_policy）。
+                // E07-T06 增加 V16（角色字段策略覆盖表 sys_role_field_policy）；
+                // E08-T02 增加 V17（审计哈希链链头表 + 只读触发器）。
                 // 此处随迁移清单维护
                 List.of(
                         "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14",
-                        "15", "16"),
+                        "15", "16", "17"),
                 root.queryForList(
                         "SELECT version FROM "
                                 + DB

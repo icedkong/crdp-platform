@@ -94,8 +94,10 @@ class PlatformControlPlaneLifecycleMySqlIT {
             root.execute("DROP DATABASE IF EXISTS t_" + code);
             root.execute("DROP USER IF EXISTS `t_" + code + "`@'%'");
             // 模块审计的 target 是 plt_tenant:{code}:{module}，一并按前缀清掉
-            platform.update(
-                    "DELETE FROM plt_audit_log WHERE target LIKE ?", "plt_tenant:" + code + "%");
+            AuditTableMaintenance.delete(
+                    platform,
+                    "DELETE FROM plt_audit_log WHERE target LIKE ?",
+                    "plt_tenant:" + code + "%");
             List<Long> ids =
                     platform.queryForList(
                             "SELECT id FROM plt_tenant WHERE code = ?", Long.class, code);

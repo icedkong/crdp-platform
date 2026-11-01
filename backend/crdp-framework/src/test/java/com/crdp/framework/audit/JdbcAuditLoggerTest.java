@@ -28,10 +28,14 @@ import org.springframework.security.core.context.SecurityContextHolder;
 /**
  * E08-T01 / PLT-AUD-001~004：审计写入组件。四类日志（操作、登录、数据访问、平台访问）按规格字段写入对应的
  * 只追加表；敏感与关键事件写失败整体失败（50000），普通操作失败只告警不回滚；入库前自动补全操作者与请求上下文。
+ *
+ * <p>E08-T02 起插入经 {@link AuditChainWriter} 封存（prev_hash / hash）；本测试用桩替身捕获「表 + SQL + 参数」， 封存计算本身见
+ * {@link AuditChainWriterTest}。
  */
 class JdbcAuditLoggerTest {
 
     private final JdbcTemplate jdbc = mock(JdbcTemplate.class);
+    private final AuditChainWriter chain = mock(AuditChainWriter.class);
     private final List<String> sqls = new ArrayList<>();
     private final List<List<Object>> argRows = new ArrayList<>();
     private JdbcAuditLogger logger;
@@ -40,17 +44,13 @@ class JdbcAuditLoggerTest {
     void setUp() {
         doAnswer(
                         invocation -> {
-                            sqls.add((String) invocation.getArgument(0));
-                            List<Object> args = new ArrayList<>();
-                            for (int i = 1; i < invocation.getArguments().length; i++) {
-                                args.add(invocation.getArgument(i));
-                            }
-                            argRows.add(args);
-                            return 1;
+                            sqls.add((String) invocation.getArgument(1));
+                            argRows.add(new ArrayList<>(invocation.getArgument(2)));
+                            return 1L;
                         })
-                .when(jdbc)
-                .update(anyString(), any(Object[].class));
-        logger = new JdbcAuditLogger(jdbc);
+                .when(chain)
+                .insert(any(), anyString(), any());
+        logger = new JdbcAuditLogger(jdbc, chain);
         SessionPrincipal principal =
                 new SessionPrincipal(
                         "token-1",
@@ -121,12 +121,12 @@ class JdbcAuditLoggerTest {
     void operationWriteFailureIsWarnedButNotThrown() {
         TenantContext.useTenant(7L, "demoa");
         doThrow(new BadSqlGrammarException("audit", "INSERT", null))
-                .when(jdbc)
-                .update(anyString(), any(Object[].class));
+                .when(chain)
+                .insert(any(), anyString(), any());
         assertThatCode(() -> logger.append(AuditEntry.operation("system", "ROLE_UPDATE").build()))
                 .doesNotThrowAnyException();
         // 失败重试：一次失败后重试一次，两次都失败才放弃（普通操作只告警）
-        verify(jdbc, times(2)).update(anyString(), any(Object[].class));
+        verify(chain, times(2)).insert(any(), anyString(), any());
     }
 
     // ---------------------------------------------------------------- 登录日志（PLT-AUD-002）
@@ -182,8 +182,8 @@ class JdbcAuditLoggerTest {
     void loginWriteFailureFailsWholeOperation() {
         TenantContext.useTenant(7L, "demoa");
         doThrow(new BadSqlGrammarException("audit", "INSERT", null))
-                .when(jdbc)
-                .update(anyString(), any(Object[].class));
+                .when(chain)
+                .insert(any(), anyString(), any());
         assertThatThrownBy(() -> logger.append(AuditEntry.login("doctor.demo").success().build()))
                 .isInstanceOf(ApiException.class)
                 .satisfies(ex -> assertThat(((ApiException) ex).code()).isEqualTo(50000));
@@ -213,8 +213,8 @@ class JdbcAuditLoggerTest {
     void dataAccessWriteFailureFailsWholeOperation() {
         TenantContext.useTenant(7L, "demoa");
         doThrow(new BadSqlGrammarException("audit", "INSERT", null))
-                .when(jdbc)
-                .update(anyString(), any(Object[].class));
+                .when(chain)
+                .insert(any(), anyString(), any());
         assertThatThrownBy(() -> logger.append(AuditEntry.dataAccess("patient", "EXPORT").build()))
                 .isInstanceOf(ApiException.class);
     }
@@ -241,8 +241,8 @@ class JdbcAuditLoggerTest {
     void platformAccessWriteFailureFailsWholeOperation() {
         TenantContext.usePlatform();
         doThrow(new BadSqlGrammarException("audit", "INSERT", null))
-                .when(jdbc)
-                .update(anyString(), any(Object[].class));
+                .when(chain)
+                .insert(any(), anyString(), any());
         assertThatThrownBy(
                         () ->
                                 logger.append(
@@ -341,9 +341,11 @@ class JdbcAuditLoggerTest {
 
         for (int i = 0; i < sqls.size(); i++) {
             long placeholders = sqls.get(i).chars().filter(ch -> ch == '?').count();
+            // 契约：业务参数 + prev_hash、hash 两个封存参数（由 AuditChainWriter 补齐）
             assertThat(argRows.get(i))
                     .as("第 %d 条插入 %s", i, sqls.get(i))
-                    .hasSize((int) placeholders);
+                    .hasSize((int) placeholders - 2);
+            assertThat(sqls.get(i)).contains("prev_hash").contains("hash");
         }
     }
 }

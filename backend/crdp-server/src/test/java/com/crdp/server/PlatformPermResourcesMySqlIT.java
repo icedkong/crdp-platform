@@ -82,7 +82,8 @@ class PlatformPermResourcesMySqlIT {
                             + " WHERE r.code = 'PLATFORM_MENU_VIEWER_IT'");
             platform.update("DELETE FROM plt_role WHERE code = 'PLATFORM_MENU_VIEWER_IT'");
         }
-        platform.update(
+        AuditTableMaintenance.delete(
+                platform,
                 "DELETE FROM plt_audit_log WHERE event_type IN"
                         + " ('MENU_CREATE', 'MENU_UPDATE', 'MENU_DELETE', 'MENU_SYNC', 'API_UPDATE')");
     }

@@ -76,10 +76,14 @@ class AuditWriteMySqlIT {
         if (platform == null) {
             return;
         }
-        platform.update("DELETE FROM aud_platform_access_log WHERE module = 'it-audit'");
-        platform.update("DELETE FROM aud_login_log WHERE username LIKE 'it-audit%'");
-        platform.update("DELETE FROM plt_audit_log WHERE action = 'IT_AUDIT_PROBE'");
-        platform.update("DELETE FROM plt_audit_log WHERE detail = '状态探针（示例）'");
+        AuditTableMaintenance.delete(
+                platform, "DELETE FROM aud_platform_access_log WHERE module = 'it-audit'");
+        AuditTableMaintenance.delete(
+                platform, "DELETE FROM aud_login_log WHERE username LIKE 'it-audit%'");
+        AuditTableMaintenance.delete(
+                platform, "DELETE FROM plt_audit_log WHERE action = 'IT_AUDIT_PROBE'");
+        AuditTableMaintenance.delete(
+                platform, "DELETE FROM plt_audit_log WHERE detail = '状态探针（示例）'");
     }
 
     @BeforeEach
@@ -92,12 +96,17 @@ class AuditWriteMySqlIT {
         runInTenant(
                 TENANT,
                 () -> {
-                    jdbc.update(
-                            "DELETE FROM aud_login_log WHERE username IN (?, ?)", ADMIN, VIEWER);
-                    jdbc.update(
+                    AuditTableMaintenance.delete(
+                            jdbc,
+                            "DELETE FROM aud_login_log WHERE username IN (?, ?)",
+                            ADMIN,
+                            VIEWER);
+                    AuditTableMaintenance.delete(
+                            jdbc,
                             "DELETE FROM aud_log WHERE action = 'ACCESS_DENIED'"
                                     + " OR action = 'IT_AUDIT_PROBE' OR module = 'it-audit'");
-                    jdbc.update("DELETE FROM aud_data_access_log WHERE module = 'it-audit'");
+                    AuditTableMaintenance.delete(
+                            jdbc, "DELETE FROM aud_data_access_log WHERE module = 'it-audit'");
                 });
     }
 

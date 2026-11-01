@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.crdp.framework.crypto.CryptoService;
 import com.crdp.framework.notify.SmsCodeSender;
+import com.crdp.server.AuditTableMaintenance;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -111,8 +112,10 @@ class AuthSecurityHardeningIT {
                                     + " (SELECT id FROM sys_user WHERE username = ?)",
                             BRUTE_USER);
                     jdbc.update("DELETE FROM sys_user WHERE username = ?", BRUTE_USER);
-                    jdbc.update("DELETE FROM aud_login_log WHERE username = ?", BRUTE_USER);
-                    jdbc.update("DELETE FROM aud_log WHERE target = ?", "sys_user:" + BRUTE_USER);
+                    AuditTableMaintenance.delete(
+                            jdbc, "DELETE FROM aud_login_log WHERE username = ?", BRUTE_USER);
+                    AuditTableMaintenance.delete(
+                            jdbc, "DELETE FROM aud_log WHERE target = ?", "sys_user:" + BRUTE_USER);
                     jdbc.update(
                             "INSERT INTO sys_user (username, display_name, password_hash, status,"
                                     + " must_change_password, phone, phone_idx) VALUES"

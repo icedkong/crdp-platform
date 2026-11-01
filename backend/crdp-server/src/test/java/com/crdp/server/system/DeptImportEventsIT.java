@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.crdp.framework.tenant.TenantContext;
+import com.crdp.server.AuditTableMaintenance;
 import com.crdp.system.org.xlsx.SimpleXlsx;
 import java.io.ByteArrayInputStream;
 import java.util.List;
@@ -82,10 +83,15 @@ class DeptImportEventsIT {
                                         + " WHERE r.code LIKE 'IT-R-IMP%'");
                         jdbc.update("DELETE FROM sys_role WHERE code LIKE 'IT-R-IMP%'");
                         jdbc.update("DELETE FROM sys_outbox");
-                        jdbc.update("DELETE FROM aud_log WHERE target LIKE 'sys_dept:IT-D-IMP%'");
-                        jdbc.update("DELETE FROM aud_log WHERE target LIKE 'sys_user:IT-U-IMP%'");
-                        jdbc.update("DELETE FROM aud_log WHERE target = 'sys_dept:import'");
-                        jdbc.update("DELETE FROM aud_log WHERE target LIKE 'sys_org:IT-ORG-IMP%'");
+                        AuditTableMaintenance.delete(
+                                jdbc, "DELETE FROM aud_log WHERE target LIKE 'sys_dept:IT-D-IMP%'");
+                        AuditTableMaintenance.delete(
+                                jdbc, "DELETE FROM aud_log WHERE target LIKE 'sys_user:IT-U-IMP%'");
+                        AuditTableMaintenance.delete(
+                                jdbc, "DELETE FROM aud_log WHERE target = 'sys_dept:import'");
+                        AuditTableMaintenance.delete(
+                                jdbc,
+                                "DELETE FROM aud_log WHERE target LIKE 'sys_org:IT-ORG-IMP%'");
                     });
         }
     }

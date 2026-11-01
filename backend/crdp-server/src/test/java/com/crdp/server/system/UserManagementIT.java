@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.crdp.framework.tenant.TenantContext;
+import com.crdp.server.AuditTableMaintenance;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
@@ -69,7 +70,8 @@ class UserManagementIT {
                         jdbc.update("DELETE FROM sys_user WHERE username LIKE 'IT-U-%'");
                         jdbc.update("DELETE FROM sys_dept WHERE code LIKE 'IT-D-U'");
                         jdbc.update("DELETE FROM ward WHERE code LIKE 'W-IT-%'");
-                        jdbc.update("DELETE FROM aud_log WHERE target LIKE 'sys_user:IT-U-%'");
+                        AuditTableMaintenance.delete(
+                                jdbc, "DELETE FROM aud_log WHERE target LIKE 'sys_user:IT-U-%'");
                     });
         }
     }
@@ -97,7 +99,8 @@ class UserManagementIT {
                         jdbc.update("DELETE FROM sys_user WHERE username LIKE 'IT-U-%'");
                         jdbc.update("DELETE FROM ward WHERE code LIKE 'W-IT-%'");
                         jdbc.update("DELETE FROM sys_dept WHERE code LIKE 'IT-D-U'");
-                        jdbc.update("DELETE FROM aud_log WHERE target LIKE 'sys_user:IT-U-%'");
+                        AuditTableMaintenance.delete(
+                                jdbc, "DELETE FROM aud_log WHERE target LIKE 'sys_user:IT-U-%'");
                     });
         }
     }

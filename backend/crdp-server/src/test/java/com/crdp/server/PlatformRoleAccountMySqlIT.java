@@ -687,7 +687,8 @@ class PlatformRoleAccountMySqlIT {
                         + " (SELECT id FROM plt_role WHERE code = 'OPERATIONS')"
                         + " AND menu_id NOT IN (100, 111, 112, 113)");
         // 审计痕迹（Redis 里的会话与登录计数按前缀在首测 @BeforeEach 清理）
-        platform.update(
+        AuditTableMaintenance.delete(
+                platform,
                 "DELETE FROM plt_audit_log WHERE event_type IN"
                         + " ('ROLE_CREATE', 'ROLE_UPDATE', 'ACCOUNT_CREATE', 'ACCOUNT_UPDATE',"
                         + " 'ACCOUNT_RESET', 'ACCOUNT_UNLOCK')");

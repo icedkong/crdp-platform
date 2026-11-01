@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.crdp.framework.tenant.TenantContext;
+import com.crdp.server.AuditTableMaintenance;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
@@ -86,7 +87,8 @@ class RoleManagementIT {
                                 "DELETE fp FROM sys_role_field_policy fp JOIN sys_role r ON r.id ="
                                         + " fp.role_id WHERE r.code LIKE 'ITR-%'");
                         jdbc.update("DELETE FROM sys_role WHERE code LIKE 'ITR-%'");
-                        jdbc.update("DELETE FROM aud_log WHERE event_type LIKE 'ROLE_%'");
+                        AuditTableMaintenance.delete(
+                                jdbc, "DELETE FROM aud_log WHERE event_type LIKE 'ROLE_%'");
                     });
         }
     }
@@ -126,7 +128,8 @@ class RoleManagementIT {
                                     + " reason = NULL, operator_id = NULL"
                                     + " WHERE tenant_id = 2 AND module_code = 'followup'");
                     platformJdbc.update("DELETE FROM plt_tenant_module_log WHERE tenant_id = 2");
-                    platformJdbc.update(
+                    AuditTableMaintenance.delete(
+                            platformJdbc,
                             "DELETE FROM plt_audit_log WHERE event_type IN"
                                     + " ('MODULE_OPEN', 'MODULE_CLOSE') AND target LIKE '%:demob:%'");
                 });

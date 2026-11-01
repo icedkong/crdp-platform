@@ -83,7 +83,8 @@ class PlatformTenantLifecycleMySqlIT {
         for (String code : createdCodes) {
             root.execute("DROP DATABASE IF EXISTS t_" + code);
             root.execute("DROP USER IF EXISTS `t_" + code + "`@'%'");
-            platform.update("DELETE FROM plt_audit_log WHERE target = ?", "plt_tenant:" + code);
+            AuditTableMaintenance.delete(
+                    platform, "DELETE FROM plt_audit_log WHERE target = ?", "plt_tenant:" + code);
             List<Long> ids =
                     platform.queryForList(
                             "SELECT id FROM plt_tenant WHERE code = ?", Long.class, code);

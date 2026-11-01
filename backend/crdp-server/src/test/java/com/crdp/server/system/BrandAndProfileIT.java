@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.crdp.framework.crypto.CryptoService;
 import com.crdp.framework.notify.SmsCodeSender;
 import com.crdp.framework.tenant.TenantContext;
+import com.crdp.server.AuditTableMaintenance;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -79,7 +80,8 @@ class BrandAndProfileIT {
                     tenant,
                     () -> {
                         jdbc.update("DELETE FROM cfg_brand");
-                        jdbc.update(
+                        AuditTableMaintenance.delete(
+                                jdbc,
                                 "DELETE FROM aud_log WHERE event_type IN"
                                         + " ('BRAND_UPDATE','USER_PROFILE_UPDATE','USER_PHONE_REBIND')");
                         // 恢复种子形态：换绑手机号与改名都会改库，@AfterEach 一并还原，

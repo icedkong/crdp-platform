@@ -76,7 +76,8 @@ class PlatformTenantDirectoryMySqlIT {
                         + " contact_email = NULL, contract_no = NULL, remark = NULL,"
                         + " updated_at = NULL WHERE id = ?",
                 demoaId);
-        platform.update(
+        AuditTableMaintenance.delete(
+                platform,
                 "DELETE FROM plt_audit_log WHERE event_type = 'TENANT_UPDATE' AND target = ?",
                 "plt_tenant:demoa");
         if (viewerCreated) {

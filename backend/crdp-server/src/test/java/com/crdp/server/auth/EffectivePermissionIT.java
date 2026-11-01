@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.crdp.framework.security.ScopeSnapshot;
 import com.crdp.framework.tenant.TenantContext;
+import com.crdp.server.AuditTableMaintenance;
 import com.crdp.system.user.HospitalAccount;
 import com.crdp.system.user.HospitalDirectory;
 import java.util.List;
@@ -73,7 +74,8 @@ class EffectivePermissionIT {
                             "DELETE ur FROM sys_user_role ur JOIN sys_role r ON r.id = ur.role_id"
                                     + " WHERE r.code LIKE 'ITR-%'");
                     jdbc.update("DELETE FROM sys_role WHERE code LIKE 'ITR-%'");
-                    jdbc.update("DELETE FROM aud_log WHERE event_type LIKE 'ROLE_%'");
+                    AuditTableMaintenance.delete(
+                            jdbc, "DELETE FROM aud_log WHERE event_type LIKE 'ROLE_%'");
                 });
         TenantContext.runAsPlatform(
                 () -> {
@@ -81,7 +83,8 @@ class EffectivePermissionIT {
                             "DELETE rm FROM plt_role_menu rm JOIN plt_menu m ON m.id = rm.menu_id"
                                     + " WHERE m.title LIKE 'ITR-%'");
                     jdbc.update("DELETE FROM plt_menu WHERE title LIKE 'ITR-%'");
-                    jdbc.update(
+                    AuditTableMaintenance.delete(
+                            jdbc,
                             "DELETE FROM plt_audit_log WHERE event_type LIKE 'MENU_%'"
                                     + " AND detail LIKE '%ITR%'");
                 });
@@ -107,7 +110,8 @@ class EffectivePermissionIT {
                             "DELETE ur FROM sys_user_role ur JOIN sys_role r ON r.id = ur.role_id"
                                     + " WHERE r.code LIKE 'ITR-%'");
                     jdbc.update("DELETE FROM sys_role WHERE code LIKE 'ITR-%'");
-                    jdbc.update("DELETE FROM aud_log WHERE event_type LIKE 'ROLE_%'");
+                    AuditTableMaintenance.delete(
+                            jdbc, "DELETE FROM aud_log WHERE event_type LIKE 'ROLE_%'");
                 });
         TenantContext.runAsPlatform(
                 () -> {
@@ -115,7 +119,8 @@ class EffectivePermissionIT {
                             "DELETE rm FROM plt_role_menu rm JOIN plt_menu m ON m.id = rm.menu_id"
                                     + " WHERE m.title LIKE 'ITR-%'");
                     jdbc.update("DELETE FROM plt_menu WHERE title LIKE 'ITR-%'");
-                    jdbc.update(
+                    AuditTableMaintenance.delete(
+                            jdbc,
                             "DELETE FROM plt_audit_log WHERE event_type LIKE 'MENU_%'"
                                     + " AND detail LIKE '%ITR%'");
                 });
