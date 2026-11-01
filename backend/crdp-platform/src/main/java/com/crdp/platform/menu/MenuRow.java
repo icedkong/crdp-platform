@@ -16,6 +16,8 @@ public class MenuRow {
     private String icon;
     private Integer sortNo;
     private Integer hidden;
+    private String status;
+    private String source;
 
     public Long getId() {
         return id;
@@ -119,5 +121,21 @@ public class MenuRow {
 
     public void setHidden(Integer hidden) {
         this.hidden = hidden;
+    }
+
+    public String getStatus() {
+        return status;
+    }
+
+    public void setStatus(String status) {
+        this.status = status;
+    }
+
+    public String getSource() {
+        return source;
+    }
+
+    public void setSource(String source) {
+        this.source = source;
     }
 }

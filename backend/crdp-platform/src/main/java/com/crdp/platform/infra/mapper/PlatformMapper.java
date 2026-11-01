@@ -1,10 +1,13 @@
 package com.crdp.platform.infra.mapper;
 
+import com.crdp.platform.apires.ApiResourceRow;
 import com.crdp.platform.menu.MenuRow;
 import com.crdp.platform.tenant.TenantRecord;
 import java.util.List;
+import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Options;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
@@ -118,4 +121,183 @@ public interface PlatformMapper {
             "INSERT INTO plt_password_history (account_id, password_hash) VALUES (#{accountId}, #{passwordHash})")
     int insertAccountPasswordHistory(
             @Param("accountId") long accountId, @Param("passwordHash") String passwordHash);
+
+    // ---- E05-T06 / PLT-PERM-001..004、011：全局菜单树、接口资源登记与清单同步 ----
+
+    /** 菜单管理树（含按钮、含停用行；软删行不返回）。 */
+    @Select(
+            """
+            SELECT id, parent_id, side, type, module_code, title, route_name, path, component,
+                   perm_code, icon, sort_no, hidden, status, source
+            FROM plt_menu
+            WHERE side = #{side} AND status <> 'DELETED'
+            ORDER BY sort_no ASC, id ASC
+            """)
+    List<MenuRow> listAllMenus(@Param("side") String side);
+
+    @Select(
+            """
+            SELECT id, parent_id, side, type, module_code, title, route_name, path, component,
+                   perm_code, icon, sort_no, hidden, status, source
+            FROM plt_menu WHERE id = #{id}
+            """)
+    MenuRow findMenu(@Param("id") long id);
+
+    @Insert(
+            """
+            INSERT INTO plt_menu
+              (parent_id, side, type, module_code, title, route_name, path, component,
+               perm_code, icon, sort_no, hidden, status, source)
+            VALUES (#{parentId}, #{side}, #{type}, #{moduleCode}, #{title}, #{routeName}, #{path},
+                    #{component}, #{permCode}, #{icon}, #{sortNo}, #{hidden}, #{status}, #{source})
+            """)
+    @Options(useGeneratedKeys = true, keyProperty = "id")
+    int insertMenu(MenuRow row);
+
+    @Update(
+            """
+            UPDATE plt_menu
+            SET title = #{title}, icon = #{icon}, sort_no = #{sortNo}, hidden = #{hidden},
+                route_name = #{routeName}, path = #{path}, component = #{component},
+                status = #{status}
+            WHERE id = #{id}
+            """)
+    int updateMenu(MenuRow row);
+
+    /** 软删除（PLT-PERM-001）：status 置 DELETED，行保留供审计追溯。 */
+    @Update("UPDATE plt_menu SET status = 'DELETED' WHERE id = #{id}")
+    int softDeleteMenu(@Param("id") long id);
+
+    /** 权限码占用计数：软删行仍持有 uk_plt_menu_perm 唯一键，须一并计入（复活走清单同步或重新启用）。 */
+    @Select(
+            """
+            SELECT COUNT(*) FROM plt_menu
+            WHERE side = #{side} AND perm_code = #{permCode}
+              AND id <> #{excludeId}
+            """)
+    int countMenuByPermCode(
+            @Param("side") String side,
+            @Param("permCode") String permCode,
+            @Param("excludeId") long excludeId);
+
+    @Select(
+            """
+            SELECT COUNT(*) FROM plt_menu
+            WHERE side = #{side} AND route_name = #{routeName} AND status <> 'DELETED'
+              AND id <> #{excludeId}
+            """)
+    int countMenuByRouteName(
+            @Param("side") String side,
+            @Param("routeName") String routeName,
+            @Param("excludeId") long excludeId);
+
+    @Select(
+            """
+            SELECT COUNT(*) FROM plt_menu
+            WHERE parent_id = #{id} AND status <> 'DELETED'
+            """)
+    int countChildMenus(@Param("id") long id);
+
+    /** 清单同步：某模块某端的清单来源行（含已下线，供差异比对）。 */
+    @Select(
+            """
+            SELECT id, parent_id, side, type, module_code, title, route_name, path, component,
+                   perm_code, icon, sort_no, hidden, status, source
+            FROM plt_menu
+            WHERE module_code = #{moduleCode} AND side = #{side} AND source = 'MANIFEST'
+            ORDER BY sort_no ASC, id ASC
+            """)
+    List<MenuRow> listManifestMenus(
+            @Param("moduleCode") String moduleCode, @Param("side") String side);
+
+    @Select(
+            """
+            SELECT id FROM plt_menu
+            WHERE side = #{side} AND route_name = #{routeName} AND status <> 'DELETED'
+            """)
+    Long findMenuIdByRouteName(@Param("side") String side, @Param("routeName") String routeName);
+
+    @Delete("DELETE FROM plt_role_menu WHERE menu_id = #{menuId}")
+    int deleteRoleMenuGrants(@Param("menuId") long menuId);
+
+    /** 菜单删除 / 停用后受影响的平台账号（权限版本递增用）。 */
+    @Select(
+            """
+            SELECT DISTINCT ar.account_id
+            FROM plt_role_menu rm
+            JOIN plt_account_role ar ON ar.role_id = rm.role_id
+            WHERE rm.menu_id = #{menuId}
+            """)
+    List<Long> accountIdsGrantedMenu(@Param("menuId") long menuId);
+
+    // ---- 接口资源（PLT-PERM-004）----
+
+    /** 平台库已登记模块编码（接口资源登记推导模块用）。 */
+    @Select("SELECT code FROM plt_module")
+    List<String> listModuleCodes();
+
+    @Select(
+            """
+            SELECT id, http_method, path_pattern, perm_code, module_code, public_access,
+                   audit_level, sensitive_level, action_type, source, synced_at
+            FROM plt_api_resource
+            ORDER BY module_code ASC, path_pattern ASC, http_method ASC
+            """)
+    List<ApiResourceRow> listApiResources();
+
+    @Select(
+            """
+            SELECT id, http_method, path_pattern, perm_code, module_code, public_access,
+                   audit_level, sensitive_level, action_type, source, synced_at
+            FROM plt_api_resource
+            WHERE http_method = #{httpMethod} AND path_pattern = #{pathPattern}
+            """)
+    ApiResourceRow findApiResource(
+            @Param("httpMethod") String httpMethod, @Param("pathPattern") String pathPattern);
+
+    @Select(
+            """
+            SELECT id, http_method, path_pattern, perm_code, module_code, public_access,
+                   audit_level, sensitive_level, action_type, source, synced_at
+            FROM plt_api_resource WHERE id = #{id}
+            """)
+    ApiResourceRow findApiResourceById(@Param("id") long id);
+
+    @Insert(
+            """
+            INSERT INTO plt_api_resource
+              (http_method, path_pattern, perm_code, module_code, public_access, audit_level,
+               sensitive_level, action_type, source, synced_at)
+            VALUES (#{httpMethod}, #{pathPattern}, #{permCode}, #{moduleCode}, #{publicAccess},
+                    #{auditLevel}, #{sensitiveLevel}, #{actionType}, #{source},
+                    CURRENT_TIMESTAMP(3))
+            """)
+    @Options(useGeneratedKeys = true, keyProperty = "id")
+    int insertApiResource(ApiResourceRow row);
+
+    /** 启动同步只写代码声明的列（权限码 / 模块 / 公共标记）；平台端标记的审计级别、敏感级别、动作类型不覆盖。 */
+    @Update(
+            """
+            UPDATE plt_api_resource
+            SET perm_code = #{permCode}, module_code = #{moduleCode},
+                public_access = #{publicAccess}, synced_at = CURRENT_TIMESTAMP(3)
+            WHERE id = #{id}
+            """)
+    int updateApiResourceRegistration(ApiResourceRow row);
+
+    @Update(
+            """
+            UPDATE plt_api_resource
+            SET perm_code = #{permCode}, public_access = #{publicAccess},
+                audit_level = #{auditLevel}, sensitive_level = #{sensitiveLevel},
+                action_type = #{actionType}, source = 'MANUAL', synced_at = CURRENT_TIMESTAMP(3)
+            WHERE id = #{id}
+            """)
+    int updateApiResourceMarks(ApiResourceRow row);
+
+    @Update("UPDATE plt_api_resource SET synced_at = CURRENT_TIMESTAMP(3) WHERE id = #{id}")
+    int touchApiResource(@Param("id") long id);
+
+    @Delete("DELETE FROM plt_api_resource WHERE id = #{id} AND source = 'SCAN'")
+    int deleteScannedApiResource(@Param("id") long id);
 }
