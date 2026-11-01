@@ -18,7 +18,8 @@ public class DataScopeAspect {
             "@annotation(com.crdp.framework.datascope.DataScope)"
                     + " || @within(com.crdp.framework.datascope.DataScope)")
     public Object open(ProceedingJoinPoint joinPoint) throws Throwable {
-        DataScopeContext.set(CurrentSession.require().scope());
+        var principal = CurrentSession.require();
+        DataScopeContext.set(principal.scope(), principal.userId());
         try {
             return joinPoint.proceed();
         } finally {

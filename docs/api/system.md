@@ -45,7 +45,7 @@ E06-T02 已实现（院区与科室树；病区字典属 `crdp-followup`，科�
 | POST | `/api/hospital/system/users/import` | `tenant:user:import` | 批量导入（PLT-ORG-007）——**随 E06-T08 落地** |
 | GET | `/api/hospital/system/users/options?keyword=&deptId=` | 登录（@PublicApi） | **已实现（E06-T09 / PLT-ORG-012）**。用户选择器：本院启用用户，`[{ id, username, displayName, deptName }]`（不含手机号等敏感字段；账号与科室名用于同名人区分）；keyword 命中账号 / 姓名 / 工号，deptId 命中主科室或负责科室，最多 50 条按姓名排序；原 §1 `/orgs/user-options`（暂行，tenant:org:view）已移除（未登记 40307），科室负责人与角色成员选择器均改走本接口 |
 
-用户状态取值 `ENABLED / DISABLED / RESIGNED`（「锁定」是登录侧 Redis 计数的瞬时态，不落 `sys_user.status`，列表不展示，解锁按钮常显）。`sys_user` 新增 `staff_no`、`main_dept_id`（租户库 V12）；负责病区 `sys_user_ward` 与负责科室 `sys_user_dept_scope` 沿用 V1 表，按用户全量覆盖。兼职科室、岗位 / 职称、账号有效期分别随字典（E06-T10）与数据范围生效计算（E07-T02）落地；离职转办事件随 E06-T03。
+用户状态取值 `ENABLED / DISABLED / RESIGNED`（「锁定」是登录侧 Redis 计数的瞬时态，不落 `sys_user.status`，列表不展示，解锁按钮常显）。`sys_user` 新增 `staff_no`、`main_dept_id`（租户库 V12）；负责病区 `sys_user_ward` 与负责科室 `sys_user_dept_scope` 沿用 V1 表，按用户全量覆盖。七种数据范围类型的生效计算已由 E07-T02 落地（主科室 / 负责病区 / 负责科室 / 角色自定义科室并集进会话快照，见 `docs/api/README.md` §2.5）；兼职科室、岗位 / 职称、账号有效期仍未落地（随字典与后续任务）；离职转办事件随 E06-T03。
 
 ## 3. 角色与数据范围（PLT-ORG-004/005、PLT-ROLE-004/005、PLT-PERM-007..009、A-WARD-003、C-WARD-004；E06-T05 已实现）
 
@@ -58,7 +58,7 @@ E06-T02 已实现（院区与科室树；病区字典属 `crdp-followup`，科�
 | POST | `/api/hospital/system/roles/{id}/copy` | `tenant:role:edit` | 复制自定义角色：菜单、数据范围与自定义科室一并复制，写 `ROLE_COPY` 审计 |
 | POST | `/api/hospital/system/roles/{id}/status` | `tenant:role:edit` | 停用 / 启用（`action=ENABLE|DISABLE`，reason ≤200）；内置与模板 40901 |
 | GET / PUT | `/api/hospital/system/roles/{id}/menus` | `tenant:role:view` / `edit` | 菜单与按钮；**只能选平台授权范围内的项**（超出返回 40001），返回树带 `assignable` 标记；仅自定义角色可改（内置不可修改权限、模板只读 40901） |
-| GET / PUT | `/api/hospital/system/roles/{id}/scope` | `tenant:role:view` / `edit` | 数据范围类型（多选取并集）：`ALL / WARD / RESPONSIBLE_DEPT / RESPONSIBLE_PATIENT / DEPT / SELF / CUSTOM_DEPT`（平台定义七种，与 `HospitalDirectory` 同口径；生效计算在 E07-T02）；`CUSTOM_DEPT` 必须带 `customDeptIds[]`（本院科室，不存在 40400） |
+| GET / PUT | `/api/hospital/system/roles/{id}/scope` | `tenant:role:view` / `edit` | 数据范围类型（多选取并集）：`ALL / WARD / RESPONSIBLE_DEPT / RESPONSIBLE_PATIENT / DEPT / SELF / CUSTOM_DEPT`（平台定义七种，与 `HospitalDirectory` 同口径；生效计算已由 E07-T02 落地：WARD/RESPONSIBLE_DEPT 取用户负责清单、DEPT 取主科室、CUSTOM_DEPT 取本角色科室清单，多角色并集，病区与科室在 SQL 改写中 OR 组合）；`CUSTOM_DEPT` 必须带 `customDeptIds[]`（本院科室，不存在 40400） |
 | GET / PUT | `/api/hospital/system/roles/{id}/members` | `tenant:role:view` / `edit` | 成员（全量覆盖 `userIds[]`）；模板角色不可直接分配（40901，先复制）；不能移除最后一名启用的租户管理员（40901）；加入的用户必须是启用状态 |
 | POST | `/api/hospital/system/roles/from-template` | `tenant:role:edit` | 应用业务角色模板（PLT-ORG-005）：`{ templateId, code, name, description? }` → 复制生成自定义角色（菜单与范围随模板带来） |
 | GET | `/api/hospital/system/roles/{id}/field-policies` | `tenant:role:edit` | 字段策略：`VISIBLE / MASKED / HIDDEN`，不能宽于平台上限（PLT-SCOPE-007）——**随 E07-T04 / T06 落地** |

@@ -5,6 +5,7 @@ import com.crdp.system.infra.mapper.BrandMapper;
 import com.crdp.system.infra.mapper.BrandRow;
 import com.crdp.system.infra.mapper.HospitalMapper;
 import com.crdp.system.infra.mapper.HospitalUserRow;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.stereotype.Component;
@@ -122,16 +123,15 @@ public class HospitalDirectory {
         }
         long userId = row.getId();
         List<String> scopeTypes = mapper.scopeTypes(userId);
-        boolean all = scopeTypes.stream().anyMatch("ALL"::equals);
         ScopeSnapshot scope =
-                all
-                        ? ScopeSnapshot.allowAll()
-                        : ScopeSnapshot.restricted(
-                                wants(scopeTypes, "WARD") ? mapper.wardIds(userId) : List.of(),
-                                wants(scopeTypes, "DEPT", "CUSTOM_DEPT", "RESPONSIBLE_DEPT")
-                                        ? mapper.deptIds(userId)
-                                        : List.of(),
-                                wants(scopeTypes, "SELF", "RESPONSIBLE_PATIENT"));
+                scopeOf(
+                        scopeTypes,
+                        wants(scopeTypes, "WARD") ? mapper.wardIds(userId) : List.of(),
+                        wants(scopeTypes, "RESPONSIBLE_DEPT") ? mapper.deptIds(userId) : List.of(),
+                        wants(scopeTypes, "DEPT") ? mapper.mainDeptId(userId) : null,
+                        wants(scopeTypes, "CUSTOM_DEPT")
+                                ? mapper.customDeptIds(userId)
+                                : List.of());
         return Optional.of(
                 new HospitalAccount(
                         userId,
@@ -146,6 +146,50 @@ public class HospitalDirectory {
                         mapper.menuIds(userId),
                         List.of(),
                         scope));
+    }
+
+    /**
+     * E07-T02 / PLT-PERM-007：七种范围类型 → 会话快照（多角色类型先由 SQL DISTINCT 并集，这里 归并触发类型的清单）。
+     *
+     * <ul>
+     *   <li>ALL：任一角色即全院（A-WARD-007），不再读清单；
+     *   <li>WARD：本人负责病区清单（sys_user_ward），未分配病区则该分支为空——只有此类型时即空范围，看不到患者；
+     *   <li>DEPT / RESPONSIBLE_DEPT / CUSTOM_DEPT：主科室（sys_user.main_dept_id）∪ 负责科室
+     *       （sys_user_dept_scope）∪ 角色自定义科室（sys_role_scope_dept，多角色并集），去重保序；
+     *   <li>SELF / RESPONSIBLE_PATIENT：本人分支（患者责任医生 / 任务负责人 = 本人，等值条件在改写侧）。
+     * </ul>
+     *
+     * <p>病区与科室在改写侧以 OR 组合（病区字典不挂科室树下，两者无上下级关系）；未触发的类型即使传入 清单也不生效（防御脏数据）。未知类型忽略。
+     *
+     * @param scopeTypes 启用角色的范围类型并集
+     * @param responsibleWardIds 本人负责病区（WARD 触发时）
+     * @param responsibleDeptIds 本人负责科室（RESPONSIBLE_DEPT 触发时）
+     * @param mainDeptId 主科室（DEPT 触发时；未配置为 null）
+     * @param customDeptIds 角色自定义科室（CUSTOM_DEPT 触发时，已跨角色并集）
+     */
+    static ScopeSnapshot scopeOf(
+            List<String> scopeTypes,
+            List<Long> responsibleWardIds,
+            List<Long> responsibleDeptIds,
+            Long mainDeptId,
+            List<Long> customDeptIds) {
+        if (scopeTypes.contains("ALL")) {
+            return ScopeSnapshot.allowAll();
+        }
+        List<Long> wardIds =
+                wants(scopeTypes, "WARD") ? List.copyOf(responsibleWardIds) : List.of();
+        LinkedHashSet<Long> deptIds = new LinkedHashSet<>();
+        if (wants(scopeTypes, "DEPT") && mainDeptId != null) {
+            deptIds.add(mainDeptId);
+        }
+        if (wants(scopeTypes, "RESPONSIBLE_DEPT")) {
+            deptIds.addAll(responsibleDeptIds);
+        }
+        if (wants(scopeTypes, "CUSTOM_DEPT")) {
+            deptIds.addAll(customDeptIds);
+        }
+        return ScopeSnapshot.restricted(
+                wardIds, List.copyOf(deptIds), wants(scopeTypes, "SELF", "RESPONSIBLE_PATIENT"));
     }
 
     private static boolean wants(List<String> types, String... names) {

@@ -16,16 +16,15 @@ import net.sf.jsqlparser.statement.select.SetOperationList;
 
 /**
  * 默认拒绝（AGENTS.md 规则 2、docs/api/README.md §2.5）：无范围上下文抛 {@link
- * DataScopeDeniedException}（40302），空范围追加 {@code AND 1 = 0} 返回空结果而不是报错。
+ * DataScopeDeniedException}（40302），空范围追加 {@code AND 1 = 0} 返回空结果而不是报错（E07-T01）。
  *
- * <p>E07-T01：空范围条件用 JSqlParser 改写进 WHERE 子句（M0 的字符串拼接对没有 WHERE 的 SQL 会产生 非法 SQL）；解析失败时拒绝执行（fail
- * closed），不静默放行。非空受限范围按病区 / 科室 / 本人的 EXISTS 改写属 E07-T02，此处仍只打标记。
+ * <p>E07-T02：非空受限范围交给 {@link RestrictedScopeRewriter} 按病区 / 科室 / 本人（OR）改写，userId 用于「仅本人负责的患者」等值分支。
  */
 public final class DataScopeGuard {
 
     private DataScopeGuard() {}
 
-    public static String enforce(String sql, ScopeSnapshot snapshot, boolean ignored) {
+    public static String enforce(String sql, ScopeSnapshot snapshot, long userId, boolean ignored) {
         if (!ControlledTables.referencedBy(sql)) {
             return sql;
         }
@@ -41,7 +40,7 @@ public final class DataScopeGuard {
         if (snapshot.empty()) {
             return appendDenyAll(sql);
         }
-        return sql + " /* crdp-datascope:restricted */";
+        return RestrictedScopeRewriter.rewrite(sql, snapshot, userId);
     }
 
     private static String appendDenyAll(String sql) {

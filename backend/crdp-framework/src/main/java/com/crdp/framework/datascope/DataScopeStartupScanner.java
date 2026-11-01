@@ -29,8 +29,9 @@ import org.springframework.stereotype.Component;
  * SELECT，其 Mapper 方法或接口层级必须能找到 {@code @DataScope} 或 {@code @IgnoreScope}，否则抛 {@link
  * DataScopeUndeclaredException} 使启动失败。
  *
- * <p>只扫 SELECT：验收口径是“患者类查询”，写路径（INSERT/UPDATE/DELETE）的范围过滤随 E07-T02 起的 条件改写一并处理。MyBatis-Plus
- * 注入语句（selectById 等继承方法）无法在方法级标注，靠接口级注解覆盖。 动态 SQL（&lt;script&gt; / &lt;foreach&gt;）无参数时求不出
+ * <p>只扫 SELECT：验收口径是“患者类查询”，E07-T02 的条件改写也只作用于查询（{@code InnerInterceptor#beforeQuery}
+ * 不挂写路径）；INSERT/UPDATE/DELETE 的范围校验随患者域写用例（M2）另行落地。MyBatis-Plus 注入语句（selectById
+ * 等继承方法）无法在方法级标注，靠接口级注解覆盖。 动态 SQL（&lt;script&gt; / &lt;foreach&gt;）无参数时求不出
  * BoundSql，回退用方法注解的原始文本做受控表 匹配（更保守：任意分支的表名都会命中）；原始文本也拿不到（如 XML、@SelectProvider）时按默认拒绝记 违规，不静默放行。
  */
 @Component
