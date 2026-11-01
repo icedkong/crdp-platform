@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.net.URI;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.AfterAll;
@@ -39,7 +40,9 @@ import org.springframework.test.context.ActiveProfiles;
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class PlatformTenantLifecycleMySqlIT {
 
-    private static final LocalDate TODAY = LocalDate.now();
+    // 服务端按北京时间校验「到期日必须晚于当天」（Asia/Shanghai）；CI 在 UTC 16:00–24:00（北京次日凌晨）
+    // 运行时 LocalDate.now() 比 Beijing 慢一天，plusDays(1) 会撞上「等于当天」被 40001 拒绝。
+    private static final LocalDate TODAY = LocalDate.now(ZoneId.of("Asia/Shanghai"));
 
     private JdbcTemplate root;
     private JdbcTemplate platform;
