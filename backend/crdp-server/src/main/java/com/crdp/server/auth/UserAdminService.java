@@ -1,5 +1,6 @@
 package com.crdp.server.auth;
 
+import com.crdp.framework.audit.AuditEntry;
 import com.crdp.framework.audit.AuditEvent;
 import com.crdp.framework.audit.AuditLogger;
 import com.crdp.framework.security.CurrentSession;
@@ -48,6 +49,13 @@ public class UserAdminService {
                         "UPDATE",
                         "sys_user:" + account.username(),
                         "管理员解锁登录锁定"));
+        // PLT-AUD-002「解锁」：账号生命周期事件同时落登录日志（操作者由写入服务补全）
+        auditLogger.append(
+                AuditEntry.login(account.username())
+                        .action("UNLOCK")
+                        .description("管理员解锁登录锁定")
+                        .success()
+                        .build());
         return account.username();
     }
 

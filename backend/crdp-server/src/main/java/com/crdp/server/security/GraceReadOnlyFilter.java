@@ -1,6 +1,8 @@
 package com.crdp.server.security;
 
+import com.crdp.framework.audit.DeniedOperationLogger;
 import com.crdp.framework.security.SessionPrincipal;
+import com.crdp.framework.web.ApiException;
 import com.crdp.platform.tenant.TenantRecord;
 import com.crdp.server.auth.TenantLookupCache;
 import jakarta.servlet.FilterChain;
@@ -40,9 +42,15 @@ public class GraceReadOnlyFilter extends OncePerRequestFilter {
 
     private final TenantLookupCache tenantLookup;
 
-    public GraceReadOnlyFilter(ApiErrorWriter errors, TenantLookupCache tenantLookup) {
+    private final DeniedOperationLogger deniedLogger;
+
+    public GraceReadOnlyFilter(
+            ApiErrorWriter errors,
+            TenantLookupCache tenantLookup,
+            DeniedOperationLogger deniedLogger) {
         this.errors = errors;
         this.tenantLookup = tenantLookup;
+        this.deniedLogger = deniedLogger;
     }
 
     @Override
@@ -51,6 +59,11 @@ public class GraceReadOnlyFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         if (blocked(request)) {
             log.info("宽限期只读拦截 method={} uri={}", request.getMethod(), request.getRequestURI());
+            // E08-T01 / audit.md §1：被拒请求写 result=DENIED 审计（过滤器层不经过全局异常处理器）
+            deniedLogger.onDenied(
+                    new ApiException(403, 40306, "宽限期只读，禁止写入"),
+                    request.getMethod(),
+                    request.getRequestURI());
             errors.write(response, 403, 40306, "宽限期只读，禁止写入，请联系平台续费");
             return;
         }

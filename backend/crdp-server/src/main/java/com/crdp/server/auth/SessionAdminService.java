@@ -1,5 +1,6 @@
 package com.crdp.server.auth;
 
+import com.crdp.framework.audit.AuditEntry;
 import com.crdp.framework.audit.AuditEvent;
 import com.crdp.framework.audit.AuditLogger;
 import com.crdp.framework.security.CurrentSession;
@@ -61,6 +62,15 @@ public class SessionAdminService {
                         "DELETE",
                         "sys_session:" + sessionId,
                         "强制下线：" + target.username()));
+        // PLT-AUD-002「强制下线」：被下线账号的会话生命周期事件落登录日志
+        auditLogger.append(
+                AuditEntry.login(target.username())
+                        .action("KICK")
+                        .description("被管理员强制下线：" + admin.username())
+                        .success()
+                        .userId(target.userId())
+                        .sessionId(target.sessionId())
+                        .build());
         return OnlineSessionView.of(target);
     }
 

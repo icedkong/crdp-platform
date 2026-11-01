@@ -36,6 +36,17 @@ public class TenantIdentifier {
         return normalized.isEmpty() ? null : normalized;
     }
 
+    /** 租户识别方式（PLT-AUD-002 登录日志扩展字段）：SUBDOMAIN 子域名、INPUT 统一登录页输入、null 未识别。 */
+    public String identifyMethod(String host, String bodyTenantCode) {
+        if (codeFromHost(host) != null) {
+            return "SUBDOMAIN";
+        }
+        if (bodyTenantCode != null && !bodyTenantCode.isBlank()) {
+            return "INPUT";
+        }
+        return null;
+    }
+
     /** 从 Host 提取租户编码；不是本平台子域名、前缀不是合法编码时返回 null。 */
     public String codeFromHost(String host) {
         if (baseDomain.isEmpty() || host == null) {

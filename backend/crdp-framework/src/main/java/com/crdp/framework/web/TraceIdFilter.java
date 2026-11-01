@@ -1,5 +1,6 @@
 package com.crdp.framework.web;
 
+import com.crdp.framework.audit.AuditMarkers;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -31,6 +32,8 @@ public class TraceIdFilter extends OncePerRequestFilter {
             filterChain.doFilter(request, response);
         } finally {
             MDC.remove(TraceIds.MDC_KEY);
+            // 请求收尾复位审计 DENIED 标记，防止线程池复用把标记带进下一个请求（E08-T01）
+            AuditMarkers.clearDenied();
         }
     }
 
