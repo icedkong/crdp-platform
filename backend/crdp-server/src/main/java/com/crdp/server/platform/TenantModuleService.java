@@ -243,7 +243,8 @@ public class TenantModuleService {
                         } else if (!routing.hasTenant(tenantId)) {
                             throw new ApiException(409, 40901, "租户库未注册路由，无法执行模块迁移，请先完成租户开通");
                         }
-                        // 第 3 步：模块菜单与按钮进入租户授权范围（授予租户管理员；授权范围模板上限是 E05-T07）
+                        // 第 3 步：模块菜单与按钮进入租户授权范围（可分配默认取模块模板，E05-T07；
+                        // TENANT_ADMIN 直授保留为兜底，OQ-46 ①）
                         int grantedMenus =
                                 grantModuleMenusToTenantAdmin(tenantId, tenant, moduleCode);
                         // 第 4 步：初始化模块配置默认值（已有覆盖值不覆盖）；业务角色模板随 E06 落地

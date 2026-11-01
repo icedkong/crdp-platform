@@ -29,6 +29,7 @@ import com.crdp.platform.infra.mapper.PlatformAccountRow;
 import com.crdp.platform.infra.mapper.PlatformMapper;
 import com.crdp.platform.menu.MenuRow;
 import com.crdp.platform.tenant.TenantRecord;
+import com.crdp.server.platform.TenantScopeService;
 import com.crdp.system.user.HospitalAccount;
 import com.crdp.system.user.HospitalDirectory;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -83,6 +84,7 @@ class AuthServiceTest {
     private final CaptchaStore captchaStore = mock(CaptchaStore.class);
     private final java.util.Map<String, String> sentCodes = new java.util.HashMap<>();
     private final SmsCodeSender smsCodeSender = mock(SmsCodeSender.class);
+    private final TenantScopeService scopeService = mock(TenantScopeService.class);
 
     private SessionStore sessionStore;
     private SecurityProperties properties;
@@ -210,7 +212,8 @@ class AuthServiceTest {
                         cryptoService,
                         properties,
                         captchaStore,
-                        new com.crdp.framework.security.PermissionVersionStore(redis));
+                        new com.crdp.framework.security.PermissionVersionStore(redis),
+                        scopeService);
 
         when(tenantLookup.findByCode(TENANT_CODE))
                 .thenReturn(
@@ -219,6 +222,9 @@ class AuthServiceTest {
                                         TENANT_ID, TENANT_CODE, "虚构示例医院甲", "ENABLED", false)));
         when(routing.hasTenant(TENANT_ID)).thenReturn(true);
         when(platformMapper.openedModules(TENANT_ID)).thenReturn(List.of("base"));
+        // E05-T07 / PLT-SCOPE：可分配范围交集（登录草稿会用；按需在用例里改写返回值）
+        when(scopeService.assignableMenuIds(TENANT_ID))
+                .thenAnswer(inv -> new java.util.HashSet<>(java.util.List.of(10L, 21L)));
         when(platformMapper.listMenus("HOSPITAL")).thenReturn(List.of());
         when(hospitalDirectory.find(USERNAME)).thenReturn(Optional.of(account("ENABLED", HASH)));
         when(passwordEncoder.matches(RIGHT_PASSWORD, HASH)).thenReturn(true);
