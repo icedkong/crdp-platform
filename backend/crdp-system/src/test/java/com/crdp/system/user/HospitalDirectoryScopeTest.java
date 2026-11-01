@@ -15,6 +15,9 @@ import org.junit.jupiter.api.Test;
  * <p>口径：多角色范围类型先并集（角色类型行由 SQL DISTINCT），快照再把触发的清单 并起来——病区取本人负责病区（WARD），科室取 主科室（DEPT）∪
  * 负责科室（RESPONSIBLE_DEPT）∪ 角色自定义科室清单（CUSTOM_DEPT， 多角色再次并集），本人取 SELF ∪ RESPONSIBLE_PATIENT；任一角色 ALL
  * 即全院（A-WARD-007）。病区与科室之间是 OR（改写侧），未触发 的类型即使表里有行也不生效。
+ *
+ * <p>E07-T03 / PLT-PERM-008：RESEARCH_PROJECT（研究项目）类型经扩展点取「用户作为成员的研究项目」 清单（规则由 rct
+ * 模块实现，此处按传入清单归并——扩展点装配与空实现见 HospitalDirectoryResearchProjectTest）。
  */
 class HospitalDirectoryScopeTest {
 
@@ -22,7 +25,12 @@ class HospitalDirectoryScopeTest {
     void allWinsOverEverythingElse() {
         ScopeSnapshot scope =
                 HospitalDirectory.scopeOf(
-                        List.of("WARD", "ALL"), List.of(1L), List.of(2L), 3L, List.of(4L));
+                        List.of("WARD", "ALL"),
+                        List.of(1L),
+                        List.of(2L),
+                        3L,
+                        List.of(4L),
+                        List.of());
         assertTrue(scope.all());
         assertFalse(scope.empty());
     }
@@ -31,7 +39,7 @@ class HospitalDirectoryScopeTest {
     void wardScopeTakesResponsibleWardsOnly() {
         ScopeSnapshot scope =
                 HospitalDirectory.scopeOf(
-                        List.of("WARD"), List.of(1L, 2L), List.of(9L), 8L, List.of(7L));
+                        List.of("WARD"), List.of(1L, 2L), List.of(9L), 8L, List.of(7L), List.of());
         assertFalse(scope.all());
         assertEquals(List.of(1L, 2L), scope.wardIds());
         assertTrue(scope.deptIds().isEmpty(), "未触发科室类型时科室清单不生效");
@@ -41,7 +49,8 @@ class HospitalDirectoryScopeTest {
     @Test
     void deptScopeTakesMainDept() {
         ScopeSnapshot scope =
-                HospitalDirectory.scopeOf(List.of("DEPT"), List.of(), List.of(9L), 8L, List.of(7L));
+                HospitalDirectory.scopeOf(
+                        List.of("DEPT"), List.of(), List.of(9L), 8L, List.of(7L), List.of());
         assertEquals(List.of(8L), scope.deptIds());
         assertTrue(scope.wardIds().isEmpty());
     }
@@ -50,7 +59,12 @@ class HospitalDirectoryScopeTest {
     void responsibleDeptScopeTakesUserResponsibleDepts() {
         ScopeSnapshot scope =
                 HospitalDirectory.scopeOf(
-                        List.of("RESPONSIBLE_DEPT"), List.of(), List.of(9L, 10L), 8L, List.of(7L));
+                        List.of("RESPONSIBLE_DEPT"),
+                        List.of(),
+                        List.of(9L, 10L),
+                        8L,
+                        List.of(7L),
+                        List.of());
         assertEquals(List.of(9L, 10L), scope.deptIds());
     }
 
@@ -58,7 +72,12 @@ class HospitalDirectoryScopeTest {
     void customDeptScopeTakesRoleCustomDepts() {
         ScopeSnapshot scope =
                 HospitalDirectory.scopeOf(
-                        List.of("CUSTOM_DEPT"), List.of(), List.of(9L), 8L, List.of(7L, 6L));
+                        List.of("CUSTOM_DEPT"),
+                        List.of(),
+                        List.of(9L),
+                        8L,
+                        List.of(7L, 6L),
+                        List.of());
         assertEquals(List.of(7L, 6L), scope.deptIds());
     }
 
@@ -70,14 +89,16 @@ class HospitalDirectoryScopeTest {
                         List.of(),
                         List.of(9L, 8L),
                         8L,
-                        List.of(7L, 9L));
+                        List.of(7L, 9L),
+                        List.of());
         assertEquals(List.of(8L, 9L, 7L), scope.deptIds(), "主科室在前，负责科室与自定义科室并集去重");
     }
 
     @Test
     void missingMainDeptContributesNothing() {
         ScopeSnapshot scope =
-                HospitalDirectory.scopeOf(List.of("DEPT"), List.of(), List.of(), null, List.of());
+                HospitalDirectory.scopeOf(
+                        List.of("DEPT"), List.of(), List.of(), null, List.of(), List.of());
         assertTrue(scope.deptIds().isEmpty());
         assertTrue(scope.empty(), "只剩一个空科室分支 → 空范围，看不到任何患者");
     }
@@ -85,7 +106,8 @@ class HospitalDirectoryScopeTest {
     @Test
     void selfBranchCoversSelfAndResponsiblePatient() {
         assertTrue(
-                HospitalDirectory.scopeOf(List.of("SELF"), List.of(), List.of(), null, List.of())
+                HospitalDirectory.scopeOf(
+                                List.of("SELF"), List.of(), List.of(), null, List.of(), List.of())
                         .self());
         assertTrue(
                 HospitalDirectory.scopeOf(
@@ -93,10 +115,12 @@ class HospitalDirectoryScopeTest {
                                 List.of(),
                                 List.of(),
                                 null,
+                                List.of(),
                                 List.of())
                         .self());
         assertFalse(
-                HospitalDirectory.scopeOf(List.of("WARD"), List.of(), List.of(), null, List.of())
+                HospitalDirectory.scopeOf(
+                                List.of("WARD"), List.of(), List.of(), null, List.of(), List.of())
                         .self());
     }
 
@@ -109,6 +133,7 @@ class HospitalDirectoryScopeTest {
                         List.of(),
                         List.of(),
                         null,
+                        List.of(),
                         List.of());
         assertFalse(scope.all());
         assertTrue(scope.self(), "仅本人负责的患者分支仍在");
@@ -119,7 +144,8 @@ class HospitalDirectoryScopeTest {
     @Test
     void wardOnlyWithoutAssignedWardsDeniesEverything() {
         ScopeSnapshot scope =
-                HospitalDirectory.scopeOf(List.of("WARD"), List.of(), List.of(), null, List.of());
+                HospitalDirectory.scopeOf(
+                        List.of("WARD"), List.of(), List.of(), null, List.of(), List.of());
         assertFalse(scope.all());
         assertTrue(scope.empty(), "WARD 类型但没有任何负责病区 → 空范围（看不到患者）");
     }
@@ -128,8 +154,74 @@ class HospitalDirectoryScopeTest {
     void unknownTypesAreIgnoredDefensively() {
         ScopeSnapshot scope =
                 HospitalDirectory.scopeOf(
-                        List.of("SOMETHING_NEW"), List.of(1L), List.of(2L), 3L, List.of(4L));
+                        List.of("SOMETHING_NEW"),
+                        List.of(1L),
+                        List.of(2L),
+                        3L,
+                        List.of(4L),
+                        List.of());
         assertFalse(scope.all());
         assertTrue(scope.empty(), "未知范围类型不放开任何清单（防御脏数据）");
+    }
+
+    // ------------------------------------------------ E07-T03：研究项目类型（PLT-PERM-008 扩展点）
+
+    /** RESEARCH_PROJECT 触发时取扩展点返回的成员项目清单，与其他类型并集保留。 */
+    @Test
+    void researchProjectTakesExtensionMemberProjects() {
+        ScopeSnapshot scope =
+                HospitalDirectory.scopeOf(
+                        List.of("RESEARCH_PROJECT"),
+                        List.of(),
+                        List.of(),
+                        null,
+                        List.of(),
+                        List.of(7L, 8L));
+        assertFalse(scope.all());
+        assertEquals(List.of(7L, 8L), scope.projectIds(), "成员项目清单冻结进快照");
+        assertTrue(scope.wardIds().isEmpty());
+        assertTrue(scope.deptIds().isEmpty());
+        assertFalse(scope.self());
+        assertFalse(scope.empty(), "有项目分支就不算空");
+    }
+
+    /** 空实现 / 非成员：项目清单为空且无其他分支 → 空范围，看不到任何患者（默认拒绝口径）。 */
+    @Test
+    void researchProjectWithoutMembershipDeniesEverything() {
+        ScopeSnapshot scope =
+                HospitalDirectory.scopeOf(
+                        List.of("RESEARCH_PROJECT"),
+                        List.of(),
+                        List.of(),
+                        null,
+                        List.of(),
+                        List.of());
+        assertFalse(scope.all());
+        assertTrue(scope.empty(), "没有成员项目 → 空范围（看不到患者）");
+    }
+
+    /** RESEARCH_PROJECT 与病区类型并集：各分支清单都保留（OR 语义在改写侧组合）。 */
+    @Test
+    void researchProjectUnionsWithWard() {
+        ScopeSnapshot scope =
+                HospitalDirectory.scopeOf(
+                        List.of("WARD", "RESEARCH_PROJECT"),
+                        List.of(1L),
+                        List.of(),
+                        null,
+                        List.of(),
+                        List.of(7L));
+        assertEquals(List.of(1L), scope.wardIds());
+        assertEquals(List.of(7L), scope.projectIds());
+        assertFalse(scope.empty());
+    }
+
+    /** 未触发 RESEARCH_PROJECT 时传入的清单不生效（与其他类型的防御口径一致）。 */
+    @Test
+    void untriggeredResearchProjectListIgnored() {
+        ScopeSnapshot scope =
+                HospitalDirectory.scopeOf(
+                        List.of("WARD"), List.of(1L), List.of(), null, List.of(), List.of(7L));
+        assertTrue(scope.projectIds().isEmpty(), "未触发类型即使拿到清单也不生效");
     }
 }

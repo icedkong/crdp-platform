@@ -283,6 +283,20 @@ class RoleAdminServiceTest {
                 customWithoutDept.getMessage().contains("自定义科室"), customWithoutDept.getMessage());
     }
 
+    /** E07-T03 / PLT-PERM-008：RESEARCH_PROJECT 是可分配的范围类型（角色多选取并集）； 项目成员关系经扩展点取数，空实现下该分支不放宽任何数据。 */
+    @Test
+    void researchProjectScopeTypeIsAssignable() {
+        stubRole(CUSTOM_ROLE_ID, "IT_ROLE", "示例角色", RoleAdminService.TYPE_CUSTOM, "ENABLED");
+
+        service.updateScope(CUSTOM_ROLE_ID, new ScopeSave(List.of("RESEARCH_PROJECT"), List.of()));
+
+        verify(jdbc)
+                .update(
+                        eq("INSERT INTO sys_role_scope (role_id, scope_type) VALUES (?, ?)"),
+                        eq(CUSTOM_ROLE_ID),
+                        eq("RESEARCH_PROJECT"));
+    }
+
     @Test
     void customScopeRejectsUnknownDepts() {
         stubRole(CUSTOM_ROLE_ID, "IT_ROLE", "示例角色", RoleAdminService.TYPE_CUSTOM, "ENABLED");

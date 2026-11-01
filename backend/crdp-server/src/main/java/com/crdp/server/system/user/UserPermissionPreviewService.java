@@ -341,9 +341,18 @@ public class UserPermissionPreviewService {
     }
 
     private static final Set<String> KNOWN_SCOPE_TYPES =
-            Set.of(ALL, WARD, "RESPONSIBLE_PATIENT", "SELF", DEPT, CUSTOM_DEPT, RESPONSIBLE_DEPT);
+            Set.of(
+                    ALL,
+                    WARD,
+                    "RESPONSIBLE_PATIENT",
+                    "SELF",
+                    DEPT,
+                    CUSTOM_DEPT,
+                    RESPONSIBLE_DEPT,
+                    // E07-T03 / PLT-PERM-008：研究项目类型进预览类型清单；成员项目清单随 rct 模块落地（空实现下该分支为空）
+                    "RESEARCH_PROJECT");
 
-    /** 防御性校验（数据脏行不进预览，与平台七种范围类型对齐）。 */
+    /** 防御性校验（数据脏行不进预览，与平台范围类型口径对齐：七种 + RESEARCH_PROJECT）。 */
     static boolean knownScopeType(String type) {
         return type != null && KNOWN_SCOPE_TYPES.contains(type);
     }

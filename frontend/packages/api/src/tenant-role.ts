@@ -8,11 +8,15 @@ export type RoleType = 'BUILT_IN' | 'CUSTOM' | 'TEMPLATE';
 
 export type RoleStatus = 'DISABLED' | 'ENABLED';
 
-/** 数据范围类型（七种，平台口径；生效计算在 E07-T02）。 */
+/**
+ * 数据范围类型（七种平台口径，生效计算在 E07-T02；另加研究项目扩展类型，E07-T03 / PLT-PERM-008——
+ * 成员项目经后端扩展点取数，空实现下不放宽任何数据，勾选项随 E07-T06 配置页放开）。
+ */
 export type RoleScopeType =
   | 'ALL'
   | 'CUSTOM_DEPT'
   | 'DEPT'
+  | 'RESEARCH_PROJECT'
   | 'RESPONSIBLE_DEPT'
   | 'RESPONSIBLE_PATIENT'
   | 'SELF'
@@ -115,12 +119,13 @@ export function tenantRoleTypeHint(type: RoleType): string {
   return '自定义角色可编辑、复制、停用';
 }
 
-/** 数据范围类型文案（平台口径七种；PLT-PERM-007）。 */
+/** 数据范围类型文案（平台口径七种 PLT-PERM-007 + 研究项目扩展类型 PLT-PERM-008）。 */
 export function tenantRoleScopeTypeText(type: RoleScopeType): string {
   const texts: Record<RoleScopeType, string> = {
     ALL: '全院（全部病区）',
     CUSTOM_DEPT: '自定义科室',
     DEPT: '本科室',
+    RESEARCH_PROJECT: '研究项目（本人为成员）',
     RESPONSIBLE_DEPT: '本人负责科室',
     RESPONSIBLE_PATIENT: '仅本人负责的患者',
     SELF: '仅本人',

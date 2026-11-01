@@ -91,6 +91,7 @@
 - **启动扫描（E07-T01）**：`DataScopeStartupScanner` 在应用启动阶段遍历全部 MyBatis 语句，访问受控表的 SELECT 未声明 `@DataScope` / `@IgnoreScope` 时启动直接失败（`DataScopeUndeclaredException`），不等运行时才 40302；SQL 无法解析求值时同样拒绝。
 - **受限范围改写（E07-T02）**：非「全部」的受限快照由 `RestrictedScopeRewriter` 用 JSqlParser 改写进 WHERE——患者表直接落 `(ward_id IN (..) OR dept_id IN (..) OR responsible_user_id = 本人)`；子表统一 `EXISTS (SELECT 1 FROM pt_patient crdp_p WHERE crdp_p.id = <别名>.patient_id AND crdp_p.deleted = 0 AND (..同上.. OR fu_task.assignee_id = 本人))`（任务表含负责人分支，A-WARD-003「责任医生或任务负责人为本人的患者」）。病区与科室两分支恒为 OR（病区字典不挂科室树下，医院已确认）。改写覆盖外层、UNION 分支、WITH 项与 FROM/JOIN/WHERE 子查询；覆盖不到的位置（如 SELECT 项标量子查询）拒绝执行，不放行。
 - 快照口径（登录时冻结，多角色取并集，任一角色为 ALL 即不过滤，A-WARD-007）：WARD=本人负责病区（`sys_user_ward`）；DEPT=主科室（`sys_user.main_dept_id`）；RESPONSIBLE_DEPT=本人负责科室（`sys_user_dept_scope`）；CUSTOM_DEPT=角色自定义科室（`sys_role_scope_dept`，跨角色并集）；SELF / RESPONSIBLE_PATIENT=本人分支；只有 WARD 但未分配病区 → 空范围，看不到任何患者（A-WARD-003 边界情况）。
+- **研究项目类型（E07-T03 / PLT-PERM-008）**：`RESEARCH_PROJECT` 为可分配的第 8 种范围类型，按项目成员制控制——底座提供扩展点 `ResearchProjectScopeProvider`（crdp-framework），登录装配快照时取「用户作为成员的研究项目」冻结进 `ScopeSnapshot.projectIds`；项目内角色与「项目 → 可见患者」的 SQL 规则由 rct 模块实现（首期不建，tech-plan「不做」清单）。底座默认注册空实现 `NoopResearchProjectScopeProvider`（恒空清单）：该分支不放宽任何数据，只有此类型的用户为空范围（看不到患者，默认拒绝）；快照带项目清单而改写分支未落地时，改写器拒绝执行（fail closed），不会静默少过滤（OQ-53）。
 - 单条资源不在范围内：返回 **40400**，不返回 40300（不暴露存在性）。
 - 列表、统计、导出、首页卡片使用同一套范围（A-WARD-004、C-WARD-005）。
 - `@IgnoreScope` 只允许用于平台元数据或系统作业，代码评审必须说明理由；标在 Mapper 接口上可覆盖 MyBatis-Plus 注入的继承语句。
