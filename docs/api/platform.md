@@ -124,3 +124,12 @@ PLT-MOD-010/011 为后续规划，不实现。
 
 - `GET /api/platform/dashboard`：租户数、即将到期、开通失败、待复核（推断，待确认）。
 - 平台审计见 `audit.md` §3。
+
+## 9. 测试要点
+
+- 各接口的 正常 / 无权限（40300）/ 校验失败（40001）/ 冲突（40901）已随 E05-T01..T06 的 IT 覆盖（`PlatformTenantDirectoryMySqlIT`、`PlatformTenantLifecycleMySqlIT`、`PlatformTenantExpiryProcessingMySqlIT`、`PlatformModuleRegistryMySqlIT`、`PlatformTenantModuleMySqlIT`）。
+- E05-T12（租户生命周期与模块开通用例，`PlatformControlPlaneLifecycleMySqlIT`，CRDP_IT_MYSQL_PORT 存在时运行）：
+  - **租户生命周期主用例**：一个虚构租户从向导开通（勾选 followup、到期日 +1 天、宽限 2 天）走完 试用 → 转正 → 到期自动转宽限 → 宽限期满自动停用 → 续期恢复 全程；租户管理员的同一医院会话贯穿——宽限期不失效（PLT-TEN-012 停用处理只发生在宽限期满）、自动停用立即 40100（PLT-TEN-016）。
+  - **生命周期 × 模块开通交叉契约**：试用与宽限期可通过 open 端点开通模块（此前仅启用态与向导内开通有用例）；停用 / 开通中 / 注销中 / 已注销一律 40901 且文案含当前状态；停用不拦平台侧 close（被拦的是医院侧访问）；开通记录（PLT-MOD-009）倒序齐全、`TENANT_STATUS` 审计链（人工转正 / 服务到期自动 / 宽限期结束自动各一条）与 `TENANT_EXPIRE`（DISABLED→ENABLED）完整留痕。
+  - **向导与负向**：向导勾选下架模块 40901（半途租户可回收）；未知模块 / 未知租户 40400。
+  - 测试技巧：到期日只允许未来（E05-T02 校验），「已到期」初态直改平台库模拟；租户查找缓存 60 秒正负都缓存，停用后的重新登录不做成功断言；医院名称全平台唯一，多次建租户须逐次取名。
