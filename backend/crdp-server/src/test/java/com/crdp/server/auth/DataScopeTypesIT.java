@@ -182,6 +182,29 @@ class DataScopeTypesIT {
                 "空范围追加恒假条件：看得到零行而不是报错");
     }
 
+    /**
+     * E07-T03 / PLT-PERM-008：RESEARCH_PROJECT 类型可分配并进登录装配；无 rct 模块时扩展点空实现 不返回成员项目 →
+     * 该用户为空范围，患者查询追加恒假条件（与登录同一条取数路径，端到端验证扩展点可用且 fail closed）。
+     */
+    @Test
+    void researchProjectScopeStaysEmptyUntilRctModuleLands() {
+        long roleRct = insertRole("ITR-SCOPE-RCT", "IT 研究项目角色（示例）", "RESEARCH_PROJECT");
+        long researcherId = insertUser("itr.researcher.demo", "IT 研究者用户（示例）", roleRct);
+
+        ScopeSnapshot scope = scopeOf(researcherId);
+        assertFalse(scope.all());
+        assertTrue(scope.projectIds().isEmpty(), "空实现没有成员项目");
+        assertTrue(scope.empty(), "只有研究项目类型且非任何项目成员 → 空范围");
+
+        String rewritten =
+                DataScopeGuard.enforce(
+                        "SELECT id FROM pt_patient WHERE deleted = 0", scope, researcherId, false);
+        assertEquals(
+                "SELECT id FROM pt_patient WHERE deleted = 0 AND 1 = 0",
+                rewritten,
+                "研究项目分支不放宽任何数据（患者可见性随 rct 模块规则落地）");
+    }
+
     // ---------------------------------------------------------------- 基础设施
 
     /** 与登录同一取数路径（HospitalDirectory.findById → assemble），不经过 HTTP 即可断言快照。 */

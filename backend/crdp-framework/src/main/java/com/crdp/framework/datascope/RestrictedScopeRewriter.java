@@ -42,6 +42,9 @@ import net.sf.jsqlparser.statement.select.WithItem;
  *       uid}（A-WARD-003「责任医生或任务负责人为本人的患者」）。
  * </ul>
  *
+ * <p>E07-T03 / PLT-PERM-008：快照的研究项目分支（projectIds，经 {@link ResearchProjectScopeProvider} 冻结）没有
+ * 对应改写规则——规则由 rct 模块实现（首期不建）；带项目清单的快照在此拒绝执行（fail closed），空实现下清单恒为空、行为与 E07-T02 一致。
+ *
  * <p>改写覆盖外层、UNION 各分支、WITH 项、FROM / JOIN 子查询与 WHERE 子查询；受控表若出现在这些位置 之外（如 SELECT 项里的标量子查询），按默认拒绝口径抛
  * {@link IllegalStateException} 拒绝执行，不静默放行（与 E07-T01 解析失败 fail closed 同向）。
  */
@@ -75,6 +78,12 @@ final class RestrictedScopeRewriter {
 
     /** 解析并改写。非 SELECT、解析失败或有改写器覆盖不到的受控表位置时抛 {@link IllegalStateException}。 */
     static String rewrite(String sql, ScopeSnapshot snapshot, long userId) {
+        if (!snapshot.projectIds().isEmpty()) {
+            // E07-T03 / PLT-PERM-008：研究项目分支的 SQL 规则属 rct 模块（首期不建）。扩展点空实现下快照不会带项目清单，
+            // 这里拦截的是「实现方接了扩展点但改写分支未落地」的半接入状态——拒绝执行而不是只放行病区 / 科室分支（fail closed）。
+            throw new IllegalStateException(
+                    "研究项目数据范围（PLT-PERM-008）的 SQL 改写分支由 rct 模块提供，未落地前拒绝执行：" + sql);
+        }
         RestrictedScopeRewriter rewriter = new RestrictedScopeRewriter(snapshot, userId);
         Statement statement;
         try {

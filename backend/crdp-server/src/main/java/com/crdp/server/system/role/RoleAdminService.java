@@ -39,8 +39,10 @@ public class RoleAdminService {
     public static final String TYPE_CUSTOM = "CUSTOM";
 
     /**
-     * 数据范围类型（与 HospitalDirectory 会话装配同一套平台口径，七种）：CUSTOM_DEPT 需在角色上勾选科室清单； WARD / RESPONSIBLE_DEPT
-     * 按「用户负责病区 / 科室」取值（platform-spec §6 关键字段·角色：负责病区、负责科室按用户设置，不在角色上勾选）。
+     * 数据范围类型（与 HospitalDirectory 会话装配同一套平台口径，七种 + 研究项目扩展类型）：CUSTOM_DEPT 需在角色上勾选科室清单； WARD /
+     * RESPONSIBLE_DEPT 按「用户负责病区 / 科室」取值（platform-spec §6 关键字段·角色：负责病区、负责科室按用户设置，不在角色上勾选）。
+     * RESEARCH_PROJECT（E07-T03 / PLT-PERM-008）为研究项目扩展类型：成员项目经 ResearchProjectScopeProvider
+     * 取数（空实现不放宽任何数据）， 项目内规则由 rct 模块实现。
      */
     public static final Set<String> SCOPE_TYPES =
             Set.of(
@@ -50,7 +52,8 @@ public class RoleAdminService {
                     "CUSTOM_DEPT",
                     "RESPONSIBLE_DEPT",
                     "SELF",
-                    "RESPONSIBLE_PATIENT");
+                    "RESPONSIBLE_PATIENT",
+                    "RESEARCH_PROJECT");
 
     public static final String SCOPE_CUSTOM_DEPT = "CUSTOM_DEPT";
 

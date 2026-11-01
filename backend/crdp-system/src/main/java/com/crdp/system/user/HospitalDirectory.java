@@ -1,5 +1,6 @@
 package com.crdp.system.user;
 
+import com.crdp.framework.datascope.ResearchProjectScopeProvider;
 import com.crdp.framework.security.ScopeSnapshot;
 import com.crdp.system.infra.mapper.BrandMapper;
 import com.crdp.system.infra.mapper.BrandRow;
@@ -16,10 +17,15 @@ public class HospitalDirectory {
 
     private final HospitalMapper mapper;
     private final BrandMapper brandMapper;
+    private final ResearchProjectScopeProvider projectScopes;
 
-    public HospitalDirectory(HospitalMapper mapper, BrandMapper brandMapper) {
+    public HospitalDirectory(
+            HospitalMapper mapper,
+            BrandMapper brandMapper,
+            ResearchProjectScopeProvider projectScopes) {
         this.mapper = mapper;
         this.brandMapper = brandMapper;
+        this.projectScopes = projectScopes;
     }
 
     /** 本院个性化配置行（E06-T11 / PLT-CFG-008）；未配置返回 null（各字段回落平台默认）。 */
@@ -129,8 +135,10 @@ public class HospitalDirectory {
                         wants(scopeTypes, "WARD") ? mapper.wardIds(userId) : List.of(),
                         wants(scopeTypes, "RESPONSIBLE_DEPT") ? mapper.deptIds(userId) : List.of(),
                         wants(scopeTypes, "DEPT") ? mapper.mainDeptId(userId) : null,
-                        wants(scopeTypes, "CUSTOM_DEPT")
-                                ? mapper.customDeptIds(userId)
+                        wants(scopeTypes, "CUSTOM_DEPT") ? mapper.customDeptIds(userId) : List.of(),
+                        // E07-T03 / PLT-PERM-008：研究项目成员关系走扩展点（默认空实现，rct 模块落地时替换）
+                        wants(scopeTypes, "RESEARCH_PROJECT")
+                                ? projectScopes.memberProjectIds(userId)
                                 : List.of());
         return Optional.of(
                 new HospitalAccount(
@@ -159,6 +167,9 @@ public class HospitalDirectory {
      *   <li>SELF / RESPONSIBLE_PATIENT：本人分支（患者责任医生 / 任务负责人 = 本人，等值条件在改写侧）。
      * </ul>
      *
+     * <p>E07-T03 / PLT-PERM-008：RESEARCH_PROJECT（研究项目）取扩展点返回的成员项目清单进快照（projectIds）； rct
+     * 模块未落地时空实现返回空——只有此类型即空范围，看不到患者（默认拒绝）。项目分支的 SQL 改写随 rct 模块提供。
+     *
      * <p>病区与科室在改写侧以 OR 组合（病区字典不挂科室树下，两者无上下级关系）；未触发的类型即使传入 清单也不生效（防御脏数据）。未知类型忽略。
      *
      * @param scopeTypes 启用角色的范围类型并集
@@ -166,13 +177,15 @@ public class HospitalDirectory {
      * @param responsibleDeptIds 本人负责科室（RESPONSIBLE_DEPT 触发时）
      * @param mainDeptId 主科室（DEPT 触发时；未配置为 null）
      * @param customDeptIds 角色自定义科室（CUSTOM_DEPT 触发时，已跨角色并集）
+     * @param memberProjectIds 成员研究项目（RESEARCH_PROJECT 触发时，来自扩展点）
      */
     static ScopeSnapshot scopeOf(
             List<String> scopeTypes,
             List<Long> responsibleWardIds,
             List<Long> responsibleDeptIds,
             Long mainDeptId,
-            List<Long> customDeptIds) {
+            List<Long> customDeptIds,
+            List<Long> memberProjectIds) {
         if (scopeTypes.contains("ALL")) {
             return ScopeSnapshot.allowAll();
         }
@@ -188,8 +201,13 @@ public class HospitalDirectory {
         if (wants(scopeTypes, "CUSTOM_DEPT")) {
             deptIds.addAll(customDeptIds);
         }
+        List<Long> projectIds =
+                wants(scopeTypes, "RESEARCH_PROJECT") ? List.copyOf(memberProjectIds) : List.of();
         return ScopeSnapshot.restricted(
-                wardIds, List.copyOf(deptIds), wants(scopeTypes, "SELF", "RESPONSIBLE_PATIENT"));
+                wardIds,
+                List.copyOf(deptIds),
+                wants(scopeTypes, "SELF", "RESPONSIBLE_PATIENT"),
+                projectIds);
     }
 
     private static boolean wants(List<String> types, String... names) {
