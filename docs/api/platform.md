@@ -53,13 +53,19 @@ PLT-MOD-010/011 为后续规划，不实现。
 
 | 方法 | 路径 | 权限 | 说明 | 需求 |
 |---|---|---|---|---|
-| GET | `/api/platform/menus/tree?side=HOSPITAL|PLATFORM` | `platform:menu:view` | 全量菜单树（含按钮） | PLT-PERM-001、002、003 |
-| POST / PUT / DELETE | `/api/platform/menus[/{id}]` | `platform:menu:edit` | 维护目录 / 菜单 / 按钮；`moduleCode` 必填 | PLT-PERM-001..003 |
-| POST | `/api/platform/menus/sync` | `platform:menu:edit` | 菜单清单同步（来自模块清单） | PLT-PERM-011 |
-| GET | `/api/platform/apis` | `platform:api:view` | 接口资源（方法 + 路径模式、权限码、动作类型 QUERY/WRITE/EXPORT/DOWNLOAD）；`unbound=true` 只看未绑定 | PLT-PERM-004 |
-| PUT | `/api/platform/apis/{id}` | `platform:api:edit` | 绑定权限码、动作类型 | PLT-PERM-004 |
-| GET / PUT | `/api/platform/fields` | `platform:field:edit` | 字段资源：敏感分级、默认策略、脱敏规则 | PLT-PERM-009 |
-| GET | `/api/platform/resource-logs` | `platform:menu:view` | 资源变更记录 | PLT-PERM-012 |
+| GET | `/api/platform/menus/tree?side=HOSPITAL\|PLATFORM` | `platform:menu:view` | **已实现（E05-T06）**。全量菜单树（含按钮与停用行；软删行不返回） | PLT-PERM-001、002、003 |
+| POST | `/api/platform/menus` | `platform:menu:edit` | **已实现（E05-T06）**。新建目录 / 菜单 / 按钮：`moduleCode` 必填且须已登记（PLT-PERM-002）；按钮必填全局唯一权限码（PLT-PERM-003，40001 校验）；菜单必填路由名 / 路径 / 视图；平台端新建的项 `source=CUSTOM` | PLT-PERM-001..003 |
+| PUT | `/api/platform/menus/{id}` | `platform:menu:edit` | **已实现（E05-T06）**。维护标题、图标、排序、隐藏、路由字段、停用；端别 / 类型 / 模块 / 权限码 / 来源不可改（权限码创建后不可改名，OQ-11）；停用递增受影响平台账号权限版本 | PLT-PERM-001、003 |
+| DELETE | `/api/platform/menus/{id}` | `platform:menu:edit` | **已实现（E05-T06）**。软删（status=DELETED）：移除 `plt_role_menu` 授予、逐租户清理 `sys_role_menu`（不可达跳过）、递增权限版本；有子项 40001 | PLT-PERM-001 |
+| GET | `/api/platform/menus/sync/diff` | `platform:menu:view` | **已实现（E05-T06）**。清单差异（只读）：随包模块清单 vs 库内 `source=MANIFEST` 行——ADDED / CHANGED（结构字段）/ OFFLINE | PLT-PERM-011 |
+| POST | `/api/platform/menus/sync` | `platform:menu:edit` | **已实现（E05-T06）**。平台确认后应用差异：新增插入（停用 / 软删行按新增复活）、变更改结构字段（标题 / 排序等平台端维护值不覆盖）、下线置停用；写 MENU_SYNC 审计 | PLT-PERM-011 |
+| GET | `/api/platform/apis` | `platform:api:view` | **已实现（E05-T06）**。接口资源（方法 + 路径模式、权限码、模块、公共 / 审计级别 / 敏感级别 / 动作类型 QUERY/WRITE/EXPORT/DOWNLOAD、来源）；`moduleCode` / `permCode` 可选过滤，`unbound=true` 只看未绑定 | PLT-PERM-004 |
+| PUT | `/api/platform/apis/{id}` | `platform:api:edit` | **已实现（E05-T06）**。标记公共接口、审计级别（NONE/OPERATION/DATA_ACCESS）、敏感级别（NORMAL/SENSITIVE）、动作类型；可给未加注解的接口补绑权限码；未绑定又非公共 40001；写 API_UPDATE 审计并即时刷新默认拒绝闸门 | PLT-PERM-004 |
+| POST | `/api/platform/apis/sync` | `platform:api:edit` | **已实现（E05-T06）**。手动触发登记同步（与启动同一套扫描逻辑），返回每条 REGISTERED / UPDATED / UNCHANGED / REMOVED | PLT-PERM-004 |
+| GET / PUT | `/api/platform/fields` | `platform:field:edit` | 字段资源：敏感分级、默认策略、脱敏规则（E08+） | PLT-PERM-009 |
+| GET | `/api/platform/resource-logs` | `platform:menu:view` | 资源变更记录（E05-T10，P2） | PLT-PERM-012 |
+
+**接口默认拒绝（E05-T06 验收）**：启动扫描把全部 `/api/**` 处理方法按 `@RequiresPermission`（权限码）、`@RequireModule`（模块，否则按权限码前段匹配 plt_module，兜底 base）、`@PublicApi`（公共接口，登录即可；与权限码同标时以权限码为准）登记进 `plt_api_resource`；`ApiResourceGuardFilter` 对 `/api/**` 按「方法 + 路径」核对——未登记或「未绑定权限码且非公共」一律 **40307**，绑定权限码的会话无码 **40300**（与 `@RequiresPermission` 同码同口径），模块未开通放行给 `@RequireModule` 返回 40301（校验链顺序：登录态 → 租户状态 → 模块开通 → 权限码）。同步不覆盖平台端标记的审计级别 / 敏感级别 / 动作类型；SCAN 来源行随接口消失自动清除，SEED / MANUAL 行保留。
 
 > 医院端菜单改名（如 患者档案 → 患者）只能通过**新 Flyway 迁移**修改种子，不能改已执行的迁移（见 `pages.md` §0）。
 

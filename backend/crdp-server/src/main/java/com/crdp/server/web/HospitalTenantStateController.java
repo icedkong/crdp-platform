@@ -1,6 +1,7 @@
 package com.crdp.server.web;
 
 import com.crdp.framework.security.CurrentSession;
+import com.crdp.framework.security.PublicApi;
 import com.crdp.framework.tenant.TenantContext;
 import com.crdp.framework.web.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
  * 医院端查看本院服务状态（E05-T03 / PLT-TEN-012）：宽限期内页面顶部显示续费提示的数据源，登录即可用（同 /auth/me 一类）。 前端横幅随 E06
  * 前端接入；此处只提供事实：状态、到期类型、到期日、距到期天数与宽限期是否只读。
  */
+@PublicApi
 @Tag(name = "医院端租户状态")
 @RestController
 public class HospitalTenantStateController {

@@ -1,5 +1,7 @@
+export * from './api-resource';
 export * from './auth';
 export * from './menu';
+export * from './menu-resource';
 export * from './module';
 export * from './tenant';
 export * from './tenant-module';

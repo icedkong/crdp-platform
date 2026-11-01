@@ -2,6 +2,7 @@ package com.crdp.server.web;
 
 import com.crdp.framework.security.CaptchaStore;
 import com.crdp.framework.security.CurrentSession;
+import com.crdp.framework.security.PublicApi;
 import com.crdp.framework.security.SecurityProperties;
 import com.crdp.framework.security.SessionPrincipal;
 import com.crdp.framework.web.ApiResponse;
@@ -21,6 +22,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
+@PublicApi
 @Tag(name = "平台端认证")
 @RestController
 public class PlatformAuthController {

@@ -28,6 +28,7 @@ public class SecurityConfig {
             TokenAuthenticationFilter tokenFilter,
             MustChangePasswordFilter mustChangePasswordFilter,
             GraceReadOnlyFilter graceReadOnlyFilter,
+            ApiResourceGuardFilter apiResourceGuardFilter,
             ApiErrorWriter errors)
             throws Exception {
         http.csrf(AbstractHttpConfigurer::disable)
@@ -103,7 +104,11 @@ public class SecurityConfig {
                 // E04-T05 / PLT-AUTH-010：强制改密会话除改密 / 登出 / me 外一律 40305（放在令牌认证之后）
                 .addFilterAfter(mustChangePasswordFilter, TokenAuthenticationFilter.class)
                 // E05-T03 / PLT-TEN-011、012：宽限期只读的租户，医院端写请求一律 40306（读照常、auth 前缀放行）
-                .addFilterAfter(graceReadOnlyFilter, MustChangePasswordFilter.class);
+                .addFilterAfter(graceReadOnlyFilter, MustChangePasswordFilter.class)
+                // E05-T06 / PLT-PERM-004 验收「未登记接口默认拒绝」：/api/** 必须登记在
+                // plt_api_resource（公共或绑定权限码），否则 40307；放在认证之后（要读会话权限码）、
+                // 端别与 permitAll 判定之前（登记缺失是部署缺陷，先于 40100/40300 暴露）
+                .addFilterAfter(apiResourceGuardFilter, GraceReadOnlyFilter.class);
         return http.build();
     }
 

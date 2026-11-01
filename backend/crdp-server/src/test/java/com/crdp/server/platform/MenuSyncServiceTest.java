@@ -1,0 +1,354 @@
+package com.crdp.server.platform;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import com.crdp.framework.audit.AuditEvent;
+import com.crdp.framework.audit.AuditLogger;
+import com.crdp.framework.security.PermissionVersionStore;
+import com.crdp.platform.infra.mapper.PlatformMapper;
+import com.crdp.platform.menu.MenuManifest;
+import com.crdp.platform.menu.MenuRow;
+import java.util.List;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+/**
+ * E05-T06 / PLT-PERM-011：菜单清单同步——清单与库内 MANIFEST 行比对差异（新增 / 变更只看结构字段 / 下线只看
+ * 启用行），确认后应用；平台端改过的标题、图标、排序不被覆盖；CUSTOM 行不参与。
+ */
+@ExtendWith(MockitoExtension.class)
+class MenuSyncServiceTest {
+
+    @Mock private PlatformMapper platformMapper;
+    @Mock private PermissionVersionStore permissionVersions;
+    @Mock private AuditLogger audit;
+
+    private MenuSyncService service;
+
+    /** 与种子 V100 同构的随访菜单行（followup / HOSPITAL）。 */
+    private static MenuRow manifestRow(
+            long id,
+            long parentId,
+            String type,
+            String title,
+            String routeName,
+            String path,
+            String component,
+            String permCode,
+            int sortNo,
+            String status) {
+        MenuRow row = new MenuRow();
+        row.setId(id);
+        row.setParentId(parentId);
+        row.setSide("HOSPITAL");
+        row.setType(type);
+        row.setModuleCode("followup");
+        row.setTitle(title);
+        row.setRouteName(routeName);
+        row.setPath(path);
+        row.setComponent(component);
+        row.setPermCode(permCode);
+        row.setIcon(null);
+        row.setSortNo(sortNo);
+        row.setHidden(0);
+        row.setStatus(status);
+        row.setSource("MANIFEST");
+        return row;
+    }
+
+    private static List<MenuRow> seedRows() {
+        return List.of(
+                manifestRow(
+                        20L,
+                        0L,
+                        "DIR",
+                        "随访",
+                        "Followup",
+                        "/followup",
+                        "LAYOUT",
+                        null,
+                        20,
+                        "ENABLED"),
+                manifestRow(
+                        21L,
+                        20L,
+                        "MENU",
+                        "患者档案",
+                        "FollowupPatient",
+                        "/followup/patient",
+                        "followup/patient/index",
+                        "followup:patient:view",
+                        10,
+                        "ENABLED"),
+                manifestRow(
+                        22L,
+                        20L,
+                        "MENU",
+                        "随访任务",
+                        "FollowupTask",
+                        "/followup/task",
+                        "followup/task/index",
+                        "followup:task:view",
+                        20,
+                        "ENABLED"),
+                manifestRow(
+                        23L,
+                        20L,
+                        "MENU",
+                        "报告单",
+                        "FollowupReport",
+                        "/followup/report",
+                        "followup/report/index",
+                        "followup:report:view",
+                        30,
+                        "ENABLED"),
+                manifestRow(
+                        211L,
+                        21L,
+                        "BUTTON",
+                        "查看明文",
+                        null,
+                        null,
+                        null,
+                        "followup:patient:plain",
+                        10,
+                        "ENABLED"),
+                manifestRow(
+                        212L,
+                        21L,
+                        "BUTTON",
+                        "导出患者",
+                        null,
+                        null,
+                        null,
+                        "followup:patient:export",
+                        20,
+                        "ENABLED"));
+    }
+
+    @BeforeEach
+    void setUp() {
+        service =
+                new MenuSyncService(new MenuManifest(), platformMapper, permissionVersions, audit);
+        lenient()
+                .when(platformMapper.listManifestMenus("followup", "HOSPITAL"))
+                .thenReturn(seedRows());
+        lenient()
+                .when(platformMapper.findMenuIdByRouteName("HOSPITAL", "Followup"))
+                .thenReturn(20L);
+        lenient()
+                .when(platformMapper.findMenuIdByRouteName("HOSPITAL", "FollowupPatient"))
+                .thenReturn(21L);
+    }
+
+    @Test
+    void noDiffWhenLibraryMatchesManifest() {
+        MenuSyncService.DiffResult diff = service.diff();
+        assertTrue(diff.empty(), () -> String.valueOf(diff.items()));
+    }
+
+    @Test
+    void changedDetectedOnlyForStructuralFields() {
+        // 平台端只改了标题（患者档案 → 患者）与排序：不算变更（同步不覆盖平台端维护值）
+        List<MenuRow> edited = new java.util.ArrayList<>(seedRows());
+        edited.set(
+                1,
+                manifestRow(
+                        21L,
+                        20L,
+                        "MENU",
+                        "患者",
+                        "FollowupPatient",
+                        "/followup/patient",
+                        "followup/patient/index",
+                        "followup:patient:view",
+                        99,
+                        "ENABLED"));
+        when(platformMapper.listManifestMenus("followup", "HOSPITAL")).thenReturn(edited);
+
+        assertTrue(service.diff().empty(), "标题 / 排序差异不算结构变更");
+
+        // 组件路径变了（模块发版换了视图）：结构变更
+        edited.set(
+                1,
+                manifestRow(
+                        21L,
+                        20L,
+                        "MENU",
+                        "患者档案",
+                        "FollowupPatient",
+                        "/followup/patient",
+                        "followup/patient/v2",
+                        "followup:patient:view",
+                        10,
+                        "ENABLED"));
+        MenuSyncService.DiffResult diff = service.diff();
+        assertEquals(1, diff.items().size());
+        assertEquals("CHANGED", diff.items().get(0).action());
+        assertEquals("FollowupPatient", diff.items().get(0).key());
+    }
+
+    @Test
+    void addedDetectedForMissingAndDisabledRows() {
+        List<MenuRow> missing = new java.util.ArrayList<>(seedRows());
+        missing.remove(5); // 导出患者按钮不在库内
+        // 查看明文按钮被平台停用：清单又包含 → 按新增（复活）报告
+        missing.set(
+                4,
+                manifestRow(
+                        211L,
+                        21L,
+                        "BUTTON",
+                        "查看明文",
+                        null,
+                        null,
+                        null,
+                        "followup:patient:plain",
+                        10,
+                        "DISABLED"));
+        when(platformMapper.listManifestMenus("followup", "HOSPITAL")).thenReturn(missing);
+
+        MenuSyncService.DiffResult diff = service.diff();
+        assertEquals(2, diff.items().size());
+        assertTrue(diff.items().stream().allMatch(item -> "ADDED".equals(item.action())));
+        assertTrue(
+                diff.items().stream()
+                        .anyMatch(item -> "followup:patient:export".equals(item.key())),
+                "库内缺的按钮按新增报告");
+        assertTrue(
+                diff.items().stream()
+                        .anyMatch(
+                                item ->
+                                        "followup:patient:plain".equals(item.key())
+                                                && item.current() != null),
+                "停用的清单行带库内现值（复活原行，避免权限码唯一键冲突）");
+    }
+
+    @Test
+    void offlineDetectedForEnabledManifestRowsNotInManifest() {
+        // 库内多出一条已启用的 MANIFEST 行（旧版本菜单，新清单已不含）→ 下线；CUSTOM 行不参与（查询按 source 过滤）
+        List<MenuRow> extra = new java.util.ArrayList<>(seedRows());
+        extra.add(
+                manifestRow(
+                        24L,
+                        20L,
+                        "MENU",
+                        "旧版随访日历",
+                        "FollowupCalendar",
+                        "/followup/calendar",
+                        "followup/calendar/index",
+                        "followup:calendar:view",
+                        40,
+                        "ENABLED"));
+        when(platformMapper.listManifestMenus("followup", "HOSPITAL")).thenReturn(extra);
+
+        MenuSyncService.DiffResult diff = service.diff();
+        assertEquals(1, diff.items().size());
+        assertEquals("OFFLINE", diff.items().get(0).action());
+        assertEquals("FollowupCalendar", diff.items().get(0).key());
+    }
+
+    @Test
+    void applyInsertsChangesAndDisablesAndAudits() {
+        List<MenuRow> rows = new java.util.ArrayList<>(seedRows());
+        rows.remove(5); // 导出患者：ADDED
+        rows.set(
+                1,
+                manifestRow(
+                        21L,
+                        20L,
+                        "MENU",
+                        "患者档案",
+                        "FollowupPatient",
+                        "/followup/patient",
+                        "followup/patient/v2",
+                        "followup:patient:view",
+                        10,
+                        "ENABLED")); // CHANGED
+        rows.add(
+                manifestRow(
+                        24L,
+                        20L,
+                        "MENU",
+                        "旧版随访日历",
+                        "FollowupCalendar",
+                        "/followup/calendar",
+                        "followup/calendar/index",
+                        "followup:calendar:view",
+                        40,
+                        "ENABLED")); // OFFLINE
+        when(platformMapper.listManifestMenus("followup", "HOSPITAL")).thenReturn(rows);
+        when(platformMapper.findMenu(21L))
+                .thenReturn(
+                        manifestRow(
+                                21L,
+                                20L,
+                                "MENU",
+                                "患者档案",
+                                "FollowupPatient",
+                                "/followup/patient",
+                                "followup/patient/index",
+                                "followup:patient:view",
+                                10,
+                                "ENABLED"));
+        when(platformMapper.findMenu(24L))
+                .thenReturn(
+                        manifestRow(
+                                24L,
+                                20L,
+                                "MENU",
+                                "旧版随访日历",
+                                "FollowupCalendar",
+                                "/followup/calendar",
+                                "followup/calendar/index",
+                                "followup:calendar:view",
+                                40,
+                                "ENABLED"));
+
+        MenuSyncService.ApplyResult result = service.apply();
+
+        assertEquals(1, result.added());
+        assertEquals(1, result.changed());
+        assertEquals(1, result.offline());
+        ArgumentCaptor<MenuRow> inserted = ArgumentCaptor.forClass(MenuRow.class);
+        verify(platformMapper).insertMenu(inserted.capture());
+        assertEquals("followup:patient:export", inserted.getValue().getPermCode());
+        assertEquals(21L, inserted.getValue().getParentId(), "按钮挂在清单上级（患者档案）下");
+        ArgumentCaptor<MenuRow> updated = ArgumentCaptor.forClass(MenuRow.class);
+        verify(platformMapper, org.mockito.Mockito.times(2)).updateMenu(updated.capture());
+        assertTrue(
+                updated.getAllValues().stream()
+                        .anyMatch(
+                                row ->
+                                        "followup/patient/index".equals(row.getComponent())
+                                                && row.getId() == 21L),
+                "结构变更以清单为准改回路由字段（库内 v2 → 清单 index）");
+        assertTrue(
+                updated.getAllValues().stream()
+                        .anyMatch(row -> "DISABLED".equals(row.getStatus()) && row.getId() == 24L),
+                "下线置停用（软下线，可再启用）");
+        ArgumentCaptor<AuditEvent> event = ArgumentCaptor.forClass(AuditEvent.class);
+        verify(audit).record(event.capture());
+        assertEquals("MENU_SYNC", event.getValue().eventType());
+    }
+
+    @Test
+    void applyOnEmptyDiffWritesNothing() {
+        MenuSyncService.ApplyResult result = service.apply();
+
+        assertEquals(0, result.added() + result.changed() + result.offline());
+        verify(platformMapper, never()).insertMenu(any());
+        verify(platformMapper, never()).updateMenu(any());
+        verify(audit, never()).record(any());
+    }
+}

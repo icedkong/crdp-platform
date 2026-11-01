@@ -1,6 +1,7 @@
 package com.crdp.server.web;
 
 import com.crdp.framework.security.CurrentSession;
+import com.crdp.framework.security.PublicApi;
 import com.crdp.framework.security.RequireModule;
 import com.crdp.framework.security.RequiresPermission;
 import com.crdp.framework.security.SessionPrincipal;
@@ -22,6 +23,7 @@ public class HospitalHelloController {
     }
 
     @Operation(summary = "返回当前令牌命中的租户库名，用来确认数据源路由。")
+    @PublicApi
     @GetMapping("/api/hospital/hello")
     public ApiResponse<HelloResponse> hello() {
         SessionPrincipal principal = CurrentSession.requireHospital();

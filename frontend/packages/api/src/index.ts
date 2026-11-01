@@ -124,8 +124,34 @@ export type {
   PasswordRuleItem,
 } from './password-policy';
 
-export { menuNodesToRoutes, menuNodeToRoute, toIconifyIcon } from './vben-menu';
-export type { VbenMenuRoute } from './vben-menu';
+export {
+  API_ACTION_TYPE_TEXT,
+  API_AUDIT_LEVEL_TEXT,
+  API_SENSITIVE_LEVEL_TEXT,
+  API_SOURCE_TEXT,
+  apiActionTypeText,
+  apiAuditLevelText,
+  apiSensitiveLevelText,
+  apiSourceText,
+  MENU_SOURCE_TEXT,
+  MENU_SYNC_ACTION_TEXT,
+  MENU_TYPE_TEXT,
+  menuSourceText,
+  menuSyncActionText,
+  menuTypeText,
+} from './perm-resources';
+export type {
+  ApiMarkRequest,
+  ApiResourceItem,
+  ApiSyncOutcome,
+  ApiSyncResult,
+  MenuCreateRequest,
+  MenuResourceNode,
+  MenuSyncApplyResult,
+  MenuSyncDiffItem,
+  MenuSyncDiffResult,
+  MenuUpdateRequest,
+} from './perm-resources';
 
 export interface CreateTenantRequest {
   /** 不填由后端自动生成（页面展示建议值可改）。 */
@@ -460,3 +486,6 @@ export interface ModuleOpenLog {
   tenantId: number;
   tenantName: string;
 }
+
+export { menuNodesToRoutes, menuNodeToRoute, toIconifyIcon } from './vben-menu';
+export type { VbenMenuRoute } from './vben-menu';
