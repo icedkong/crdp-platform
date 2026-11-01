@@ -1,16 +1,30 @@
 # 医院端系统管理接口（system）
 
-> 后端：`crdp-system`（用户、角色、组织、字典、参数、通知配置）；病区相关字段在 `crdp-followup` 使用。前缀 `/api/hospital/system/`（推断，待确认）。
-> 页面：`docs/design/pages.md` §10。全部路径 **推断，待确认**。
-> 菜单种子现有权限码：`tenant:user:view`、`tenant:role:view`、`tenant:org:view`（原种子 `tenant:dept:view`，OQ-11 定论 B 由 V103 改名对齐规格）。
+> 后端：`crdp-system`（用户、角色、组织、字典、参数、通知配置）；病区相关字段在 `crdp-followup` 使用。前缀 `/api/hospital/system/`。
+> 页面：`docs/design/pages.md` §10。E06-T02 已落地的组织接口见 §1（原「推断，待确认」已按实现定稿：院区 `/orgs`、科室 `/depts` 分资源）；其余路径仍为 **推断，待确认**。
+> 菜单种子现有权限码：`tenant:user:view`、`tenant:role:view`、`tenant:org:view` / `tenant:org:edit`（view 原种子 `tenant:dept:view`，OQ-11 定论 B 由 V103 改名对齐规格；edit 为平台库 V19 新增按钮 331）。
 
 ## 1. 组织：院区、科室、病区（PLT-ORG-001..003、A-WARD-001/008、C-WARD-001/008）
 
+E06-T02 已实现（院区与科室树；病区字典属 `crdp-followup`，科室导入 E06-T03）：
+
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| GET | `/api/hospital/system/orgs/tree` | `tenant:org:view` | 院区 → 科室 → 病区树（`sys_org`、`sys_dept`；A 只有病区一层也用同一树） |
-| POST / PUT | `/api/hospital/system/orgs[/{id}]` | `tenant:org:edit`（推断） | 新建 / 修改；停用前返回影响（成员数、患者数） |
-| POST | `/api/hospital/system/orgs/import` | `tenant:org:edit` | 科室导入（Excel，见 `import-export.md`） |
+| GET | `/api/hospital/system/orgs/tree` | `tenant:org:view` | 院区 → 多级科室树（含停用节点）；`{ singleOrg, orgs[] }`，`singleOrg=true` 表示启用院区 ≤ 1，页面可隐藏院区层级（PLT-ORG-001）；节点含 `code/name/status` 与科室的 `deptType/leaderUserId/leaderName/hisCode/sortNo/children`（同级按 `sortNo`、`id` 升序） |
+| GET | `/api/hospital/system/orgs/{orgId}/impact` | `tenant:org:edit` | 院区停用影响面：`{ deptCount, enabledDeptCount, memberCount }`（患者数随患者表 E08+ 落地补充） |
+| GET | `/api/hospital/system/orgs/user-options?keyword=` | `tenant:org:view` | 负责人候选（本院启用用户，暂行；PLT-ORG-012 共用选择器落地于 E06-T09 后替换） |
+| POST / PUT | `/api/hospital/system/orgs[/{orgId}]` | `tenant:org:edit` | 新增 / 编辑院区：`{ code, name }`；编码租户内唯一（重复 40902）、创建后不可改（更新可省略，携带不一致 40001）；写 `ORG_CREATE` / `ORG_UPDATE` 审计 |
+| POST | `/api/hospital/system/orgs/{orgId}/status` | `tenant:org:edit` | 停用 / 启用：`{ action: ENABLE\|DISABLE, reason? }`；有启用中的科室时 40901；重复流转 40901；写 `ORG_STATUS` 审计 |
+| POST | `/api/hospital/system/depts` | `tenant:org:edit` | 新增科室：`{ orgId, parentDeptId?, code, name, deptType?, leaderUserId?, hisCode?, sortNo? }`；`parentDeptId` 省略或 0 = 院区顶层；写 `DEPT_CREATE` 审计 |
+| PUT | `/api/hospital/system/depts/{deptId}` | `tenant:org:edit` | 编辑 / 移动科室（整对象更新）：名称、类型、负责人（必须是本院启用用户）、HIS 编码、排序、所属院区与上级；移入自己子树、上级与院区不一致、上级不存在 → 40901；写 `DEPT_UPDATE` 审计 |
+| POST | `/api/hospital/system/depts/{deptId}/status` | `tenant:org:edit` | 停用 / 启用：同院区口径；有启用中的下级科室时 40901；停用科室不再出现在业务选择器（树中保留）；写 `DEPT_STATUS` 审计 |
+| GET | `/api/hospital/system/depts/{deptId}/impact` | `tenant:org:edit` | 科室停用影响面：`{ memberCount, childCount, enabledChildCount }` |
+
+未实现（后续任务）：
+
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| POST | `/api/hospital/system/orgs/import` | `tenant:org:edit` | 科室导入（Excel，见 `import-export.md`；E06-T03） |
 | GET / POST / PUT | `/api/hospital/followup/wards[/{id}]` | `followup:ward:edit` | 病区字典：名称、编码、默认随访负责人、停用（A-WARD-001、008；C-WARD-001） |
 | GET / PUT | `/api/hospital/followup/wards/aliases` | `followup:ward:edit` | 病区值映射（导入时原值 → 病区，`ward_alias`，A-WARD-006） |
 | GET | `/api/hospital/followup/wards/{id}/members` | `followup:ward:edit` | 成员与患者数 |

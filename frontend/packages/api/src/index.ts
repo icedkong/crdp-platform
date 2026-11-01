@@ -109,6 +109,22 @@ export {
 } from './login-rejection';
 
 export type { LoginRejectionInfo } from './login-rejection';
+export { DEPT_TYPE_OPTIONS, ORG_STATUS_TEXT, orgStatusText } from './org';
+export type {
+  DeptImpactView,
+  DeptNodeView,
+  DeptSaveRequest,
+  DeptView,
+  OrgCampusNode,
+  OrgImpactView,
+  OrgNodeStatus,
+  OrgSaveRequest,
+  OrgStatusRequest,
+  OrgTreeView,
+  OrgView,
+  UserOptionView,
+} from './org';
+
 export {
   PASSWORD_EXPIRY_REMIND_DAYS,
   PASSWORD_HISTORY_COUNT,
@@ -123,7 +139,6 @@ export type {
   PasswordPolicyOptions,
   PasswordRuleItem,
 } from './password-policy';
-
 export {
   API_ACTION_TYPE_TEXT,
   API_AUDIT_LEVEL_TEXT,
@@ -152,25 +167,6 @@ export type {
   MenuSyncDiffResult,
   MenuUpdateRequest,
 } from './perm-resources';
-export { TENANT_SCOPE_STATE_TEXT } from './tenant-scope';
-export type {
-  ScopeTemplateItem,
-  ScopeTemplateModule,
-  ScopeTemplateUpdateRequest,
-  ScopeTemplateView,
-  SensitivePermItem,
-  SensitivePermUpdateRequest,
-  TenantScopeAffectedRole,
-  TenantScopeChangeResult,
-  TenantScopeImpactItem,
-  TenantScopeItem,
-  TenantScopeItemState,
-  TenantScopeLog,
-  TenantScopeModule,
-  TenantScopePreview,
-  TenantScopeUpdateRequest,
-  TenantScopeView,
-} from './tenant-scope';
 
 export interface CreateTenantRequest {
   /** 不填由后端自动生成（页面展示建议值可改）。 */
@@ -505,6 +501,26 @@ export interface ModuleOpenLog {
   tenantId: number;
   tenantName: string;
 }
+
+export { TENANT_SCOPE_STATE_TEXT } from './tenant-scope';
+export type {
+  ScopeTemplateItem,
+  ScopeTemplateModule,
+  ScopeTemplateUpdateRequest,
+  ScopeTemplateView,
+  SensitivePermItem,
+  SensitivePermUpdateRequest,
+  TenantScopeAffectedRole,
+  TenantScopeChangeResult,
+  TenantScopeImpactItem,
+  TenantScopeItem,
+  TenantScopeItemState,
+  TenantScopeLog,
+  TenantScopeModule,
+  TenantScopePreview,
+  TenantScopeUpdateRequest,
+  TenantScopeView,
+} from './tenant-scope';
 
 export { menuNodesToRoutes, menuNodeToRoute, toIconifyIcon } from './vben-menu';
 export type { VbenMenuRoute } from './vben-menu';
