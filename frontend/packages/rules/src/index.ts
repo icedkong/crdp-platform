@@ -13,3 +13,10 @@ export function permissionCode(
   }
   return `${module}:${resource}:${action}`;
 }
+
+export { hasPermission } from './has-permission';
+export {
+  PERMISSION_REFRESH_CODES,
+  permissionVersionChanged,
+  shouldRefreshPermissions,
+} from './permission-refresh';

@@ -9,6 +9,7 @@ import { preferences } from '@vben/preferences';
 import { errorMessageResponseInterceptor, RequestClient } from '@vben/request';
 import { useAccessStore } from '@vben/stores';
 
+import { shouldRefreshPermissions } from '@crdp/rules';
 import { message } from 'ant-design-vue';
 
 import { useAuthStore } from '#/store';
@@ -66,6 +67,13 @@ function createRequestClient(baseURL: string, options?: RequestClientOptions) {
       if (body?.code === 40_305 && !url.includes('/auth/password')) {
         const authStore = useAuthStore();
         await authStore.redirectToPasswordChange();
+      }
+      // E06-T01 / PLT-PERM-010、OQ-40：40300（缺权限码）/ 40301（模块未开通）时
+      // 重新拉取权限码与菜单并重建路由（后端此时已按最新授权重算会话）。
+      // 40302 是后端未声明数据范围的缺陷（components.md §1.2），不触发刷新。
+      if (shouldRefreshPermissions(body?.code)) {
+        const authStore = useAuthStore();
+        void authStore.refreshAccess();
       }
       // 登录失败也是 HTTP 401，不能当成令牌过期去登出。
       if (status === 401 && !url.includes('/auth/login')) {

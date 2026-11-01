@@ -91,6 +91,11 @@ function setupAccessGuard(router: Router) {
 
     // 是否已经生成过动态路由
     if (accessStore.isAccessChecked) {
+      // E06-T01 / pages.md §0.2：已登录但目标路由未下发（无菜单权限，或权限刷新后
+      // 已清掉的旧路由）→ 403 页「没有访问权限，请联系本院管理员」，而不是 404。
+      if (to.name === 'FallbackNotFound') {
+        return { path: '/403', replace: true };
+      }
       return true;
     }
 

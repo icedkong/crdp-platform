@@ -78,7 +78,7 @@
   - 登录响应 `expiresInSeconds` = 剩余空闲窗口（约 30 / 15 分钟）。
   - 修改或重置密码后其他会话全部失效（E04-T05，`revokeAllForUser`，当前会话保留）。
 - 在线会话管理（E04-T06 / PLT-AUTH-009）：`sessionId` = 令牌 SHA-256 前 16 个十六进制字符（单向，接口绝不返回令牌）；管理员按本院在线列表 + 会话号强制下线（`SESSION_KICK` 审计），本人可查看并下线自己的会话（`SESSION_REVOKE` 审计）；不存在的会话号统一 40400。
-- 权限变更生效（E04-T06 / PLT-PERM-010）：会话带登录时的权限版本号（初始 1）。授权用例（E06 角色 / 用户 / 数据范围管理）变更后必须调用 `PermissionVersionStore.bump(端别, 租户, 用户)` 递增版本。请求时 `TokenAuthenticationFilter` 发现会话版本落后：按库里的最新授权**重算会话**（令牌不变、菜单 / 权限码 / 数据范围 / 账号状态取新值）后继续执行——旧令牌里的权限快照自此失效；若账号已停用 / 不存在，会话删除、40100。前端依据 `me.permissionVersion` 变化或收到 40300 重新拉取 `codes` 与 `menus`（本任务为后端；前端刷新在 E06）。
+- 权限变更生效（E04-T06 / PLT-PERM-010）：会话带登录时的权限版本号（初始 1）。授权用例（E06 角色 / 用户 / 数据范围管理）变更后必须调用 `PermissionVersionStore.bump(端别, 租户, 用户)` 递增版本。请求时 `TokenAuthenticationFilter` 发现会话版本落后：按库里的最新授权**重算会话**（令牌不变、菜单 / 权限码 / 数据范围 / 账号状态取新值）后继续执行——旧令牌里的权限快照自此失效；若账号已停用 / 不存在，会话删除、40100。前端依据 `me.permissionVersion` 变化或收到 40300 重新拉取 `codes` 与 `menus`（后端 E04-T06；前端刷新已在 E06-T01 接入：收到 40300 / 40301 或 `me.permissionVersion` 变化时重拉 `me + codes + menus` 并重建路由，40302 不触发——它是后端未声明数据范围的缺陷）。
 - 端别隔离（E04-T03 / PLT-AUTH-005）：`/api/platform/**` 只接受平台会话，`/api/hospital/**` 只接受医院会话。`TokenAuthenticationFilter` 认证时按会话端别附加 `SESSION_PLATFORM` / `SESSION_HOSPITAL` 权限，`SecurityConfig` 的路径规则据此把跨端令牌统一拒绝为 40300，不依赖各控制器自行调用 `require*` 系列；控制器层 `requirePlatform` / `requireHospital`（40300）保留为内层防线。登录层面两端账号分库校验：平台账号只存于平台库 `plt_account`，医院账号只存于各租户库，互不能在对方端登录（失败同样统一 40101）。
 - 忘记密码（E04-T07 / PLT-AUTH-011，医院端；平台端见 OQ-41）：
   - 第一步 `/auth/password/forgot`：重置验证码发到该账号**绑定手机号**（不是请求里的任意手机号）；未知租户 / 未知账号 / 停用账号 / 未绑定手机号一律**静默成功**（不触达短信通道）。未知账号同样消耗 60 秒冷却位（探针键），使「短时间内第二次请求是否 42900」与真实账号不可区分；冷却与每日上限同登录验证码（同一手机号 60 秒 / 每日 10 条，超限 42900）。
@@ -115,7 +115,7 @@ interface MeResponseExt extends MeResponse {
 ### 2.2 权限变更生效（PLT-PERM-010）——已在 E04-T06 实现，行为见第 1 节
 
 - 角色、菜单、授权范围变化时，授权用例递增 `permissionVersion`（`PermissionVersionStore`，Redis `crdp:permver:*`）；请求时发现会话里的版本落后，后端按新权限重新计算会话后放行（令牌不变，旧权限快照失效）。
-- 前端在收到 40300 或轮询 `me` 发现 `permissionVersion` 变化时，重新拉取 `codes` 与 `menus`（前端接入在 E06）。
+- 前端在收到 40300 或轮询 `me` 发现 `permissionVersion` 变化时，重新拉取 `codes` 与 `menus`（E06-T01 已接入：收到 40300 / 40301 或 `me.permissionVersion` 变化时重拉并重建路由；40302 不触发）。
 
 ## 3. 测试要点
 

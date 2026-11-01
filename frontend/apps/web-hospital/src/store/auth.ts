@@ -10,6 +10,7 @@ import { preferences } from '@vben/preferences';
 import { resetAllStores, useAccessStore, useUserStore } from '@vben/stores';
 
 import { pickTwoFactorChallenge } from '@crdp/api';
+import { permissionVersionChanged } from '@crdp/rules';
 import { notification } from 'ant-design-vue';
 import { defineStore } from 'pinia';
 
@@ -22,6 +23,7 @@ import {
   verifyTwoFactorApi,
 } from '#/api';
 import { $t } from '#/locales';
+import { refreshAccessRoutes } from '#/router/access';
 
 /** 登录动作的统一返回：完成登录、停在第 2 步等短信验证码，或强制改密。 */
 export interface AuthOutcome {
@@ -41,6 +43,11 @@ export const useAuthStore = defineStore('auth', () => {
   const loginLoading = ref(false);
   const smsLoginLoading = ref(false);
   const twoFactorLoading = ref(false);
+
+  /** E06-T01 / PLT-PERM-010：上次拉取权限码时看到的 me.permissionVersion。 */
+  const permissionVersionSeen = ref<null | number>(null);
+  /** 刷新单飞标志：40300 风暴与版本检测并发时只重建一次。 */
+  const refreshingAccess = ref(false);
 
   /**
    * 拿到令牌后的公共收尾：写入令牌、拉取用户信息与权限码、跳转首页（E04-T02 起的既有流程）。
@@ -102,6 +109,32 @@ export const useAuthStore = defineStore('auth', () => {
   async function redirectToPasswordChange() {
     if (router.currentRoute.value.path !== CHANGE_PASSWORD_PATH) {
       await router.push(CHANGE_PASSWORD_PATH);
+    }
+  }
+
+  /**
+   * E06-T01 / PLT-PERM-005、006、010：权限变化后重新拉取 me + 权限码 + 菜单并重建路由。
+   * 触发源（components.md §1.2）：接口返回 40300（缺权限码）/ 40301（模块未开通），
+   * 或 me.permissionVersion 变化。后端在权限版本落后时已按最新授权重算会话，
+   * 这里重新拉取即可让菜单与按钮跟上（按权限码显示菜单与按钮）。
+   */
+  async function refreshAccess() {
+    if (!accessStore.accessToken || refreshingAccess.value) {
+      return;
+    }
+    refreshingAccess.value = true;
+    try {
+      const userInfo = await fetchUserInfo();
+      accessStore.setAccessCodes(await getAccessCodesApi());
+      const { accessibleMenus, accessibleRoutes } = await refreshAccessRoutes(
+        router,
+        userInfo.roles ?? [],
+      );
+      accessStore.setAccessMenus(accessibleMenus);
+      accessStore.setAccessRoutes(accessibleRoutes);
+      accessStore.setIsAccessChecked(true);
+    } finally {
+      refreshingAccess.value = false;
     }
   }
 
@@ -179,6 +212,20 @@ export const useAuthStore = defineStore('auth', () => {
   async function fetchUserInfo() {
     const userInfo = await getUserInfoApi();
     userStore.setUserInfo(userInfo);
+    // E06-T01 / PLT-PERM-010：me 的权限版本号与上次不同 → 权限已变，重新拉取权限码与菜单。
+    // 首次登录（seen 为空）或强制改密期（codes 为空）不触发；单飞标志防止与 refreshAccess 重入。
+    const version =
+      (userInfo as { permissionVersion?: number }).permissionVersion ?? null;
+    const changed = permissionVersionChanged(
+      permissionVersionSeen.value,
+      version,
+    );
+    if (typeof version === 'number') {
+      permissionVersionSeen.value = version;
+    }
+    if (changed && accessStore.accessCodes.length > 0) {
+      void refreshAccess();
+    }
     return userInfo;
   }
 
@@ -186,6 +233,8 @@ export const useAuthStore = defineStore('auth', () => {
     loginLoading.value = false;
     smsLoginLoading.value = false;
     twoFactorLoading.value = false;
+    permissionVersionSeen.value = null;
+    refreshingAccess.value = false;
   }
 
   return {
@@ -198,6 +247,7 @@ export const useAuthStore = defineStore('auth', () => {
     loginLoading,
     logout,
     redirectToPasswordChange,
+    refreshAccess,
     smsLoginLoading,
     twoFactorLoading,
   };

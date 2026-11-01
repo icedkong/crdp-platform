@@ -610,6 +610,9 @@ importers:
       '@crdp/api':
         specifier: workspace:*
         version: link:../../packages/api
+      '@crdp/rules':
+        specifier: workspace:*
+        version: link:../../packages/rules
       '@crdp/status-tag':
         specifier: workspace:*
         version: link:../../packages/status-tag
@@ -682,6 +685,9 @@ importers:
       '@crdp/api':
         specifier: workspace:*
         version: link:../../packages/api
+      '@crdp/rules':
+        specifier: workspace:*
+        version: link:../../packages/rules
       '@crdp/status-tag':
         specifier: workspace:*
         version: link:../../packages/status-tag
