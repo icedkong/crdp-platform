@@ -4,6 +4,8 @@ import com.crdp.framework.crypto.DigestService;
 import com.crdp.framework.tenant.TenantContext;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import org.springframework.jdbc.BadSqlGrammarException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -20,6 +22,10 @@ import org.springframework.stereotype.Component;
  *
  * <p>E08-T01 遗留的未封存前缀（链首之前、hash 为 NULL 的行）跳过。 只读操作，不修复、不补写；断链处置由调用方（验链作业记 BROKEN
  * 结果并告警，PLT-AUD-009）。
+ *
+ * <p><b>归档桥接（E08-T03 / PLT-AUD-010）</b>：到期月分区归档 WORM 后被 DROP，在线链出现「归档洞」——洞后首行的 prev_hash
+ * 指向已归档行的链尾哈希（登记在 aud_archive.last_hash，对象锁定 15 年）。 衔接不上时先查登记：prev_hash 与某归档段链尾一致且该段 last_id 在当前行之前
+ * → 判定为合法桥接（哈希密码学绑定归档内容，伪造需改登记表）； 查无登记 → 仍按 BROKEN_LINK 报断链（真删行 / 篡改可检出）。登记表不存在（迁移前老库）按无归档处理，不影响验链。
  */
 @Component
 public class AuditChainVerifier {
@@ -95,6 +101,8 @@ public class AuditChainVerifier {
         List<ChainBreak> breaks = new ArrayList<>();
         String expectedPrev = AuditChainTable.GENESIS;
         boolean chainStarted = false;
+        // 归档段链尾登记（aud_archive）：懒加载——只有遇到衔接不上时才查（多数验链趟无需查库）
+        List<Map<String, Object>> archivedTails = null;
         long cursor = 0L;
         while (true) {
             List<ChainRow> batch =
@@ -132,12 +140,17 @@ public class AuditChainVerifier {
                                     "存量 hash 与按内容重算值不符"));
                 }
                 if (!expectedPrev.equals(row.prevHash())) {
-                    breaks.add(
-                            new ChainBreak(
-                                    table.tableName(),
-                                    row.id(),
-                                    BreakKind.BROKEN_LINK,
-                                    "prev_hash 与实际前序不衔接"));
+                    if (archivedTails == null) {
+                        archivedTails = loadArchivedTails(table.tableName());
+                    }
+                    if (!bridgedByArchive(archivedTails, row)) {
+                        breaks.add(
+                                new ChainBreak(
+                                        table.tableName(),
+                                        row.id(),
+                                        BreakKind.BROKEN_LINK,
+                                        "prev_hash 与实际前序不衔接"));
+                    }
                 }
                 expectedPrev = row.hash();
             }
@@ -147,6 +160,30 @@ public class AuditChainVerifier {
             cursor = batch.get(batch.size() - 1).id();
         }
         return new TableVerification(table.tableName(), scanned, hashed, List.copyOf(breaks));
+    }
+
+    /** 已归档分区的链尾登记；登记表不存在（迁移前老库）按无归档处理。 */
+    private List<Map<String, Object>> loadArchivedTails(String tableName) {
+        try {
+            return jdbc.queryForList(
+                    "SELECT last_id, last_hash FROM aud_archive WHERE table_name = ?", tableName);
+        } catch (BadSqlGrammarException missingRegistry) {
+            return List.of();
+        }
+    }
+
+    /** prev_hash 与某归档段链尾一致且该段整体在当前行之前 → 合法归档洞，不是断链。 */
+    private static boolean bridgedByArchive(List<Map<String, Object>> archivedTails, ChainRow row) {
+        for (Map<String, Object> tail : archivedTails) {
+            Object lastId = tail.get("last_id");
+            if (lastId instanceof Number number
+                    && number.longValue() < row.id()
+                    && row.prevHash() != null
+                    && row.prevHash().equals(tail.get("last_hash"))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static List<Object> readValues(java.sql.ResultSet rs, AuditChainTable table)
