@@ -80,6 +80,12 @@ crdp:
     allowed-origin-patterns:
       - http://127.0.0.1:*
       - http://localhost:*
+  audit:
+    archive:
+      # E08-T03 / PLT-AUD-010：在线保留 1 年，归档对象 WORM 锁定 15 年（保留期只能延长）
+      online-retention-months: 12
+      worm-retention-years: 15
+      partitions-ahead: 3 # 预建未来月分区，保证新月份写入即有分区
 
 info:
   app:

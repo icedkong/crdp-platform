@@ -144,4 +144,29 @@ class AuditChainWriterTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("prev_hash");
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void emptyOnlineTableChainsOntoArchivedTail() {
+        // E08-T03：整表在线数据归档后（在线无已封存行），新写入衔接归档登记的链尾，不重锚 GENESIS
+        stubChainReads(null, 15L);
+        when(jdbc.query(
+                        contains("aud_archive"),
+                        ArgumentMatchers
+                                .<org.springframework.jdbc.core.ResultSetExtractor<String>>any(),
+                        eq("aud_probe")))
+                .thenReturn("e".repeat(64));
+
+        writer.insert(
+                probe,
+                "INSERT INTO aud_probe (a, b, prev_hash, hash) VALUES (?, ?, ?, ?)",
+                List.of("PROBE5", 5L));
+
+        List<Object> args = argRows.get(0);
+        assertThat(args.get(2)).isEqualTo("e".repeat(64));
+        String expected =
+                new Sha256DigestService()
+                        .hashHex(probe.hashInput("e".repeat(64), List.of("PROBE5", 5L)));
+        assertThat(args.get(3)).isEqualTo(expected);
+    }
 }

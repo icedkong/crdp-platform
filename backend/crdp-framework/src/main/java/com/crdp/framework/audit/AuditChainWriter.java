@@ -85,7 +85,10 @@ public class AuditChainWriter {
         }
     }
 
-    /** 前序哈希：已封存行按主键倒序第一条；链未开始（无已封存行）返回 GENESIS。 */
+    /**
+     * 前序哈希：已封存行按主键倒序第一条；在线无已封存行时回退到归档登记（aud_archive.last_hash，E08-T03： 整表在线数据归档后链不重锚
+     * GENESIS，与归档段保持连续）；都无返回 GENESIS。
+     */
     private String readLastHash(AuditChainTable table) {
         // 用 ResultSetExtractor：queryForObject 在零行时抛异常，而「链未开始」是正常态
         String last =
@@ -94,6 +97,14 @@ public class AuditChainWriter {
                                 + table.tableName()
                                 + " WHERE hash IS NOT NULL ORDER BY id DESC LIMIT 1",
                         rs -> rs.next() ? rs.getString(1) : null);
+        if (last == null) {
+            last =
+                    jdbc.query(
+                            "SELECT last_hash FROM aud_archive WHERE table_name = ?"
+                                    + " AND last_hash IS NOT NULL ORDER BY last_id DESC LIMIT 1",
+                            rs -> rs.next() ? rs.getString(1) : null,
+                            table.tableName());
+        }
         return last == null ? AuditChainTable.GENESIS : last;
     }
 
