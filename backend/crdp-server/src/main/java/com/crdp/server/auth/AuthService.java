@@ -21,6 +21,7 @@ import com.crdp.platform.infra.mapper.PlatformAccountRow;
 import com.crdp.platform.infra.mapper.PlatformMapper;
 import com.crdp.platform.menu.MenuRow;
 import com.crdp.platform.tenant.TenantRecord;
+import com.crdp.server.platform.TenantScopeService;
 import com.crdp.system.user.HospitalAccount;
 import com.crdp.system.user.HospitalDirectory;
 import java.time.Duration;
@@ -80,6 +81,7 @@ public class AuthService {
     private final SecurityProperties securityProperties;
     private final CaptchaStore captchaStore;
     private final PermissionVersionStore permissionVersions;
+    private final TenantScopeService scopeService;
 
     public AuthService(
             PlatformMapper platformMapper,
@@ -97,7 +99,8 @@ public class AuthService {
             CryptoService cryptoService,
             SecurityProperties securityProperties,
             CaptchaStore captchaStore,
-            PermissionVersionStore permissionVersions) {
+            PermissionVersionStore permissionVersions,
+            TenantScopeService scopeService) {
         this.platformMapper = platformMapper;
         this.tenantLookup = tenantLookup;
         this.hospitalDirectory = hospitalDirectory;
@@ -114,6 +117,7 @@ public class AuthService {
         this.securityProperties = securityProperties;
         this.captchaStore = captchaStore;
         this.permissionVersions = permissionVersions;
+        this.scopeService = scopeService;
     }
 
     public LoginResult loginHospital(
@@ -389,7 +393,11 @@ public class AuthService {
                 TenantContext.callAsPlatform(() -> platformMapper.openedModules(tenant.id()));
         List<MenuRow> menus =
                 TenantContext.callAsPlatform(() -> platformMapper.listMenus("HOSPITAL"));
-        Granted granted = grant(menus, account.menuIds(), opened);
+        // E05-T07 / PLT-SCOPE：用户最终权限 = 已开通模块 ∩ 可分配范围 ∩ 角色并集。
+        // 会话层交集是兜底：租户库不可达导致自动收回被跳过时，超范围授权也在下次重算时失效。
+        Set<Long> assignable =
+                TenantContext.callAsPlatform(() -> scopeService.assignableMenuIds(tenant.id()));
+        Granted granted = grant(menus, account.menuIds(), opened, assignable);
         long now = Instant.now().getEpochSecond();
         return new SessionPrincipal(
                 null,
@@ -423,7 +431,7 @@ public class AuthService {
                 TenantContext.callAsPlatform(() -> platformMapper.accountMenuIds(accountId));
         List<MenuRow> menus =
                 TenantContext.callAsPlatform(() -> platformMapper.listMenus("PLATFORM"));
-        Granted granted = grant(menus, menuIds, List.of("base", "followup"));
+        Granted granted = grant(menus, menuIds, List.of("base", "followup"), null);
         boolean mustFlag =
                 Boolean.TRUE.equals(account.getMustChangePassword())
                         || passwordExpired(account.getPasswordUpdatedAt());
@@ -548,14 +556,19 @@ public class AuthService {
                         "remainingAttempts", rateLimiter.remainingAttempts(bucket)));
     }
 
-    private static Granted grant(
-            List<MenuRow> menus, List<Long> grantedIds, List<String> openedModules) {
+    /** 授权交集：角色授予 ∩ 已开通模块 ∩ 可分配范围（E05-T07 / PLT-SCOPE-006；assignable 为 null 表示 不限，平台端会话用）。 */
+    static Granted grant(
+            List<MenuRow> menus,
+            List<Long> grantedIds,
+            List<String> openedModules,
+            Set<Long> assignableIds) {
         Set<Long> wanted = new HashSet<>(grantedIds);
         Set<String> opened = new HashSet<>(openedModules);
         List<MenuRow> effective =
                 menus.stream()
                         .filter(row -> wanted.contains(row.getId()))
                         .filter(row -> opened.contains(row.getModuleCode()))
+                        .filter(row -> assignableIds == null || assignableIds.contains(row.getId()))
                         .toList();
         List<Long> ids = effective.stream().map(MenuRow::getId).toList();
         List<String> codes =

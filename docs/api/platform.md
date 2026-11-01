@@ -71,14 +71,19 @@ PLT-MOD-010/011 为后续规划，不实现。
 
 ## 4. 授权范围（PLT-SCOPE-001..008）
 
+> 已实现（E05-T07，`PlatformTenantScopeMySqlIT`）。授权范围不落表：= 该租户已开通模块（`plt_tenant_module.status='OPEN'`）下的医院端启用菜单与按钮，随模块开通 / 关闭自动扩张 / 收缩（PLT-SCOPE-001）。生效可分配集 = base 固定能力 ∪（模板默认 ∩ 非敏感，按租户覆盖 `plt_tenant_scope` 调整）∩ 授权范围；医院端会话草稿按「已开通模块 ∩ 可分配范围 ∩ 角色并集」求交（`AuthService.grant`）。
+
 | 方法 | 路径 | 权限 | 说明 | 需求 |
 |---|---|---|---|---|
-| GET / PUT | `/api/platform/tenants/{id}/scope` | `platform:tenant:edit` | 租户可分配的菜单 / 按钮 / 数据范围类型 / 字段策略上限；敏感权限单独放开（需原因 + 二次认证） | PLT-SCOPE-001、002、004、007 |
-| POST | `/api/platform/tenants/{id}/scope/preview` | `platform:tenant:edit` | 变更影响分析：受影响角色、用户数 | PLT-SCOPE-005 |
-| GET / POST / PUT | `/api/platform/scope-templates[/{id}]` | `platform:scope:template` | 授权范围模板 | PLT-SCOPE-003 |
-| GET | `/api/platform/tenants/{id}/scope/logs` | `platform:tenant:view` | 变更记录 | PLT-SCOPE-008 |
+| GET | `/api/platform/tenants/{id}/scope` | `platform:tenant:scope:view` | **已实现（E05-T07）**。按模块分组的医院端菜单 / 按钮清单：`{tenantId,tenantCode,tenantName,tenantStatus,modules[{code,name,baseModule,opened,items[{id,parentId,type,title,permCode,moduleCode,sensitive,defaultAssignable,assignable,fixed,state(CLOSED/NOT_RELEASED/ASSIGNABLE),releaseReason,setAt}]}]}`；base 项 `fixed=true` 恒可分配（组织、用户、角色管理固定能力，平台规格 §5） | PLT-SCOPE-001、002、004 |
+| POST | `/api/platform/tenants/{id}/scope/preview` | `platform:tenant:scope:edit` | **已实现（E05-T07）**。变更影响分析（只读）：body 与 PUT 相同；返回 `{removed[],added[],sensitiveReleases[],affectedRoles[{roleId,roleCode,roleName,removedMenuCount,removedPermCodes[],userCount}],affectedUserCount}`；租户库不可达 40901 | PLT-SCOPE-005 |
+| PUT | `/api/platform/tenants/{id}/scope` | `platform:tenant:scope:edit` | **已实现（E05-T07）**。body `{assignableMenuIds[](期望全集，base 固定项必须全带，缺失 40001),sensitiveReasons{menuId:原因}(本次放开敏感项必填，≤200),reason(必填 ≤200)}`；勾选项必须是授权范围内的医院端启用菜单（未开通模块 / 未知 / 平台端菜单 40001）；保存即**自动收回**：`DELETE sys_role_menu WHERE menu_id IN (移除项)`（租户库不可达整体 40901，不留中间态）+ 受影响用户 `permissionVersion` 递增（在线会话下一次请求即重算）；写 `plt_scope_log`（前后差异）与 SCOPE_UPDATE 审计；范围扩大不自动授予任何角色 | PLT-SCOPE-002、004、006、008 |
+| GET | `/api/platform/tenants/{id}/scope/logs` | `platform:tenant:scope:view` | **已实现（E05-T07）**。变更记录倒序：`[{id,tenantId,reason,detail(前后差异),operatorId,createdAt}]` | PLT-SCOPE-008 |
+| GET | `/api/platform/scope-template` | `platform:scope:template:edit` | **已实现（E05-T07）**。模板视图：`{modules[{code,name,baseModule,items[{menuId,parentId,title,permCode,sensitive,inTemplate}]}],sensitivePerms[{id,permCode,name}]}` | PLT-SCOPE-003、004 |
+| PUT | `/api/platform/scope-template/{moduleCode}` | `platform:scope:template:edit` | **已实现（E05-T07）**。保存模块模板（替换式）：`{menuIds[]}`；base 模块 40001（固定能力不进模板）、跨模块菜单 40001、敏感项 40001（只能按租户单独放开）；写 SCOPE_TEMPLATE_UPDATE 审计。模板只改默认值：对已开通租户的生效集在下次会话重算 / 登录时收敛，存量角色收回须走租户级 PUT scope（影响分析 + 确认） | PLT-SCOPE-003 |
+| PUT | `/api/platform/scope-template/sensitive-perms` | `platform:scope:template:edit` | **已实现（E05-T07）**。敏感权限清单整表替换：`{items[{permCode,name}]}`；权限码须符合 `{模块}:{资源}:{动作}`（未绑定菜单的码先登记后生效，如 rct 后续项），清单内唯一、说明必填 ≤128；写 SENSITIVE_PERM_UPDATE 审计。清单增减只影响默认值，已放开租户的覆盖不受影响 | PLT-SCOPE-004 |
 
-收回范围时自动从租户角色中移除并递增 `permissionVersion`（PLT-SCOPE-006、PLT-PERM-010）。
+敏感清单种子为规格确认的 9 项中的 7 项（RCT 揭盲 / 锁库随 rct 模块开发时登记）。站内信通知租户管理员（规格 §5 范围变更流程第 5 步）随 E09 通知通道接入（届时补派发行），当前以变更记录 + 审计留痕。数据范围与字段策略上限（PLT-SCOPE-007）为 P2 后续规划，不在 `/scope` 响应中。
 
 ## 5. 平台账号与角色（PLT-ROLE-001..006、PLT-VIEW-005/006）
 

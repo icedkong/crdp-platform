@@ -152,6 +152,25 @@ export type {
   MenuSyncDiffResult,
   MenuUpdateRequest,
 } from './perm-resources';
+export { TENANT_SCOPE_STATE_TEXT } from './tenant-scope';
+export type {
+  ScopeTemplateItem,
+  ScopeTemplateModule,
+  ScopeTemplateUpdateRequest,
+  ScopeTemplateView,
+  SensitivePermItem,
+  SensitivePermUpdateRequest,
+  TenantScopeAffectedRole,
+  TenantScopeChangeResult,
+  TenantScopeImpactItem,
+  TenantScopeItem,
+  TenantScopeItemState,
+  TenantScopeLog,
+  TenantScopeModule,
+  TenantScopePreview,
+  TenantScopeUpdateRequest,
+  TenantScopeView,
+} from './tenant-scope';
 
 export interface CreateTenantRequest {
   /** 不填由后端自动生成（页面展示建议值可改）。 */

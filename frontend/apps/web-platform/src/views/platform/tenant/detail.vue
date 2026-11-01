@@ -55,6 +55,7 @@ import {
   validateReason,
 } from './lifecycle';
 import ModulesTab from './modules-tab.vue';
+import ScopeTab from './scope-tab.vue';
 
 defineOptions({ name: 'PlatformTenantDetail' });
 
@@ -64,6 +65,8 @@ const tenantId = Number(route.params.id);
 const { hasPermission } = usePermission();
 const canEdit = hasPermission('platform:tenant:edit');
 const canRenew = hasPermission('platform:tenant:renew');
+// E05-T07 / PLT-SCOPE-001、002：授权范围页签（查看权限控制显隐）
+const canScopeView = hasPermission('platform:tenant:scope:view');
 
 const detail = ref<null | TenantDetail>(null);
 const loading = ref(false);
@@ -212,7 +215,7 @@ onMounted(load);
 <template>
   <Page
     :title="detail?.name ?? '租户详情'"
-    description="租户基本信息与维护；模块开通随 E05-T05 提供，授权范围、资源信息、管理员、操作记录随对应任务提供。"
+    description="租户基本信息与维护；模块开通（E05-T05）与授权范围（E05-T07）已提供，资源信息、管理员、操作记录随对应任务提供。"
   >
     <Card :bordered="false" class="crdp-card">
       <Spin :spinning="loading">
@@ -285,6 +288,9 @@ onMounted(load);
           </TabPane>
           <TabPane key="modules" tab="模块">
             <ModulesTab :tenant-id="tenantId" />
+          </TabPane>
+          <TabPane v-if="canScopeView" key="scope" tab="授权范围">
+            <ScopeTab :tenant-id="tenantId" />
           </TabPane>
           <TabPane key="expiry" tab="到期设置">
             <div class="toolbar">
