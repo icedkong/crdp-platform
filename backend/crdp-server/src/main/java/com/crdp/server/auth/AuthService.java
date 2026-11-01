@@ -19,7 +19,6 @@ import com.crdp.framework.tenant.TenantRoutingDataSource;
 import com.crdp.framework.web.ApiException;
 import com.crdp.platform.infra.mapper.PlatformAccountRow;
 import com.crdp.platform.infra.mapper.PlatformMapper;
-import com.crdp.platform.menu.MenuRow;
 import com.crdp.platform.tenant.TenantRecord;
 import com.crdp.server.platform.TenantScopeService;
 import com.crdp.system.user.HospitalAccount;
@@ -28,12 +27,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -82,6 +78,7 @@ public class AuthService {
     private final CaptchaStore captchaStore;
     private final PermissionVersionStore permissionVersions;
     private final TenantScopeService scopeService;
+    private final EffectivePermissionService effectivePermissions;
 
     public AuthService(
             PlatformMapper platformMapper,
@@ -100,7 +97,8 @@ public class AuthService {
             SecurityProperties securityProperties,
             CaptchaStore captchaStore,
             PermissionVersionStore permissionVersions,
-            TenantScopeService scopeService) {
+            TenantScopeService scopeService,
+            EffectivePermissionService effectivePermissions) {
         this.platformMapper = platformMapper;
         this.tenantLookup = tenantLookup;
         this.hospitalDirectory = hospitalDirectory;
@@ -118,6 +116,7 @@ public class AuthService {
         this.captchaStore = captchaStore;
         this.permissionVersions = permissionVersions;
         this.scopeService = scopeService;
+        this.effectivePermissions = effectivePermissions;
     }
 
     public LoginResult loginHospital(
@@ -389,15 +388,10 @@ public class AuthService {
 
     /** 医院端会话草稿（登录与权限重算共用）：授权快照 + 登录 IP + 生命周期 + 当前权限版本号。 */
     SessionPrincipal hospitalDraft(TenantRecord tenant, HospitalAccount account, String ip) {
-        List<String> opened =
-                TenantContext.callAsPlatform(() -> platformMapper.openedModules(tenant.id()));
-        List<MenuRow> menus =
-                TenantContext.callAsPlatform(() -> platformMapper.listMenus("HOSPITAL"));
-        // E05-T07 / PLT-SCOPE：用户最终权限 = 已开通模块 ∩ 可分配范围 ∩ 角色并集。
+        // E06-T06 / PLT-ROLE-006：用户最终权限 = 已开通模块 ∩ 可分配范围 ∩ 角色并集（EffectivePermissionService 统一口径）。
         // 会话层交集是兜底：租户库不可达导致自动收回被跳过时，超范围授权也在下次重算时失效。
-        Set<Long> assignable =
-                TenantContext.callAsPlatform(() -> scopeService.assignableMenuIds(tenant.id()));
-        Granted granted = grant(menus, account.menuIds(), opened, assignable);
+        EffectivePermissionService.Granted granted =
+                effectivePermissions.hospitalGrants(tenant.id(), account);
         long now = Instant.now().getEpochSecond();
         return new SessionPrincipal(
                 null,
@@ -411,7 +405,7 @@ public class AuthService {
                 account.roles(),
                 granted.menuIds(),
                 granted.permissionCodes(),
-                opened,
+                granted.openedModules(),
                 permissionVersions.current("HOSPITAL", tenant.id(), account.id()),
                 account.scope(),
                 mustChangePassword(account.mustChangePassword(), account.passwordUpdatedAt()),
@@ -429,9 +423,7 @@ public class AuthService {
                 TenantContext.callAsPlatform(() -> platformMapper.accountRoles(accountId));
         List<Long> menuIds =
                 TenantContext.callAsPlatform(() -> platformMapper.accountMenuIds(accountId));
-        List<MenuRow> menus =
-                TenantContext.callAsPlatform(() -> platformMapper.listMenus("PLATFORM"));
-        Granted granted = grant(menus, menuIds, List.of("base", "followup"), null);
+        EffectivePermissionService.Granted granted = effectivePermissions.platformGrants(menuIds);
         boolean mustFlag =
                 Boolean.TRUE.equals(account.getMustChangePassword())
                         || passwordExpired(account.getPasswordUpdatedAt());
@@ -567,31 +559,6 @@ public class AuthService {
                         "remainingAttempts", rateLimiter.remainingAttempts(bucket)));
     }
 
-    /** 授权交集：角色授予 ∩ 已开通模块 ∩ 可分配范围（E05-T07 / PLT-SCOPE-006；assignable 为 null 表示 不限，平台端会话用）。 */
-    static Granted grant(
-            List<MenuRow> menus,
-            List<Long> grantedIds,
-            List<String> openedModules,
-            Set<Long> assignableIds) {
-        Set<Long> wanted = new HashSet<>(grantedIds);
-        Set<String> opened = new HashSet<>(openedModules);
-        List<MenuRow> effective =
-                menus.stream()
-                        .filter(row -> wanted.contains(row.getId()))
-                        .filter(row -> opened.contains(row.getModuleCode()))
-                        .filter(row -> assignableIds == null || assignableIds.contains(row.getId()))
-                        .toList();
-        List<Long> ids = effective.stream().map(MenuRow::getId).toList();
-        List<String> codes =
-                effective.stream()
-                        .map(MenuRow::getPermCode)
-                        .filter(Objects::nonNull)
-                        .filter(code -> !code.isBlank())
-                        .distinct()
-                        .toList();
-        return new Granted(ids, codes);
-    }
-
     /**
      * 登录结果：直接通过时是 token；需要双因素时 token 为空，改发 challengeId 与可用方式 （docs/api/auth.md：login 需要双因素时返回 {
      * challengeId, methods[] } 而不是 token）。
@@ -614,6 +581,4 @@ public class AuthService {
 
     /** E04-T05 / PLT-AUTH-001、007：密码登录可携带的图形验证码（连续失败 3 次后必填）。 */
     public record CaptchaInput(String captchaId, String code) {}
-
-    private record Granted(List<Long> menuIds, List<String> permissionCodes) {}
 }
