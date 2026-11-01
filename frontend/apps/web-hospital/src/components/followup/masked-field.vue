@@ -1,9 +1,14 @@
 <script lang="ts" setup>
 import { computed, onUnmounted, ref } from 'vue';
 
+import {
+  buildPlaintextRevealRequest,
+  normalizePatientPlainField,
+} from '@crdp/api';
 import { timings } from '@crdp/tokens';
 import { Button, message, Modal, Popconfirm } from 'ant-design-vue';
 
+import { revealPatientPlaintext } from '#/api/core';
 import { findPatient } from '#/reference/fixtures';
 import { usePlaintextReveal } from '#/reference/plaintext';
 import { useBreakpoint } from '#/reference/use-breakpoint';
@@ -14,7 +19,7 @@ const props = withDefaults(
     field: string;
     patientId: string;
     permission?: string;
-    /** 样板页打开，用来演示明文交互。正式页面不要传。 */
+    /** 样板页打开，用来演示明文交互（虚构数据）。正式页面不要传。 */
     referenceMode?: boolean;
     revealable?: boolean;
     value: string;
@@ -45,11 +50,26 @@ const allowed = computed(
 
 const revealApi = usePlaintextReveal({
   reveal: async () => {
-    // 明文接口尚未落地（POST .../plaintext）。样板只在内存里返回虚构值。
-    const patient = findPatient(props.patientId);
-    if (!patient) return props.value;
-    if (props.field === 'phone') return patient.phonePlain;
-    return patient.namePlain;
+    if (props.referenceMode) {
+      // 样板页用虚构数据演示交互；正式页面走明文接口（E07-T05 已落地）。
+      const patient = findPatient(props.patientId);
+      if (!patient) return props.value;
+      if (props.field === 'phone') return patient.phonePlain;
+      return patient.namePlain;
+    }
+    const request = buildPlaintextRevealRequest(props.field, 'detail');
+    if (!request) {
+      // 目录外字段不发起明文请求，保持脱敏值
+      return props.value;
+    }
+    const result = await revealPatientPlaintext(
+      props.patientId,
+      request.fields,
+      request.scene,
+    );
+    const field = normalizePatientPlainField(props.field);
+    // 明文只进入组件内存（usePlaintextReveal），60 秒后自动恢复脱敏
+    return (field && result.values[field]) || props.value;
   },
   ttlMs: timings.plaintextRevealMs,
 });

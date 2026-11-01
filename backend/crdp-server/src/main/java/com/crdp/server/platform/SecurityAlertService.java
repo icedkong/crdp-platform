@@ -1,8 +1,10 @@
 package com.crdp.server.platform;
 
+import com.crdp.followup.patient.app.PlaintextRevealService;
 import com.crdp.framework.audit.AuditAppendedEvent;
 import com.crdp.framework.audit.AuditEntry;
 import com.crdp.framework.audit.AuditResult;
+import com.crdp.framework.audit.AuditType;
 import com.crdp.framework.tenant.TenantContext;
 import java.util.List;
 import java.util.Map;
@@ -29,7 +31,9 @@ import org.springframework.stereotype.Service;
  *   <li>{@link #RULE_PERMISSION_CHANGE 权限变更}：操作日志 event_type / action 前缀 {@code ROLE_}（角色、菜单授权、
  *       成员与字段策略调整，RoleAdminService 两代写入口径都命中）；
  *   <li>{@link #RULE_PLATFORM_ACCESS 平台访问}：平台访问日志 action 前缀 {@code VIEW_}（进入租户视角与视角规则变更； 写入侧随
- *       E20-T01，规则先行就绪）。
+ *       E20-T01，规则先行就绪）；
+ *   <li>{@link #RULE_PLAINTEXT_ABUSE 明文查看滥用}（E07-T05）：数据访问 {@code VIEW_PLAIN} 被频控拒绝（DENIED +
+ *       RATE_LIMITED，患者明文接口每分钟 30 次上限）——「只看 SUCCESS」的唯一例外，被拒本身就是信号。
  * </ul>
  *
  * <p>接收人：全部启用的 PLATFORM_ADMIN（plt_account × plt_role；按租户指定平台负责人随 PLT-VIEW-006，回落口径同 OQ-44）。
@@ -49,6 +53,13 @@ public class SecurityAlertService {
 
     /** 平台访问：进入租户视角 / 视角规则变更（VIEW_* 平台访问，写入侧随 E20-T01）。 */
     public static final String RULE_PLATFORM_ACCESS = "PLATFORM_ACCESS";
+
+    /**
+     * 明文查看滥用（E07-T05 / patient.md §5）：数据访问 {@code VIEW_PLAIN} 被频控拒绝（DENIED + reason= {@link
+     * PlaintextRevealService#REASON_RATE_LIMITED}）。 规则总体只看
+     * SUCCESS，这是唯一例外——被频控拒绝本身就是滥用信号，成功次数由正常审计与频控兜底。
+     */
+    public static final String RULE_PLAINTEXT_ABUSE = "PLAINTEXT_ABUSE";
 
     private static final Logger log = LoggerFactory.getLogger(SecurityAlertService.class);
 
@@ -88,10 +99,17 @@ public class SecurityAlertService {
         }
     }
 
-    /** 规则匹配（纯函数）。只看「成功」的安全事件：被拒（DENIED）与失败（FAIL）由审批与审计兜底，不在这里告警。 */
+    /**
+     * 规则匹配（纯函数）。只看「成功」的安全事件：被拒（DENIED）与失败（FAIL）由审批与审计兜底，不在这里告警； 唯一例外是 {@link #RULE_PLAINTEXT_ABUSE
+     * 明文查看滥用}——被频控拒绝（DENIED + RATE_LIMITED）本身就是告警信号（patient.md §5）。
+     */
     static String match(AuditEntry entry) {
         if (entry.result() != AuditResult.SUCCESS) {
-            return null;
+            return entry.type() == AuditType.DATA_ACCESS
+                            && "VIEW_PLAIN".equals(entry.accessMethod())
+                            && PlaintextRevealService.REASON_RATE_LIMITED.equals(entry.reason())
+                    ? RULE_PLAINTEXT_ABUSE
+                    : null;
         }
         return switch (entry.type()) {
             case LOGIN -> "LOCK".equals(entry.action()) ? RULE_ABNORMAL_LOGIN : null;
@@ -189,6 +207,8 @@ public class SecurityAlertService {
             case RULE_PERMISSION_CHANGE ->
                     tenant + "权限变更（" + actorOf(entry) + "）：" + orAction(entry);
             case RULE_PLATFORM_ACCESS -> "平台访问租户视角（" + actorOf(entry) + "）：" + orAction(entry);
+            case RULE_PLAINTEXT_ABUSE ->
+                    tenant + "用户「" + actorOf(entry) + "」明文查看过于频繁被频控拒绝：" + orAction(entry);
             default -> tenant + "安全事件：" + orAction(entry);
         };
     }

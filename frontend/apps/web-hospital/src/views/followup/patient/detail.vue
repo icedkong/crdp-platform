@@ -23,13 +23,11 @@ import {
   logRows,
   timelineA,
 } from '#/reference/fixtures';
-import { usePermission } from '#/reference/use-permission';
 
 defineOptions({ name: 'FollowupPatientDetail' });
 
 const route = useRoute();
 const router = useRouter();
-const { hasPermission } = usePermission();
 
 const patient = computed(() => findPatient(String(route.params.id)));
 const tab = ref('baseline');
@@ -37,6 +35,8 @@ const activeKey = ref('');
 const uploadOpen = ref(false);
 const previewOpen = ref(false);
 const previewId = ref('');
+// 样板页恒用虚构数据演示（referenceMode）；真实明文查看由 MaskedField 走
+// POST /followup/patients/{id}/plaintext（followup:patient:plain + 审计），随 E13 患者域页面接入
 const referenceMode = true;
 
 const tree = computed(() => (patient.value ? locationTree(patient.value) : []));
@@ -130,7 +130,7 @@ if (!activeKey.value && patient.value) {
       can-unplanned
       can-upload
       :patient="patient"
-      :reference-mode="referenceMode || hasPermission('followup:patient:plain')"
+      :reference-mode="referenceMode"
       @action="onHeader"
     />
     <Tabs v-model:active-key="tab" class="tabs">

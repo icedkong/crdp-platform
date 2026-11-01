@@ -87,6 +87,7 @@ export {
 } from './auth-flow';
 
 export type { TwoFactorChallenge } from './auth-flow';
+
 export {
   ASSET_URL_PATTERN,
   isValidAssetUrl,
@@ -103,7 +104,6 @@ export type {
   TenantBrandView,
   ThemeColorOption,
 } from './brand';
-
 export {
   DICT_SOURCE_TEXT,
   DICT_STATUS_TEXT,
@@ -116,6 +116,7 @@ export {
   paramValueTypeText,
   validateOverrideValue,
 } from './config';
+
 export type {
   DictItemSource,
   DictStatus,
@@ -134,6 +135,7 @@ export type {
   TenantParamOverrideRequest,
   TenantParamView,
 } from './config';
+
 export {
   DEPT_IMPORT_COLUMNS,
   deptImportActionText,
@@ -183,7 +185,6 @@ export type {
   OrgTreeView,
   OrgView,
 } from './org';
-
 export {
   PASSWORD_EXPIRY_REMIND_DAYS,
   PASSWORD_HISTORY_COUNT,
@@ -198,6 +199,19 @@ export type {
   PasswordPolicyOptions,
   PasswordRuleItem,
 } from './password-policy';
+
+export {
+  buildPlaintextRevealRequest,
+  normalizePatientPlainField,
+  normalizePatientPlainScene,
+  PATIENT_PLAIN_FIELDS,
+} from './patient';
+export type {
+  PatientPlainField,
+  PatientPlaintextRequest,
+  PatientPlaintextResult,
+  PatientPlaintextScene,
+} from './patient';
 export {
   API_ACTION_TYPE_TEXT,
   API_AUDIT_LEVEL_TEXT,

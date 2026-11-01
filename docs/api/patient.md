@@ -70,16 +70,20 @@ interface PatientRow {
 
 前端处理（ConflictBanner，components.md §13）：暂停自动保存 → 「保留我的并覆盖」= 以 `currentVersion` 作为 `baseVersion` 重发并带 `overwrite: true`（后端写审计）；「载入服务器版本」= 本地改动另存本机副本。**不做字段级自动合并**。已提交或只读的记录不自动保存（自动保存请求返回 40901）。
 
-## 5. 明文查看（A-PAT-010、C-PAT-012；技术方案“明文查看（已确认 2026-10-31）”）
+## 5. 明文查看（A-PAT-010、C-PAT-012；技术方案“明文查看（已确认 2026-10-31）”；E07-T05 已实现）
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| POST | `/api/hospital/followup/patients/{id}/plaintext` | `followup:patient:plain`（A/C 规格权限表），且该字段对当前角色策略为 `MASKED` | body `{ fields: ['name','phone','idCard'], scene: 'detail'|'form' }` → `{ values: { phone: '...' }, expiresInSeconds: 60 }` |
+| POST | `/api/hospital/followup/patients/{id}/plaintext` | `followup:patient:plain`（A/C 规格权限表，按钮 211；敏感权限，平台需先对该院放开可分配范围 PLT-SCOPE-004），且该字段对当前角色策略为 `MASKED` | body `{ fields: ['name','phone','idCard'], scene: 'detail'|'form' }`（scene 缺省 `detail`；字段去重）→ `{ values: { phone: '...' }, expiresInSeconds: 60 }` |
 
-- 每次调用写租户审计（含字段码、场景、traceId，**不记录明文值**）；随访员看电话也每次记。
-- 前端点击后原地确认即显示，不再输入密码；60 秒后恢复脱敏；明文**不进**本地草稿与任何缓存。
+- 每次调用写租户数据访问审计（`DATA_ACCESS / VIEW_PLAIN`，对象 `PATIENT:{id}`，描述含字段中文名与场景、traceId，**不记录明文值**，`before/after`/摘要均不落）；随访员看电话也每次记。越范围 / 不存在的患者 40400 并写 `DENIED` 审计。
+- 字段策略口径：`MASKED` 才走本接口；`VISIBLE`（明文已随普通接口返回）与 `HIDDEN`（禁止任何输出）请求一律 **40001**；目录外字段与非法场景 40001。
+- 响应头 `Cache-Control: no-store`；`expiresInSeconds = 60`（design tokens `timings.plaintextRevealMs` 同口径）。
+- 前端点击后原地确认即显示，不再输入密码（OQ-57 定论：popconfirm 二次确认，不加 `@RequireReauth`）；60 秒后恢复脱敏；明文**不进**本地草稿与任何缓存。
 - 列表页不提供逐行明文（design-system 表格规则）。
-- 频控：同一用户每分钟 ≤ 30 次（推断，待确认），超出 42900 并写安全告警（PLT-AUD-012）。
+- 频控：同一用户每分钟 ≤ 30 次（文档建议值，暂按此实现，产品定论后只改 `PlaintextRateLimiter` 常量），超出 **42900** 并写 `DENIED(reason=RATE_LIMITED)` 审计，触发安全告警 `PLAINTEXT_ABUSE`（PLT-AUD-012，接收人为启用的平台管理员）。
+- 默认脱敏（序列化）：DTO 敏感字符串字段标 framework `@MaskedByPolicy(resource, field)`（`FieldPolicyJacksonModule`）——`MASKED` 掩码、`HIDDEN` 整字段不出现、`VISIBLE` 明文；动态结构（导出行、站内信参数）用 `SensitiveFieldSanitizer.apply`，同一套口径。掩码规则（`SensitiveValueMasker`）：姓名「张*明」（两字「张*」）、手机号前 3 后 4「138****5678」、证件号前 6 后 4、病案号前 2 后 2、住址前 6 字 + 固定 4 星，其余通用（首尾保留、中间按位数补星）。
+- 实现备注：患者表随 E13-T01 建表，明文取数经端口 `PatientPlaintextSource`（当前占位实现恒 40400，不伪造数据）；E13 的真实实现必须走 `@DataScope` 查询、解密只经 `CryptoService`。
 
 ## 6. 联系方式（pt_contact，按版本保存）
 

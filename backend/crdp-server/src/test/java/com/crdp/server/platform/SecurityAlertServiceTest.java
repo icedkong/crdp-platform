@@ -109,6 +109,31 @@ class SecurityAlertServiceTest {
     }
 
     @Test
+    void rateLimitedPlaintextViewMatchesPlaintextAbuse() {
+        // E07-T05：明文查看被频控拒绝（DENIED + reason=RATE_LIMITED）是滥用信号本身（patient.md §5）
+        assertThat(
+                        SecurityAlertService.match(
+                                AuditEntry.dataAccess("followup", "VIEW_PLAIN")
+                                        .result(AuditResult.DENIED)
+                                        .errorCode(42900)
+                                        .reason("RATE_LIMITED")
+                                        .build()))
+                .isEqualTo(SecurityAlertService.RULE_PLAINTEXT_ABUSE);
+        // 正常的明文查看（SUCCESS）不告警；其他拒绝原因（越范围 40400）不告警
+        assertThat(
+                        SecurityAlertService.match(
+                                AuditEntry.dataAccess("followup", "VIEW_PLAIN").success().build()))
+                .isNull();
+        assertThat(
+                        SecurityAlertService.match(
+                                AuditEntry.dataAccess("followup", "VIEW_PLAIN")
+                                        .result(AuditResult.DENIED)
+                                        .reason("PATIENT_NOT_FOUND_OR_OUT_OF_SCOPE")
+                                        .build()))
+                .isNull();
+    }
+
+    @Test
     void platformViewActionMatchesPlatformAccess() {
         assertThat(
                         SecurityAlertService.match(
