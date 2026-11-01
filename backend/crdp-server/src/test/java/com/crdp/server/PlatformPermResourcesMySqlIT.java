@@ -305,6 +305,15 @@ class PlatformPermResourcesMySqlIT {
                 flatten((List<Map<String, Object>>) hospitalTree.get("data")).stream()
                         .anyMatch(node -> "followup:patient:plain".equals(node.get("permCode"))),
                 "医院端树含随访按钮");
+        // OQ-11 定论 B：组织架构菜单权限码对齐规格（V103 改名），旧码不得再出现
+        assertTrue(
+                flatten((List<Map<String, Object>>) hospitalTree.get("data")).stream()
+                        .anyMatch(node -> "tenant:org:view".equals(node.get("permCode"))),
+                "组织架构菜单用规格码 tenant:org:view");
+        assertFalse(
+                flatten((List<Map<String, Object>>) hospitalTree.get("data")).stream()
+                        .anyMatch(node -> "tenant:dept:view".equals(node.get("permCode"))),
+                "旧码 tenant:dept:view 已由 V103 改名，不得再出现");
     }
 
     @Test

@@ -2,13 +2,13 @@
 
 > 后端：`crdp-system`（用户、角色、组织、字典、参数、通知配置）；病区相关字段在 `crdp-followup` 使用。前缀 `/api/hospital/system/`（推断，待确认）。
 > 页面：`docs/design/pages.md` §10。全部路径 **推断，待确认**。
-> 菜单种子现有权限码：`tenant:user:view`、`tenant:role:view`、`tenant:dept:view`（规格写作 `tenant:org:view`，见 OQ-11）。
+> 菜单种子现有权限码：`tenant:user:view`、`tenant:role:view`、`tenant:org:view`（原种子 `tenant:dept:view`，OQ-11 定论 B 由 V103 改名对齐规格）。
 
 ## 1. 组织：院区、科室、病区（PLT-ORG-001..003、A-WARD-001/008、C-WARD-001/008）
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| GET | `/api/hospital/system/orgs/tree` | `tenant:dept:view` | 院区 → 科室 → 病区树（`sys_org`、`sys_dept`；A 只有病区一层也用同一树） |
+| GET | `/api/hospital/system/orgs/tree` | `tenant:org:view` | 院区 → 科室 → 病区树（`sys_org`、`sys_dept`；A 只有病区一层也用同一树） |
 | POST / PUT | `/api/hospital/system/orgs[/{id}]` | `tenant:org:edit`（推断） | 新建 / 修改；停用前返回影响（成员数、患者数） |
 | POST | `/api/hospital/system/orgs/import` | `tenant:org:edit` | 科室导入（Excel，见 `import-export.md`） |
 | GET / POST / PUT | `/api/hospital/followup/wards[/{id}]` | `followup:ward:edit` | 病区字典：名称、编码、默认随访负责人、停用（A-WARD-001、008；C-WARD-001） |

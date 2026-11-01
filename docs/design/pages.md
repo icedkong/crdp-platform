@@ -43,7 +43,7 @@
 | 报告单与资料 | `/followup/report` | `FollowupReport` | `followup/report/index` | 种子为 `followup:report:view`；规格无此码，查看归 `followup:scan:upload`（见 OQ-12） | **是**（上传与查看） | 种子已有，标题“报告单”→“报告单与资料” |
 | 统计 | `/followup/stats` | `FollowupStats` | `followup/stats/index` | `followup:dashboard:view`（推断，待确认） | 否 | 新增 |
 | 系统设置 | `/system` | `HospitalSystem` | `LAYOUT` | — | 否 | 种子标题“系统管理” |
-| ┗ 用户 / 角色 / 科室 | `/system/user` 等 | 已有 | 已有 | `tenant:user:view` / `tenant:role:view` / 种子 `tenant:dept:view`（规格 `tenant:org:view`，见 OQ-11） | 否 | |
+| ┗ 用户 / 角色 / 科室 | `/system/user` 等 | 已有 | 已有 | `tenant:user:view` / `tenant:role:view` / `tenant:org:view`（原种子 dept 码已由 V103 改名，OQ-11） | 否 | |
 | ┗ 病区管理 | `/system/ward` | `HospitalWard` | `system/ward/index` | `followup:ward:edit` | 否 | 新增 |
 | ┗ 字段字典 | `/system/field` | `FollowupField` | `followup/field/index` | `followup:field:edit` | 否 | 新增 |
 | ┗ 报告单设置 | `/system/report-config` | `FollowupReportConfig` | `followup/report/config` | `followup:scan:config` | 否 | 新增 |
@@ -518,7 +518,7 @@
 |---|---|---|---|---|
 | 用户管理 | `/system/user` | `tenant:user:view` / `edit` / `reset` / `import` / `export` | PLT-ORG-006、007、008、009、010；A-WARD-002；C-WARD-003 | 用户编辑页新增“负责病区”（A）/“负责科室或病区”（C）多选；权限预览 |
 | 角色管理 | `/system/role` | `tenant:role:view` / `edit` | PLT-ORG-004、005；PLT-PERM-007、009；A-WARD-003 | 编辑页四个页签：菜单按钮（仅可分配范围）/ 数据范围 / 字段策略 / 成员 |
-| 组织架构 | `/system/dept` | 种子 `tenant:dept:view`；规格 `tenant:org:view` / `edit` | PLT-ORG-001、002、003 | 左树右详情 |
+| 组织架构 | `/system/dept` | `tenant:org:view` / `edit`（原种子 dept:view 已由 V103 改名，OQ-11） | PLT-ORG-001、002、003 | 左树右详情 |
 | 病区管理 | `/system/ward` | `followup:ward:edit` | A-WARD-001、006、008、009；C-WARD-001、008 | 成员、患者数、默认随访负责人、停用 |
 | 字段字典 | `/system/field` | `followup:field:edit` | A-FLD-001…009、012、013；C-FLD-001…010 | 按分类列字段；编辑显示名、帮助、范围、必填、选项；变更记录。**不做**医院自助新增字段与表单设计器（A-FLD-010/011 延后） |
 | 报告单设置 | `/system/report-config` | `followup:scan:config` | A-ATT-003、011、012、013、018；C-SCAN-002、003、004、005 | 资料类型、字段集、名称字典、指标模板、字段映射、格式与大小 |
