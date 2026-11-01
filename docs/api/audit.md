@@ -59,6 +59,7 @@
 | `BATCH_EXPORT` 批量导出 | 数据访问 `access_method=EXPORT` | 导出即成批数据离站，一律告警；后续患者导出（E13）等自动覆盖 |
 | `PERMISSION_CHANGE` 权限变更 | 操作日志 event_type / action 前缀 `ROLE_` | 角色、菜单授权、成员、字段策略调整 |
 | `PLATFORM_ACCESS` 平台访问 | 平台访问日志 action 前缀 `VIEW_` | 进入租户视角与视角规则变更；写入侧随 E20-T01，规则已就绪 |
+| `PLAINTEXT_ABUSE` 明文查看滥用 | 数据访问 `VIEW_PLAIN` 且 `result=DENIED`、`reason=RATE_LIMITED` | 患者明文接口频控拒绝（每分钟 30 次上限，patient.md §5）——「只看 SUCCESS」的唯一例外，被拒本身就是信号（E07-T05） |
 
 接收人 = 全部启用的 PLATFORM_ADMIN（按租户指定平台负责人随 PLT-VIEW-006，回落口径同 OQ-44）；唯一键 `(rule_code, alert_key=traceId, recipient_id)` 同一触发不重发。站内信收件箱与 PENDING → SENT/FAILED 投递随 E09 通知域消费本表（`NotifySender` 仍为占位实现，与 `plt_tenant_expire_notice` 同一消费契约）。告警派发失败只记 ERROR 日志不阻断业务（事实源是审计日志，可对账）；断链告警（PLT-AUD-009）复用本通道，随 E09 一并触达。
 
@@ -67,7 +68,7 @@
 - 对审计表执行 UPDATE / DELETE 在数据库层面失败。
 - 篡改一条记录后，完整性校验能定位断点。
 - 篡改检测矩阵（E08-T06，验收「篡改检测用例通过」）：六张审计表逐表「真实写入 → 篡改后一条 → 验链在该行报 `BAD_HASH`」（`AuditChainTamperMySqlIT`，真库）；对抗了解算法的攻击者的单元强化用例（`AuditChainTamperDetectionTest`）——重封攻击（改内容并按算法重算本条 hash，本行自洽）由后继行 `BROKEN_LINK` 检出、两行连同 prev/hash 整体对调至少一处断裂、直插编造 hash 行报 `BAD_HASH`、断点落在翻页第二批（批大小 500 之后）也要检出；篡改后验链作业把该租户本趟记 `FAILED`（`job_tenant_run`）并在 `aud_chain_check` 记 `BROKEN`（`/integrity` 数据源）。
-- 查看明文、下载、导出各有一条 `DATA_ACCESS` 记录；被拒请求有 `DENIED` 记录。
+- 查看明文、下载、导出各有一条 `DATA_ACCESS` 记录；被拒请求有 `DENIED` 记录（E07-T05 明文接口：成功 / 越范围 40400 / 频控 42900 三态各有断言，见 `PatientPlaintextIT`）。
 - E04-T08：导出提交与下载（两端）缺 `X-Reauth-Token` 一律 40304，并按 §1 写 result=DENIED 操作日志（`ReauthFlowIT`）。
 - 审计 `before/after` 中检索不到手机号、证件号明文。
 - 组合查询（时间 / 模块 / 结果 / IP / traceId）与详情前后值、traceId 关联（E08-T04，`AuditQueryExportMySqlIT`）。
