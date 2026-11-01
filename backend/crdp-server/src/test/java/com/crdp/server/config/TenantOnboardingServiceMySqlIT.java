@@ -196,10 +196,11 @@ class TenantOnboardingServiceMySqlIT {
                 // E07-T06 增加 V16（角色字段策略覆盖表 sys_role_field_policy）；
                 // E08-T02 增加 V17（审计哈希链链头表 + 只读触发器）。
                 // E08-T03 增加 V18（审计表按月分区 + 归档登记 aud_archive）。
+                // E08-T04 增加 V19（审计导出作业表 job_export / job_export_approval + 审计中心菜单授权）。
                 // 此处随迁移清单维护
                 List.of(
                         "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14",
-                        "15", "16", "17", "18"),
+                        "15", "16", "17", "18", "19"),
                 root.queryForList(
                         "SELECT version FROM "
                                 + DB

@@ -76,6 +76,9 @@ export function authBase(mode: SessionMode) {
   return mode === 'hospital' ? '/api/hospital' : '/api/platform';
 }
 
+// E08-T04 审计中心（PLT-AUD-005~007）
+export * from './audit';
+
 export {
   cooldownRemaining,
   isTwoFactorChallenge,
@@ -84,7 +87,6 @@ export {
 } from './auth-flow';
 
 export type { TwoFactorChallenge } from './auth-flow';
-
 export {
   ASSET_URL_PATTERN,
   isValidAssetUrl,
@@ -92,6 +94,7 @@ export {
   THEME_COLOR_OPTIONS,
   themeColorHexOf,
 } from './brand';
+
 export type {
   BrandSaveRequest,
   BrandView,
@@ -113,7 +116,6 @@ export {
   paramValueTypeText,
   validateOverrideValue,
 } from './config';
-
 export type {
   DictItemSource,
   DictStatus,
@@ -181,6 +183,7 @@ export type {
   OrgTreeView,
   OrgView,
 } from './org';
+
 export {
   PASSWORD_EXPIRY_REMIND_DAYS,
   PASSWORD_HISTORY_COUNT,
@@ -191,7 +194,6 @@ export {
   passwordPolicyViolations,
   passwordRuleItems,
 } from './password-policy';
-
 export type {
   PasswordPolicyOptions,
   PasswordRuleItem,
@@ -224,15 +226,6 @@ export type {
   MenuSyncDiffResult,
   MenuUpdateRequest,
 } from './perm-resources';
-export {
-  platformAccountStatusText,
-  platformRoleStatusText,
-  platformRoleViewSummary,
-  platformTenantScopeText,
-  platformVisibleScopeText,
-  validatePlatformAccount,
-  validatePlatformRole,
-} from './platform-role';
 
 export interface CreateTenantRequest {
   /** 不填由后端自动生成（页面展示建议值可改）。 */
@@ -568,6 +561,15 @@ export interface ModuleOpenLog {
   tenantName: string;
 }
 
+export {
+  platformAccountStatusText,
+  platformRoleStatusText,
+  platformRoleViewSummary,
+  platformTenantScopeText,
+  platformVisibleScopeText,
+  validatePlatformAccount,
+  validatePlatformRole,
+} from './platform-role';
 export type {
   PlatformAccountResetResult,
   PlatformAccountSaveRequest,
@@ -580,8 +582,8 @@ export type {
   PlatformTenantScope,
   PlatformVisibleScope,
 } from './platform-role';
-export type { OnlineSessionView } from './session';
 
+export type { OnlineSessionView } from './session';
 export {
   TENANT_ROLE_SCOPE_OPTIONS,
   tenantFieldPolicyText,
@@ -589,6 +591,7 @@ export {
   tenantRoleTypeHint,
   tenantRoleTypeText,
 } from './tenant-role';
+
 export type {
   FieldPolicy,
   RoleScopeType,
@@ -610,8 +613,8 @@ export type {
   TenantRoleStatusRequest,
   TenantRoleView,
 } from './tenant-role';
-
 export { TENANT_SCOPE_STATE_TEXT } from './tenant-scope';
+
 export type {
   ScopeTemplateItem,
   ScopeTemplateModule,
@@ -630,7 +633,6 @@ export type {
   TenantScopeUpdateRequest,
   TenantScopeView,
 } from './tenant-scope';
-
 export {
   flattenMenuPreview,
   nextStatusActions,
@@ -640,6 +642,7 @@ export {
   userOptionLabel,
   userStatusText,
 } from './tenant-user';
+
 export type {
   MenuPreviewNode,
   MenuPreviewRow,
@@ -660,6 +663,6 @@ export type {
   UserStatus,
   WardOptionView,
 } from './tenant-user';
-
 export { menuNodesToRoutes, menuNodeToRoute, toIconifyIcon } from './vben-menu';
+
 export type { VbenMenuRoute } from './vben-menu';

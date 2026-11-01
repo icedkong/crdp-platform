@@ -1,4 +1,5 @@
 export * from './api-resource';
+export * from './audit';
 export * from './auth';
 export * from './dict';
 export * from './menu';

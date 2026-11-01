@@ -3,7 +3,7 @@
 > 后端：`crdp-framework`（审计切面 `@AuditLog` + 写入服务 `AuditLogger`，E08-T01 已落地；哈希链封存 / 验链 / 日志只读，E08-T02 已落地；按月分区与 OBS WORM 归档，E08-T03 已落地）、`crdp-system` / `crdp-platform`（查询，E08-T04）。
 > 表（E08-T01 起按规格字段写入，E08-T03 起按月分区）：租户库 `aud_log`（操作）、`aud_login_log`（登录）、`aud_data_access_log`（数据访问）；平台库 `plt_audit_log`（平台操作 / 租户控制面，含 `tenant_id` 供 PLT-TEN-022 按租户检索）、`aud_login_log`（平台账号登录 + 租户未识别的医院登录失败）、`aud_platform_access_log`（租户视角访问，仅平台库，医院端不可见）。
 > 页面：`/system/audit`（租户）、`/platform/audit`（平台）；患者详情「操作日志」页签。
-> 需求：PLT-AUD-001…012、PLT-VIEW（平台访问记录）。查询路径 **推断，待确认**（E08-T04 定稿）。
+> 需求：PLT-AUD-001…012、PLT-VIEW（平台访问记录）。查询与导出路径已由 E08-T04 定稿（§2、§3）。
 
 ## 1. 写入（后端约定，所有模块都要遵守；E08-T01 已实现）
 
@@ -19,27 +19,39 @@
 - 留存：在线 1 年后转归档（PLT-AUD-010）。
 - 运维注意：只读触发器要求迁移账号能建触发器——binlog 开启时非 SUPER 账号需 `log_bin_trust_function_creators=1`（MySQL 1419）。本地 / CI 的 `docker-compose.yml` 已用 `--skip-log-bin` 关闭 binlog；生产由 RDS 参数组处置（运维 E22）。
 
-## 2. 租户查询（`tenant:audit:view` / `tenant:audit:export`；E08-T04 实现）
+## 2. 租户查询与导出（E08-T04 已实现）
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| POST | `/api/hospital/system/audit/{type}/search` | `type = operation|login|data-access`；条件：时间、用户、模块、对象、结果、IP、traceId（PLT-AUD-005） |
-| GET | `/api/hospital/system/audit/{type}/{id}` | 详情（前后值对比，PLT-AUD-006） |
-| POST | `/api/hospital/system/audit/exports` | 异步导出，走 `import-export.md` §3 的审批（PLT-AUD-007）；导出本身也写审计 |
-| GET | `/api/hospital/followup/patients/{id}/logs` | 患者「操作日志」页签：该患者相关的操作日志（只读） |
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| POST | `/api/hospital/system/audit/{type}/search` | `tenant:audit:view` | `type = operation\|login\|data-access`；条件体：`startTime/endTime`（ISO-8601 带时区，必填，跨度 ≤ 3 个月，超出 40001）、`userId/userName/module/action/objectType/objectId/result/ip/traceId`（可选）、`pageNo/pageSize`（PLT-AUD-005） |
+| GET | `/api/hospital/system/audit/{type}/{id}` | `tenant:audit:view` | 详情：前后值（敏感值为摘要）、`prevHash/hash`、`traceLinks[]`（同 traceId 其他日志，PLT-AUD-006） |
+| GET | `/api/hospital/followup/patients/{id}/logs` | `followup:patient:view` | 患者「操作日志」页签：`object_type='PATIENT' AND object_id={id}` 的操作 + 数据访问日志（只读；患者模块随 E13 以该口径写入） |
+| POST | `/api/hospital/system/audit/exports` | `tenant:audit:export` | `{ type, condition（与查询同构）, reason }` → `{ exportId, status }`；租户管理员（角色含 TENANT_ADMIN）免审批直接 `GENERATING`，普通用户 `PENDING_APPROVAL`（PLT-AUD-007 已确认口径） |
+| GET | `/api/hospital/system/audit/exports` | `tenant:audit:export` | 我的导出（状态、行数、文件哈希、下载截止） |
+| GET | `/api/hospital/system/export-approvals` | `tenant:audit:export:approve` | 待审批列表（租户管理员，import-export.md §3） |
+| POST | `/api/hospital/system/export-approvals/{id}/approve` · `/reject` | `tenant:audit:export:approve` | `{ comment }`；非待审批状态再操作 40901 |
+| GET | `/api/hospital/system/audit/exports/{id}/download` | `tenant:audit:export` | 仅申请人；未审批 / 生成中 / 已结束 40901，超 24 小时 40901；返回 CSV 附件（UTF-8 BOM，首列水印） |
+
+导出实现（暂行做法见 OQ-56）：条件在提交时校验并 JSON 固化到 `job_export.condition_json`（base V19），审批通过后按固化条件重放生成；文件为带水印列的 CSV，行数上限 50 000（超出文件尾附截断提示），文件体暂存 `job_export.file_body`（LONGBLOB，M1 单实例，E10 对象存储落地后迁走），24 小时后过期。审计点：提交 `DATA_ACCESS/EXPORT`、审批 `OPERATION/AUDIT_EXPORT_APPROVE|REJECT`（前后值 = 状态迁移）、每次下载 `DATA_ACCESS/DOWNLOAD`（含文件哈希）。
 
 租户侧**看不到**平台访问记录（PLT-AUD-004 仅存平台侧）。
 
-## 3. 平台查询（`platform:audit:view` / `export`；E08-T04 实现）
+## 3. 平台查询与导出（E08-T04 已实现）
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| POST | `/api/platform/audit/{type}/search` | `type = operation|login|tenant-view|view-rule|control-plane`，可按租户筛选 |
-| GET | `/api/platform/audit/{type}/{id}` | 详情；同 traceId 关联 |
-| POST | `/api/platform/audit/exports` | 平台账号导出由平台管理员审批 |
-| GET | `/api/platform/audit/integrity?tenantId=` | 最近一次哈希链校验结果（P1） |
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| POST | `/api/platform/audit/{type}/search` | `platform:audit:view` | `type = operation\|login\|tenant-view\|view-rule\|control-plane`；页签映射：operation → `plt_audit_log` 全量、control-plane → `plt_audit_log AND tenant_id IS NOT NULL`（租户控制面，PLT-TEN-022）、login → 平台库 `aud_login_log`、tenant-view → `aud_platform_access_log` 全量、view-rule → `aud_platform_access_log AND action LIKE 'VIEW_RULE%'`（写入侧随 E20-T01）；条件同 §2 另加 `tenantId` |
+| GET | `/api/platform/audit/{type}/{id}` | `platform:audit:view` | 详情；同 traceId 关联（跨平台库三张表） |
+| GET | `/api/platform/audit/integrity?tenantId=` | `platform:audit:view` | 最近一次哈希链校验结果（`aud_chain_check` 按表取最新；`tenantId` 为空 = 平台库自身，PLT-AUD-009） |
+| POST | `/api/platform/audit/exports` | `platform:audit:export` | 平台账号导出一律 `PENDING_APPROVAL`，由**另一名**平台管理员审批（申请人自审 40901，PLT-AUD-007 已确认） |
+| GET | `/api/platform/audit/exports` | `platform:audit:export` | 我的导出 |
+| GET | `/api/platform/audit/export-approvals` | `platform:audit:export:approve` | 待审批列表 |
+| POST | `/api/platform/audit/export-approvals/{id}/approve` · `/reject` | `platform:audit:export:approve` | `{ comment }`；申请人不能审批自己的申请（40901） |
+| GET | `/api/platform/audit/exports/{id}/download` | `platform:audit:export` | 仅申请人；限 24 小时；CSV 附件（水印 = `姓名（账号）· 平台审计中心 · 时间`） |
 
-安全告警（PLT-AUD-012，P1）：异常登录、批量导出、权限变更、平台访问实时告警，经 outbox 发站内信给平台管理员。
+平台侧导出作业表在平台库（V28，含 `tenant_id` 列）；提交 `DATA_ACCESS/EXPORT`、审批 `OPERATION`、下载 `DATA_ACCESS/DOWNLOAD` 均按平台上下文落 `aud_platform_access_log`（PLT-AUD-004 仅存平台侧）。水印记申请人（导出人），不是审批人。
+
+安全告警（PLT-AUD-012，P1，随 E08-T05）：异常登录、批量导出、权限变更、平台访问实时告警，经 outbox 发站内信给平台管理员。
 
 ## 4. 测试要点
 
@@ -47,3 +59,5 @@
 - 篡改一条记录后，完整性校验能定位断点。
 - 查看明文、下载、导出各有一条 `DATA_ACCESS` 记录；被拒请求有 `DENIED` 记录。
 - 审计 `before/after` 中检索不到手机号、证件号明文。
+- 组合查询（时间 / 模块 / 结果 / IP / traceId）与详情前后值、traceId 关联（E08-T04，`AuditQueryExportMySqlIT`）。
+- 导出审批：租户管理员免审批、普通用户待审批（未审批下载 40901）、平台申请人不能自审（40901）、审批通过后异步生成并限时下载、导出 / 审批 / 下载全程记审计（验收原文：导出需审批，导出本身记审计）。
