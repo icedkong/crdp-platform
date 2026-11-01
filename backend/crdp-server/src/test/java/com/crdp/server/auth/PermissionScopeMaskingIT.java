@@ -588,6 +588,86 @@ class PermissionScopeMaskingIT {
         assertTrue(audits != null && audits >= 1, "字段策略保存应写审计，实际 " + audits);
     }
 
+    // ================================================================ 字段策略合并（E07-T04）
+
+    /**
+     * E07-T04 / PLT-PERM-009（tasks.csv 验收：隐藏、脱敏、明文按角色合并）：多角色显式覆盖同字段「取最宽松」 （platform-spec
+     * §4：叠加授权），未覆盖的角色不注入默认参与合并；无覆盖字段回落平台默认 MASKED。 停用角色的覆盖立即失效（与菜单 / 范围同口径）。 脱敏序列化与明文查看接口随 E07-T05。
+     */
+    @Test
+    void fieldPoliciesMergeAcrossRolesMostPermissive() {
+        long strictRole = insertRole("ITR-PSM-FP-A", "IT 字段策略角色甲（示例）");
+        long looseRole = insertRole("ITR-PSM-FP-B", "IT 字段策略角色乙（示例）");
+        runInTenant(
+                () -> {
+                    roleAdmin.updateFieldPolicies(
+                            strictRole,
+                            List.of(
+                                    new FieldPolicyItem("patient", "name", "HIDDEN"),
+                                    new FieldPolicyItem("patient", "address", "HIDDEN"),
+                                    new FieldPolicyItem("patient", "phone", "MASKED")));
+                    roleAdmin.updateFieldPolicies(
+                            looseRole,
+                            List.of(
+                                    new FieldPolicyItem("patient", "name", "VISIBLE"),
+                                    new FieldPolicyItem("patient", "medicalRecordNo", "VISIBLE")));
+                });
+        long user =
+                userWithRoles(
+                        "itr.psm.field.demo", "IT 字段策略用户（示例）", List.of(strictRole, looseRole));
+
+        // 登录面：与登录同一取数路径装配会话快照（HospitalDirectory.findById → assemble）
+        var account = runInTenant(() -> hospitalDirectory.findById(user).orElseThrow());
+        assertEquals("VISIBLE", account.fieldPolicies().decide("patient", "name"), "隐藏 + 明文 → 明文");
+        assertEquals(
+                "HIDDEN",
+                account.fieldPolicies().decide("patient", "address"),
+                "唯一显式覆盖生效（未覆盖角色不注入默认）");
+        assertEquals("MASKED", account.fieldPolicies().decide("patient", "phone"), "显式 MASKED 覆盖");
+        assertEquals("VISIBLE", account.fieldPolicies().decide("patient", "medicalRecordNo"));
+        assertEquals("MASKED", account.fieldPolicies().decide("patient", "idCard"), "无覆盖回落默认脱敏");
+
+        // 排查面：预览同口径，sourceRoles 只列授出生效策略的角色（PLT-ORG-009「所见 = 会话所得」）
+        UserEffectivePermissionsView preview = previewOf(user);
+        var name =
+                preview.fields().stream()
+                        .filter(field -> "name".equals(field.field()))
+                        .findFirst()
+                        .orElseThrow();
+        assertEquals("VISIBLE", name.policy());
+        assertTrue(name.overridden());
+        assertEquals(List.of("IT 字段策略角色乙（示例）"), name.sourceRoles(), "只有放开明文的角色列来源");
+        var address =
+                preview.fields().stream()
+                        .filter(field -> "address".equals(field.field()))
+                        .findFirst()
+                        .orElseThrow();
+        assertEquals("HIDDEN", address.policy());
+        assertEquals(List.of("IT 字段策略角色甲（示例）"), address.sourceRoles());
+        var idCard =
+                preview.fields().stream()
+                        .filter(field -> "idCard".equals(field.field()))
+                        .findFirst()
+                        .orElseThrow();
+        assertFalse(idCard.overridden(), "无覆盖字段不标 overridden");
+        assertTrue(idCard.sourceRoles().isEmpty());
+
+        // 停用放开角色的成员仍按收紧角色执行：停用角色的覆盖立即失效（与菜单同口径）
+        runInTenant(
+                () ->
+                        jdbc.update(
+                                "UPDATE sys_role SET status = 'DISABLED' WHERE id = ?", looseRole));
+        var afterDisable = runInTenant(() -> hospitalDirectory.findById(user).orElseThrow());
+        assertEquals(
+                "HIDDEN",
+                afterDisable.fieldPolicies().decide("patient", "name"),
+                "停用角色乙后只剩角色甲的 HIDDEN");
+        assertEquals(
+                "MASKED",
+                afterDisable.fieldPolicies().decide("patient", "medicalRecordNo"),
+                "停用角色的 VISIBLE 一并失效，回落默认脱敏");
+    }
+
     // ---------------------------------------------------------------- 基础设施
 
     /** 与登录同一取数路径（HospitalDirectory.findById → assemble），不经 HTTP 即可断言快照。 */

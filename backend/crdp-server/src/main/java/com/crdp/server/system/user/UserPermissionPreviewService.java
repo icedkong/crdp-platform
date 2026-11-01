@@ -1,5 +1,7 @@
 package com.crdp.server.system.user;
 
+import com.crdp.framework.fieldpolicy.FieldPolicySnapshot;
+import com.crdp.framework.fieldpolicy.SensitiveFieldCatalog;
 import com.crdp.framework.tenant.TenantContext;
 import com.crdp.framework.web.ApiException;
 import com.crdp.platform.infra.mapper.PlatformMapper;
@@ -25,6 +27,9 @@ import org.springframework.stereotype.Service;
  * 启用角色授权并集），数据范围与 {@link HospitalDirectory} 的快照 归并同口径——WARD 范围由角色触发、病区清单取本人负责病区（sys_user_ward），DEPT
  * / CUSTOM_DEPT / RESPONSIBLE_DEPT 触发负责科室清单（sys_user_dept_scope）；任一启用角色为 ALL 即全院可见（A-WARD-007），
  * 不再列病区。实时计算，不缓存；本接口只读、不写审计。
+ *
+ * <p>E07-T04 / PLT-PERM-009：字段策略同口径并入预览（{@code fields[]}）——敏感字段目录逐项展示 多角色显式覆盖「取最宽松」合并后的生效策略 （隐藏
+ * &lt; 脱敏 &lt; 可见），与登录装配 {@code HospitalDirectory} 的快照同一合并不变量， sourceRoles 只列授出生效策略的启用角色。
  *
  * <p>来源角色只统计<b>启用中</b>的角色（停用角色的授权立即失效，与 HospitalMapper.menuIds / scopeTypes 一致）；
  * 角色清单本身保留停用行并标注状态，便于排查。
@@ -79,6 +84,18 @@ public class UserPermissionPreviewService {
     /** 负责科室清单：DEPT / CUSTOM_DEPT / RESPONSIBLE_DEPT 触发，附来源角色。 */
     public record ScopeDeptView(long id, String code, String name, List<String> sourceRoles) {}
 
+    /**
+     * 生效字段策略（E07-T04 / PLT-PERM-009）：多角色显式覆盖「取最宽松」合并后的用户视角； sourceRoles 只列授出生效策略的角色（无覆盖回落平台默认时为空）。
+     */
+    public record FieldPolicyView(
+            String resource,
+            String field,
+            String label,
+            String defaultPolicy,
+            String policy,
+            boolean overridden,
+            List<String> sourceRoles) {}
+
     /** 权限预览视图（只读）。 */
     public record UserEffectivePermissionsView(
             long userId,
@@ -92,10 +109,15 @@ public class UserPermissionPreviewService {
             boolean scopeAll,
             List<ScopeTypeView> scopeTypes,
             List<ScopeWardView> wards,
-            List<ScopeDeptView> depts) {}
+            List<ScopeDeptView> depts,
+            List<FieldPolicyView> fields) {}
 
     /** 启用角色的范围行（sourceRoles 归并的输入，roleId 保序）。 */
     public record RoleScopeRow(long roleId, String roleName, String scopeType) {}
+
+    /** 启用角色的显式字段策略覆盖行（E07-T04 合并预览的输入，roleId 保序）。 */
+    public record RoleFieldPolicyRow(
+            long roleId, String roleName, String resource, String field, String policy) {}
 
     // ---------------------------------------------------------------- 查询
 
@@ -135,6 +157,7 @@ public class UserPermissionPreviewService {
                 deptsEffective(all, effectiveTypes)
                         ? deptRows(userId, deptScopeSources(sources))
                         : List.of();
+        List<FieldPolicyView> fields = fieldPolicyViews(fieldPolicyRows(userId));
 
         return new UserEffectivePermissionsView(
                 userId,
@@ -148,7 +171,8 @@ public class UserPermissionPreviewService {
                 all,
                 scopeTypes,
                 wards,
-                depts);
+                depts,
+                fields);
     }
 
     // ---------------------------------------------------------------- 纯函数（单测覆盖）
@@ -231,6 +255,60 @@ public class UserPermissionPreviewService {
         return List.copyOf(names);
     }
 
+    /**
+     * E07-T04 / PLT-PERM-009：用户视角的生效字段策略（纯函数，与会话快照同一合并不变量）： 目录逐字段展示，多角色显式覆盖「取最宽松」（隐藏 &lt; 脱敏 &lt;
+     * 可见，platform-spec §4 叠加授权）， 无覆盖回落平台默认；sourceRoles 只列<b>授出生效策略</b>的启用角色（按角色序去重）——「谁给了你明文」。
+     *
+     * <p>防御脏数据：目录外字段与非法策略行不参与合并（保存入口已校验）。合并口径与 {@code FieldPolicySnapshot.merge}
+     * 一致：未配置的角色不注入默认参与合并。
+     *
+     * @param rows 用户全部启用角色的显式覆盖行（roleId 保序）
+     */
+    public static List<FieldPolicyView> fieldPolicyViews(List<RoleFieldPolicyRow> rows) {
+        List<FieldPolicyView> views = new ArrayList<>();
+        for (SensitiveFieldCatalog.Entry entry : SensitiveFieldCatalog.all()) {
+            List<RoleFieldPolicyRow> effective =
+                    rows == null
+                            ? List.of()
+                            : rows.stream()
+                                    .filter(
+                                            row ->
+                                                    entry.key()
+                                                            .equals(
+                                                                    row.resource()
+                                                                            + "."
+                                                                            + row.field()))
+                                    .filter(
+                                            row ->
+                                                    SensitiveFieldCatalog.POLICIES.contains(
+                                                            row.policy()))
+                                    .sorted(Comparator.comparingLong(RoleFieldPolicyRow::roleId))
+                                    .toList();
+            // 只在显式覆盖内取最宽松（不把默认值注入合并）；无覆盖整体回落平台默认
+            String policy =
+                    effective.stream()
+                            .map(RoleFieldPolicyRow::policy)
+                            .reduce(FieldPolicySnapshot::mostPermissive)
+                            .orElse(entry.defaultPolicy());
+            LinkedHashSet<String> sourceRoles = new LinkedHashSet<>();
+            for (RoleFieldPolicyRow row : effective) {
+                if (row.policy().equals(policy)) {
+                    sourceRoles.add(row.roleName());
+                }
+            }
+            views.add(
+                    new FieldPolicyView(
+                            entry.resource(),
+                            entry.field(),
+                            entry.label(),
+                            entry.defaultPolicy(),
+                            policy,
+                            !effective.isEmpty(),
+                            List.copyOf(sourceRoles)));
+        }
+        return views;
+    }
+
     // ---------------------------------------------------------------- 内部
 
     private Map<String, Object> userRow(long userId) {
@@ -301,6 +379,24 @@ public class UserPermissionPreviewService {
                                 rs.getLong("role_id"),
                                 rs.getString("role_name"),
                                 rs.getString("scope_type")),
+                userId);
+    }
+
+    /** 启用角色的显式字段策略覆盖行（E07-T04；停用角色不计，与登录装配 HospitalMapper.fieldPolicies 同口径）。 */
+    private List<RoleFieldPolicyRow> fieldPolicyRows(long userId) {
+        return jdbc.query(
+                "SELECT r.id AS role_id, r.name AS role_name, fp.resource, fp.field, fp.policy"
+                        + " FROM sys_role_field_policy fp"
+                        + " JOIN sys_role r ON r.id = fp.role_id AND r.status = 'ENABLED'"
+                        + " JOIN sys_user_role ur ON ur.role_id = r.id"
+                        + " WHERE ur.user_id = ? ORDER BY r.id, fp.resource, fp.field",
+                (rs, rowNum) ->
+                        new RoleFieldPolicyRow(
+                                rs.getLong("role_id"),
+                                rs.getString("role_name"),
+                                rs.getString("resource"),
+                                rs.getString("field"),
+                                rs.getString("policy")),
                 userId);
     }
 

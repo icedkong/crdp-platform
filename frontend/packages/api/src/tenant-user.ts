@@ -159,11 +159,27 @@ export interface ScopeDeptView {
   sourceRoles: string[];
 }
 
-/** 权限预览视图（只读）：菜单、权限码与数据范围（含病区）逐项标注来源角色。 */
+/**
+ * 生效字段策略（E07-T04 / PLT-PERM-009）：多角色显式覆盖「取最宽松」合并后的用户视角；
+ * sourceRoles 只列授出生效策略的启用角色，无覆盖回落平台默认时为空数组。
+ */
+export interface FieldPolicyPreviewView {
+  defaultPolicy: 'HIDDEN' | 'MASKED' | 'VISIBLE' | string;
+  field: string;
+  label: string;
+  overridden: boolean;
+  policy: 'HIDDEN' | 'MASKED' | 'VISIBLE' | string;
+  resource: string;
+  sourceRoles: string[];
+}
+
+/** 权限预览视图（只读）：菜单、权限码、数据范围（含病区）与字段策略逐项标注来源角色。 */
 export interface UserEffectivePermissionsView {
   /** 负责科室清单（无科室类范围或全院时为空数组）。 */
   depts: ScopeDeptView[];
   displayName: string;
+  /** 敏感字段目录逐项的生效策略（多角色取最宽松，E07-T04）。 */
+  fields: FieldPolicyPreviewView[];
   menus: MenuPreviewNode[];
   openedModules: string[];
   permissionCodes: string[];

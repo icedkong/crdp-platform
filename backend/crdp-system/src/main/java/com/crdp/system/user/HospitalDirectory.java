@@ -1,11 +1,14 @@
 package com.crdp.system.user;
 
 import com.crdp.framework.datascope.ResearchProjectScopeProvider;
+import com.crdp.framework.fieldpolicy.FieldPolicyOverride;
+import com.crdp.framework.fieldpolicy.FieldPolicySnapshot;
 import com.crdp.framework.security.ScopeSnapshot;
 import com.crdp.system.infra.mapper.BrandMapper;
 import com.crdp.system.infra.mapper.BrandRow;
 import com.crdp.system.infra.mapper.HospitalMapper;
 import com.crdp.system.infra.mapper.HospitalUserRow;
+import com.crdp.system.infra.mapper.RoleFieldPolicyRow;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
@@ -140,6 +143,8 @@ public class HospitalDirectory {
                         wants(scopeTypes, "RESEARCH_PROJECT")
                                 ? projectScopes.memberProjectIds(userId)
                                 : List.of());
+        // E07-T04 / PLT-PERM-009：启用角色的显式字段策略覆盖「取最宽松」合并，未覆盖字段回落平台默认（脱敏序列化随 E07-T05）
+        FieldPolicySnapshot fieldPolicies = fieldPoliciesOf(mapper.fieldPolicies(userId));
         return Optional.of(
                 new HospitalAccount(
                         userId,
@@ -153,7 +158,27 @@ public class HospitalDirectory {
                         mapper.roles(userId),
                         mapper.menuIds(userId),
                         List.of(),
-                        scope));
+                        scope,
+                        fieldPolicies));
+    }
+
+    /**
+     * E07-T04 / PLT-PERM-009：多角色显式覆盖「取最宽松」合并（platform-spec §4：叠加授权；隐藏 &lt; 脱敏 &lt;
+     * 可见）。未配置的角色不注入平台默认参与合并——否则任何角色的收紧覆盖都会被别的角色的「默认脱敏」冲掉； 某字段没有任何覆盖时整体回落目录默认（当前一律 MASKED）。合并本体在
+     * framework {@link FieldPolicySnapshot#merge}，登录装配与权限预览共用。
+     */
+    static FieldPolicySnapshot fieldPoliciesOf(List<RoleFieldPolicyRow> roleOverrides) {
+        return FieldPolicySnapshot.merge(
+                roleOverrides == null
+                        ? List.of()
+                        : roleOverrides.stream()
+                                .map(
+                                        row ->
+                                                new FieldPolicyOverride(
+                                                        row.getResource(),
+                                                        row.getField(),
+                                                        row.getPolicy()))
+                                .toList());
     }
 
     /**

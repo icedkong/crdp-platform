@@ -486,7 +486,9 @@ public class AuthService {
                 ip,
                 now,
                 now,
-                hospitalIdleSeconds(tenant, account));
+                hospitalIdleSeconds(tenant, account),
+                // E07-T04 / PLT-PERM-009：字段策略快照（多角色取最宽松）冻结进会话；角色策略保存递增权限版本后重算即得新值
+                account.fieldPolicies());
     }
 
     /** 平台端会话草稿（登录与权限重算共用）。平台端空闲超时固定 15 分钟（等保参数表）。 */
