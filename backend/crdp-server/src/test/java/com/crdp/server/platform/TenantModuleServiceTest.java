@@ -48,6 +48,7 @@ class TenantModuleServiceTest {
     private final TenantRoutingDataSource routing = mock(TenantRoutingDataSource.class);
     private final TenantSchemaMigrator migrator = mock(TenantSchemaMigrator.class);
     private final ModuleRegistry registry = new ModuleRegistry();
+    private final RoleTemplateService roleTemplates = mock(RoleTemplateService.class);
 
     private TenantModuleService service;
 
@@ -55,8 +56,18 @@ class TenantModuleServiceTest {
     void setUp() {
         service =
                 new TenantModuleService(
-                        platform, registry, routing, migrator, audit, sessions, permissionVersions);
+                        platform,
+                        registry,
+                        routing,
+                        migrator,
+                        audit,
+                        sessions,
+                        permissionVersions,
+                        roleTemplates);
         lenient().when(routing.hasTenant(anyLong())).thenReturn(true);
+        lenient()
+                .when(roleTemplates.seedToTenant(anyLong(), anyString(), anyString()))
+                .thenReturn(0);
         TenantContext.usePlatform();
     }
 
@@ -458,6 +469,8 @@ class TenantModuleServiceTest {
                         eq("followup"),
                         eq("defaultNotifyChannel"),
                         eq("站内信"));
+        // 业务角色模板（E06-T05 / PLT-ROLE-005：开通流程第 4 步下发到租户库）
+        verify(roleTemplates).seedToTenant(TENANT_ID, "demoa", "followup");
         // 状态落 OPEN、开通时间与操作人
         verify(platform)
                 .update(
@@ -741,6 +754,8 @@ class TenantModuleServiceTest {
                         eq("2"),
                         eq(TENANT_ID),
                         eq("followup"));
+        // 新建租户同样下发业务角色模板（E06-T05；base 未登记模板，seeder 返回 0）
+        verify(roleTemplates).seedToTenant(TENANT_ID, "demoa", "followup");
         // 新租户没有在线会话，不递增权限版本
         verify(permissionVersions, never()).bump(anyString(), anyLong(), anyLong());
     }

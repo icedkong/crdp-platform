@@ -43,19 +43,29 @@ E06-T02 已实现（院区与科室树；病区字典属 `crdp-followup`，科�
 | POST | `/api/hospital/system/users/import` | `tenant:user:import` | 批量导入（PLT-ORG-007） |
 | GET | `/api/hospital/system/users/options?keyword=&deptId=` | 登录 | 用户选择器（只返回 id、显示名、科室；PLT-ORG-012） |
 
-## 3. 角色与数据范围（PLT-ORG-004/005、PLT-PERM-007..009、A-WARD-003、C-WARD-004）
+## 3. 角色与数据范围（PLT-ORG-004/005、PLT-ROLE-004/005、PLT-PERM-007..009、A-WARD-003、C-WARD-004；E06-T05 已实现）
+
+角色类型（`roleType`）：`BUILT_IN` 内置（租户管理员，不可删除、不可修改权限、不可停用，也不能移除最后一名启用成员）/ `TEMPLATE` 模板（模块开通时由平台下发，只读）/ `CUSTOM` 自定义（可编辑、复制、停用、删除——删除仅限无成员时）。
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| GET | `/api/hospital/system/roles` | `tenant:role:view` | 列表（内置角色不可删） |
-| POST / PUT / DELETE | `/api/hospital/system/roles[/{id}]` | `tenant:role:edit` | 角色基本信息 |
-| GET / PUT | `/api/hospital/system/roles/{id}/menus` | `tenant:role:edit` | 菜单与按钮；**只能选平台授权范围内的项**（超出返回 40001） |
-| GET / PUT | `/api/hospital/system/roles/{id}/scope` | `tenant:role:edit` | 数据范围类型：`ALL / DEPT / DEPT_AND_CHILDREN / WARD / SELF / CUSTOM`（以平台定义为准）；`wardIds[]` / `deptIds[]` |
-| GET / PUT | `/api/hospital/system/roles/{id}/field-policies` | `tenant:role:edit` | 字段策略：`VISIBLE / MASKED / HIDDEN`，不能宽于平台上限（PLT-SCOPE-007） |
-| GET / PUT | `/api/hospital/system/roles/{id}/members` | `tenant:role:edit` | 成员 |
-| POST | `/api/hospital/system/roles/from-template` | `tenant:role:edit` | 应用业务角色模板 |
+| GET | `/api/hospital/system/roles` | `tenant:role:view` | 列表（内置 / 模板 / 自定义，附 `memberCount` / `menuCount` / `moduleCode` / `description`） |
+| POST / PUT / DELETE | `/api/hospital/system/roles[/{id}]` | `tenant:role:edit` | 角色基本信息：新建自定义角色（编码租户内唯一 40902、创建后不可改）、编辑（仅自定义，编码不可改 40001）、删除（仅无成员的自定义角色 40901） |
+| POST | `/api/hospital/system/roles/{id}/copy` | `tenant:role:edit` | 复制自定义角色：菜单、数据范围与自定义科室一并复制，写 `ROLE_COPY` 审计 |
+| POST | `/api/hospital/system/roles/{id}/status` | `tenant:role:edit` | 停用 / 启用（`action=ENABLE|DISABLE`，reason ≤200）；内置与模板 40901 |
+| GET / PUT | `/api/hospital/system/roles/{id}/menus` | `tenant:role:view` / `edit` | 菜单与按钮；**只能选平台授权范围内的项**（超出返回 40001），返回树带 `assignable` 标记；仅自定义角色可改（内置不可修改权限、模板只读 40901） |
+| GET / PUT | `/api/hospital/system/roles/{id}/scope` | `tenant:role:view` / `edit` | 数据范围类型（多选取并集）：`ALL / WARD / RESPONSIBLE_DEPT / RESPONSIBLE_PATIENT / DEPT / SELF / CUSTOM_DEPT`（平台定义七种，与 `HospitalDirectory` 同口径；生效计算在 E07-T02）；`CUSTOM_DEPT` 必须带 `customDeptIds[]`（本院科室，不存在 40400） |
+| GET / PUT | `/api/hospital/system/roles/{id}/members` | `tenant:role:view` / `edit` | 成员（全量覆盖 `userIds[]`）；模板角色不可直接分配（40901，先复制）；不能移除最后一名启用的租户管理员（40901）；加入的用户必须是启用状态 |
+| POST | `/api/hospital/system/roles/from-template` | `tenant:role:edit` | 应用业务角色模板（PLT-ORG-005）：`{ templateId, code, name, description? }` → 复制生成自定义角色（菜单与范围随模板带来） |
+| GET | `/api/hospital/system/roles/{id}/field-policies` | `tenant:role:edit` | 字段策略：`VISIBLE / MASKED / HIDDEN`，不能宽于平台上限（PLT-SCOPE-007）——**随 E07-T04 / T06 落地** |
 
-保存角色后递增相关用户的 `permissionVersion`（PLT-PERM-010）。租户管理员全院可见（A-WARD-007、C-WARD-007）。
+保存角色授权 / 成员 / 状态后递增受影响用户的 `permissionVersion`（PLT-PERM-010），在线会话下一次请求即按新权限重算；全部写租户库审计（`ROLE_CREATE` / `ROLE_UPDATE` / `ROLE_COPY` / `ROLE_STATUS` / `ROLE_DELETE` / `ROLE_MENUS` / `ROLE_SCOPE` / `ROLE_MEMBERS`）。租户管理员全院可见（A-WARD-007、C-WARD-007）。
+
+### 3.1 业务角色模板（PLT-ROLE-005，E06-T05）
+
+- 模板定义在平台库 `plt_role_template`（+ `plt_role_template_menu` 默认授权），种子 V105 登记随访模块五个模板：随访员 `FOLLOWUP_NURSE`、责任医生 `FOLLOWUP_DUTY_DOCTOR`、研究者 `FOLLOWUP_RESEARCHER`、CRC `FOLLOWUP_CRC`、资料录入员 `FOLLOWUP_DATA_CLERK`。
+- 模块开通流程第 4 步（PLT-MOD-004）与新建租户向导都会把启用模板下发到该租户库（`sys_role` 的 `TEMPLATE` 行 + 菜单授权，幂等；开通记录 detail 写明下发数量）。模板菜单矩阵是暂行口径（OQ-50），敏感按钮不进模板。
+- 重新开通模块自动恢复模板；演示租户库由种子 V106 对齐兜底。
 
 ## 4. 字典与参数（PLT-CFG-002/004、A-FLD-012、C-FLD-002/003）
 

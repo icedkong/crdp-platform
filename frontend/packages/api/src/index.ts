@@ -541,6 +541,29 @@ export type {
 } from './platform-role';
 export type { OnlineSessionView } from './session';
 
+export {
+  TENANT_ROLE_SCOPE_OPTIONS,
+  tenantRoleScopeTypeText,
+  tenantRoleTypeHint,
+  tenantRoleTypeText,
+} from './tenant-role';
+export type {
+  RoleScopeType,
+  RoleStatus,
+  RoleType,
+  TenantRoleCopyRequest,
+  TenantRoleFromTemplateRequest,
+  TenantRoleMembersView,
+  TenantRoleMemberView,
+  TenantRoleMenuNode,
+  TenantRoleMenusView,
+  TenantRoleSaveRequest,
+  TenantRoleScopeSaveRequest,
+  TenantRoleScopeView,
+  TenantRoleStatusRequest,
+  TenantRoleView,
+} from './tenant-role';
+
 export { TENANT_SCOPE_STATE_TEXT } from './tenant-scope';
 export type {
   ScopeTemplateItem,

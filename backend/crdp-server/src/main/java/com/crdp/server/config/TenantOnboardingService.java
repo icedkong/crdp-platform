@@ -62,6 +62,12 @@ public class TenantOnboardingService {
     private static final int TENANT_ADMIN_SETTINGS_MENU_ID = 34;
 
     /**
+     * 「维护角色与授权」按钮（tenant:role:edit）在 plt_menu 的固定 id，平台库迁移 V22 新增（E06-T05 / PLT-ORG-004）。 老库由租户库
+     * base V11 增量授予、local/dev 全新库由种子 V106 补授，这里覆盖生产（无种子）。
+     */
+    private static final int TENANT_ADMIN_ROLE_EDIT_MENU_ID = 321;
+
+    /**
      * 开通请求：编码与医院名称必填；首个管理员在开通时提供，也可启用前经 E06 补设。 expire 为向导第 2 步的到期设置（E05-T02
      * /PLT-TEN-011），空表示长期有效；重试重入时不会改写已登记租户的到期设置。 modules 为向导第 2 步勾选的 业务模块（E05-T05 /PLT-MOD-004，base
      * 必开不传），null 表示重试重入——沿用上次已登记模块。
@@ -333,10 +339,12 @@ public class TenantOnboardingService {
                     Long roleId =
                             queryId("SELECT id FROM sys_role WHERE code = ?", TENANT_ADMIN_ROLE);
                     if (roleId == null) {
+                        // PLT-ROLE-004：租户初始化即生成租户管理员内置角色（role_type=BUILT_IN，E06-T05 起记录类型）
                         roleId =
                                 insertReturningId(
-                                        "INSERT INTO sys_role (code, name, built_in, status)"
-                                                + " VALUES (?, ?, 1, 'ENABLED')",
+                                        "INSERT INTO sys_role (code, name, built_in, status,"
+                                                + " role_type) VALUES (?, ?, 1, 'ENABLED',"
+                                                + " 'BUILT_IN')",
                                         TENANT_ADMIN_ROLE,
                                         "租户管理员");
                     }
@@ -411,6 +419,21 @@ public class TenantOnboardingService {
                         platform.update(
                                 "INSERT INTO sys_role_menu (role_id, menu_id) VALUES (?, "
                                         + TENANT_ADMIN_SETTINGS_MENU_ID
+                                        + ")",
+                                roleId);
+                    }
+                    // E06-T05 / PLT-ORG-004：租户管理员内置的组织 / 用户 / 角色管理权限是平台基础模块固定能力
+                    // （platform-spec §5），「维护角色与授权」按钮（plt_menu 321）同样授予。
+                    Integer roleEditGranted =
+                            platform.queryForObject(
+                                    "SELECT COUNT(*) FROM sys_role_menu WHERE role_id = ? AND menu_id = "
+                                            + TENANT_ADMIN_ROLE_EDIT_MENU_ID,
+                                    Integer.class,
+                                    roleId);
+                    if (roleEditGranted == null || roleEditGranted == 0) {
+                        platform.update(
+                                "INSERT INTO sys_role_menu (role_id, menu_id) VALUES (?, "
+                                        + TENANT_ADMIN_ROLE_EDIT_MENU_ID
                                         + ")",
                                 roleId);
                     }

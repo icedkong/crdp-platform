@@ -97,7 +97,7 @@ PLT-MOD-010/011 为后续规划，不实现。
 | GET / POST / PUT | `/api/platform/roles[/{id}]` | `platform:role:view` / `edit` | **已实现（E06-T04）**。角色视图 `{id, code, name, description, builtIn, status, view{canEnter, visibleScope∈CONFIG_ONLY/CONFIG_AND_BUSINESS, tenantScope∈ALL/RESPONSIBLE/SPECIFIED, canConfigure, canResetPassword, canEditBusiness}, menuIds(详情), holderCount, createdAt, updatedAt}`；新建自定义角色编码服务端生成（`CUSTOM_` 前缀，创建后不可改）；菜单授权只能是平台端启用菜单（40001）；`tenantScope=SPECIFIED` 暂 40001（指定租户清单由 E20-T01 落地，OQ-48）；不提供删除 |
 | GET | `/api/platform/roles/{id}/holders` | `platform:role:view` | **已实现（E06-T04）**。持有人列表（账号、姓名、账号状态） |
 | GET | `/api/platform/roles/menus` | `platform:role:view` | **已实现（E06-T04）**。可授权的平台端启用菜单 / 按钮（平铺带 parentId，角色页授权树数据源；不依赖 `platform:menu:view`） |
-| GET | `/api/platform/role-templates` | `platform:role:view` | 业务角色模板（复制到租户内置角色，PLT-ROLE-004、005，属 E06-T05） |
+| GET | `/api/platform/role-templates?moduleCode=` | `platform:role:view` | **已实现（E06-T05）**。业务角色模板清单（PLT-ROLE-005）：`{id, moduleCode, code, name, description, sortNo}`，只读；模块开通时下发到租户库成 `TEMPLATE` 角色（见 `system.md` §3.1），租户在医院端「从模板复制」生成自定义角色（PLT-ORG-005） |
 
 ## 6. 租户视角（PLT-VIEW-001..018）
 
