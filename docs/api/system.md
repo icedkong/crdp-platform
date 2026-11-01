@@ -63,9 +63,19 @@ E06-T02 已实现（院区与科室树；病区字典属 `crdp-followup`，科�
 |---|---|---|
 | 租户字典 | `/api/hospital/system/dicts`、`/dicts/{code}/items`（`cfg_dict`、`cfg_dict_item`；条目停用不删除） | `tenant:dict:edit` |
 | 租户参数 | `/api/hospital/system/params`（`cfg_param`） | `tenant:param:edit` |
-| 个性化 | `/api/hospital/system/brand`（名称、Logo fileId、预设主题色，`cfg_brand`） | `tenant:brand:edit` |
+| 个性化 | `/api/hospital/system/brand`（`cfg_brand`，E06-T11 已实现，见 §4.1） | `tenant:brand:edit` |
 | 安全设置 | `/api/hospital/system/security-policy`（不得低于平台下限） | `tenant:security:edit` |
 | Webhook | `/api/hospital/system/webhooks`（`cfg_webhook`，见 `notify.md`） | `tenant:webhook:edit` |
+
+### 4.1 个性化（E06-T11 / PLT-CFG-008 已实现）
+
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| GET | `/api/hospital/system/brand` | `tenant:brand:edit` | `{ displayName, defaultName, logoUrl, loginBgUrl, themeColor, themeColorHex, copyright, updatedAt }`；`displayName` 为空表示未配置（前端回落 `defaultName`＝平台租户名称） |
+| GET | `/api/hospital/system/brand/theme-colors` | `tenant:brand:edit` | 预设色板 `[{ key, hex, label }]`：BLUE #3A75FF（默认）/ TEAL #1DC29E / ORANGE #FA8C16 / RED #FF4D4F（OQ-23：主色固定，租户只选预设辅助色） |
+| PUT | `/api/hospital/system/brand` | `tenant:brand:edit` | `{ displayName, logoUrl, loginBgUrl, themeColor, copyright }` 全量覆盖。显示名称必填（≤128）；素材地址只放行 `http(s)://` 或站内 `/` 路径（≤512，拒绝 `data:` / `javascript:`），素材对象存储在 E10 接入前先存素材 URL（OQ-49）；版权信息 ≤255。保存即时生效（登录页 `GET /auth/tenant?code=` 现读）并写审计 `BRAND_UPDATE` |
+
+`me.tenantName` 与登录页显示名称同口径：个性化 `displayName` 优先，未配置回落平台租户名称；改名后重新登录或会话权限重算时生效。
 
 ## 5. 首页卡片配置（A-DASH-013/014）
 
@@ -83,11 +93,16 @@ E06-T02 已实现（院区与科室树；病区字典属 `crdp-followup`，科�
 
 ## 7. 个人中心（PLT-ORG-011、A-NTF-007、C-NTF-007）
 
+> E06-T11 已实现基本信息、换绑手机号与登录记录（登录即可访问，接口资源表标「公共接口」）； 修改密码与在线会话沿用 `auth.md` §1 的
+> `/auth/password`、`/auth/sessions`。通知偏好（A-NTF-007 / C-NTF-007，`ntf_user_pref`）随通知任务落地。
+
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET / PUT | `/api/hospital/profile` | 基本信息（显示名、手机号修改需短信验证） |
-| GET | `/api/hospital/profile/login-logs` | 本人登录记录 |
-| GET / PUT | `/api/hospital/profile/notice-pref` | 通知偏好（`ntf_user_pref`） |
+| GET | `/api/hospital/profile` | `{ username, displayName, phoneMasked, roles[], tenantName, createdAt }`；手机号只返回脱敏值（`139****0002`），不提供明文口 |
+| PUT | `/api/hospital/profile` | `{ displayName }` 修改本人姓名（账号不可改；1–64 字符）；写审计 `USER_PROFILE_UPDATE` |
+| POST | `/api/hospital/profile/phone/sms` | `{ phone }` 换绑第一步：验证码发到**新**手机号（`^1\d{10}$`；与登录 / 重置验证码分命名空间 `rebind:租户:账号:新号`；60 秒冷却与每日上限超限 42900；新号与当前号相同 40001） |
+| PUT | `/api/hospital/profile/phone` | `{ phone, code }` 换绑第二步：验证码通过后落新密文与盲索引（本院唯一，被他人绑定 40902）；验证码错误 / 过期 40102；写审计 `USER_PHONE_REBIND`（手机号脱敏） |
+| GET | `/api/hospital/profile/login-logs` | 本人最近 20 条登录记录 `[{ success, message, createdAt }]`（按用户名过滤，北京时间 ISO-8601；不含 IP） |
 
 ## 8. 在线会话（PLT-AUTH-008/009）
 

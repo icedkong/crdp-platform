@@ -108,4 +108,36 @@ public interface HospitalMapper {
             "INSERT INTO sys_password_history (user_id, password_hash) VALUES (#{userId}, #{passwordHash})")
     int insertPasswordHistory(
             @Param("userId") long userId, @Param("passwordHash") String passwordHash);
+
+    // ---- E06-T11 / PLT-ORG-011：个人中心 ----
+
+    /** 本人改显示名（PLT-ORG-011 基本信息）。 */
+    @Update("UPDATE sys_user SET display_name = #{displayName} WHERE id = #{userId}")
+    int updateDisplayName(@Param("userId") long userId, @Param("displayName") String displayName);
+
+    /** 换绑手机号（PLT-ORG-011）：同时落密文与盲索引（本院唯一约束由 uk_sys_user_phone_idx 保证）。 */
+    @Update(
+            """
+            UPDATE sys_user SET phone = #{phoneCipher}, phone_idx = #{phoneIdx}
+            WHERE id = #{userId}
+            """)
+    int updatePhone(
+            @Param("userId") long userId,
+            @Param("phoneCipher") String phoneCipher,
+            @Param("phoneIdx") String phoneIdx);
+
+    /** 本人最近登录记录（aud_login_log，倒序取前若干条；个人中心「登录记录」）。 */
+    @Select(
+            """
+            SELECT success, message, created_at AS createdAt
+            FROM aud_login_log
+            WHERE username = #{username}
+            ORDER BY id DESC
+            LIMIT #{limit}
+            """)
+    List<LoginLogRow> loginLogs(@Param("username") String username, @Param("limit") int limit);
+
+    /** 账号创建时间（个人中心基本信息展示）。 */
+    @Select("SELECT created_at FROM sys_user WHERE id = #{userId}")
+    LocalDateTime createdAt(@Param("userId") long userId);
 }

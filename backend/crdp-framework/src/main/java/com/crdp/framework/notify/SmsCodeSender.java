@@ -16,4 +16,10 @@ public interface SmsCodeSender {
      * 同样不得写日志、不得回显。
      */
     void sendPasswordResetCode(String phone, String code);
+
+    /**
+     * 个人中心换绑手机号验证码（E06-T11 / PLT-ORG-011）。发往<b>新手机号</b>， 文案须提示「正在换绑手机号」，与登录 / 重置验证码分命名空间互不通用； code
+     * 同样不得写日志、不得回显。
+     */
+    void sendPhoneBindCode(String phone, String code);
 }
