@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import type { ModuleCatalogItem } from '@crdp/api';
+import type { ModuleCatalogItem, ModuleOpenLog } from '@crdp/api';
 
 import { h, onMounted, onUnmounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
@@ -20,13 +20,18 @@ import {
   Tag,
 } from 'ant-design-vue';
 
-import { listModules, syncModules } from '#/api/core/module';
+import {
+  listModuleOpenLogs,
+  listModules,
+  syncModules,
+} from '#/api/core/module';
 import { usePermission } from '#/reference/use-permission';
 
 import {
   baseModuleText,
   canTakeOffShelf,
   dependsOnText,
+  logLines,
   menuSideText,
   menuTypeText,
   shelfStatusText,
@@ -55,6 +60,30 @@ const syncError = ref('');
 // 维护对话框（PLT-MOD-002）：展示信息与上下架
 const editOpen = ref(false);
 const editTarget = ref<ModuleCatalogItem | null>(null);
+
+// 开通记录（E05-T05 / PLT-MOD-009）：展开行按需加载，最新在前
+const openLogs = ref<Record<string, ModuleOpenLog[]>>({});
+const openLogsLoading = ref<Record<string, boolean>>({});
+
+async function loadOpenLogs(code: string) {
+  if (openLogs.value[code] || openLogsLoading.value[code]) {
+    return;
+  }
+  openLogsLoading.value[code] = true;
+  try {
+    openLogs.value[code] = await listModuleOpenLogs(code);
+  } catch {
+    openLogs.value[code] = [];
+  } finally {
+    openLogsLoading.value[code] = false;
+  }
+}
+
+function onExpand(expanded: boolean, record: ModuleCatalogItem) {
+  if (expanded) {
+    void loadOpenLogs(record.code);
+  }
+}
 
 const columns = [
   { dataIndex: 'code', title: '模块编码', width: 110 },
@@ -185,6 +214,7 @@ onUnmounted(() => window.removeEventListener('resize', read));
         :pagination="false"
         :row-key="(row: ModuleCatalogItem) => row.code"
         size="middle"
+        @expand="onExpand"
       >
         <template #bodyCell="{ column, record }">
           <span v-if="column.dataIndex === 'code'" class="code">
@@ -247,6 +277,32 @@ onUnmounted(() => window.removeEventListener('resize', read));
               <Tag v-for="item in record.configItems" :key="item.code">
                 {{ item.name }}（{{ item.code }}，默认 {{ item.defaultValue }}）
               </Tag>
+            </div>
+            <div class="section">
+              <h4>开通记录</h4>
+              <span v-if="openLogsLoading[record.code]">加载中…</span>
+              <span
+                v-else-if="
+                  !openLogs[record.code] || openLogs[record.code].length === 0
+                "
+              >
+                暂无开通 / 关闭记录
+              </span>
+              <ul v-else class="versions">
+                <li v-for="log in openLogs[record.code]" :key="log.id">
+                  <span class="version-no">
+                    {{ logLines(log)[0] }}
+                  </span>
+                  <span
+                    v-for="line in logLines(log).slice(1, -1)"
+                    :key="line"
+                    class="version-note"
+                  >
+                    {{ line }}
+                  </span>
+                  <span class="version-date">{{ logLines(log).at(-1) }}</span>
+                </li>
+              </ul>
             </div>
             <div class="section">
               <h4>版本历史</h4>

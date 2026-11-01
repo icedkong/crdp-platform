@@ -47,6 +47,35 @@ export function moduleShelfText(status: string): string {
   return MODULE_SHELF_TEXT[status] ?? status;
 }
 
+/** 租户模块开通状态（PLT-MOD-004、005）：未开通（null）单独口径。 */
+export const TENANT_MODULE_STATUS_TEXT: Record<string, string> = {
+  OPENING: '开通中',
+  OPEN: '已开通',
+  OPEN_FAILED: '开通失败',
+  MAINTENANCE: '维护中',
+  CLOSED: '已关闭',
+};
+
+export const TENANT_MODULE_NOT_OPENED_TEXT = '未开通';
+
+export function tenantModuleStatusText(status: null | string): string {
+  if (status === null || status === '') {
+    return TENANT_MODULE_NOT_OPENED_TEXT;
+  }
+  return TENANT_MODULE_STATUS_TEXT[status] ?? status;
+}
+
+/** 开通记录（PLT-MOD-009）：动作 → 展示文案。 */
+export const MODULE_LOG_ACTION_TEXT: Record<string, string> = {
+  OPEN: '开通',
+  CLOSE: '关闭',
+  UPGRADE: '升级',
+};
+
+export function moduleLogActionText(action: string): string {
+  return MODULE_LOG_ACTION_TEXT[action] ?? action;
+}
+
 /** 注册同步结果（PLT-MOD-002）：动作 → 展示文案。 */
 export const MODULE_SYNC_ACTION_TEXT: Record<string, string> = {
   REGISTERED: '新注册',

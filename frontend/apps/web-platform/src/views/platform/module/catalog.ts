@@ -96,6 +96,9 @@ export function validateEditModel(model: ModuleEditModel): string[] {
   return errors;
 }
 
+// 开通记录（E05-T05 / PLT-MOD-009）展示逻辑与租户模块页签共用，这里转出供本页使用。
+export { logActionTone, logLines } from '../tenant/tenant-modules';
+
 /** 同步结果提示（PLT-MOD-002）：「随访：已更新（功能 0.1.0 / 迁移 2）」。 */
 export function syncOutcomeLine(outcome: {
   action: string;

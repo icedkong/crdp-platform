@@ -87,13 +87,18 @@ export type { TwoFactorChallenge } from './auth-flow';
 
 export {
   EXPIRE_TYPE_TEXT,
+  MODULE_LOG_ACTION_TEXT,
   MODULE_SHELF_OPTIONS,
   MODULE_SHELF_TEXT,
   MODULE_SYNC_ACTION_TEXT,
+  moduleLogActionText,
   moduleShelfText,
   moduleSyncActionText,
+  TENANT_MODULE_NOT_OPENED_TEXT,
+  TENANT_MODULE_STATUS_TEXT,
   TENANT_STATUS_OPTIONS,
   TENANT_STATUS_TEXT,
+  tenantModuleStatusText,
   tenantStatusText,
 } from './enums';
 export {
@@ -133,6 +138,8 @@ export interface CreateTenantRequest {
   expireType?: 'FIXED' | 'LONG_TERM';
   graceDays?: null | number;
   graceReadOnly?: boolean | null;
+  /** 勾选的业务模块（E05-T05 / PLT-MOD-004，向导第 2 步）：base 必开不传。 */
+  modules?: string[];
   name: string;
   remindDays?: null | number[];
 }
@@ -357,4 +364,99 @@ export interface ModuleSyncOutcome {
 
 export interface ModuleSyncResult {
   outcomes: ModuleSyncOutcome[];
+}
+
+/** 租户模块开通状态（PLT-MOD-004、005；null = 未开通）。 */
+export type TenantModuleStatus =
+  | 'CLOSED'
+  | 'MAINTENANCE'
+  | 'OPEN'
+  | 'OPEN_FAILED'
+  | 'OPENING';
+
+/** 租户详情 · 模块页签的行（E05-T05）：目录信息 + 该租户的开通痕迹。 */
+export interface TenantModuleItem {
+  baseModule: boolean;
+  closedAt: null | string;
+  code: string;
+  currentMigrationVersion: string;
+  dependsOn: string[];
+  description: string;
+  featureVersion: string;
+  migrationVersion: string;
+  name: string;
+  openedAt: null | string;
+  /** 关闭 / 开通失败原因（留痕）。 */
+  reason: null | string;
+  /** 上架状态（ON / OFF；下架后不能再被新开通）。 */
+  shelfStatus: ModuleShelfStatus;
+  /** 该租户的开通状态；null = 未开通。 */
+  status: null | TenantModuleStatus;
+}
+
+export interface TenantModulesView {
+  code: string;
+  modules: TenantModuleItem[];
+  name: string;
+  tenantId: number;
+  tenantStatus: TenantStatus;
+}
+
+/** 开通 / 关闭结果（PLT-MOD-004、005）。 */
+export interface TenantModuleChangeResult {
+  migrationVersion: string;
+  moduleCode: string;
+  previousStatus: null | string;
+  status: TenantModuleStatus;
+  tenantCode: string;
+  tenantId: number;
+}
+
+/** 关闭影响评估（PLT-MOD-005）：二次确认前展示。 */
+export interface TenantModuleCloseImpact {
+  dependentModules: string[];
+  moduleCode: string;
+  moduleName: string;
+  onlineUserCount: number;
+  /** fu_task 未建或租户库不可达时为空。 */
+  pendingTaskCount: null | number;
+  tenantCode: string;
+  tenantId: number;
+}
+
+/** 模块级配置（PLT-MOD-008）：默认值取模块定义，租户覆盖值优先。 */
+export interface TenantModuleConfigItem {
+  code: string;
+  defaultValue: string;
+  description: string;
+  effectiveValue: string;
+  name: string;
+  /** 租户覆盖值；空 = 用默认。 */
+  value: null | string;
+}
+
+export interface TenantModuleConfig {
+  items: TenantModuleConfigItem[];
+  moduleCode: string;
+  tenantCode: string;
+  tenantId: number;
+}
+
+export interface TenantModuleConfigUpdateRequest {
+  reason?: null | string;
+  values: Record<string, string>;
+}
+
+/** 开通记录（PLT-MOD-009）：开通 / 关闭（升级 UPGRADE 随 PLT-MOD-007）。 */
+export interface ModuleOpenLog {
+  action: 'CLOSE' | 'OPEN' | 'UPGRADE';
+  createdAt: string;
+  detail: null | string;
+  id: number;
+  moduleCode: string;
+  operatorId: null | number;
+  reason: null | string;
+  tenantCode: string;
+  tenantId: number;
+  tenantName: string;
 }

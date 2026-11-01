@@ -16,6 +16,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.crdp.framework.web.ApiException;
+import com.crdp.server.platform.TenantModuleService;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,6 +38,7 @@ class TenantOnboardingServiceTest {
     private final ProvisioningDatabase provisioning = mock(ProvisioningDatabase.class);
     private final PasswordEncoder encoder = mock(PasswordEncoder.class);
     private final ProvisioningProperties properties = new ProvisioningProperties();
+    private final TenantModuleService tenantModules = mock(TenantModuleService.class);
 
     private TenantOnboardingService service;
 
@@ -44,7 +46,8 @@ class TenantOnboardingServiceTest {
     void setUp() {
         properties.setTenantJdbcUrlTemplate("jdbc:mysql://127.0.0.1:13306/{db}");
         service =
-                new TenantOnboardingService(platform, registry, provisioning, properties, encoder);
+                new TenantOnboardingService(
+                        platform, registry, provisioning, properties, encoder, tenantModules);
     }
 
     /** 调用链：第 1 次 queryForList（查租户行）为空 → 走插入；其后（角色/用户/绑定查询）都命中。 */
@@ -68,7 +71,7 @@ class TenantOnboardingServiceTest {
 
     private TenantOnboardingService.OnboardingRequest request() {
         return new TenantOnboardingService.OnboardingRequest(
-                "democ", "虚构示例医院丙", "admin", "丙院管理员", "Init@2026", null);
+                "democ", "虚构示例医院丙", "admin", "丙院管理员", "Init@2026", null, null);
     }
 
     @Test
@@ -153,17 +156,17 @@ class TenantOnboardingServiceTest {
 
     private TenantOnboardingService.OnboardingRequest requestWithoutAdmin() {
         return new TenantOnboardingService.OnboardingRequest(
-                "democ", "虚构示例医院丙", null, null, null, null);
+                "democ", "虚构示例医院丙", null, null, null, null, null);
     }
 
     @Test
     void rejectsInvalidRequestsBeforeTouchingAnything() {
         TenantOnboardingService.OnboardingRequest badCode =
                 new TenantOnboardingService.OnboardingRequest(
-                        "DemoC", "名", "admin", null, "Init@2026", null);
+                        "DemoC", "名", "admin", null, "Init@2026", null, null);
         TenantOnboardingService.OnboardingRequest noPassword =
                 new TenantOnboardingService.OnboardingRequest(
-                        "democ", "名", "admin", null, " ", null);
+                        "democ", "名", "admin", null, " ", null, null);
 
         assertThrows(ApiException.class, () -> service.onboard(badCode));
         assertThrows(ApiException.class, () -> service.onboard(noPassword));

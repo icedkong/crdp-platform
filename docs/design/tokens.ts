@@ -237,6 +237,13 @@ export const statusTone: Record<string, StatusTone> = {
   // 模块目录（PLT-MOD-001 上架状态：上架 / 下架，下架后不能再被新开通）
   上架: 'success',
   下架: 'error',
+  // 租户模块开通状态（PLT-MOD-004、005；未开通用中性 default）
+  已开通: 'success',
+  开通中: 'processing',
+  开通失败: 'error',
+  维护中: 'warning',
+  已关闭: 'default',
+  未开通: 'default',
 };
 
 /**

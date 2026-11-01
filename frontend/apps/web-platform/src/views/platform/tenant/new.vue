@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import type { TenantOnboardingResult } from '@crdp/api';
 
-import { computed, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
@@ -28,6 +28,7 @@ import {
 } from 'ant-design-vue';
 import dayjs from 'dayjs';
 
+import { listModules } from '#/api/core/module';
 import { createTenant } from '#/api/core/tenant';
 
 import {
@@ -56,7 +57,28 @@ const basic = reactive({
   code: suggestTenantCode(),
   name: '',
 });
-const modules = ref<string[]>(['followup']);
+const modules = ref<string[]>([]);
+// 模块选项来自目录（E05-T05 / PLT-MOD-004）：只列上架的非基础模块，默认全选
+const moduleOptions = ref<
+  Array<{ code: string; description: string; name: string }>
+>([]);
+
+onMounted(async () => {
+  try {
+    const catalog = await listModules();
+    moduleOptions.value = catalog
+      .filter((item) => !item.baseModule && item.status === 'ON')
+      .map((item) => ({
+        code: item.code,
+        description: item.description,
+        name: item.name,
+      }));
+    modules.value = moduleOptions.value.map((item) => item.code);
+  } catch {
+    moduleOptions.value = [];
+    modules.value = [];
+  }
+});
 // 到期设置（E05-T02 / PLT-TEN-011，向导第 2 步）：默认长期有效，选择有到期日时展开其余项
 const expiry = reactive({ ...EMPTY_EXPIRY_FORM });
 const expiryErrors = computed(() => validateExpiryForm(expiry));
@@ -74,6 +96,16 @@ const adminError = computed(() =>
   adminSkipped.value
     ? undefined
     : validateInitialPassword(admin.initialPassword),
+);
+
+/** 确认步骤展示用：勾选模块的名称。 */
+const moduleNames = computed(() =>
+  modules.value
+    .map(
+      (code) =>
+        moduleOptions.value.find((item) => item.code === code)?.name ?? code,
+    )
+    .toSorted((left, right) => left.localeCompare(right, 'zh-Hans-CN')),
 );
 
 const canLeaveStep = computed(() => {
@@ -117,6 +149,7 @@ async function submit() {
         : admin.initialPassword,
       adminUsername: adminSkipped.value ? undefined : admin.username.trim(),
       code: basic.code.trim(),
+      modules: [...modules.value],
       name: basic.name.trim(),
       ...toCreateExpiry(expiry),
     });
@@ -199,10 +232,19 @@ const provisionItems = computed(() => {
 
       <!-- 第 2 步：模块与到期设置（模块开通是 E05-T05；到期设置 E05-T02 / PLT-TEN-011） -->
       <Form v-show="current === 1" layout="vertical" style="max-width: 480px">
-        <FormItem label="开通模块">
+        <FormItem
+          label="开通模块"
+          help="平台基础必选；下架模块不可选（PLT-MOD-004）"
+        >
           <CheckboxGroup v-model:value="modules">
-            <Checkbox disabled checked value="base">平台基础（必选）</Checkbox>
-            <Checkbox value="followup">随访</Checkbox>
+            <Checkbox checked disabled value="base">平台基础（必选）</Checkbox>
+            <Checkbox
+              v-for="item in moduleOptions"
+              :key="item.code"
+              :value="item.code"
+            >
+              {{ item.name }}（{{ item.code }}）
+            </Checkbox>
           </CheckboxGroup>
         </FormItem>
         <FormItem label="到期类型" required>
@@ -314,7 +356,9 @@ const provisionItems = computed(() => {
           {{ subdomainPreview(basic.code.trim()) }}（统一登录页可用编码）
         </DescriptionsItem>
         <DescriptionsItem label="开通模块">
-          平台基础{{ modules.includes('followup') ? '、随访' : '' }}
+          平台基础{{
+            moduleNames.length > 0 ? `、${moduleNames.join('、')}` : ''
+          }}
         </DescriptionsItem>
         <DescriptionsItem label="到期设置">
           {{ expiryFormText(expiry) }}

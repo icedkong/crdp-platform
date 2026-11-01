@@ -57,7 +57,8 @@ public class TenantOnboardingService {
 
     /**
      * 开通请求：编码与医院名称必填；首个管理员在开通时提供，也可启用前经 E06 补设。 expire 为向导第 2 步的到期设置（E05-T02
-     * /PLT-TEN-011），空表示长期有效；重试重入时不会改写已登记租户的到期设置。
+     * /PLT-TEN-011），空表示长期有效；重试重入时不会改写已登记租户的到期设置。 modules 为向导第 2 步勾选的 业务模块（E05-T05 /PLT-MOD-004，base
+     * 必开不传），null 表示重试重入——沿用上次已登记模块。
      */
     public record OnboardingRequest(
             String code,
@@ -65,7 +66,8 @@ public class TenantOnboardingService {
             String adminUsername,
             String adminDisplayName,
             String adminInitialPassword,
-            TenantLifecycleService.ExpiryView expire) {}
+            TenantLifecycleService.ExpiryView expire,
+            List<String> modules) {}
 
     public record StepResult(String step, String status, String error) {}
 
@@ -76,6 +78,7 @@ public class TenantOnboardingService {
     private final ProvisioningDatabase provisioning;
     private final ProvisioningProperties properties;
     private final PasswordEncoder passwordEncoder;
+    private final com.crdp.server.platform.TenantModuleService tenantModules;
     private final SecureRandom random = new SecureRandom();
 
     public TenantOnboardingService(
@@ -83,12 +86,14 @@ public class TenantOnboardingService {
             TenantDataSourceRegistry registry,
             ProvisioningDatabase provisioning,
             ProvisioningProperties properties,
-            PasswordEncoder passwordEncoder) {
+            PasswordEncoder passwordEncoder,
+            com.crdp.server.platform.TenantModuleService tenantModules) {
         this.platform = platform;
         this.registry = registry;
         this.provisioning = provisioning;
         this.properties = properties;
         this.passwordEncoder = passwordEncoder;
+        this.tenantModules = tenantModules;
     }
 
     public OnboardingResult onboard(OnboardingRequest request) {
@@ -112,6 +117,13 @@ public class TenantOnboardingService {
         } else {
             // 向导第 3 步可跳过：启用前经 E06 补设管理员
             record(steps, tenantId, "admin", "SKIPPED", null);
+        }
+        // 模块开通（E05-T05 / PLT-MOD-004，向导第 2 步勾选）：base 必开 + 勾选模块；迁移已随 migrate-register
+        // 全量执行，这里落开通登记、初始化配置与授权菜单。失败重试未带清单时沿用上次已登记的非关闭模块（可重入）。
+        if (request.modules() != null) {
+            tenantModules.openForOnboarding(tenantId, request.modules());
+        } else {
+            tenantModules.reopenExistingForRetry(tenantId);
         }
 
         TenantContext.runAsPlatform(
@@ -141,7 +153,7 @@ public class TenantOnboardingService {
                 });
     }
 
-    /** 从失败步骤重试：用平台库里登记的名称与编码重跑编排（可重入）；管理员已建成则保持不动。 */
+    /** 从失败步骤重试：用平台库里登记的名称与编码重跑编排（可重入）；管理员已建成则保持不动，模块沿用上次登记。 */
     public OnboardingResult retry(long tenantId) {
         return TenantContext.callAsPlatform(
                 () -> {
@@ -152,6 +164,7 @@ public class TenantOnboardingService {
                             new OnboardingRequest(
                                     String.valueOf(tenant.get("code")),
                                     String.valueOf(tenant.get("name")),
+                                    null,
                                     null,
                                     null,
                                     null,
