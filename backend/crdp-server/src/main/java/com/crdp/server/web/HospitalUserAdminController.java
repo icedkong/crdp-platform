@@ -3,6 +3,7 @@ package com.crdp.server.web;
 import com.crdp.framework.security.PublicApi;
 import com.crdp.framework.security.RequireReauth;
 import com.crdp.framework.security.RequiresPermission;
+import com.crdp.framework.web.ApiException;
 import com.crdp.framework.web.ApiResponse;
 import com.crdp.server.auth.UserAdminService;
 import com.crdp.server.system.user.UserAccountAdminService;
@@ -14,24 +15,30 @@ import com.crdp.server.system.user.UserAccountAdminService.UserOptionView;
 import com.crdp.server.system.user.UserAccountAdminService.UserPage;
 import com.crdp.server.system.user.UserAccountAdminService.UserUpdateRequest;
 import com.crdp.server.system.user.UserAccountAdminService.WardOption;
+import com.crdp.server.system.user.UserImportService;
 import com.crdp.server.system.user.UserPermissionPreviewService;
 import com.crdp.server.system.user.UserPermissionPreviewService.UserEffectivePermissionsView;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.List;
 import java.util.Map;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 /**
  * E06-T07 / PLT-ORG-006、008、A-WARD-002、C-WARD-003：医院端用户管理接口（docs/api/system.md §2）。 查看
- * tenant:user:view，新建 / 编辑 / 停用 / 启用 / 离职 tenant:user:edit，重置密码与解锁 tenant:user:reset。解锁接口先由 E04-T05
- * 落地（auth.UserAdminService），此处保持不动。
+ * tenant:user:view，新建 / 编辑 / 停用 / 启用 / 离职 tenant:user:edit，重置密码与解锁 tenant:user:reset， 批量导入
+ * tenant:user:import（E06-T08 / PLT-ORG-007）。解锁接口先由 E04-T05 落地（auth.UserAdminService），此处保持不动。
  */
 @Tag(name = "医院端用户管理")
 @RestController
@@ -39,15 +46,59 @@ public class HospitalUserAdminController {
 
     private final UserAdminService userAdminService;
     private final UserAccountAdminService service;
+    private final UserImportService importService;
     private final UserPermissionPreviewService previewService;
 
     public HospitalUserAdminController(
             UserAdminService userAdminService,
             UserAccountAdminService service,
+            UserImportService importService,
             UserPermissionPreviewService previewService) {
         this.userAdminService = userAdminService;
         this.service = service;
+        this.importService = importService;
         this.previewService = previewService;
+    }
+
+    // ---- 用户批量导入（E06-T08 / PLT-ORG-007）----
+
+    @Operation(summary = "用户导入模板：表头 + 两行示例（全部虚构数据），xlsx 单工作表")
+    @GetMapping("/api/hospital/system/users/import-template")
+    @RequiresPermission("tenant:user:import")
+    public ResponseEntity<byte[]> importTemplate() {
+        return xlsx("用户导入模板.xlsx", importService.template());
+    }
+
+    @Operation(
+            summary =
+                    "用户批量导入（PLT-ORG-007）：上传 xlsx，逐行校验并新建，单行失败不影响其他行；"
+                            + "返回逐行结果（CREATED / FAILED 与原因）；只新建不更新既有用户；"
+                            + "初始密码不随导入返回（首次短信登录后设置），写 USER_IMPORT 审计")
+    @PostMapping("/api/hospital/system/users/import")
+    @RequiresPermission("tenant:user:import")
+    public ApiResponse<UserImportService.ImportReport> importUsers(
+            @RequestPart("file") MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            throw new ApiException(400, 40001, "请选择要导入的 xlsx 文件");
+        }
+        try (java.io.InputStream in = file.getInputStream()) {
+            return ApiResponse.ok(importService.importUsers(in));
+        } catch (java.io.IOException ex) {
+            throw new ApiException(400, 40001, "文件读取失败，请重新上传");
+        }
+    }
+
+    private static ResponseEntity<byte[]> xlsx(String filename, byte[] body) {
+        return ResponseEntity.ok()
+                .header(
+                        HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename*=UTF-8''"
+                                + java.net.URLEncoder.encode(
+                                        filename, java.nio.charset.StandardCharsets.UTF_8))
+                .contentType(
+                        MediaType.parseMediaType(
+                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .body(body);
     }
 
     @Operation(summary = "用户分页列表（PLT-ORG-006）：筛选 keyword / deptId / wardId / roleId / status；手机号脱敏")

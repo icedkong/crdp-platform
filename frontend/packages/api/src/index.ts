@@ -677,6 +677,17 @@ export type {
   UserStatus,
   WardOptionView,
 } from './tenant-user';
+export {
+  failedUserRows,
+  USER_IMPORT_COLUMNS,
+  userImportActionText,
+  userImportSummary,
+} from './user-import';
+export type {
+  UserImportAction,
+  UserImportReport,
+  UserImportRowResult,
+} from './user-import';
 export { menuNodesToRoutes, menuNodeToRoute, toIconifyIcon } from './vben-menu';
 
 export type { VbenMenuRoute } from './vben-menu';

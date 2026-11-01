@@ -29,7 +29,7 @@ E06-T02 已实现（院区与科室树；病区字典属 `crdp-followup`，科�
 | GET / PUT | `/api/hospital/followup/wards/aliases` | `followup:ward:edit` | 病区值映射（导入时原值 → 病区，`ward_alias`，A-WARD-006） |
 | GET | `/api/hospital/followup/wards/{id}/members` | `followup:ward:edit` | 成员与患者数 |
 
-## 2. 用户（PLT-ORG-006..012、A-WARD-002、C-WARD-003；E06-T07 列表 / 详情 / 新建 / 编辑 / 状态 / 重置 / 解锁，E06-T09 权限预览与用户选择器）
+## 2. 用户（PLT-ORG-006..012、A-WARD-002、C-WARD-003；E06-T07 列表 / 详情 / 新建 / 编辑 / 状态 / 重置 / 解锁，E06-T08 批量导入，E06-T09 权限预览与用户选择器）
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
@@ -42,7 +42,8 @@ E06-T02 已实现（院区与科室树；病区字典属 `crdp-followup`，科�
 | POST | `/api/hospital/system/users/{id}/unlock` | `tenant:user:reset` | 解锁（E04-T05 落地，清登录失败计数桶）；写 `USER_UNLOCK` 审计 |
 | GET | `/api/hospital/system/wards/options` | `tenant:user:view` | 病区候选（用户编辑页「负责病区」多选，只读启用项；病区字典维护属病区管理任务，届时替换） |
 | GET | `/api/hospital/system/users/{id}/effective-permissions` | `tenant:user:view` | **已实现（E06-T09 / PLT-ORG-009、A-WARD-009、C-WARD-008）**。权限预览：`{ userId, username, displayName, status, roles[]（含停用行，带 roleType）, openedModules[], menus[]（树含按钮，逐项带 sourceRoles）, permissionCodes[], scopeAll, scopeTypes[]（带 sourceRoles）, wards[]（可见病区，带 sourceRoles）, depts[]（负责科室，带 sourceRoles） }`；与登录会话同一计算入口（EffectivePermissionService 三层交集 + 快照同口径范围归并），实时不缓存、只读不写审计；字段策略（PLT-PERM-009）随 E07-T04 / T06 落地后补充 |
-| POST | `/api/hospital/system/users/import` | `tenant:user:import` | 批量导入（PLT-ORG-007）——**随 E06-T08 落地** |
+| GET | `/api/hospital/system/users/import-template` | `tenant:user:import` | **已实现（E06-T08 / PLT-ORG-007）**。用户导入模板下载：xlsx 单工作表，表头 `账号、姓名、工号、手机号、主科室编码、角色编码、负责病区编码、负责科室编码` + 两行示例（全部虚构数据）；清单列（角色 / 负责病区 / 负责科室）多个编码用分号（半角 `;` 或全角 `；`）分隔 |
+| POST | `/api/hospital/system/users/import` | `tenant:user:import` | **已实现（E06-T08 / PLT-ORG-007）**。用户批量导入（multipart `file`，≤1000 行）：与科室导入同一同步一次性模型（OQ-52）——上传即逐行校验并**新建**，**单行失败不影响其他行**，返回 `{ total, created, failed, rows[{ rowNo, username, action(CREATED\|FAILED), message }] }`（导入不更新既有用户，无 UPDATED）；表头不符 / 无数据行 / 超 1000 行 / 非 xlsx → 40001。逐行规则与手工新建同口径：账号字符集 / 长度与本院唯一（库内已存在该行失败，提示走用户管理编辑）、姓名必填、大陆手机号本院唯一（密文 + 盲索引，文件内重复同样报错）、主科室编码与角色编码必填且须存在、模板角色不可直接分配、负责病区 / 负责科室编码须存在；**初始密码不随导入返回**（每行生成随机密码只落哈希、首登强制改密，用户首次短信登录后设置密码，platform-spec §6 新建用户流程）；写 `USER_IMPORT` 作业级审计（不含手机号明文） |
 | GET | `/api/hospital/system/users/options?keyword=&deptId=` | 登录（@PublicApi） | **已实现（E06-T09 / PLT-ORG-012）**。用户选择器：本院启用用户，`[{ id, username, displayName, deptName }]`（不含手机号等敏感字段；账号与科室名用于同名人区分）；keyword 命中账号 / 姓名 / 工号，deptId 命中主科室或负责科室，最多 50 条按姓名排序；原 §1 `/orgs/user-options`（暂行，tenant:org:view）已移除（未登记 40307），科室负责人与角色成员选择器均改走本接口 |
 
 用户状态取值 `ENABLED / DISABLED / RESIGNED`（「锁定」是登录侧 Redis 计数的瞬时态，不落 `sys_user.status`，列表不展示，解锁按钮常显）。`sys_user` 新增 `staff_no`、`main_dept_id`（租户库 V12）；负责病区 `sys_user_ward` 与负责科室 `sys_user_dept_scope` 沿用 V1 表，按用户全量覆盖。七种数据范围类型的生效计算已由 E07-T02 落地（主科室 / 负责病区 / 负责科室 / 角色自定义科室并集进会话快照，见 `docs/api/README.md` §2.5）；兼职科室、岗位 / 职称、账号有效期仍未落地（随字典与后续任务）；离职转办事件随 E06-T03。
