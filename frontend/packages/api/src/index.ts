@@ -102,6 +102,37 @@ export type {
 } from './brand';
 
 export {
+  DICT_SOURCE_TEXT,
+  DICT_STATUS_TEXT,
+  dictSourceText,
+  dictStatusText,
+  PARAM_LOG_ACTION_TEXT,
+  PARAM_VALUE_TYPE_TEXT,
+  paramLogActionText,
+  paramRangeText,
+  paramValueTypeText,
+  validateOverrideValue,
+} from './config';
+
+export type {
+  DictItemSource,
+  DictStatus,
+  ParamValueType,
+  PlatformDictItemSaveRequest,
+  PlatformDictItemView,
+  PlatformDictSaveRequest,
+  PlatformDictView,
+  PlatformParamSaveRequest,
+  PlatformParamView,
+  TenantDictItemSaveRequest,
+  TenantDictItemView,
+  TenantDictSaveRequest,
+  TenantDictTypeView,
+  TenantParamLogView,
+  TenantParamOverrideRequest,
+  TenantParamView,
+} from './config';
+export {
   EXPIRE_TYPE_TEXT,
   MODULE_LOG_ACTION_TEXT,
   MODULE_SHELF_OPTIONS,
@@ -117,7 +148,6 @@ export {
   tenantModuleStatusText,
   tenantStatusText,
 } from './enums';
-
 export {
   errorBody,
   lockedMessage,
