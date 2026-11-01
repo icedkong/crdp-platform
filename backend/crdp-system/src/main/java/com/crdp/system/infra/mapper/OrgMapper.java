@@ -75,6 +75,22 @@ public interface OrgMapper {
     @Select("SELECT id FROM sys_dept WHERE code = #{code}")
     Long findDeptIdByCode(@Param("code") String code);
 
+    @Select(
+            """
+            SELECT d.id, d.org_id AS orgId, d.parent_id AS parentId, d.code, d.name,
+                   d.dept_type AS deptType, d.leader_user_id AS leaderUserId,
+                   u.display_name AS leaderName, d.his_code AS hisCode,
+                   d.sort_no AS sortNo, d.status
+            FROM sys_dept d
+            LEFT JOIN sys_user u ON u.id = d.leader_user_id
+            WHERE d.code = #{code}
+            """)
+    DeptRow findDeptByCode(@Param("code") String code);
+
+    /** 科室导入（E06-T03 / PLT-ORG-003）：按账号解析负责人，必须是本院启用用户。 */
+    @Select("SELECT id FROM sys_user WHERE username = #{username} AND status = 'ENABLED'")
+    Long findEnabledUserIdByUsername(@Param("username") String username);
+
     @Insert(
             """
             INSERT INTO sys_dept

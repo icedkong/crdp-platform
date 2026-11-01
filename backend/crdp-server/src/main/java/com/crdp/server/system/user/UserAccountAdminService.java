@@ -74,6 +74,7 @@ public class UserAccountAdminService {
     private final SecurityProperties securityProperties;
     private final AuditLogger audit;
     private final PermissionVersionStore permissionVersions;
+    private final com.crdp.system.event.OrgUserEvents events;
     private final RandomGenerator random = new SecureRandom();
 
     public UserAccountAdminService(
@@ -84,7 +85,8 @@ public class UserAccountAdminService {
             LoginRateLimiter rateLimiter,
             SecurityProperties securityProperties,
             AuditLogger audit,
-            PermissionVersionStore permissionVersions) {
+            PermissionVersionStore permissionVersions,
+            com.crdp.system.event.OrgUserEvents events) {
         this.jdbc = jdbc;
         this.cryptoService = cryptoService;
         this.passwordEncoder = passwordEncoder;
@@ -93,6 +95,7 @@ public class UserAccountAdminService {
         this.securityProperties = securityProperties;
         this.audit = audit;
         this.permissionVersions = permissionVersions;
+        this.events = events;
     }
 
     // ---------------------------------------------------------------- 视图与请求
@@ -382,6 +385,10 @@ public class UserAccountAdminService {
 
     public UserDetail update(long userId, UserUpdateRequest request) {
         Map<String, Object> row = userRow(userId);
+        // PLT-ORG-013：调岗（主科室变化）与角色变化的事件要在覆盖前取旧值（同一事务内发布）
+        Long previousMainDeptId = nullableNum(row.get("mainDeptId"));
+        String previousMainDeptName = strOrNull(row.get("main_dept_name"));
+        List<String> previousRoleCodes = roleCodesOfUser(userId);
         String displayName = requireDisplayName(request == null ? null : request.displayName());
         String staffNo = optionalStaffNo(request == null ? null : request.staffNo());
         Long mainDeptId = requireMainDeptId(request == null ? null : request.mainDeptId());
@@ -431,6 +438,26 @@ public class UserAccountAdminService {
         replaceRoles(userId, roleIds);
         replaceWards(userId, wardIds);
         replaceDeptScopes(userId, deptScopeIds);
+        // PLT-ORG-013：调岗（主科室变化）与角色变化发事件（与业务变更同一事务）
+        if (!Objects.equals(previousMainDeptId, mainDeptId)) {
+            events.userDeptChanged(
+                    userId,
+                    str(row.get("username")),
+                    str(row.get("display_name")),
+                    previousMainDeptId,
+                    previousMainDeptName,
+                    mainDeptId,
+                    deptNameById(mainDeptId));
+        }
+        List<String> newRoleCodes = roleCodesByIds(roleIds);
+        if (!previousRoleCodes.equals(newRoleCodes)) {
+            events.userRolesChanged(
+                    userId,
+                    str(row.get("username")),
+                    str(row.get("display_name")),
+                    previousRoleCodes,
+                    newRoleCodes);
+        }
         // 负责病区 / 负责科室 / 角色变化立即生效：递增权限版本（platform-spec §4、OQ-40 ①）
         bump(userId);
         audit(
@@ -463,6 +490,16 @@ public class UserAccountAdminService {
         if (STATUS_DISABLED.equals(target) || STATUS_RESIGNED.equals(target)) {
             // 停用 / 离职立即下线（platform-spec §6 业务规则）
             sessionStore.revokeAllForUser(sessionProxy(row), null);
+            // PLT-ORG-013：停用 / 离职发事件，供业务模块提示待办转交（不自动改派，OQ-10）
+            String reason =
+                    request == null || request.reason() == null ? null : request.reason().trim();
+            if (STATUS_DISABLED.equals(target)) {
+                events.userDisabled(
+                        userId, str(row.get("username")), str(row.get("display_name")), reason);
+            } else {
+                events.userResigned(
+                        userId, str(row.get("username")), str(row.get("display_name")), reason);
+            }
         }
         bump(userId);
         audit(
@@ -703,7 +740,7 @@ public class UserAccountAdminService {
                 str(row.get("display_name")),
                 strOrNull(row.get("staff_no")),
                 maskedPhone(decryptOrNull(strOrNull(row.get("phone")))),
-                nullableNum(row.get("main_dept_id")),
+                nullableNum(row.get("mainDeptId")),
                 strOrNull(row.get("main_dept_name")),
                 jdbc.queryForList(
                         "SELECT role_id FROM sys_user_role WHERE user_id = ? ORDER BY role_id",
@@ -827,6 +864,34 @@ public class UserAccountAdminService {
                     userId,
                     deptId);
         }
+    }
+
+    /** 用户当前角色编码（按角色 id 升序，事件负载用）。 */
+    private List<String> roleCodesOfUser(long userId) {
+        return jdbc.queryForList(
+                "SELECT r.code FROM sys_role r JOIN sys_user_role ur ON ur.role_id = r.id"
+                        + " WHERE ur.user_id = ? ORDER BY r.id",
+                String.class,
+                userId);
+    }
+
+    /** 角色编号 → 编码清单（按入参顺序去重，事件负载用）。 */
+    private List<String> roleCodesByIds(LinkedHashSet<Long> roleIds) {
+        if (roleIds.isEmpty()) {
+            return List.of();
+        }
+        StringBuilder sql = new StringBuilder("SELECT code FROM sys_role WHERE id IN (");
+        sql.append("?, ".repeat(roleIds.size() - 1)).append("?) ORDER BY id");
+        return jdbc.queryForList(sql.toString(), String.class, roleIds.toArray());
+    }
+
+    private String deptNameById(Long deptId) {
+        if (deptId == null) {
+            return null;
+        }
+        List<String> names =
+                jdbc.queryForList("SELECT name FROM sys_dept WHERE id = ?", String.class, deptId);
+        return names.isEmpty() ? null : names.get(0);
     }
 
     private Map<Long, List<String>> roleNamesByUser(List<Long> userIds) {

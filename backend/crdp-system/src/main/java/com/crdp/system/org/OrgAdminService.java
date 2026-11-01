@@ -31,10 +31,13 @@ public class OrgAdminService {
 
     private final OrgMapper mapper;
     private final AuditLogger audit;
+    private final com.crdp.system.event.OrgUserEvents events;
 
-    public OrgAdminService(OrgMapper mapper, AuditLogger audit) {
+    public OrgAdminService(
+            OrgMapper mapper, AuditLogger audit, com.crdp.system.event.OrgUserEvents events) {
         this.mapper = mapper;
         this.audit = audit;
+        this.events = events;
     }
 
     // ---------------------------------------------------------------- 视图
@@ -160,6 +163,11 @@ public class OrgAdminService {
             throw new ApiException(409, 40901, disable ? "院区已是停用状态" : "院区已是启用状态");
         }
         mapper.updateOrgStatus(orgId, target);
+        if (disable) {
+            // PLT-ORG-013：停用院区发事件（同一事务），业务模块订阅后提示待办转交（不自动改派，OQ-10）
+            events.orgDisabled(
+                    orgId, org.getCode(), org.getName(), request == null ? null : request.reason());
+        }
         audit(
                 "ORG_STATUS",
                 "STATUS",
@@ -283,6 +291,16 @@ public class OrgAdminService {
             throw new ApiException(409, 40901, disable ? "科室已是停用状态" : "科室已是启用状态");
         }
         mapper.updateDeptStatus(deptId, target);
+        if (disable) {
+            // PLT-ORG-013：停用科室发事件（同一事务），业务选择器随即不再出现该科室
+            events.deptDisabled(
+                    deptId,
+                    dept.getCode(),
+                    dept.getName(),
+                    dept.getOrgId(),
+                    orgLabel(dept.getOrgId()),
+                    request == null ? null : request.reason());
+        }
         audit(
                 "DEPT_STATUS",
                 "STATUS",

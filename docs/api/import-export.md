@@ -23,7 +23,7 @@
 
 ## 2. 组织 / 用户导入（PLT-ORG-003、PLT-ORG-007，P1）
 
-`POST /api/hospital/system/imports?type=ORG|USER`，同上的作业模型，权限 `tenant:org:edit`（规格；种子为 `tenant:dept:*`，见 OQ-11）/ `tenant:user:edit`。
+**科室导入已实现（E06-T03）**：`GET /api/hospital/system/orgs/import-template` + `POST /api/hospital/system/orgs/import`（`tenant:org:edit`）——**同步一次性模型**（OQ-52），上传即逐行校验并落库、单行失败不影响其他行、返回逐行结果；详见 `system.md` §1。§1 的异步作业模型（预检 / 确认 / 结果文件）保留给患者宽表导入（E15+/E18）。用户导入（PLT-ORG-007）仍为 `POST /api/hospital/system/users/import`（E06-T08），届时用户侧也采用同步模型对齐。
 
 ## 3. 导出（A-PAT-009、C-PAT-014、PLT-AUD-007）
 

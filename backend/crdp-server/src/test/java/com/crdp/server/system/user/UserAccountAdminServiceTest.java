@@ -59,6 +59,8 @@ class UserAccountAdminServiceTest {
     private final SecurityProperties securityProperties = new SecurityProperties();
     private final AuditLogger audit = mock(AuditLogger.class);
     private final PermissionVersionStore permissionVersions = mock(PermissionVersionStore.class);
+    private final com.crdp.system.event.OrgUserEvents events =
+            mock(com.crdp.system.event.OrgUserEvents.class);
 
     private UserAccountAdminService service;
 
@@ -73,7 +75,8 @@ class UserAccountAdminServiceTest {
                         rateLimiter,
                         securityProperties,
                         audit,
-                        permissionVersions);
+                        permissionVersions,
+                        events);
         TenantContext.useTenant(TENANT_ID, "demoa");
         stubUserRow(userRow("ENABLED"));
         stubRoles(List.of(Map.of("id", ROLE_ID, "code", "FOLLOWUP_DOCTOR", "role_type", "CUSTOM")));
