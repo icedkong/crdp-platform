@@ -1,6 +1,6 @@
 # 审计日志（audit）
 
-> 后端：`crdp-framework`（审计切面 `@AuditLog` + 写入服务 `AuditLogger`，E08-T01 已落地；哈希链封存 / 验链 / 日志只读，E08-T02 已落地；按月分区与 OBS WORM 归档，E08-T03 已落地）、`crdp-system` / `crdp-platform`（查询，E08-T04）。
+> 后端：`crdp-framework`（审计切面 `@AuditLog` + 写入服务 `AuditLogger`，E08-T01 已落地；哈希链封存 / 验链 / 日志只读，E08-T02 已落地；按月分区与 OBS WORM 归档，E08-T03 已落地；写入成功事件 `AuditAppendedEvent` 与安全告警入口，E08-T05 已落地）、`crdp-system` / `crdp-platform`（查询，E08-T04）、`crdp-server`（安全告警 `SecurityAlertService`，E08-T05）。
 > 表（E08-T01 起按规格字段写入，E08-T03 起按月分区）：租户库 `aud_log`（操作）、`aud_login_log`（登录）、`aud_data_access_log`（数据访问）；平台库 `plt_audit_log`（平台操作 / 租户控制面，含 `tenant_id` 供 PLT-TEN-022 按租户检索）、`aud_login_log`（平台账号登录 + 租户未识别的医院登录失败）、`aud_platform_access_log`（租户视角访问，仅平台库，医院端不可见）。
 > 页面：`/system/audit`（租户）、`/platform/audit`（平台）；患者详情「操作日志」页签。
 > 需求：PLT-AUD-001…012、PLT-VIEW（平台访问记录）。查询与导出路径已由 E08-T04 定稿（§2、§3）。
@@ -51,7 +51,16 @@
 
 平台侧导出作业表在平台库（V28，含 `tenant_id` 列）；提交 `DATA_ACCESS/EXPORT`、审批 `OPERATION`、下载 `DATA_ACCESS/DOWNLOAD` 均按平台上下文落 `aud_platform_access_log`（PLT-AUD-004 仅存平台侧）。水印记申请人（导出人），不是审批人。
 
-安全告警（PLT-AUD-012，P1，随 E08-T05）：异常登录、批量导出、权限变更、平台访问实时告警，经 outbox 发站内信给平台管理员。
+安全告警（PLT-AUD-012，P1，E08-T05 已实现）：实时评估每条写入成功的审计记录（`JdbcAuditLogger` 写入成功即发 `AuditAppendedEvent`，同步、保留租户上下文），命中规则就在平台库 `plt_security_alert`（V30）按「接收人 × 触发」落站内信派发行（channel=INBOX、send_status=PENDING），规则与暂行口径见 OQ-58：
+
+| 规则 | 触发（审计记录口径，且 result=SUCCESS） | 说明 |
+|---|---|---|
+| `ABNORMAL_LOGIN` 异常登录 | 登录日志 `action=LOCK` | 连续失败达到阈值锁定（E04-T05，一次锁定只告警一次） |
+| `BATCH_EXPORT` 批量导出 | 数据访问 `access_method=EXPORT` | 导出即成批数据离站，一律告警；后续患者导出（E13）等自动覆盖 |
+| `PERMISSION_CHANGE` 权限变更 | 操作日志 event_type / action 前缀 `ROLE_` | 角色、菜单授权、成员、字段策略调整 |
+| `PLATFORM_ACCESS` 平台访问 | 平台访问日志 action 前缀 `VIEW_` | 进入租户视角与视角规则变更；写入侧随 E20-T01，规则已就绪 |
+
+接收人 = 全部启用的 PLATFORM_ADMIN（按租户指定平台负责人随 PLT-VIEW-006，回落口径同 OQ-44）；唯一键 `(rule_code, alert_key=traceId, recipient_id)` 同一触发不重发。站内信收件箱与 PENDING → SENT/FAILED 投递随 E09 通知域消费本表（`NotifySender` 仍为占位实现，与 `plt_tenant_expire_notice` 同一消费契约）。告警派发失败只记 ERROR 日志不阻断业务（事实源是审计日志，可对账）；断链告警（PLT-AUD-009）复用本通道，随 E09 一并触达。
 
 ## 4. 测试要点
 
@@ -63,3 +72,4 @@
 - 审计 `before/after` 中检索不到手机号、证件号明文。
 - 组合查询（时间 / 模块 / 结果 / IP / traceId）与详情前后值、traceId 关联（E08-T04，`AuditQueryExportMySqlIT`）。
 - 导出审批：租户管理员免审批、普通用户待审批（未审批下载 40901）、平台申请人不能自审（40901）、审批通过后异步生成并限时下载、导出 / 审批 / 下载全程记审计（验收原文：导出需审批，导出本身记审计）。
+- E08-T05：触发规则后站内信告警（验收原文）——连续失败锁定 → `ABNORMAL_LOGIN`、导出提交 → `BATCH_EXPORT` 各自落 `plt_security_alert` 派发行（INBOX、PENDING、接收人含种子 `platform.admin`）；权限变更 `ROLE_*` 同口径，普通操作与被拒（DENIED / FAIL）不告警（`SecurityAlertMySqlIT`，真库端到端 + `SecurityAlertServiceTest` 规则矩阵）。

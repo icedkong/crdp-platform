@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
@@ -22,6 +23,8 @@ import org.springframework.stereotype.Component;
  * 租户控制面日志，tenantId 支持按租户维度检索 PLT-TEN-022）； 登录日志——医院登录写租户库 {@code aud_login_log}、平台登录与租户未识别的失败写平台库
  * {@code aud_login_log}； 数据访问日志写租户库 {@code aud_data_access_log}（平台账号在租户视角里的访问按 PLT-AUD-004 改落平台库）；
  * 平台访问日志只写平台库 {@code aud_platform_access_log}，即使在租户上下文里调用也自路由到平台库（医院端不可见）。
+ *
+ * <p>写入成功后发布 {@link AuditAppendedEvent}（E08-T05 安全告警的实时入口）；发布失败只记 WARN，不影响已落库的审计与业务。
  *
  * <p>失败语义（audit.md §1 / platform-spec §9）：写入失败先重试一次；仍失败时， 登录、平台访问与敏感数据访问（明文、导出、打印、下载） 整体失败抛
  * 50000——宁可业务不通，不可审计缺行； 普通操作日志只告警不回滚（记录告警，业务照常）。
@@ -41,9 +44,13 @@ public class JdbcAuditLogger implements AuditLogger {
 
     private final AuditChainWriter chain;
 
-    public JdbcAuditLogger(JdbcTemplate jdbc, AuditChainWriter chain) {
+    private final ApplicationEventPublisher events;
+
+    public JdbcAuditLogger(
+            JdbcTemplate jdbc, AuditChainWriter chain, ApplicationEventPublisher events) {
         this.jdbc = jdbc;
         this.chain = chain;
+        this.events = events;
     }
 
     @Override
@@ -51,6 +58,7 @@ public class JdbcAuditLogger implements AuditLogger {
         AuditEntry entry = enrich(raw);
         try {
             write(entry);
+            publish(entry);
             return;
         } catch (DataAccessException firstFailure) {
             log.warn(
@@ -61,6 +69,7 @@ public class JdbcAuditLogger implements AuditLogger {
         }
         try {
             write(entry);
+            publish(entry);
         } catch (DataAccessException secondFailure) {
             if (strict(entry)) {
                 log.error(
@@ -75,6 +84,19 @@ public class JdbcAuditLogger implements AuditLogger {
                     entry.action(),
                     entry.traceId(),
                     secondFailure.getMostSpecificCause().getMessage());
+        }
+    }
+
+    /** 写入成功后发布事件（安全告警等派生处理）。发布异常不向上抛：审计已落库，派生失败不连坐业务。 */
+    private void publish(AuditEntry entry) {
+        try {
+            events.publishEvent(new AuditAppendedEvent(entry));
+        } catch (RuntimeException publishFailure) {
+            log.warn(
+                    "audit appended event publish failed type={} action={} reason={}",
+                    entry.type(),
+                    entry.action(),
+                    publishFailure.getMessage());
         }
     }
 
