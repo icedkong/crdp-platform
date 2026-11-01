@@ -121,7 +121,8 @@ class TenantOnboardingServiceMySqlIT {
                                         new JdbcTemplate(routing),
                                         new com.crdp.framework.crypto.Sha256DigestService(),
                                         new org.springframework.jdbc.datasource
-                                                .DataSourceTransactionManager(routing))),
+                                                .DataSourceTransactionManager(routing)),
+                                event -> {}),
                         null,
                         null,
                         new com.crdp.server.platform.RoleTemplateService(

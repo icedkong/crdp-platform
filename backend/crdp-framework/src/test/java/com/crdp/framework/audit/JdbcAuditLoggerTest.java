@@ -38,6 +38,7 @@ class JdbcAuditLoggerTest {
     private final AuditChainWriter chain = mock(AuditChainWriter.class);
     private final List<String> sqls = new ArrayList<>();
     private final List<List<Object>> argRows = new ArrayList<>();
+    private final List<AuditAppendedEvent> events = new ArrayList<>();
     private JdbcAuditLogger logger;
 
     @BeforeEach
@@ -50,7 +51,7 @@ class JdbcAuditLoggerTest {
                         })
                 .when(chain)
                 .insert(any(), anyString(), any());
-        logger = new JdbcAuditLogger(jdbc, chain);
+        logger = new JdbcAuditLogger(jdbc, chain, event -> events.add((AuditAppendedEvent) event));
         SessionPrincipal principal =
                 new SessionPrincipal(
                         "token-1",
@@ -324,6 +325,35 @@ class JdbcAuditLoggerTest {
 
         assertThat(sqls.get(0)).contains("INSERT INTO aud_login_log");
         assertThat(lastArgs()).contains("nobody.demo", 0, "unknown-tenant");
+    }
+
+    // ---------------------------------------------------------------- 写入后事件（E08-T05 安全告警入口）
+
+    @Test
+    void appendedEventIsPublishedAfterSuccessfulWrite() {
+        TenantContext.useTenant(7L, "demoa");
+        logger.append(AuditEntry.login("doctor.demo").action("LOCK").success().build());
+
+        assertThat(events).hasSize(1);
+        // 事件携带补全后的入口（result / traceId 缺省值已填），供规则评估（SecurityAlertService）
+        assertThat(events.get(0).entry().action()).isEqualTo("LOCK");
+        assertThat(events.get(0).entry().result()).isEqualTo(AuditResult.SUCCESS);
+        assertThat(events.get(0).entry().traceId()).isNotNull();
+        // 遗留桥接同样经 append 发布（record → append）
+        logger.record(new AuditEvent("ROLE_MEMBERS", 42L, "UPDATE", "sys_role:9", "调整成员（示例）"));
+        assertThat(events).hasSize(2);
+        assertThat(events.get(1).entry().eventType()).isEqualTo("ROLE_MEMBERS");
+    }
+
+    @Test
+    void noEventIsPublishedWhenWriteFails() {
+        TenantContext.useTenant(7L, "demoa");
+        doThrow(new BadSqlGrammarException("audit", "INSERT", null))
+                .when(chain)
+                .insert(any(), anyString(), any());
+        assertThatThrownBy(() -> logger.append(AuditEntry.login("doctor.demo").success().build()))
+                .isInstanceOf(ApiException.class);
+        assertThat(events).isEmpty();
     }
 
     // ---------------------------------------------------------------- 插入语句与表一一对应（防串列）
