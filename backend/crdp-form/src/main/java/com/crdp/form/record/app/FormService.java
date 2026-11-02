@@ -11,6 +11,7 @@ import com.crdp.form.record.infra.mapper.FormVersionInsert;
 import com.crdp.form.record.infra.mapper.FormVersionRow;
 import com.crdp.form.record.infra.mapper.VersionFieldRow;
 import com.crdp.form.rule.app.FieldIssue;
+import com.crdp.form.rule.app.FormConditionEngine;
 import com.crdp.form.rule.app.FormRuleEngine;
 import com.crdp.form.rule.app.RuleResult;
 import com.crdp.form.rule.infra.mapper.FormRuleMapper;
@@ -45,6 +46,11 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>E11-T04（A-FLD-003 / A-FLD-006 / C-FLD-007）：写入闸门在类型检查后加<b>硬范围</b>拦截（超硬范围不可保存， 42200 带
  * fieldErrors）；软范围与跨字段规则不在草稿闸门里（form.md §2 草稿语义），提交 / 保存修改前调 {@link #validateForSubmit(String, int,
  * Map)} 再执行一次（硬规则违反 42200，软规则返回警告由调用方做确认流）。
+ *
+ * <p>E11-T03（A-FLD-004 / C-FLD-005）：提交校验追加<b>条件必填</b>（有效必填 = 显示 &&（required || requiredWhen），缺失
+ * errors {@code rule=required}）并对<b>隐藏字段的值做掩蔽</b>（不查范围 / 跨字段）；上下文变量（C 的 device.type 等）由调用方随 {@link
+ * #validateForSubmit(String, int, Map, Map)} 传入。tech-plan §6「提交时被隐藏字段的值清空」由 {@link
+ * #stripHiddenFields(String, int, Map, Map)} 提供（提交流程调用；清空写 fe_field_history 随 E11-T06）。
  */
 @Service
 public class FormService {
@@ -54,6 +60,7 @@ public class FormService {
     private final FormDataValidator validator;
     private final FormRuleMapper ruleMapper;
     private final FormRuleEngine ruleEngine;
+    private final FormConditionEngine conditionEngine;
     private final AuditLogger audit;
     private final ObjectMapper json = new ObjectMapper();
 
@@ -63,12 +70,14 @@ public class FormService {
             FormDataValidator validator,
             FormRuleMapper ruleMapper,
             FormRuleEngine ruleEngine,
+            FormConditionEngine conditionEngine,
             AuditLogger audit) {
         this.fieldMapper = fieldMapper;
         this.recordMapper = recordMapper;
         this.validator = validator;
         this.ruleMapper = ruleMapper;
         this.ruleEngine = ruleEngine;
+        this.conditionEngine = conditionEngine;
         this.audit = audit;
     }
 
@@ -305,24 +314,69 @@ public class FormService {
      *
      * <p>执行范围（硬 + 软）与跨字段规则（按 fe_rule severity）：硬校验违反抛 42200（data.fieldErrors 与前端提示 同构）；软范围 /
      * 软规则命中<b>不拦截</b>，作为警告返回（A-FLD-003「提示但可保存」、C-FLD-007「黄色提示并要求确认」），由调用方 走确认流（确认人记
-     * data_meta，tech-plan §6）。按记录的模板版本取字段口径。
+     * data_meta，tech-plan §6）。按记录的模板版本取字段口径。E11-T03 追加<b>条件必填</b>（缺失 {@code
+     * rule=required}）与<b>隐藏字段掩蔽</b> （残留值不查范围 / 跨字段）。无上下文（ctx 条件变量全部不成立）。
      *
      * @return 软校验警告（可能为空，顺序与 FormSchema 一致）
      */
     public List<FieldIssue> validateForSubmit(
             String formCode, int templateVersion, Map<String, Object> data) {
+        return validateForSubmit(formCode, templateVersion, data, Map.of());
+    }
+
+    /**
+     * 同 {@link #validateForSubmit(String, int, Map)}，带条件上下文（tech-plan §6「操作数可以是上下文变量」，如医院 C 的当前器械
+     * device.type / device.hasRaLead，由随访记录接口按随访日期匹配器械后传入，E21-T03）。
+     */
+    public List<FieldIssue> validateForSubmit(
+            String formCode,
+            int templateVersion,
+            Map<String, Object> data,
+            Map<String, Object> context) {
         FormVersionRow snapshot = requireVersion(requireForm(formCode), templateVersion);
         List<VersionFieldRow> fields = recordMapper.findVersionFields(formCode, snapshot.version());
         if (fields.isEmpty()) {
             throw new ApiException(404, 40400, "记录的模板版本不存在（formCode=" + formCode + "）");
         }
         validator.validateData(data, fields);
-        RuleResult result = ruleEngine.validate(data, fields, ruleMapper.findRules(formCode));
+        RuleResult result =
+                ruleEngine.validate(data, fields, ruleMapper.findRules(formCode), context);
         if (!result.ok()) {
             throw new ApiException(422, 42200, "表单校验未通过", Map.of("fieldErrors", result.errors()));
         }
         return result.warnings();
     }
+
+    /**
+     * tech-plan §6「被隐藏字段的值清空」：按当前答案与上下文求值 visibleWhen，移除隐藏字段残留的值（E11-T03）。 提交流程（E15 / E25）在 {@link
+     * #validateForSubmit} 通过后、落库前调用；清空动作写 fe_field_history 随 E11-T06。 只移除有值的键（已空 / 缺键无需清空），返回清洗后的
+     * data 与被清空的稳定键（cleared-hidden 口径）。
+     */
+    @Transactional(readOnly = true)
+    public StrippedData stripHiddenFields(
+            String formCode,
+            int templateVersion,
+            Map<String, Object> data,
+            Map<String, Object> context) {
+        FormVersionRow snapshot = requireVersion(requireForm(formCode), templateVersion);
+        List<VersionFieldRow> fields = recordMapper.findVersionFields(formCode, snapshot.version());
+        if (fields.isEmpty()) {
+            throw new ApiException(404, 40400, "记录的模板版本不存在（formCode=" + formCode + "）");
+        }
+        Map<String, Object> values = data == null ? new LinkedHashMap<>() : data;
+        Map<String, Object> cleaned = new LinkedHashMap<>(values);
+        List<String> cleared = new ArrayList<>();
+        for (String key : conditionEngine.hiddenFieldKeys(fields, values, context)) {
+            Object value = cleaned.remove(key);
+            if (value != null) {
+                cleared.add(key);
+            }
+        }
+        return new StrippedData(cleaned, List.copyOf(cleared));
+    }
+
+    /** 隐藏字段清洗结果：清洗后的 data 与被清空的稳定键（写 cleared-hidden 与字段历史用，E11-T06）。 */
+    public record StrippedData(Map<String, Object> data, List<String> clearedKeys) {}
 
     // ---------------------------------------------------------------- 内部
 

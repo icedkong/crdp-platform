@@ -301,6 +301,7 @@ class FormEngineIT {
         assertEquals(120, ((Number) soft.data().get("f011")).intValue());
 
         // 跨字段（V30 演示规则：出生 ≤ 手术）：违反 → 提交校验 42200；通过且软范围命中 → 警告返回不拦截
+        // （f010: 0 = 吸烟史已答「否」，满足 E11-T03 起提交校验的必填检查且 f012 保持隐藏）
         ApiException cross =
                 callInTenant(
                         "demoa",
@@ -309,7 +310,10 @@ class FormEngineIT {
                                 formService.validateForSubmit(
                                         "A_BASELINE",
                                         1,
-                                        Map.of("f003", "2024-05-06", "f020", "2024-05-01"));
+                                        Map.of(
+                                                "f003", "2024-05-06",
+                                                "f020", "2024-05-01",
+                                                "f010", 0));
                                 return null;
                             } catch (ApiException e) {
                                 return e;
@@ -335,7 +339,9 @@ class FormEngineIT {
                                                 "f020",
                                                 "2024-05-06",
                                                 "f011",
-                                                120)));
+                                                120,
+                                                "f010",
+                                                0)));
         assertTrue(
                 warnings.stream()
                         .anyMatch(
@@ -354,6 +360,84 @@ class FormEngineIT {
                                         "birth_le_surgery".equals(rule.get("id"))
                                                 && "HARD".equals(rule.get("severity"))),
                 "schema.rules 含 V30 演示规则");
+    }
+
+    // ---------------------------------------------------------------- E11-T03：条件显示与条件必填（A-FLD-004）
+
+    /**
+     * E11-T03 验收「前后端同一套用例结果一致」（本用例走服务层端到端，双端用例一致性由共享 JSON 锁定）： FormSchema 下发 visibleWhen /
+     * requiredWhen；吸烟史=是 → 每日吸烟支数必填缺失 42200（rule=required）； 吸烟史=否 → f012 隐藏，残留超硬范围值不拦截（掩蔽）且
+     * stripHiddenFields 清空残留值（tech-plan §6）。
+     */
+    @Test
+    void conditionalRequiredGatesSubmitAndHiddenValuesAreStripped() {
+        loginServicePrincipal();
+
+        // schema 下发条件树（V31 演示字段 f012：f010=1 才显示并必填）
+        Map<?, ?> schema = data(get(SCHEMA, hospitalToken("demoa")));
+        Map<?, ?> cigarettes =
+                fieldKeysWithDef((List<Map<?, ?>>) schema.get("categories")).get("f012");
+        assertNotNull(cigarettes.get("visibleWhen"), "schema 下发 visibleWhen 条件树");
+        assertNotNull(cigarettes.get("requiredWhen"), "schema 下发 requiredWhen 条件树");
+
+        // 吸烟史=是、f012 缺失：提交校验 42200，fieldErrors 命中 required（文案与前端「必填」同词）
+        ApiException missing =
+                callInTenant(
+                        "demoa",
+                        () -> {
+                            try {
+                                formService.validateForSubmit(
+                                        "A_BASELINE",
+                                        1,
+                                        Map.of(
+                                                "f010",
+                                                1,
+                                                "f003",
+                                                "2024-05-01",
+                                                "f020",
+                                                "2024-05-06"));
+                                return null;
+                            } catch (ApiException e) {
+                                return e;
+                            }
+                        });
+        assertNotNull(missing, "条件必填缺失必须拦截提交");
+        assertEquals(42200, missing.code());
+        FieldIssue issue =
+                (FieldIssue) ((List<?>) ((Map<?, ?>) missing.data()).get("fieldErrors")).get(0);
+        assertEquals("f012", issue.key());
+        assertEquals("required", issue.rule());
+        assertEquals("必填", issue.message());
+
+        // 吸烟史=否：f012 隐藏 → 残留 300（超硬范围 1–100）不拦截；提交前清空残留值并返回被清空键
+        callInTenant(
+                "demoa",
+                () ->
+                        formService.validateForSubmit(
+                                "A_BASELINE",
+                                1,
+                                Map.of(
+                                        "f010",
+                                        0,
+                                        "f003",
+                                        "2024-05-01",
+                                        "f020",
+                                        "2024-05-06",
+                                        "f012",
+                                        300)));
+        FormService.StrippedData stripped =
+                callInTenant(
+                        "demoa",
+                        () ->
+                                formService.stripHiddenFields(
+                                        "A_BASELINE",
+                                        1,
+                                        new java.util.LinkedHashMap<>(
+                                                Map.of("f010", 0, "f012", 300, "f011", 170)),
+                                        Map.of()));
+        assertEquals(List.of("f012"), stripped.clearedKeys(), "被隐藏字段的残留值被清空");
+        assertFalse(stripped.data().containsKey("f012"), "清空后的 data 不含隐藏字段值");
+        assertEquals(170, ((Number) stripped.data().get("f011")).intValue(), "显示中字段保留");
     }
 
     // ---------------------------------------------------------------- 权限、模块开关、隔离
@@ -438,6 +522,17 @@ class FormEngineIT {
                                         "status",
                                         "ENABLED"))));
         return ((Number) data(post(PUBLISH, token, null)).get("version")).intValue();
+    }
+
+    /** 全部字段的定义索引（key → field 定义），供断言单字段下发口径（如 visibleWhen / requiredWhen）。 */
+    private static Map<String, Map<?, ?>> fieldKeysWithDef(List<Map<?, ?>> categories) {
+        Map<String, Map<?, ?>> index = new java.util.LinkedHashMap<>();
+        for (Map<?, ?> category : categories) {
+            for (Map<?, ?> field : (List<Map<?, ?>>) category.get("fields")) {
+                index.put((String) field.get("key"), field);
+            }
+        }
+        return index;
     }
 
     private static List<String> fieldKeys(List<Map<?, ?>> categories) {

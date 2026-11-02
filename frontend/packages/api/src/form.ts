@@ -6,7 +6,7 @@
  * 1=是），页面显示 `label`。字段可启停（ENABLED/DISABLED，停用不删除）。
  */
 
-import type { CrossFieldRule } from '@crdp/rules';
+import type { ConditionTree, CrossFieldRule } from '@crdp/rules';
 
 /** 表单摘要（GET /api/hospital/form/forms；完整模板见 FormSchema，E11-T02）。 */
 export interface FormSummary {
@@ -77,7 +77,8 @@ export interface FormFieldDef {
   label: string;
   options?: FieldOption[] | null;
   required: boolean;
-  requiredWhen?: unknown;
+  /** 条件必填（E11-T03；与 FormSchemaField.requiredWhen 同构的条件树）。 */
+  requiredWhen?: ConditionTree | null;
   sensitive: boolean;
   softRange?: FieldRange | null;
   status: FieldDictStatus;
@@ -85,7 +86,8 @@ export interface FormFieldDef {
   type: FormFieldType;
   unit?: null | string;
   updatedAt?: null | string;
-  visibleWhen?: unknown;
+  /** 条件显示条件树（E11-T03，字典维护页只读展示；求值与 FormSchemaField 同一套）。 */
+  visibleWhen?: ConditionTree | null;
 }
 
 /** 选项维护：code 已存在为改（显示名 / 排序 / 停用），不存在为新增；编码不可改、不删除。 */
@@ -238,14 +240,15 @@ export interface FormSchemaField {
   /** 选项（单选 / 下拉 / 多选）：编码 + 显示名 + 停用标记（A-FLD-002）。 */
   optionSet?: FormSchemaOption[] | null;
   required: boolean;
-  requiredWhen?: unknown;
+  /** 条件必填（E11-T03；有效必填 = 显示 &&（required || requiredWhen 成立），@crdp/rules）。 */
+  requiredWhen?: ConditionTree | null;
   sensitive: boolean;
   softRange?: FieldRange | null;
   storage: FieldStorage;
   type: FormFieldType;
   unit?: null | string;
-  /** 条件树（E11-T03 前后端一致求值）。 */
-  visibleWhen?: unknown;
+  /** 条件显示条件树（E11-T03，前后端一致求值：@crdp/rules evaluateCondition / 后端 FormConditionEngine）。 */
+  visibleWhen?: ConditionTree | null;
 }
 
 export interface FormSchemaOption {

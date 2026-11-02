@@ -11,8 +11,20 @@
  * - 跨字段：`rules[]`（fe_rule，FormSchema 实时下发）COMPARE 语义「leftField op rightField 须成立」
  *   （op = lt / lte），数值比大小、日期 / 日期时间比先后（日期按当日 00:00 归一，分钟 / 秒两种写法等价）；
  *   一侧为空或不可比不触发。HARD 违反进 errors，SOFT 进 warnings。
+ * - E11-T03 / A-FLD-004、C-FLD-005：字段带 `required` / `visibleWhen` / `requiredWhen` 时追加<b>条件必填</b>
+ *   （有效必填 = 显示 &&（required || requiredWhen 成立），缺失 errors `rule=required`、文案「必填」），
+ *   并对<b>隐藏字段的值做掩蔽</b>（不查范围、不参与跨字段）——与后端同语义；`context` 为条件上下文
+ *   （如 C 的 device.type，tech-plan §6）。检查顺序：范围 → 条件必填 → 跨字段（errors 顺序两端一致）。
  * - 单位（unit）不做换算：范围值与录入值同单位（A-FLD-003「数值有单位与合理范围」），单位文案由渲染器展示（E11-T07）。
  */
+
+import type { ConditionTree } from './form-condition';
+
+import {
+  hiddenFieldKeys,
+  isEmptyFormValue,
+  isRequiredField,
+} from './form-condition';
 
 /** 数值范围（与 packages/api FieldRange 同构；本包不依赖工作区包）。 */
 export interface ValidationRange {
@@ -45,7 +57,7 @@ export interface FieldIssue {
   categoryKey: string;
   key: string;
   message: string;
-  /** hardRange / softRange / 规则 id。 */
+  /** hardRange / softRange / required / 规则 id。 */
   rule: string;
 }
 
@@ -55,31 +67,56 @@ export interface FormValidationResult {
   warnings: FieldIssue[];
 }
 
-/** 参与校验的字段（FormSchemaField 子集；范围字段才查范围）。 */
+/**
+ * 参与校验的字段（FormSchemaField 子集；范围字段才查范围，条件字段才查条件必填 / 掩蔽——
+ * E11-T03 的三个可选列缺省时不参与，兼容 E11-T04 既有调用）。
+ */
 export interface ValidatableField {
   categoryKey: string;
   hardRange?: null | ValidationRange;
   key: string;
+  /** 基础必填（E11-T03 条件必填）。 */
+  required?: boolean;
+  /** 条件必填（为空不追加必填）。 */
+  requiredWhen?: ConditionTree | null;
   softRange?: null | ValidationRange;
+  /** 存储方式；非 json 不做条件必填（缺省视为 json）。 */
+  storage?: string;
   type: string;
+  /** 条件显示（为空恒显示）。 */
+  visibleWhen?: ConditionTree | null;
 }
 
-/** 就地校验一份表单数据：字段口径来自模板（不得页面写死），规则来自 FormSchema.rules。 */
+/**
+ * 就地校验一份表单数据：字段口径来自模板（不得页面写死），规则来自 FormSchema.rules，条件上下文
+ * （可省略）来自页面（如 C 的器械上下文）。字段带条件列时：隐藏字段的值不查范围 / 跨字段（掩蔽），
+ * 显示中的有效必填缺失进 errors（rule=required）。
+ */
 export function validateFormData(
   fields: ValidatableField[],
   rules: CrossFieldRule[],
   data: null | Record<string, unknown> | undefined,
+  context?: null | Record<string, unknown>,
 ): FormValidationResult {
   const values = data ?? {};
   const errors: FieldIssue[] = [];
   const warnings: FieldIssue[] = [];
+
+  // E11-T03：隐藏字段的值从校验视角移除（提交时按已清空口径：不查范围、不参与跨字段）
+  const hidden = new Set(hiddenFieldKeys(fields, values, context));
+  const effective: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(values)) {
+    if (!hidden.has(key)) {
+      effective[key] = value;
+    }
+  }
 
   for (const field of fields) {
     if (field.type !== 'number' && field.type !== 'pair_number') continue;
     const hard = normalizeRange(field.hardRange);
     const soft = normalizeRange(field.softRange);
     if (!hard && !soft) continue;
-    for (const value of numericValues(field.type, values[field.key])) {
+    for (const value of numericValues(field.type, effective[field.key])) {
       if (hard && !hard.contains(value)) {
         errors.push({
           key: field.key,
@@ -98,10 +135,26 @@ export function validateFormData(
     }
   }
 
+  // E11-T03：条件必填（storage 缺省视为 json；派生字段不做必填）
+  for (const field of fields) {
+    if (field.storage !== undefined && field.storage !== 'json') continue;
+    if (field.type === 'derived') continue;
+    if (hidden.has(field.key)) continue;
+    if (!isRequiredField(field, values, context)) continue;
+    if (isEmptyFormValue(values[field.key])) {
+      errors.push({
+        key: field.key,
+        categoryKey: field.categoryKey,
+        rule: 'required',
+        message: '必填',
+      });
+    }
+  }
+
   for (const rule of rules) {
     const comparison = compareValues(
-      values[rule.params?.leftField],
-      values[rule.params?.rightField],
+      effective[rule.params?.leftField],
+      effective[rule.params?.rightField],
     );
     if (comparison === null) continue; // 一侧为空或不可比：不触发
     const holds = rule.params.op === 'lte' ? comparison <= 0 : comparison < 0;

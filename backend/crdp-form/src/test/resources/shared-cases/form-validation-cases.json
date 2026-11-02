@@ -1,9 +1,10 @@
 {
   "comment": "E11-T04 前后端共用校验用例（components.md §10.5）：同一份文件由后端 FormRuleEngine（FormRuleEngineTest）与前端 @crdp/rules（form-validation.test）各执行一遍，errors / warnings 逐条（key、categoryKey、rule、message）完全一致才通过。用例取自需求验收标准：A-FLD-003（超出硬范围不可保存、软范围提示但可保存）、A-FLD-006（入院 ≤ 手术 ≤ 出院、手术开始 < 结束、进 ICU < 出 ICU、死亡日期 ≥ 出院日期）、C-FLD-007（建议范围软提示、格式错误由类型闸门拦截、上限频率须大于下限频率）。字段与规则全部虚构（示例），真实字段与规则随 E23-T01 录入。",
   "shape": {
-    "fields[]": "参与校验的字段：key 稳定键、categoryKey 分类锚点键、type 为 components.md §10.1 类型、hardRange/softRange 为 {min,max}（空端不限制）",
+    "fields[]": "参与校验的字段：key 稳定键、categoryKey 分类锚点键、type 为 components.md §10.1 类型、hardRange/softRange 为 {min,max}（空端不限制）；required / visibleWhen / requiredWhen / storage 可选（E11-T03 条件必填与掩蔽）",
     "rules[]": "fe_rule 下发口径：id 规则稳定编码、severity HARD|SOFT、categoryKey、key 提示挂靠字段、params {leftField, op lt|lte, rightField}、message",
-    "expectedErrors[] / expectedWarnings[]": "FieldIssue：key、categoryKey、rule（hardRange / softRange / 规则 id）、message"
+    "expectedErrors[] / expectedWarnings[]": "FieldIssue：key、categoryKey、rule（hardRange / softRange / 规则 id）、message",
+    "context": "条件上下文（可省）：ctx 叶子按点路径取值（如 device.type），E11-T03"
   },
   "cases": [
     {
@@ -13,12 +14,20 @@
           "key": "f011",
           "categoryKey": "basic_info",
           "type": "number",
-          "hardRange": { "min": 50, "max": 250 },
-          "softRange": { "min": 130, "max": 210 }
+          "hardRange": {
+            "min": 50,
+            "max": 250
+          },
+          "softRange": {
+            "min": 130,
+            "max": 210
+          }
         }
       ],
       "rules": [],
-      "data": { "f011": 50 },
+      "data": {
+        "f011": 50
+      },
       "expectedErrors": [],
       "expectedWarnings": [
         {
@@ -36,12 +45,20 @@
           "key": "f011",
           "categoryKey": "basic_info",
           "type": "number",
-          "hardRange": { "min": 50, "max": 250 },
-          "softRange": { "min": 130, "max": 210 }
+          "hardRange": {
+            "min": 50,
+            "max": 250
+          },
+          "softRange": {
+            "min": 130,
+            "max": 210
+          }
         }
       ],
       "rules": [],
-      "data": { "f011": 300 },
+      "data": {
+        "f011": 300
+      },
       "expectedErrors": [
         {
           "key": "f011",
@@ -59,12 +76,20 @@
           "key": "f011",
           "categoryKey": "basic_info",
           "type": "number",
-          "hardRange": { "min": 50, "max": 250 },
-          "softRange": { "min": 130, "max": 210 }
+          "hardRange": {
+            "min": 50,
+            "max": 250
+          },
+          "softRange": {
+            "min": 130,
+            "max": 210
+          }
         }
       ],
       "rules": [],
-      "data": { "f011": 120 },
+      "data": {
+        "f011": 120
+      },
       "expectedErrors": [],
       "expectedWarnings": [
         {
@@ -82,12 +107,20 @@
           "key": "f011",
           "categoryKey": "basic_info",
           "type": "number",
-          "hardRange": { "min": 50, "max": 250 },
-          "softRange": { "min": 130, "max": 210 }
+          "hardRange": {
+            "min": 50,
+            "max": 250
+          },
+          "softRange": {
+            "min": 130,
+            "max": 210
+          }
         }
       ],
       "rules": [],
-      "data": { "f011": 170 },
+      "data": {
+        "f011": 170
+      },
       "expectedErrors": [],
       "expectedWarnings": []
     },
@@ -98,11 +131,15 @@
           "key": "f100",
           "categoryKey": "pacing",
           "type": "number",
-          "hardRange": { "min": 30 }
+          "hardRange": {
+            "min": 30
+          }
         }
       ],
       "rules": [],
-      "data": { "f100": 25 },
+      "data": {
+        "f100": 25
+      },
       "expectedErrors": [
         {
           "key": "f100",
@@ -120,11 +157,15 @@
           "key": "f101",
           "categoryKey": "pacing",
           "type": "number",
-          "softRange": { "max": 200 }
+          "softRange": {
+            "max": 200
+          }
         }
       ],
       "rules": [],
-      "data": { "f101": 210 },
+      "data": {
+        "f101": 210
+      },
       "expectedErrors": [],
       "expectedWarnings": [
         {
@@ -138,9 +179,21 @@
     {
       "name": "A-FLD-006 入院 ≤ 手术 ≤ 出院：正常顺序通过（入院 = 手术同日，lte 含相等）",
       "fields": [
-        { "key": "f021", "categoryKey": "surgery", "type": "date" },
-        { "key": "f020", "categoryKey": "surgery", "type": "date" },
-        { "key": "f022", "categoryKey": "surgery", "type": "date" }
+        {
+          "key": "f021",
+          "categoryKey": "surgery",
+          "type": "date"
+        },
+        {
+          "key": "f020",
+          "categoryKey": "surgery",
+          "type": "date"
+        },
+        {
+          "key": "f022",
+          "categoryKey": "surgery",
+          "type": "date"
+        }
       ],
       "rules": [
         {
@@ -148,7 +201,11 @@
           "severity": "HARD",
           "categoryKey": "surgery",
           "key": "f020",
-          "params": { "leftField": "f021", "op": "lte", "rightField": "f020" },
+          "params": {
+            "leftField": "f021",
+            "op": "lte",
+            "rightField": "f020"
+          },
           "message": "手术日期不能早于入院日期"
         },
         {
@@ -156,20 +213,40 @@
           "severity": "HARD",
           "categoryKey": "surgery",
           "key": "f022",
-          "params": { "leftField": "f020", "op": "lte", "rightField": "f022" },
+          "params": {
+            "leftField": "f020",
+            "op": "lte",
+            "rightField": "f022"
+          },
           "message": "出院日期不能早于手术日期"
         }
       ],
-      "data": { "f021": "2024-05-01", "f020": "2024-05-01", "f022": "2024-05-10" },
+      "data": {
+        "f021": "2024-05-01",
+        "f020": "2024-05-01",
+        "f022": "2024-05-10"
+      },
       "expectedErrors": [],
       "expectedWarnings": []
     },
     {
       "name": "A-FLD-006 手术早于入院：adm_le_surgery 违反拦截（fieldErrors 挂手术字段）",
       "fields": [
-        { "key": "f021", "categoryKey": "surgery", "type": "date" },
-        { "key": "f020", "categoryKey": "surgery", "type": "date" },
-        { "key": "f022", "categoryKey": "surgery", "type": "date" }
+        {
+          "key": "f021",
+          "categoryKey": "surgery",
+          "type": "date"
+        },
+        {
+          "key": "f020",
+          "categoryKey": "surgery",
+          "type": "date"
+        },
+        {
+          "key": "f022",
+          "categoryKey": "surgery",
+          "type": "date"
+        }
       ],
       "rules": [
         {
@@ -177,7 +254,11 @@
           "severity": "HARD",
           "categoryKey": "surgery",
           "key": "f020",
-          "params": { "leftField": "f021", "op": "lte", "rightField": "f020" },
+          "params": {
+            "leftField": "f021",
+            "op": "lte",
+            "rightField": "f020"
+          },
           "message": "手术日期不能早于入院日期"
         },
         {
@@ -185,11 +266,19 @@
           "severity": "HARD",
           "categoryKey": "surgery",
           "key": "f022",
-          "params": { "leftField": "f020", "op": "lte", "rightField": "f022" },
+          "params": {
+            "leftField": "f020",
+            "op": "lte",
+            "rightField": "f022"
+          },
           "message": "出院日期不能早于手术日期"
         }
       ],
-      "data": { "f021": "2024-05-06", "f020": "2024-05-01", "f022": "2024-05-10" },
+      "data": {
+        "f021": "2024-05-06",
+        "f020": "2024-05-01",
+        "f022": "2024-05-10"
+      },
       "expectedErrors": [
         {
           "key": "f020",
@@ -203,8 +292,16 @@
     {
       "name": "A-FLD-006 手术开始 < 结束（lt 不含相等）：开始 = 结束违反",
       "fields": [
-        { "key": "f031", "categoryKey": "surgery", "type": "datetime" },
-        { "key": "f032", "categoryKey": "surgery", "type": "datetime" }
+        {
+          "key": "f031",
+          "categoryKey": "surgery",
+          "type": "datetime"
+        },
+        {
+          "key": "f032",
+          "categoryKey": "surgery",
+          "type": "datetime"
+        }
       ],
       "rules": [
         {
@@ -212,11 +309,18 @@
           "severity": "HARD",
           "categoryKey": "surgery",
           "key": "f032",
-          "params": { "leftField": "f031", "op": "lt", "rightField": "f032" },
+          "params": {
+            "leftField": "f031",
+            "op": "lt",
+            "rightField": "f032"
+          },
           "message": "手术结束时间必须晚于开始时间"
         }
       ],
-      "data": { "f031": "2024-05-06T08:30", "f032": "2024-05-06T08:30" },
+      "data": {
+        "f031": "2024-05-06T08:30",
+        "f032": "2024-05-06T08:30"
+      },
       "expectedErrors": [
         {
           "key": "f032",
@@ -230,8 +334,16 @@
     {
       "name": "A-FLD-006 手术开始 < 结束：带秒写法（YYYY-MM-DDTHH:mm:ss）与分钟写法可比较且通过",
       "fields": [
-        { "key": "f031", "categoryKey": "surgery", "type": "datetime" },
-        { "key": "f032", "categoryKey": "surgery", "type": "datetime" }
+        {
+          "key": "f031",
+          "categoryKey": "surgery",
+          "type": "datetime"
+        },
+        {
+          "key": "f032",
+          "categoryKey": "surgery",
+          "type": "datetime"
+        }
       ],
       "rules": [
         {
@@ -239,19 +351,34 @@
           "severity": "HARD",
           "categoryKey": "surgery",
           "key": "f032",
-          "params": { "leftField": "f031", "op": "lt", "rightField": "f032" },
+          "params": {
+            "leftField": "f031",
+            "op": "lt",
+            "rightField": "f032"
+          },
           "message": "手术结束时间必须晚于开始时间"
         }
       ],
-      "data": { "f031": "2024-05-06T08:30:00", "f032": "2024-05-06T09:15" },
+      "data": {
+        "f031": "2024-05-06T08:30:00",
+        "f032": "2024-05-06T09:15"
+      },
       "expectedErrors": [],
       "expectedWarnings": []
     },
     {
       "name": "A-FLD-006 进 ICU < 出 ICU：出 ICU 早于进 ICU 违反",
       "fields": [
-        { "key": "f041", "categoryKey": "periop", "type": "datetime" },
-        { "key": "f042", "categoryKey": "periop", "type": "datetime" }
+        {
+          "key": "f041",
+          "categoryKey": "periop",
+          "type": "datetime"
+        },
+        {
+          "key": "f042",
+          "categoryKey": "periop",
+          "type": "datetime"
+        }
       ],
       "rules": [
         {
@@ -259,11 +386,18 @@
           "severity": "HARD",
           "categoryKey": "periop",
           "key": "f042",
-          "params": { "leftField": "f041", "op": "lt", "rightField": "f042" },
+          "params": {
+            "leftField": "f041",
+            "op": "lt",
+            "rightField": "f042"
+          },
           "message": "出 ICU 时间必须晚于进 ICU 时间"
         }
       ],
-      "data": { "f041": "2024-05-06T20:00", "f042": "2024-05-06T18:30" },
+      "data": {
+        "f041": "2024-05-06T20:00",
+        "f042": "2024-05-06T18:30"
+      },
       "expectedErrors": [
         {
           "key": "f042",
@@ -277,8 +411,16 @@
     {
       "name": "A-FLD-006 死亡日期 ≥ 出院日期：以「出院 ≤ 死亡」表达，死亡早于出院违反",
       "fields": [
-        { "key": "f022", "categoryKey": "surgery", "type": "date" },
-        { "key": "f051", "categoryKey": "outcome", "type": "date" }
+        {
+          "key": "f022",
+          "categoryKey": "surgery",
+          "type": "date"
+        },
+        {
+          "key": "f051",
+          "categoryKey": "outcome",
+          "type": "date"
+        }
       ],
       "rules": [
         {
@@ -286,11 +428,18 @@
           "severity": "HARD",
           "categoryKey": "outcome",
           "key": "f051",
-          "params": { "leftField": "f022", "op": "lte", "rightField": "f051" },
+          "params": {
+            "leftField": "f022",
+            "op": "lte",
+            "rightField": "f051"
+          },
           "message": "死亡日期不能早于出院日期"
         }
       ],
-      "data": { "f022": "2024-05-10", "f051": "2024-05-08" },
+      "data": {
+        "f022": "2024-05-10",
+        "f051": "2024-05-08"
+      },
       "expectedErrors": [
         {
           "key": "f051",
@@ -308,13 +457,18 @@
           "key": "f100",
           "categoryKey": "pacing",
           "type": "number",
-          "hardRange": { "min": 30 }
+          "hardRange": {
+            "min": 30
+          }
         },
         {
           "key": "f101",
           "categoryKey": "pacing",
           "type": "number",
-          "hardRange": { "min": 60, "max": 200 }
+          "hardRange": {
+            "min": 60,
+            "max": 200
+          }
         }
       ],
       "rules": [
@@ -323,11 +477,18 @@
           "severity": "HARD",
           "categoryKey": "pacing",
           "key": "f101",
-          "params": { "leftField": "f100", "op": "lt", "rightField": "f101" },
+          "params": {
+            "leftField": "f100",
+            "op": "lt",
+            "rightField": "f101"
+          },
           "message": "上限频率必须大于下限频率"
         }
       ],
-      "data": { "f100": 110, "f101": 100 },
+      "data": {
+        "f100": 110,
+        "f101": 100
+      },
       "expectedErrors": [
         {
           "key": "f101",
@@ -341,8 +502,16 @@
     {
       "name": "C-FLD-007 软规则（SOFT）违反只提示不拦截（黄色提示并要求确认）",
       "fields": [
-        { "key": "f110", "categoryKey": "pacing", "type": "number" },
-        { "key": "f120", "categoryKey": "pacing", "type": "number" }
+        {
+          "key": "f110",
+          "categoryKey": "pacing",
+          "type": "number"
+        },
+        {
+          "key": "f120",
+          "categoryKey": "pacing",
+          "type": "number"
+        }
       ],
       "rules": [
         {
@@ -350,11 +519,18 @@
           "severity": "SOFT",
           "categoryKey": "pacing",
           "key": "f120",
-          "params": { "leftField": "f120", "op": "lt", "rightField": "f110" },
+          "params": {
+            "leftField": "f120",
+            "op": "lt",
+            "rightField": "f110"
+          },
           "message": "感知 AV 间期一般短于起搏 AV 间期，请确认"
         }
       ],
-      "data": { "f120": 200, "f110": 180 },
+      "data": {
+        "f120": 200,
+        "f110": 180
+      },
       "expectedErrors": [],
       "expectedWarnings": [
         {
@@ -368,8 +544,16 @@
     {
       "name": "A-FLD-006 一侧日期未填：规则不触发（无法比较）",
       "fields": [
-        { "key": "f021", "categoryKey": "surgery", "type": "date" },
-        { "key": "f020", "categoryKey": "surgery", "type": "date" }
+        {
+          "key": "f021",
+          "categoryKey": "surgery",
+          "type": "date"
+        },
+        {
+          "key": "f020",
+          "categoryKey": "surgery",
+          "type": "date"
+        }
       ],
       "rules": [
         {
@@ -377,11 +561,17 @@
           "severity": "HARD",
           "categoryKey": "surgery",
           "key": "f020",
-          "params": { "leftField": "f021", "op": "lte", "rightField": "f020" },
+          "params": {
+            "leftField": "f021",
+            "op": "lte",
+            "rightField": "f020"
+          },
           "message": "手术日期不能早于入院日期"
         }
       ],
-      "data": { "f021": "2024-05-01" },
+      "data": {
+        "f021": "2024-05-01"
+      },
       "expectedErrors": [],
       "expectedWarnings": []
     },
@@ -392,11 +582,19 @@
           "key": "f060",
           "categoryKey": "echo",
           "type": "pair_number",
-          "hardRange": { "min": 5, "max": 250 }
+          "hardRange": {
+            "min": 5,
+            "max": 250
+          }
         }
       ],
       "rules": [],
-      "data": { "f060": { "length": 60, "width": 300 } },
+      "data": {
+        "f060": {
+          "length": 60,
+          "width": 300
+        }
+      },
       "expectedErrors": [
         {
           "key": "f060",
@@ -414,25 +612,41 @@
           "key": "f070",
           "categoryKey": "lab",
           "type": "derived",
-          "hardRange": { "min": 10, "max": 60 }
+          "hardRange": {
+            "min": 10,
+            "max": 60
+          }
         },
         {
           "key": "f011",
           "categoryKey": "basic_info",
           "type": "number",
-          "hardRange": { "min": 50, "max": 250 }
+          "hardRange": {
+            "min": 50,
+            "max": 250
+          }
         }
       ],
       "rules": [],
-      "data": { "f070": 999 },
+      "data": {
+        "f070": 999
+      },
       "expectedErrors": [],
       "expectedWarnings": []
     },
     {
       "name": "日期与日期时间混比：日期按当日 00:00 归一后比较（lte 通过）",
       "fields": [
-        { "key": "f020", "categoryKey": "surgery", "type": "date" },
-        { "key": "f031", "categoryKey": "surgery", "type": "datetime" }
+        {
+          "key": "f020",
+          "categoryKey": "surgery",
+          "type": "date"
+        },
+        {
+          "key": "f031",
+          "categoryKey": "surgery",
+          "type": "datetime"
+        }
       ],
       "rules": [
         {
@@ -440,11 +654,18 @@
           "severity": "HARD",
           "categoryKey": "surgery",
           "key": "f031",
-          "params": { "leftField": "f020", "op": "lte", "rightField": "f031" },
+          "params": {
+            "leftField": "f020",
+            "op": "lte",
+            "rightField": "f031"
+          },
           "message": "手术开始时间不能早于手术日期"
         }
       ],
-      "data": { "f020": "2024-05-06", "f031": "2024-05-06T08:30" },
+      "data": {
+        "f020": "2024-05-06",
+        "f031": "2024-05-06T08:30"
+      },
       "expectedErrors": [],
       "expectedWarnings": []
     },
@@ -455,17 +676,180 @@
           "key": "f080",
           "categoryKey": "lab",
           "type": "number",
-          "hardRange": { "min": 2.5, "max": 6.5 }
+          "hardRange": {
+            "min": 2.5,
+            "max": 6.5
+          }
         }
       ],
       "rules": [],
-      "data": { "f080": 8.9 },
+      "data": {
+        "f080": 8.9
+      },
       "expectedErrors": [
         {
           "key": "f080",
           "categoryKey": "lab",
           "rule": "hardRange",
           "message": "取值应在 2.5–6.5 之间"
+        }
+      ],
+      "expectedWarnings": []
+    },
+    {
+      "name": "A-FLD-004 条件必填：是否死亡=是而死亡日期缺失 → 拦截（rule=required，文案「必填」）",
+      "fields": [
+        {
+          "key": "f215",
+          "categoryKey": "endpoint",
+          "type": "radio",
+          "required": true
+        },
+        {
+          "key": "f216",
+          "categoryKey": "endpoint",
+          "type": "date",
+          "visibleWhen": {
+            "all": [
+              {
+                "field": "f215",
+                "op": "eq",
+                "value": 1
+              }
+            ]
+          },
+          "requiredWhen": {
+            "all": [
+              {
+                "field": "f215",
+                "op": "eq",
+                "value": 1
+              }
+            ]
+          }
+        }
+      ],
+      "rules": [],
+      "data": {
+        "f215": 1
+      },
+      "expectedErrors": [
+        {
+          "key": "f216",
+          "categoryKey": "endpoint",
+          "rule": "required",
+          "message": "必填"
+        }
+      ],
+      "expectedWarnings": []
+    },
+    {
+      "name": "A-FLD-004 隐藏字段掩蔽：是否死亡=否时死亡日期残留值不报必填、不查范围；可见字段照常查范围",
+      "fields": [
+        {
+          "key": "f215",
+          "categoryKey": "endpoint",
+          "type": "radio"
+        },
+        {
+          "key": "f216",
+          "categoryKey": "endpoint",
+          "type": "number",
+          "hardRange": {
+            "min": 1,
+            "max": 31
+          },
+          "visibleWhen": {
+            "all": [
+              {
+                "field": "f215",
+                "op": "eq",
+                "value": 1
+              }
+            ]
+          },
+          "requiredWhen": {
+            "all": [
+              {
+                "field": "f215",
+                "op": "eq",
+                "value": 1
+              }
+            ]
+          }
+        },
+        {
+          "key": "f011",
+          "categoryKey": "basic_info",
+          "type": "number",
+          "hardRange": {
+            "min": 50,
+            "max": 250
+          }
+        }
+      ],
+      "rules": [],
+      "data": {
+        "f215": 0,
+        "f216": 300,
+        "f011": 300
+      },
+      "expectedErrors": [
+        {
+          "key": "f011",
+          "categoryKey": "basic_info",
+          "rule": "hardRange",
+          "message": "取值应在 50–250 之间"
+        }
+      ],
+      "expectedWarnings": []
+    },
+    {
+      "name": "C-FLD-005 上下文必填：device.type=ICD 时 ICD 放电次数缺失 → 拦截（ctx 按点路径取值）",
+      "fields": [
+        {
+          "key": "f700",
+          "categoryKey": "icd",
+          "type": "number",
+          "visibleWhen": {
+            "all": [
+              {
+                "ctx": "device.type",
+                "op": "in",
+                "value": [
+                  "ICD",
+                  "CRT-D"
+                ]
+              }
+            ]
+          },
+          "requiredWhen": {
+            "all": [
+              {
+                "ctx": "device.type",
+                "op": "in",
+                "value": [
+                  "ICD",
+                  "CRT-D"
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "rules": [],
+      "context": {
+        "device": {
+          "type": "ICD"
+        }
+      },
+      "data": {},
+      "expectedErrors": [
+        {
+          "key": "f700",
+          "categoryKey": "icd",
+          "rule": "required",
+          "message": "必填"
         }
       ],
       "expectedWarnings": []

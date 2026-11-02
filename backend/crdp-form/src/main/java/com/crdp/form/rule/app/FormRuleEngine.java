@@ -17,7 +17,8 @@ import org.springframework.stereotype.Component;
 
 /**
  * E11-T04 / A-FLD-003、A-FLD-006、C-FLD-007：类型值之上的<b>范围与跨字段校验</b>（类型闸门是 {@link
- * com.crdp.form.record.app.FormDataValidator}，先于本引擎执行）。
+ * com.crdp.form.record.app.FormDataValidator}，先于本引擎执行）；E11-T03 / A-FLD-004、C-FLD-005 追加<b>条件必填</b>与
+ * <b>隐藏字段掩蔽</b>。
  *
  * <p>与前端 {@code packages/rules} 的 {@code validateFormData} 同语义（前后端校验一致），共用用例锁定： {@code
  * backend/crdp-form/src/test/resources/shared-cases/form-validation-cases.json}（components.md
@@ -31,6 +32,11 @@ import org.springframework.stereotype.Component;
  *       值编码口径比较——数值比大小、日期 YYYY-MM-DD 与日期时间 YYYY-MM-DDTHH:mm 比先后（日期按当日 00:00 归一，分钟 /
  *       秒两种写法等价）；一侧为空或不可比（数值 × 日期、普通文本）不触发。HARD 违反即拦截（form.md §2 失败 42200），SOFT 只提示（C-FLD-007
  *       建议范围语义）。
+ *   <li>条件必填（E11-T03）：有效必填 = 字段显示（visibleWhen 求值）&&（required || requiredWhen 求值）；命中而值为空 → errors 带
+ *       {@code rule=required}（文案「必填」，与渲染器 §10.3 同词）。只查 storage=json 且非派生的字段（引擎只校验记录 JSON；实体 /
+ *       加密列必填随业务接口 E13，派生随 E11-T05 重算）。
+ *   <li>隐藏字段掩蔽（E11-T03）：visibleWhen 不成立字段的值不参与范围与跨字段（tech-plan §6「提交时清空」——值残留按已清空口径校验）； 清空动作本身由
+ *       {@code FormService.stripHiddenFields} 在提交流程执行（写字段历史随 E11-T06）。
  * </ul>
  *
  * <p>提示文案与前端逐字一致：范围两端都有用「取值应在 min–max 之间」，只有一端用「取值不能小于 min」/「取值不能大于 max」；跨字段文案直接用
@@ -44,15 +50,38 @@ public class FormRuleEngine {
             Pattern.compile("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2})?");
 
     private final ObjectMapper json = new ObjectMapper();
+    private final FormConditionEngine conditionEngine;
 
-    /** 提交 / 保存修改前的完整规则执行（form.md §2「后端再执行一次」）：errors 拦截、warnings 提示。 */
+    public FormRuleEngine(FormConditionEngine conditionEngine) {
+        this.conditionEngine = conditionEngine;
+    }
+
+    /**
+     * 提交 / 保存修改前的完整规则执行（form.md §2「后端再执行一次」）：errors 拦截、warnings 提示。无上下文（context = 空）：ctx
+     * 叶子全部不成立（与前端缺 context 同口径）。
+     */
     public RuleResult validate(
             Map<String, Object> data, List<VersionFieldRow> fields, List<RuleRow> rules) {
+        return validate(data, fields, rules, Map.of());
+    }
+
+    /**
+     * 同 {@link #validate(Map, List, List)}，带条件上下文（C 的 device.type 等，由业务侧传入，E21-T03）。 检查顺序：范围 → 条件必填
+     * → 跨字段（errors 顺序前后端一致，共享用例锁定）。
+     */
+    public RuleResult validate(
+            Map<String, Object> data,
+            List<VersionFieldRow> fields,
+            List<RuleRow> rules,
+            Map<String, Object> context) {
         Map<String, Object> values = data == null ? Map.of() : data;
         List<FieldIssue> errors = new ArrayList<>();
         List<FieldIssue> warnings = new ArrayList<>();
-        checkRanges(values, fields, errors, warnings);
-        checkCrossFields(values, rules, errors, warnings);
+        List<String> hidden = conditionEngine.hiddenFieldKeys(fields, values, context);
+        Map<String, Object> effective = maskHidden(values, hidden);
+        checkRanges(effective, fields, errors, warnings);
+        checkRequired(values, fields, context, hidden, errors);
+        checkCrossFields(effective, rules, errors, warnings);
         return new RuleResult(List.copyOf(errors), List.copyOf(warnings));
     }
 
@@ -64,6 +93,47 @@ public class FormRuleEngine {
         List<FieldIssue> errors = new ArrayList<>();
         checkRanges(data == null ? Map.of() : data, fields, errors, new ArrayList<>());
         return List.copyOf(errors);
+    }
+
+    // ---------------------------------------------------------------- 条件必填（E11-T03 / A-FLD-004）
+
+    /**
+     * 有效必填缺失 → errors（{@code rule=required}，文案「必填」与渲染器 §10.3 同词，前后端逐字一致）。 只查 storage=json
+     * 且非派生的显示中字段；隐藏字段永不必填（值提交时清空、不计完整度，A-PAT-019）。
+     */
+    private void checkRequired(
+            Map<String, Object> data,
+            List<VersionFieldRow> fields,
+            Map<String, Object> context,
+            List<String> hidden,
+            List<FieldIssue> errors) {
+        for (VersionFieldRow field : fields) {
+            if (!"json".equals(field.storageType())
+                    || FieldType.DERIVED.code().equals(field.type())) {
+                continue; // 实体 / 加密列必填随业务接口（E13）；派生字段由 E11-T05 重算
+            }
+            if (hidden.contains(field.fieldKey())) {
+                continue;
+            }
+            if (!conditionEngine.requiredNow(field, data, context)) {
+                continue;
+            }
+            if (FormConditionEngine.isEmptyValue(data.get(field.fieldKey()))) {
+                errors.add(new FieldIssue(field.fieldKey(), field.categoryKey(), "required", "必填"));
+            }
+        }
+    }
+
+    /** 隐藏字段的值从校验视角移除（残留值按已清空口径：不查范围、不参与跨字段比较）。 */
+    private static Map<String, Object> maskHidden(Map<String, Object> data, List<String> hidden) {
+        if (hidden.isEmpty()) {
+            return data;
+        }
+        Map<String, Object> effective = new java.util.LinkedHashMap<>(data);
+        for (String key : hidden) {
+            effective.remove(key);
+        }
+        return effective;
     }
 
     // ---------------------------------------------------------------- 范围（硬 / 软）

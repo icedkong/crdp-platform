@@ -1,0 +1,383 @@
+{
+  "comment": "E11-T03 前后端共用条件求值用例（components.md §10.5；A-FLD-004 条件显示与条件必填）：同一份文件由后端 FormConditionEngine（FormConditionEngineTest）与前端 @crdp/rules（form-condition.test）各执行一遍，visible 与 missingRequired 逐条（key、categoryKey、rule、message）完全一致才通过。用例取自需求验收标准：是否死亡=是才显示并必填死亡日期与死亡原因、选了再住院类型才显示再住院日期、复查超声=是才显示超声指标（A-FLD-004）；ICD 项目按当前器械类型、心房参数按在用 RA 电极（components.md §10.4、C-FLD-005 上下文变量）。字段全部虚构（示例），真实字段随 E23-T01 录入。求值语义（form.md §2.4）：操作数缺失（未答 / null）除 empty / notEmpty 外一律不成立；eq / in 按值编码口径严格同型比较（1 与 \"1\" 不等）；条件为空恒真。",
+  "shape": {
+    "fields[]": "参与求值的字段：key 稳定键、categoryKey 分类锚点键、type（可省）、storage（可省，默认 json）、required（可省，默认 false）、visibleWhen / requiredWhen 条件树（可省 = 无条件：恒显示 / 不加必填）",
+    "data": "表单值（键 = 稳定键，值按 tech-plan §6 值编码）",
+    "context": "条件上下文（可省）：ctx 按点路径取值（如 device.type），来源 C 器械上下文（E21-T03）等业务侧",
+    "expectedVisible[]": "按 fields 声明序，显示字段的 key 列表（visibleWhen 求值结果）",
+    "expectedMissingRequired[]": "FieldIssue：key、categoryKey、rule=required、message=必填（显示中且有效必填、值为空）"
+  },
+  "cases": [
+    {
+      "name": "A-FLD-004 是否死亡=是：死亡日期与死亡原因显示并必填",
+      "fields": [
+        { "key": "f215", "categoryKey": "endpoint", "type": "radio", "required": true },
+        { "key": "f216", "categoryKey": "endpoint", "type": "date",
+          "visibleWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] },
+          "requiredWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] } },
+        { "key": "f217", "categoryKey": "endpoint", "type": "text",
+          "visibleWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] },
+          "requiredWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] } }
+      ],
+      "data": { "f215": 1 },
+      "expectedVisible": ["f215", "f216", "f217"],
+      "expectedMissingRequired": [
+        { "key": "f216", "categoryKey": "endpoint", "rule": "required", "message": "必填" },
+        { "key": "f217", "categoryKey": "endpoint", "rule": "required", "message": "必填" }
+      ]
+    },
+    {
+      "name": "A-FLD-004 是否死亡=否：隐藏字段不报必填（残留值也不报）",
+      "fields": [
+        { "key": "f215", "categoryKey": "endpoint", "type": "radio", "required": true },
+        { "key": "f216", "categoryKey": "endpoint", "type": "date",
+          "visibleWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] },
+          "requiredWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] } },
+        { "key": "f217", "categoryKey": "endpoint", "type": "text",
+          "visibleWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] },
+          "requiredWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] } }
+      ],
+      "data": { "f215": 0, "f216": "2024-01-02", "f217": "心源性（示例）" },
+      "expectedVisible": ["f215"],
+      "expectedMissingRequired": []
+    },
+    {
+      "name": "A-FLD-004 是否死亡未答：eq 操作数缺失不成立 → 后续字段隐藏；自身必填报缺失",
+      "fields": [
+        { "key": "f215", "categoryKey": "endpoint", "type": "radio", "required": true },
+        { "key": "f216", "categoryKey": "endpoint", "type": "date",
+          "visibleWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] },
+          "requiredWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] } }
+      ],
+      "data": {},
+      "expectedVisible": ["f215"],
+      "expectedMissingRequired": [
+        { "key": "f215", "categoryKey": "endpoint", "rule": "required", "message": "必填" }
+      ]
+    },
+    {
+      "name": "A-FLD-004 选了再住院类型（in [1,2,3]）：再住院日期显示并必填",
+      "fields": [
+        { "key": "f300", "categoryKey": "readmit", "type": "select", "required": true },
+        { "key": "f301", "categoryKey": "readmit", "type": "date",
+          "visibleWhen": { "all": [{ "field": "f300", "op": "in", "value": [1, 2, 3] }] },
+          "requiredWhen": { "all": [{ "field": "f300", "op": "in", "value": [1, 2, 3] }] } }
+      ],
+      "data": { "f300": 2 },
+      "expectedVisible": ["f300", "f301"],
+      "expectedMissingRequired": [
+        { "key": "f301", "categoryKey": "readmit", "rule": "required", "message": "必填" }
+      ]
+    },
+    {
+      "name": "A-FLD-004 再住院类型=0（无）：in 不含 0 → 再住院日期隐藏",
+      "fields": [
+        { "key": "f300", "categoryKey": "readmit", "type": "select", "required": true },
+        { "key": "f301", "categoryKey": "readmit", "type": "date",
+          "visibleWhen": { "all": [{ "field": "f300", "op": "in", "value": [1, 2, 3] }] },
+          "requiredWhen": { "all": [{ "field": "f300", "op": "in", "value": [1, 2, 3] }] } }
+      ],
+      "data": { "f300": 0 },
+      "expectedVisible": ["f300"],
+      "expectedMissingRequired": []
+    },
+    {
+      "name": "A-FLD-004 复查超声=true（是否值）：超声指标显示并必填",
+      "fields": [
+        { "key": "f400", "categoryKey": "echo", "type": "boolean", "required": true },
+        { "key": "f401", "categoryKey": "echo", "type": "number",
+          "visibleWhen": { "all": [{ "field": "f400", "op": "eq", "value": true }] },
+          "requiredWhen": { "all": [{ "field": "f400", "op": "eq", "value": true }] } }
+      ],
+      "data": { "f400": true },
+      "expectedVisible": ["f400", "f401"],
+      "expectedMissingRequired": [
+        { "key": "f401", "categoryKey": "echo", "rule": "required", "message": "必填" }
+      ]
+    },
+    {
+      "name": "A-FLD-004 复查超声=false：隐藏（false 是已答，条件不成立）",
+      "fields": [
+        { "key": "f400", "categoryKey": "echo", "type": "boolean", "required": true },
+        { "key": "f401", "categoryKey": "echo", "type": "number",
+          "visibleWhen": { "all": [{ "field": "f400", "op": "eq", "value": true }] },
+          "requiredWhen": { "all": [{ "field": "f400", "op": "eq", "value": true }] } }
+      ],
+      "data": { "f400": false },
+      "expectedVisible": ["f400"],
+      "expectedMissingRequired": []
+    },
+    {
+      "name": "数值比较 gte：NYHA 分级 ≥ 3 显示并必填症状描述",
+      "fields": [
+        { "key": "f500", "categoryKey": "cardiac", "type": "select", "required": true },
+        { "key": "f501", "categoryKey": "cardiac", "type": "textarea",
+          "visibleWhen": { "all": [{ "field": "f500", "op": "gte", "value": 3 }] },
+          "requiredWhen": { "all": [{ "field": "f500", "op": "gte", "value": 3 }] } }
+      ],
+      "data": { "f500": 3 },
+      "expectedVisible": ["f500", "f501"],
+      "expectedMissingRequired": [
+        { "key": "f501", "categoryKey": "cardiac", "rule": "required", "message": "必填" }
+      ]
+    },
+    {
+      "name": "数值比较 gte 不满足：NYHA 分级 2 → 隐藏",
+      "fields": [
+        { "key": "f500", "categoryKey": "cardiac", "type": "select", "required": true },
+        { "key": "f501", "categoryKey": "cardiac", "type": "textarea",
+          "visibleWhen": { "all": [{ "field": "f500", "op": "gte", "value": 3 }] },
+          "requiredWhen": { "all": [{ "field": "f500", "op": "gte", "value": 3 }] } }
+      ],
+      "data": { "f500": 2 },
+      "expectedVisible": ["f500"],
+      "expectedMissingRequired": []
+    },
+    {
+      "name": "日期比较 gte：随访日期 ≥ 2024-01-01 显示并必填归档说明",
+      "fields": [
+        { "key": "f640", "categoryKey": "followup", "type": "date", "required": true },
+        { "key": "f641", "categoryKey": "followup", "type": "textarea",
+          "visibleWhen": { "all": [{ "field": "f640", "op": "gte", "value": "2024-01-01" }] },
+          "requiredWhen": { "all": [{ "field": "f640", "op": "gte", "value": "2024-01-01" }] } }
+      ],
+      "data": { "f640": "2024-05-06" },
+      "expectedVisible": ["f640", "f641"],
+      "expectedMissingRequired": [
+        { "key": "f641", "categoryKey": "followup", "rule": "required", "message": "必填" }
+      ]
+    },
+    {
+      "name": "日期比较 gte 不满足：2023-12-31 < 2024-01-01 → 隐藏",
+      "fields": [
+        { "key": "f640", "categoryKey": "followup", "type": "date", "required": true },
+        { "key": "f641", "categoryKey": "followup", "type": "textarea",
+          "visibleWhen": { "all": [{ "field": "f640", "op": "gte", "value": "2024-01-01" }] },
+          "requiredWhen": { "all": [{ "field": "f640", "op": "gte", "value": "2024-01-01" }] } }
+      ],
+      "data": { "f640": "2023-12-31" },
+      "expectedVisible": ["f640"],
+      "expectedMissingRequired": []
+    },
+    {
+      "name": "不可比较的文本不成立（gt / gte 只认数值与日期 / 日期时间，普通文本不比）",
+      "fields": [
+        { "key": "f640", "categoryKey": "followup", "type": "date", "required": true },
+        { "key": "f641", "categoryKey": "followup", "type": "textarea",
+          "visibleWhen": { "all": [{ "field": "f640", "op": "gte", "value": "2024-01-01" }] },
+          "requiredWhen": { "all": [{ "field": "f640", "op": "gte", "value": "2024-01-01" }] } }
+      ],
+      "data": { "f640": "文字（示例）" },
+      "expectedVisible": ["f640"],
+      "expectedMissingRequired": []
+    },
+    {
+      "name": "C 上下文变量：device.type in [ICD, CRT-D] / device.hasRaLead=true / device.chambers ≥ 2（点路径取值）",
+      "fields": [
+        { "key": "f700", "categoryKey": "icd", "type": "textarea",
+          "visibleWhen": { "all": [{ "ctx": "device.type", "op": "in", "value": ["ICD", "CRT-D"] }] },
+          "requiredWhen": { "all": [{ "ctx": "device.type", "op": "in", "value": ["ICD", "CRT-D"] }] } },
+        { "key": "f701", "categoryKey": "sensing", "type": "textarea",
+          "visibleWhen": { "all": [{ "ctx": "device.hasRaLead", "op": "eq", "value": true }] } },
+        { "key": "f702", "categoryKey": "pacing", "type": "number",
+          "visibleWhen": { "all": [{ "ctx": "device.chambers", "op": "gte", "value": 2 }] } }
+      ],
+      "data": {},
+      "context": { "device": { "type": "ICD", "hasRaLead": true, "chambers": 2 } },
+      "expectedVisible": ["f700", "f701", "f702"],
+      "expectedMissingRequired": [
+        { "key": "f700", "categoryKey": "icd", "rule": "required", "message": "必填" }
+      ]
+    },
+    {
+      "name": "C 上下文变量不满足 / 缺失（ctx 操作数缺失同 field：不成立）",
+      "fields": [
+        { "key": "f700", "categoryKey": "icd", "type": "textarea",
+          "visibleWhen": { "all": [{ "ctx": "device.type", "op": "in", "value": ["ICD", "CRT-D"] }] },
+          "requiredWhen": { "all": [{ "ctx": "device.type", "op": "in", "value": ["ICD", "CRT-D"] }] } },
+        { "key": "f701", "categoryKey": "sensing", "type": "textarea",
+          "visibleWhen": { "all": [{ "ctx": "device.hasRaLead", "op": "eq", "value": true }] } },
+        { "key": "f702", "categoryKey": "pacing", "type": "number",
+          "visibleWhen": { "all": [{ "ctx": "device.chambers", "op": "gte", "value": 2 }] } }
+      ],
+      "data": {},
+      "context": { "device": { "type": "VVIR", "chambers": 1 } },
+      "expectedVisible": [],
+      "expectedMissingRequired": []
+    },
+    {
+      "name": "嵌套 any / all：用了药（单药或联合）且不耐受 → 不良反应描述显示并必填",
+      "fields": [
+        { "key": "f800", "categoryKey": "medication", "type": "select", "required": true },
+        { "key": "f802", "categoryKey": "medication", "type": "radio", "required": true },
+        { "key": "f803", "categoryKey": "medication", "type": "textarea",
+          "visibleWhen": { "all": [
+            { "any": [{ "field": "f800", "op": "eq", "value": 1 }, { "field": "f800", "op": "eq", "value": 2 }] },
+            { "field": "f802", "op": "eq", "value": 0 }
+          ] },
+          "requiredWhen": { "all": [
+            { "any": [{ "field": "f800", "op": "eq", "value": 1 }, { "field": "f800", "op": "eq", "value": 2 }] },
+            { "field": "f802", "op": "eq", "value": 0 }
+          ] } }
+      ],
+      "data": { "f800": 2, "f802": 0 },
+      "expectedVisible": ["f800", "f802", "f803"],
+      "expectedMissingRequired": [
+        { "key": "f803", "categoryKey": "medication", "rule": "required", "message": "必填" }
+      ]
+    },
+    {
+      "name": "嵌套 any 不满足（未用药）：any 全不成立 → 隐藏",
+      "fields": [
+        { "key": "f800", "categoryKey": "medication", "type": "select", "required": true },
+        { "key": "f802", "categoryKey": "medication", "type": "radio", "required": true },
+        { "key": "f803", "categoryKey": "medication", "type": "textarea",
+          "visibleWhen": { "all": [
+            { "any": [{ "field": "f800", "op": "eq", "value": 1 }, { "field": "f800", "op": "eq", "value": 2 }] },
+            { "field": "f802", "op": "eq", "value": 0 }
+          ] } }
+      ],
+      "data": { "f800": 0, "f802": 0 },
+      "expectedVisible": ["f800", "f802"],
+      "expectedMissingRequired": []
+    },
+    {
+      "name": "嵌套 all 另一支不满足（耐受良好）：隐藏",
+      "fields": [
+        { "key": "f800", "categoryKey": "medication", "type": "select", "required": true },
+        { "key": "f802", "categoryKey": "medication", "type": "radio", "required": true },
+        { "key": "f803", "categoryKey": "medication", "type": "textarea",
+          "visibleWhen": { "all": [
+            { "any": [{ "field": "f800", "op": "eq", "value": 1 }, { "field": "f800", "op": "eq", "value": 2 }] },
+            { "field": "f802", "op": "eq", "value": 0 }
+          ] } }
+      ],
+      "data": { "f800": 2, "f802": 1 },
+      "expectedVisible": ["f800", "f802"],
+      "expectedMissingRequired": []
+    },
+    {
+      "name": "notEmpty：其他原因已填 → 补充说明显示并必填；空串算空",
+      "fields": [
+        { "key": "f900", "categoryKey": "reason", "type": "text", "required": true },
+        { "key": "f901", "categoryKey": "reason", "type": "textarea",
+          "visibleWhen": { "all": [{ "field": "f900", "op": "notEmpty" }] },
+          "requiredWhen": { "all": [{ "field": "f900", "op": "notEmpty" }] } }
+      ],
+      "data": { "f900": "其他（示例）" },
+      "expectedVisible": ["f900", "f901"],
+      "expectedMissingRequired": [
+        { "key": "f901", "categoryKey": "reason", "rule": "required", "message": "必填" }
+      ]
+    },
+    {
+      "name": "notEmpty 空串不成立（空串算空）→ 隐藏",
+      "fields": [
+        { "key": "f900", "categoryKey": "reason", "type": "text", "required": true },
+        { "key": "f901", "categoryKey": "reason", "type": "textarea",
+          "visibleWhen": { "all": [{ "field": "f900", "op": "notEmpty" }] },
+          "requiredWhen": { "all": [{ "field": "f900", "op": "notEmpty" }] } }
+      ],
+      "data": { "f900": "" },
+      "expectedVisible": ["f900"],
+      "expectedMissingRequired": [
+        { "key": "f900", "categoryKey": "reason", "rule": "required", "message": "必填" }
+      ]
+    },
+    {
+      "name": "empty：无既往手术（多选空数组）→ 「确认无既往手术」显示；已选 → 隐藏",
+      "fields": [
+        { "key": "f910", "categoryKey": "history", "type": "multiselect", "required": true },
+        { "key": "f911", "categoryKey": "history", "type": "boolean",
+          "visibleWhen": { "all": [{ "field": "f910", "op": "empty" }] } }
+      ],
+      "data": { "f910": [] },
+      "expectedVisible": ["f910", "f911"],
+      "expectedMissingRequired": [
+        { "key": "f910", "categoryKey": "history", "rule": "required", "message": "必填" }
+      ]
+    },
+    {
+      "name": "empty 空数组成立、已选数组不成立（同一份字段定义换个数据）",
+      "fields": [
+        { "key": "f910", "categoryKey": "history", "type": "multiselect", "required": true },
+        { "key": "f911", "categoryKey": "history", "type": "boolean",
+          "visibleWhen": { "all": [{ "field": "f910", "op": "empty" }] } }
+      ],
+      "data": { "f910": [1, 2] },
+      "expectedVisible": ["f910"],
+      "expectedMissingRequired": []
+    },
+    {
+      "name": "eq 严格同型：数值 1 ≠ 字符串 \"1\"（配置值必须按值编码写：选项编码整数、日期字符串）",
+      "fields": [
+        { "key": "f950", "categoryKey": "lab", "type": "number", "required": true },
+        { "key": "f951", "categoryKey": "lab", "type": "textarea",
+          "visibleWhen": { "all": [{ "field": "f950", "op": "eq", "value": "1" }] } }
+      ],
+      "data": { "f950": 1 },
+      "expectedVisible": ["f950"],
+      "expectedMissingRequired": []
+    },
+    {
+      "name": "ne：选项 ≠ 目标值时显示（已答才参与，未答不成立由其他用例锁定）",
+      "fields": [
+        { "key": "f955", "categoryKey": "reason", "type": "select", "required": true },
+        { "key": "f956", "categoryKey": "reason", "type": "textarea",
+          "visibleWhen": { "all": [{ "field": "f955", "op": "ne", "value": 0 }] },
+          "requiredWhen": { "all": [{ "field": "f955", "op": "ne", "value": 0 }] } }
+      ],
+      "data": { "f955": 9 },
+      "expectedVisible": ["f955", "f956"],
+      "expectedMissingRequired": [
+        { "key": "f956", "categoryKey": "reason", "rule": "required", "message": "必填" }
+      ]
+    },
+    {
+      "name": "0 与 false 是已答不算空：必填字段填 0 / false 不报缺失",
+      "fields": [
+        { "key": "f980", "categoryKey": "lab", "type": "number", "required": true },
+        { "key": "f981", "categoryKey": "lab", "type": "boolean", "required": true }
+      ],
+      "data": { "f980": 0, "f981": false },
+      "expectedVisible": ["f980", "f981"],
+      "expectedMissingRequired": []
+    },
+    {
+      "name": "pair_number 分量全缺 = 空 → 条件必填缺失",
+      "fields": [
+        { "key": "f971", "categoryKey": "aneurysm", "type": "radio", "required": true },
+        { "key": "f970", "categoryKey": "aneurysm", "type": "pair_number",
+          "visibleWhen": { "all": [{ "field": "f971", "op": "eq", "value": 1 }] },
+          "requiredWhen": { "all": [{ "field": "f971", "op": "eq", "value": 1 }] } }
+      ],
+      "data": { "f971": 1, "f970": { "length": null, "width": null } },
+      "expectedVisible": ["f971", "f970"],
+      "expectedMissingRequired": [
+        { "key": "f970", "categoryKey": "aneurysm", "rule": "required", "message": "必填" }
+      ]
+    },
+    {
+      "name": "pair_number 部分已填 = 非空 → 不报必填",
+      "fields": [
+        { "key": "f971", "categoryKey": "aneurysm", "type": "radio", "required": true },
+        { "key": "f970", "categoryKey": "aneurysm", "type": "pair_number",
+          "visibleWhen": { "all": [{ "field": "f971", "op": "eq", "value": 1 }] },
+          "requiredWhen": { "all": [{ "field": "f971", "op": "eq", "value": 1 }] } }
+      ],
+      "data": { "f971": 1, "f970": { "length": 30 } },
+      "expectedVisible": ["f971", "f970"],
+      "expectedMissingRequired": []
+    },
+    {
+      "name": "storage 非 json（实体 / 加密列）与派生字段不做必填（引擎只校验记录 JSON；实体必填随 E13、派生随 E11-T05）",
+      "fields": [
+        { "key": "f990", "categoryKey": "basic", "type": "text", "storage": "column", "required": true },
+        { "key": "f991", "categoryKey": "basic", "type": "derived", "required": true }
+      ],
+      "data": {},
+      "expectedVisible": ["f990", "f991"],
+      "expectedMissingRequired": []
+    }
+  ]
+}

@@ -15,6 +15,22 @@ export function permissionCode(
 }
 
 export {
+  type Condition,
+  type ConditionalField,
+  type ConditionOp,
+  type ConditionTree,
+  type CtxCondition,
+  evaluateCondition,
+  type FieldCondition,
+  hiddenFieldKeys,
+  isEmptyFormValue,
+  isFieldVisible,
+  isRequiredField,
+  missingRequiredFields,
+  type RequiredIssue,
+  stripHiddenFieldValues,
+} from './form-condition';
+export {
   compareValues,
   type CrossFieldCompareParams,
   type CrossFieldRule,
