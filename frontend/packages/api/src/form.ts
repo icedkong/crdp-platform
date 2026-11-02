@@ -6,7 +6,7 @@
  * 1=是），页面显示 `label`。字段可启停（ENABLED/DISABLED，停用不删除）。
  */
 
-/** 表单摘要（GET /api/hospital/form/forms；完整 FormSchema 随 E11-T02）。 */
+/** 表单摘要（GET /api/hospital/form/forms；完整模板见 FormSchema，E11-T02）。 */
 export interface FormSummary {
   code: string;
   currentVersion: number;
@@ -195,4 +195,95 @@ export function matchFieldKeyword(
     field.code.toLowerCase().includes(query) ||
     field.key.toLowerCase().includes(query)
   );
+}
+
+/* ----------------------------------------------------------------------
+ * E11-T02 / A-NFR-002、C-NFR-002：FormSchema（GET /api/hospital/form/forms/{code}?version=，
+ * components.md §10.1 契约 + name / usage）。不传 version 取当前发布版；已有记录按其保存时的
+ * 版本取（旧版本快照永久可读）。rules 为 fe_rule 跨字段校验（E11-T04 前为空数组）。
+ */
+
+export interface FormSchema {
+  categories: FormSchemaCategory[];
+  code: string;
+  name: string;
+  /** fe_rule 跨字段校验（E11-T04 落地前恒为空数组）。 */
+  rules: unknown[];
+  usage: FormUsage;
+  /** 模板版本：记录保存时固化的 formVersion 用它取旧版本渲染。 */
+  version: number;
+}
+
+export interface FormSchemaCategory {
+  fields: FormSchemaField[];
+  /** 稳定锚点键（报告单位置、分类条依赖，模板改版不变）。 */
+  key: string;
+  label: string;
+  order: number;
+}
+
+export interface FormSchemaField {
+  /** 字段编码（导入导出名）。 */
+  code: string;
+  decimals?: null | number;
+  derived?: FieldDerivedDef | null;
+  hardRange?: FieldRange | null;
+  help?: null | string;
+  /** 稳定 ASCII 键（如 f019），JSON 数据键。 */
+  key: string;
+  label: string;
+  /** 选项（单选 / 下拉 / 多选）：编码 + 显示名 + 停用标记（A-FLD-002）。 */
+  optionSet?: FormSchemaOption[] | null;
+  required: boolean;
+  requiredWhen?: unknown;
+  sensitive: boolean;
+  softRange?: FieldRange | null;
+  storage: FieldStorage;
+  type: FormFieldType;
+  unit?: null | string;
+  /** 条件树（E11-T03 前后端一致求值）。 */
+  visibleWhen?: unknown;
+}
+
+export interface FormSchemaOption {
+  code: number;
+  /** 停用选项：不可新选，历史值仍按编码显示（不删除即不失效）。 */
+  disabled?: boolean;
+  exclusive?: boolean;
+  label: string;
+  needsDetail?: boolean;
+  ordinal?: null | number;
+}
+
+/** 发布结果（POST /api/hospital/form/forms/{code}/publish，followup:field:edit）。 */
+export interface FormPublishResult {
+  code: string;
+  /** 本次固化的启用字段数（停用字段不进新版本）。 */
+  fieldCount: number;
+  name: string;
+  publishedAt: string;
+  version: number;
+}
+
+/** 全表单字段索引：稳定键 → 字段（渲染器按记录 data 的键取定义）。 */
+export function indexSchemaFields(
+  schema: Pick<FormSchema, 'categories'>,
+): Map<string, FormSchemaField> {
+  const index = new Map<string, FormSchemaField>();
+  for (const category of schema.categories) {
+    for (const field of category.fields) {
+      index.set(field.key, field);
+    }
+  }
+  return index;
+}
+
+/** 选项显示名：按编码取显示名（数据库存编码、页面显示显示名，A-FLD-002）；未知编码回落编码本身。 */
+export function schemaOptionLabel(
+  field: Pick<FormSchemaField, 'optionSet'>,
+  code: null | number | undefined,
+): string {
+  if (code === null || code === undefined) return '—';
+  const option = field.optionSet?.find((item) => item.code === code);
+  return option ? option.label : String(code);
 }

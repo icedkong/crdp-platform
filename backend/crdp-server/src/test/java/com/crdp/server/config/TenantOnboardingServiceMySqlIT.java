@@ -210,11 +210,13 @@ class TenantOnboardingServiceMySqlIT {
                 // E10-T02 增加 V26（sys_file 迁桶后清理 body 列，followup 目录）。
                 // E10-T03 增加 V27（sys_file 缩略图键 + pages 口径收敛，followup 目录）。
                 // E11-T01 增加 V28（字段元数据 fe_form / fe_field / fe_option_set / fe_option，followup 目录）。
+                // E11-T02 增加 V29（模板版本快照 fe_form_version / fe_form_version_field 与 JSON 记录
+                // fe_record，followup 目录）。
                 // 此处随迁移清单维护
                 List.of(
                         "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14",
                         "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26",
-                        "27", "28"),
+                        "27", "28", "29"),
                 root.queryForList(
                         "SELECT version FROM "
                                 + DB

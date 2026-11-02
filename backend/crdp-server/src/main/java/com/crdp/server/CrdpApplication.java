@@ -11,6 +11,7 @@ import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
     "com.crdp.platform.infra.mapper",
     "com.crdp.system.infra.mapper",
     "com.crdp.form.field.infra.mapper",
+    "com.crdp.form.record.infra.mapper",
     "com.crdp.followup.notice.infra.mapper",
     "com.crdp.followup.file.infra.mapper"
 })

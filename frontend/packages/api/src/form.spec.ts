@@ -6,9 +6,11 @@ import {
   fieldStorageText,
   formFieldTypeText,
   formUsageText,
+  indexSchemaFields,
   isOptionFieldType,
   isValidFieldRange,
   matchFieldKeyword,
+  schemaOptionLabel,
 } from './form';
 
 /** E11-T01 / A-FLD-002：显示名与编码分离的展示与筛选逻辑。 */
@@ -53,5 +55,70 @@ describe('e11-t01 字段字典类型与助手', () => {
     expect(matchFieldKeyword(smoking, 'f010')).toBe(true);
     expect(matchFieldKeyword(smoking, ' ')).toBe(true);
     expect(matchFieldKeyword(smoking, '体重')).toBe(false);
+  });
+});
+
+/** 示例模板（后端种子 A_BASELINE v1 的子集，全部虚构）。 */
+const schema: FormSchema = {
+  categories: [
+    {
+      fields: [
+        {
+          code: 'smoking_history',
+          key: 'f010',
+          label: '吸烟史',
+          optionSet: [
+            { code: 0, label: '否' },
+            { code: 1, label: '是' },
+          ],
+          required: true,
+          sensitive: false,
+          storage: 'json',
+          type: 'radio',
+        },
+        {
+          code: 'height_cm',
+          decimals: 1,
+          hardRange: { max: 250, min: 50 },
+          key: 'f011',
+          label: '身高',
+          required: false,
+          sensitive: false,
+          softRange: { max: 210, min: 130 },
+          storage: 'json',
+          type: 'number',
+          unit: 'cm',
+        },
+      ],
+      key: 'basic_info',
+      label: '病例基本信息',
+      order: 10,
+    },
+  ],
+  code: 'A_BASELINE',
+  name: '基线档案（示例）',
+  rules: [],
+  usage: 'BASELINE',
+  version: 1,
+};
+
+/** E11-T02 / A-NFR-002、C-NFR-002：FormSchema 按版本读取与字段索引。 */
+describe('e11-t02 FormSchema 类型与助手', () => {
+  it('字段索引：稳定键 → 字段定义（渲染器按记录 data 的键取）', () => {
+    const index = indexSchemaFields(schema);
+    expect(index.size).toBe(2);
+    expect(index.get('f010')?.label).toBe('吸烟史');
+    expect(index.get('f011')?.hardRange).toEqual({ max: 250, min: 50 });
+    expect(index.get('f999')).toBeUndefined();
+  });
+
+  it('选项显示名：按编码取显示名，空值与未知编码有兜底（A-FLD-002）', () => {
+    const smoking = indexSchemaFields(schema).get('f010');
+    expect(smoking).toBeDefined();
+    if (!smoking) return;
+    expect(schemaOptionLabel(smoking, 0)).toBe('否');
+    expect(schemaOptionLabel(smoking, 1)).toBe('是');
+    expect(schemaOptionLabel(smoking, 9)).toBe('9');
+    expect(schemaOptionLabel(smoking, null)).toBe('—');
   });
 });
