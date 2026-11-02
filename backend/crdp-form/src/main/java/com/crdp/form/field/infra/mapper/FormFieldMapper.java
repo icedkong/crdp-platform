@@ -96,7 +96,86 @@ public interface FormFieldMapper {
             @Param("status") String status,
             @Param("updatedBy") Long updatedBy);
 
+    /**
+     * 新增字段（E11-T09 导入）：全列写入，字段由实施批量录入（E23-T01 / C 字段字典）而不是页面手工建。 键、编码、类型、敏感标记、存储方式只在此处落定，创建后不可改。
+     */
+    @Insert(
+            """
+            INSERT INTO fe_field
+              (form_code, field_key, field_code, label, category_key, type, unit, decimals,
+               hard_range, soft_range, option_set_code, required, visible_when, required_when,
+               derived_def, sensitive_flag, storage_type, help_text, sort_no, status, updated_by)
+            VALUES (#{formCode}, #{fieldKey}, #{fieldCode}, #{label}, #{categoryKey}, #{type},
+                    #{unit}, #{decimals}, #{hardRange}, #{softRange}, #{optionSetCode}, #{required},
+                    #{visibleWhen}, #{requiredWhen}, #{derivedDef}, #{sensitive}, #{storageType},
+                    #{helpText}, #{sortNo}, #{status}, #{updatedBy})
+            """)
+    int insertField(
+            @Param("formCode") String formCode,
+            @Param("fieldKey") String fieldKey,
+            @Param("fieldCode") String fieldCode,
+            @Param("label") String label,
+            @Param("categoryKey") String categoryKey,
+            @Param("type") String type,
+            @Param("unit") String unit,
+            @Param("decimals") Integer decimals,
+            @Param("hardRange") String hardRange,
+            @Param("softRange") String softRange,
+            @Param("optionSetCode") String optionSetCode,
+            @Param("required") boolean required,
+            @Param("visibleWhen") String visibleWhen,
+            @Param("requiredWhen") String requiredWhen,
+            @Param("derivedDef") String derivedDef,
+            @Param("sensitive") boolean sensitive,
+            @Param("storageType") String storageType,
+            @Param("helpText") String helpText,
+            @Param("sortNo") int sortNo,
+            @Param("status") String status,
+            @Param("updatedBy") Long updatedBy);
+
+    /**
+     * 导入更新字段（E11-T09）：行是字段的完整定义，可维护与实施列全量覆盖（含分类、硬范围、条件与派生 —— 这些租户维护页不可改、实施经导入调整）；
+     * 字段编码、类型、存储方式、敏感标记不可改（A-FLD-008），更新列上没有它们。
+     */
+    @Update(
+            """
+            UPDATE fe_field
+            SET label = #{label}, category_key = #{categoryKey}, unit = #{unit},
+                decimals = #{decimals}, hard_range = #{hardRange}, soft_range = #{softRange},
+                option_set_code = #{optionSetCode}, required = #{required},
+                visible_when = #{visibleWhen}, required_when = #{requiredWhen},
+                derived_def = #{derivedDef}, help_text = #{helpText}, sort_no = #{sortNo},
+                status = #{status}, updated_by = #{updatedBy}
+            WHERE form_code = #{formCode} AND field_key = #{fieldKey}
+            """)
+    int updateFieldForImport(
+            @Param("formCode") String formCode,
+            @Param("fieldKey") String fieldKey,
+            @Param("label") String label,
+            @Param("categoryKey") String categoryKey,
+            @Param("unit") String unit,
+            @Param("decimals") Integer decimals,
+            @Param("hardRange") String hardRange,
+            @Param("softRange") String softRange,
+            @Param("optionSetCode") String optionSetCode,
+            @Param("required") boolean required,
+            @Param("visibleWhen") String visibleWhen,
+            @Param("requiredWhen") String requiredWhen,
+            @Param("derivedDef") String derivedDef,
+            @Param("helpText") String helpText,
+            @Param("sortNo") int sortNo,
+            @Param("status") String status,
+            @Param("updatedBy") Long updatedBy);
+
     // ---------------------------------------------------------------- fe_option
+
+    /** 单个选项集定义（E11-T09 导入自动建集前查重）。 */
+    @Select("SELECT id, code, name FROM fe_option_set WHERE code = #{code}")
+    OptionSetRow findOptionSet(@Param("code") String code);
+
+    /** 新建选项集（E11-T09 导入：集不存在时自动创建，名称先取编码，后续随字典维护调整）。 */
+    @Insert("INSERT INTO fe_option_set (code, name) VALUES (#{code}, #{name})")
+    int insertOptionSet(@Param("code") String code, @Param("name") String name);
 
     /** 选项集下的选项，按排序号。 */
     @Select(
@@ -107,6 +186,48 @@ public interface FormFieldMapper {
             FROM fe_option WHERE set_code = #{setCode} ORDER BY sort_no, option_code
             """)
     List<OptionRow> findOptions(@Param("setCode") String setCode);
+
+    /**
+     * 新增选项（E11-T09 导入）：与 {@link #insertOption} 的差别是带序数 / 互斥 / 需补充说明 / 别名 —— 这四列实施录入（导入）可写，
+     * 租户维护页不提供（form.md §3）。
+     */
+    @Insert(
+            """
+            INSERT INTO fe_option
+              (set_code, option_code, label, ordinal, exclusive, needs_detail, aliases,
+               sort_no, status, updated_by)
+            VALUES (#{setCode}, #{optionCode}, #{label}, #{ordinal}, #{exclusive}, #{needsDetail},
+                    #{aliases}, #{sortNo}, #{status}, #{updatedBy})
+            """)
+    int insertOptionFull(
+            @Param("setCode") String setCode,
+            @Param("optionCode") int optionCode,
+            @Param("label") String label,
+            @Param("ordinal") Integer ordinal,
+            @Param("exclusive") boolean exclusive,
+            @Param("needsDetail") boolean needsDetail,
+            @Param("aliases") String aliases,
+            @Param("sortNo") int sortNo,
+            @Param("status") String status,
+            @Param("updatedBy") Long updatedBy);
+
+    /** 导入维护选项（E11-T09）：改显示名 / 序数 / 互斥 / 需补充说明 / 别名；编码、排序与状态不动（状态的启停走字典维护页）。 */
+    @Update(
+            """
+            UPDATE fe_option
+            SET label = #{label}, ordinal = #{ordinal}, exclusive = #{exclusive},
+                needs_detail = #{needsDetail}, aliases = #{aliases}, updated_by = #{updatedBy}
+            WHERE set_code = #{setCode} AND option_code = #{optionCode}
+            """)
+    int updateOptionForImport(
+            @Param("setCode") String setCode,
+            @Param("optionCode") int optionCode,
+            @Param("label") String label,
+            @Param("ordinal") Integer ordinal,
+            @Param("exclusive") boolean exclusive,
+            @Param("needsDetail") boolean needsDetail,
+            @Param("aliases") String aliases,
+            @Param("updatedBy") Long updatedBy);
 
     /** 维护选项：显示名与排序可改、可停用（编码不可改，已有数据的选项不删除，form.md §3）。 */
     @Update(
@@ -185,4 +306,7 @@ public interface FormFieldMapper {
             Long operatorId,
             String operatorName,
             java.time.LocalDateTime createdAt) {}
+
+    /** fe_option_set 行（E11-T09 导入建集查重用）。 */
+    record OptionSetRow(Long id, String code, String name) {}
 }

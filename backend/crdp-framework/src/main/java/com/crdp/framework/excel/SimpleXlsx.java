@@ -1,4 +1,4 @@
-package com.crdp.system.org.xlsx;
+package com.crdp.framework.excel;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -15,8 +15,8 @@ import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
 
 /**
- * 最小 xlsx 读写（E06-T03 科室导入专用，OQ-52）：只用 JDK 内置 zip + StAX，不引入 POI—— 宽表（212+ 列、上万行）流式读写仍属 E18 的框架
- * {@code ExcelGateway}，本类只面向小表（≤1000 行、全文本单元格）。
+ * 最小 xlsx 读写（E06-T03 科室 / 用户导入起用，OQ-52；E11-T09 起上移框架与字段字典导入共用）： 只用 JDK 内置 zip + StAX，不引入
+ * POI——宽表（212+ 列、上万行）流式读写仍属 E18 的框架 {@code ExcelGateway}， 本类只面向小表（≤1000 行、全文本单元格）。
  *
  * <p>写：单工作表、inlineStr 单元格（模板只有表头与示例行，全部虚构数据）。 读：第一个 worksheet part；支持 Excel 常见的
  * sharedStrings（t="s"）、inlineStr（t="inlineStr"）、公式结果字符串（t="str"）与 数值单元格（无 t，v 原样返回），空单元格补 ""，按 r

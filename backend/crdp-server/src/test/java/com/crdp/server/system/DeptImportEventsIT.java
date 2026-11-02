@@ -4,9 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.crdp.framework.excel.SimpleXlsx;
 import com.crdp.framework.tenant.TenantContext;
 import com.crdp.server.AuditTableMaintenance;
-import com.crdp.system.org.xlsx.SimpleXlsx;
 import java.io.ByteArrayInputStream;
 import java.util.List;
 import java.util.Map;
