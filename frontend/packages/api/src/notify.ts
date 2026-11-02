@@ -83,3 +83,101 @@ export function noticeTargetRoute(
     }
   }
 }
+
+// ---------------------------------------------------------------- 通知设置（E09-T04 / A-NTF-001、C-NTF-001）
+
+/** 通知渠道（notify.md §2）：站内信即时投递；短信并入每日汇总（E09-T05 发送）。 */
+export type NotifyChannel = 'INBOX' | 'SMS';
+
+/**
+ * 接收人规则选项（A-NTF-004 / C-NTF-004）：
+ * OWNER 任务负责人（发送前按病区复核）、WARD_STAFF 无负责人时病区成员兜底
+ * （A 是医生与随访员、C 含护士——差异在病区关联了谁）、CC_WARD_LEADER 逾期抄送病区负责人。
+ */
+export type NotifyRecipientOption = 'CC_WARD_LEADER' | 'OWNER' | 'WARD_STAFF';
+
+/** 逐事件规则（GET /api/hospital/notify/rules 行；后端目录全集，缺行回落默认值）。 */
+export interface NotifyRule {
+  advanceDays?: null | number;
+  channels: NotifyChannel[];
+  enabled: boolean;
+  eventType: string;
+  label: string;
+  recipients: NotifyRecipientOption[];
+  sendTime?: null | string;
+  smsTemplateCode?: null | string;
+}
+
+/** PUT /api/hospital/notify/rules/{eventType} 请求体（全量覆盖）。 */
+export interface NotifyRuleUpdate {
+  advanceDays?: null | number;
+  channels: NotifyChannel[];
+  enabled: boolean;
+  recipients: NotifyRecipientOption[];
+  sendTime?: null | string;
+  smsTemplateCode?: null | string;
+}
+
+/** 可选短信模板（只读：平台审核过的 NOTIFY 场景模板，租户只能选不能写）。 */
+export interface NotifySmsTemplate {
+  code: string;
+  content: string;
+  name: string;
+}
+
+/** 渠道展示名（通知设置页）。 */
+export const NOTIFY_CHANNEL_LABELS: Record<NotifyChannel, string> = {
+  INBOX: '站内信',
+  SMS: '短信',
+};
+
+/** 接收人规则展示名（通知设置页）。 */
+export const NOTIFY_RECIPIENT_LABELS: Record<NotifyRecipientOption, string> = {
+  CC_WARD_LEADER: '抄送病区负责人',
+  OWNER: '任务负责人',
+  WARD_STAFF: '无负责人时病区成员',
+};
+
+/**
+ * 规则 → 编辑表单初值（通知设置页弹窗）：sendTime 缺省（即时事件）回空串，
+ * 避免 TimePicker 收到 null 的告警；advanceDays / smsTemplateCode 允许空。
+ */
+export interface NotifyRuleFormModel {
+  advanceDays: null | number;
+  channels: NotifyChannel[];
+  enabled: boolean;
+  recipients: NotifyRecipientOption[];
+  sendTime: string;
+  smsTemplateCode: string;
+}
+
+export function toNotifyRuleFormModel(rule: NotifyRule): NotifyRuleFormModel {
+  return {
+    advanceDays: rule.advanceDays ?? null,
+    channels: [...rule.channels],
+    enabled: rule.enabled,
+    recipients: [...rule.recipients],
+    sendTime: rule.sendTime ?? '',
+    smsTemplateCode: rule.smsTemplateCode ?? '',
+  };
+}
+
+/**
+ * 编辑表单 → PUT 请求体：sendTime / smsTemplateCode 空串归 null（即时事件、
+ * 渠道不含短信时后端要求为空）；渠道与接收人保持数组原序。
+ */
+export function toNotifyRuleUpdate(
+  eventType: string,
+  model: NotifyRuleFormModel,
+): NotifyRuleUpdate & { eventType: string } {
+  return {
+    advanceDays: model.advanceDays,
+    channels: [...model.channels],
+    enabled: model.enabled,
+    eventType,
+    recipients: [...model.recipients],
+    sendTime: model.sendTime.trim() === '' ? null : model.sendTime.trim(),
+    smsTemplateCode:
+      model.smsTemplateCode.trim() === '' ? null : model.smsTemplateCode.trim(),
+  };
+}

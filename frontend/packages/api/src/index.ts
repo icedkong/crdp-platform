@@ -183,6 +183,21 @@ export type {
   NoticeTargetType,
   NoticeUnreadCount,
 } from './notify';
+// E09-T04 通知设置（A-NTF-001、C-NTF-001）
+export {
+  NOTIFY_CHANNEL_LABELS,
+  NOTIFY_RECIPIENT_LABELS,
+  toNotifyRuleFormModel,
+  toNotifyRuleUpdate,
+} from './notify';
+export type {
+  NotifyChannel,
+  NotifyRecipientOption,
+  NotifyRule,
+  NotifyRuleFormModel,
+  NotifyRuleUpdate,
+  NotifySmsTemplate,
+} from './notify';
 export { DEPT_TYPE_OPTIONS, ORG_STATUS_TEXT, orgStatusText } from './org';
 export type {
   DeptImpactView,

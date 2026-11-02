@@ -91,7 +91,21 @@ public class MenuManifest {
                             null,
                             "followup:patient:export",
                             null,
-                            20));
+                            20),
+                    // E09-T04 / A-NTF-001、C-NTF-001：通知设置（挂 base 的系统设置目录下，菜单本体属 followup 模块）
+                    new MenuManifestItem(
+                            "followup",
+                            "HOSPITAL",
+                            "MENU",
+                            "FollowupNotice",
+                            "HospitalSystem",
+                            "通知设置",
+                            "FollowupNotice",
+                            "/system/notice",
+                            "followup/notice/index",
+                            "followup:notice:config",
+                            null,
+                            45));
 
     public List<MenuManifestItem> items() {
         return ITEMS;

@@ -1,6 +1,7 @@
 package com.crdp.framework.notify.sms;
 
 import com.crdp.framework.tenant.TenantContext;
+import java.util.List;
 import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
@@ -37,5 +38,20 @@ public class SmsTemplateStore {
                                         code)
                                 .stream()
                                 .findFirst());
+    }
+
+    /** 某场景已审核通过的可选模板（通知设置页只让租户在平台审核过的模板里选，notify.md §2）。 不要求已回填腾讯云模板 ID——是否可真实发送由通道层给出准确失败原因。 */
+    public List<SmsTemplateOption> listApprovedByScene(String scene) {
+        return TenantContext.callAsPlatform(
+                () ->
+                        jdbc.query(
+                                "SELECT code, name, content FROM plt_sms_template"
+                                        + " WHERE scene = ? AND status = 'APPROVED' ORDER BY code",
+                                (rs, rowNum) ->
+                                        new SmsTemplateOption(
+                                                rs.getString("code"),
+                                                rs.getString("name"),
+                                                rs.getString("content")),
+                                scene));
     }
 }

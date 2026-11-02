@@ -1,8 +1,14 @@
-import type { NoticeMessage, NoticeTarget } from './notify';
+import type { NoticeMessage, NoticeTarget, NotifyRule } from './notify';
 
 import { describe, expect, it } from 'vitest';
 
-import { noticeTargetRoute } from './notify';
+import {
+  noticeTargetRoute,
+  NOTIFY_CHANNEL_LABELS,
+  NOTIFY_RECIPIENT_LABELS,
+  toNotifyRuleFormModel,
+  toNotifyRuleUpdate,
+} from './notify';
 
 /** E09-T02 / A-NTF-002、C-NTF-002：站内信 target → 跳转路由（验收：点击消息跳到对应任务）。 */
 describe('e09-T02 站内信跳转路由', () => {
@@ -40,5 +46,53 @@ describe('e09-T02 站内信跳转路由', () => {
       noticeTargetRoute({ id: 1, type: 'VISIT' } as unknown as NoticeTarget),
     ).toBeNull();
     expect(noticeTargetRoute({ id: Number.NaN, type: 'TASK' })).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------- 通知设置（E09-T04）
+
+describe('e09-t04 通知设置规则类型', () => {
+  const overdueRule: NotifyRule = {
+    advanceDays: null,
+    channels: ['INBOX', 'SMS'],
+    enabled: true,
+    eventType: 'TASK_OVERDUE',
+    label: '已逾期',
+    recipients: ['OWNER', 'WARD_STAFF', 'CC_WARD_LEADER'],
+    sendTime: '08:30',
+    smsTemplateCode: 'NOTIFY_OVERDUE',
+  };
+
+  it('规则 → 表单初值：即时事件 sendTime 回空串、可空字段归 null', () => {
+    const model = toNotifyRuleFormModel({
+      ...overdueRule,
+      sendTime: null,
+      smsTemplateCode: null,
+      advanceDays: null,
+    });
+    expect(model.sendTime).toBe('');
+    expect(model.smsTemplateCode).toBe('');
+    expect(model.advanceDays).toBeNull();
+    expect(model.channels).toEqual(['INBOX', 'SMS']);
+  });
+
+  it('表单 → PUT 请求体：空串归 null、数组拷贝不反向污染', () => {
+    const model = toNotifyRuleFormModel(overdueRule);
+    model.sendTime = '  ';
+    const update = toNotifyRuleUpdate('TASK_OVERDUE', model);
+    expect(update.sendTime).toBeNull();
+    expect(update.smsTemplateCode).toBe('NOTIFY_OVERDUE');
+    expect(update.channels).toEqual(['INBOX', 'SMS']);
+    expect(update.eventType).toBe('TASK_OVERDUE');
+    update.channels.push('SMS');
+    expect(model.channels).toEqual(['INBOX', 'SMS']);
+  });
+
+  it('渠道与接收人展示名齐备（通知设置页文案）', () => {
+    expect(NOTIFY_CHANNEL_LABELS.INBOX).toBe('站内信');
+    expect(NOTIFY_CHANNEL_LABELS.SMS).toBe('短信');
+    expect(NOTIFY_RECIPIENT_LABELS.OWNER).toBe('任务负责人');
+    expect(NOTIFY_RECIPIENT_LABELS.WARD_STAFF).toBe('无负责人时病区成员');
+    expect(NOTIFY_RECIPIENT_LABELS.CC_WARD_LEADER).toBe('抄送病区负责人');
   });
 });

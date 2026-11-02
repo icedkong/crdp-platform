@@ -157,13 +157,16 @@ public class MenuSyncService {
         }
     }
 
-    /** 上级 key 尚不在库内：该父项同批新增（ADDED），应用时父项先插入后子项能解析到新 id； 差异展示阶段按 0（顶级）呈现。 */
+    /**
+     * 上级 key 不在本模块清单行内：可能是同批新增的清单父项（应用时先插父项），也可能是 跨模块父项（如 followup 的「通知设置」挂在 base
+     * 的系统设置目录下）——DIR/MENU 的 key 即 routeName， 直接按 routeName 查库内；都解析不到按 0（顶级）呈现。
+     */
     private Long resolveParentLater(String side, String parentKey) {
         return manifest.items().stream()
                 .filter(item -> item.key().equals(parentKey))
                 .findFirst()
                 .map(item -> platformMapper.findMenuIdByRouteName(side, item.routeName()))
-                .orElse(0L);
+                .orElse(platformMapper.findMenuIdByRouteName(side, parentKey));
     }
 
     // ---------------------------------------------------------------- 应用（平台确认后）
