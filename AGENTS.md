@@ -53,7 +53,8 @@ frontend/                    pnpm workspace。官方 Vben Admin 5.7.0，只保�
   packages/rules/            权限码与前端规则
   packages/viewer/           报告单查看器（水印预览）
 deploy/                      本地 MySQL 初始化（演示租户库）
-scripts/                     dev.sh、check_flyway_versions.py
+iac/                         华为云资源 IaC 草稿（运维任务产出；真实云操作由持账号运维执行，rds-prod/ 见 E22-T04）
+scripts/                     dev.sh、check_flyway_versions.py、check_rds_baseline.py
 docs/                        需求、任务、设计、接口、ADR、待确认问题
 .github/workflows/ci.yml     CI
 ```

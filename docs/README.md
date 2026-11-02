@@ -19,6 +19,7 @@
 | `design/reference-pages.md` | 医院端样板页：哪些文件是模板、怎么抄 | 写医院端页面时先看 |
 | `api/README.md` | 接口通用约定：前缀、鉴权、响应包、错误码、分页、数据范围、脱敏、审计 | 任何接口 |
 | `api/auth.md` · `platform.md` · `system.md` · `form.md` · `patient.md` · `implant.md` · `followup.md` · `report.md` · `notify.md` · `stats.md` · `import-export.md` · `audit.md` | 各模块接口契约提纲 | 对应模块 |
+| `ops/rds-prod.md` | RDS 8.0 生产实例运维手册：参数基线、主备切换验证、跨区域备份开启（IaC 在 `iac/rds-prod/`；真实云操作由运维执行） | 数据库运维、备份恢复演练（E22） |
 | `open-questions.md` | 待确认问题 OQ-01…OQ-33 与暂行做法 | 遇到不确定时先查 |
 | `adr/` | 仓库已有架构决定（如 M0 骨架） | 改架构前 |
 

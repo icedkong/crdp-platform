@@ -1,0 +1,20 @@
+# 样例值：真实环境以此为准另写 terraform.tfvars（.gitignore 已忽略 *.tfvars）或用 -var 注入。
+# 无默认值的必填项：vpc_id、subnet_id、security_group_id、admin_password、destination_project_id。
+
+vpc_id             = "00000000-0000-0000-0000-000000000000"
+subnet_id          = "00000000-0000-0000-0000-000000000000"
+security_group_id  = "00000000-0000-0000-0000-000000000000"
+destination_project_id = "00000000000000000000000000000000"
+
+instance_name   = "crdp-prod-mysql80"
+flavor          = "rds.mysql.x1.large.2.ha" # 购买前以控制台可购规格为准
+volume_type     = "ESSD"
+volume_size_gb  = 100
+maintain_begin  = "22:00"
+maintain_end    = "23:00"
+charging_mode   = "prePaid"
+period_unit     = "month"
+period          = 1
+auto_renew      = "true"
+
+# admin_password 一律 TF_VAR_admin_password 环境变量注入（来自 DEW 凭据管理），不写进任何文件。
