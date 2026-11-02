@@ -3,7 +3,7 @@
 > 后端：`crdp-form`（字段字典、表单模板、规则）；前端：`frontend/packages/form-engine`（`FormRenderer`）与 `frontend/packages/rules`（前后端共用的校验 / 派生规则，见技术方案 §15 前端结构）。
 > 契约基准：`docs/design/components.md` §10.1 的 `FormSchema` 类型 —— **本文件与之保持一致，有变化两处同改**。
 > 原则：**字段由表单模板驱动**，页面不得硬编码业务字段；新增 / 改字段 = 改模板 + 新 Flyway 迁移（种子）或字典维护页，不改页面代码。
-> §1 模板按版本读取与发布、§3 字段字典维护已随 E11-T01 / E11-T02 落地、§2 规则执行已随 E11-T04 落地、§2.4 条件显示与条件必填已随 E11-T03 落地、§1.2 字段级变更历史已随 E11-T06 落地、§2.6 派生函数库已随 E11-T05 落地、§3 变更记录已随 E11-T08 落地、§3 Excel 批量导入已随 E11-T09 落地（实现即定义）；其余路径 **推断，待确认**。
+> §1 模板按版本读取与发布、§3 字段字典维护已随 E11-T01 / E11-T02 落地、§2 规则执行已随 E11-T04 落地、§2.4 条件显示与条件必填已随 E11-T03 落地、§1.2 字段级变更历史已随 E11-T06 落地、§2.6 派生函数库已随 E11-T05 落地、§3 变更记录已随 E11-T08 落地、§3 Excel 批量导入已随 E11-T09 落地、§2.5 三引擎组合标准用例已随 E11-T10 落地（实现即定义）；其余路径 **推断，待确认**。
 
 ## 1. 读取表单模板（E11-T02 已实现）
 
@@ -117,7 +117,9 @@ E11-T02 落地（A-NFR-002 / C-NFR-002「JSON 文档存储」）。数据记录�
 
 ### 2.5 共享用例（前后端一致的事实来源）
 
-`backend/crdp-form/src/test/resources/shared-cases/form-validation-cases.json`：后端 `FormRuleEngineTest` 与前端 `packages/rules/src/form-validation.test.ts` 各执行一遍，errors / warnings 逐条（`key`、`categoryKey`、`rule`、`message`）完全一致（E11-T03 起用例可带条件字段与 `context`）。条件求值专用 `shared-cases/form-condition-cases.json`：后端 `FormConditionEngineTest` 与前端 `packages/rules/src/form-condition.test.ts` 各执行一遍，visible / missingRequired 逐条一致。派生专用 `shared-cases/form-derived-cases.json`（E11-T05 已落地）：后端 `FormDerivedEngineTest` 与前端 `packages/rules/src/form-derived.test.ts` 各执行一遍，每个派生字段的 value / status / message 逐条一致（见 §2.6）。对比规则（E17）沿用同一目录。
+`backend/crdp-form/src/test/resources/shared-cases/form-validation-cases.json`：后端 `FormRuleEngineTest` 与前端 `packages/rules/src/form-validation.test.ts` 各执行一遍，errors / warnings 逐条（`key`、`categoryKey`、`rule`、`message`）完全一致（E11-T03 起用例可带条件字段与 `context`）。条件求值专用 `shared-cases/form-condition-cases.json`：后端 `FormConditionEngineTest` 与前端 `packages/rules/src/form-condition.test.ts` 各执行一遍，visible / missingRequired 逐条一致。派生专用 `shared-cases/form-derived-cases.json`（E11-T05 已落地）：后端 `FormDerivedEngineTest` 与前端 `packages/rules/src/form-derived.test.ts` 各执行一遍，每个派生字段的 value / status / message 逐条一致（见 §2.6）。
+
+**综合标准用例** `shared-cases/form-standard-cases.json`（E11-T10 已落地，A-FLD-004 + A-FLD-005）：后端 `FormStandardCaseTest` 与前端 `packages/rules/src/form-standard.test.ts` 各执行一遍，把三个引擎按提交流程组成**标准管线**，五个结果块（visible / clearedHidden / derived / errors / warnings）逐条一致：① 条件求值（`visibleWhen`）→ visible；② 隐藏字段残留值清空（§2.4 `stripHiddenFields` / `stripHiddenFieldValues` 同语义）→ clearedHidden；③ 派生在**清空后**的数据上按拓扑重算（渲染器清空后实时重算同口径，§2.6）→ derived；④ 校验在「清空 + ok 计算值回写」的数据上执行（范围 → 条件必填 → 跨字段 → 派生手工闸门 `rule=derived` 追加在最后，与渲染器 hardErrors 组装、写入闸门同口径）→ errors / warnings。组合顺序本身是被测语义：**清空先于派生**（隐藏来源按缺失计、止日缺省回落按今天）、**派生先于校验**（计算值参与跨字段比较）、**掩蔽先于跨字段**（残留值不比较）。对比规则（E17）沿用同一目录。
 
 ### 2.6 派生函数库（fe_field.derived_def，E11-T05 已实现；A-FLD-005、C-FLD-006）
 

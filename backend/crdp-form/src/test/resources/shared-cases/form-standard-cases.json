@@ -1,0 +1,408 @@
+{
+  "comment": "E11-T10 表单引擎条件、校验与派生标准用例（A-FLD-004 条件显示 / 条件必填 + A-FLD-005 派生自动计算；验收「前后端同一用例集一致」）。同一份文件由后端 FormStandardCaseTest（crdp-form）与前端 @crdp/rules（form-standard.test）各执行一遍，五个结果块逐条一致。与 E11-T03 / E11-T04 / E11-T05 的三份单引擎用例不同，本用例集把三个引擎按提交流程的标准管线串起来（顺序 = tech-plan §6 与渲染器实际语义）：① 条件求值 visibleWhen → visible（声明序）；② 隐藏字段残留值清空（stripHiddenFields / stripHiddenFieldValues）→ clearedHidden（声明序，只含有值的键）；③ 派生按拓扑重算（清空后的数据，渲染器清空后重算）→ derived（value / status / message，声明序）；④ 校验在「清空 + ok 计算值回写」的数据上执行（写入闸门同口径：ok 覆盖、invalid 手工值 errors rule=derived 追加在最后）→ errors / warnings。全部虚构数据。",
+  "shape": {
+    "fields[]": "参与标准管线的字段（自包含）：key 稳定键、categoryKey 分类锚点键、label 显示名（派生留空提示用）、type 为 components.md §10.1 类型；hardRange / softRange 为 {min,max}（空端不限制）；required / visibleWhen / requiredWhen（条件树，可省）、derived 为 {fn,args}（可省）、storage（可省，默认 json）",
+    "rules[]": "fe_rule 下发口径（可省 = 无跨字段规则）：id 规则稳定编码、severity HARD|SOFT、categoryKey、key 提示挂靠字段、params {leftField, op lt|lte, rightField}、message",
+    "data": "表单数据（键 = 稳定键，按字段声明序书写，值按 tech-plan §6 值编码）；context 条件上下文（可省）；today 固定参考日 YYYY-MM-DD（止日缺省的派生函数用它，可省 = 当天）",
+    "expected.visible[]": "① 条件求值后显示字段的 key（字段声明序）",
+    "expected.clearedHidden[]": "② 隐藏且带值、被清空的稳定键（字段声明序；值为 null / 缺键的隐藏字段不产生清空记录）",
+    "expected.derived[]": "③ 派生结果（字段声明序，只含派生字段）：key、value（null = 留空）、status（ok / missing / invalid）、message（留空原因）",
+    "expected.errors[] / expectedWarnings[]": "④ 校验命中：FieldIssue（key、categoryKey、rule=hardRange|required|规则 id|derived、message）。errors 顺序：范围 → 条件必填 → 跨字段（规则声明序）→ 派生手工闸门（rule=derived，追加在最后，渲染器 hardErrors 组装同序）"
+  },
+  "cases": [
+    {
+      "name": "A-FLD-004/005 年度随访核心表单全绿提交：条件分支隐藏、BMI 与术后住院天数算出、无任何提示",
+      "fields": [
+        { "key": "f011", "categoryKey": "basic_info", "label": "身高", "type": "number", "hardRange": { "min": 50, "max": 250 }, "softRange": { "min": 130, "max": 210 } },
+        { "key": "f013", "categoryKey": "basic_info", "label": "体重", "type": "number", "hardRange": { "min": 2, "max": 300 } },
+        { "key": "f020", "categoryKey": "surgery", "label": "手术日期", "type": "date", "required": true },
+        { "key": "f021", "categoryKey": "surgery", "label": "出院日期", "type": "date", "required": true },
+        { "key": "f030", "categoryKey": "surgery", "label": "术后住院天数", "type": "derived", "derived": { "fn": "DAYS_INCLUSIVE", "args": ["f020", "f021"] } },
+        { "key": "f031", "categoryKey": "basic_info", "label": "BMI", "type": "derived", "derived": { "fn": "BMI", "args": ["f013", "f011"] } },
+        { "key": "f215", "categoryKey": "endpoint", "label": "是否死亡", "type": "radio", "required": true },
+        { "key": "f216", "categoryKey": "endpoint", "label": "死亡日期", "type": "date", "visibleWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] }, "requiredWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] } },
+        { "key": "f217", "categoryKey": "endpoint", "label": "死亡原因", "type": "text", "visibleWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] }, "requiredWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] } },
+        { "key": "f300", "categoryKey": "readmit", "label": "再住院类型", "type": "select", "required": true },
+        { "key": "f301", "categoryKey": "readmit", "label": "再住院日期", "type": "date", "visibleWhen": { "all": [{ "field": "f300", "op": "in", "value": [1, 2, 3] }] }, "requiredWhen": { "all": [{ "field": "f300", "op": "in", "value": [1, 2, 3] }] } },
+        { "key": "f400", "categoryKey": "echo", "label": "复查超声", "type": "boolean", "required": true },
+        { "key": "f401", "categoryKey": "echo", "label": "LVEF", "type": "number", "hardRange": { "min": 10, "max": 90 }, "softRange": { "min": 50, "max": 70 }, "visibleWhen": { "all": [{ "field": "f400", "op": "eq", "value": true }] }, "requiredWhen": { "all": [{ "field": "f400", "op": "eq", "value": true }] } },
+        { "key": "f501", "categoryKey": "surgery", "label": "预期术后住院天数", "type": "number" }
+      ],
+      "rules": [
+        { "id": "surgery_le_discharge", "severity": "HARD", "categoryKey": "surgery", "key": "f021", "params": { "leftField": "f020", "op": "lte", "rightField": "f021" }, "message": "手术日期不能晚于出院日期" },
+        { "id": "discharge_le_death", "severity": "HARD", "categoryKey": "endpoint", "key": "f216", "params": { "leftField": "f021", "op": "lte", "rightField": "f216" }, "message": "出院日期不能晚于死亡日期" },
+        { "id": "stay_le_expect", "severity": "HARD", "categoryKey": "surgery", "key": "f030", "params": { "leftField": "f030", "op": "lte", "rightField": "f501" }, "message": "术后住院天数超过预期，请核对手术与出院日期" }
+      ],
+      "data": { "f011": 175, "f013": 70, "f020": "2026-03-01", "f021": "2026-03-08", "f215": 0, "f300": 0, "f400": true, "f401": 56, "f501": 15 },
+      "expected": {
+        "visible": ["f011", "f013", "f020", "f021", "f030", "f031", "f215", "f300", "f400", "f401", "f501"],
+        "clearedHidden": [],
+        "derived": [
+          { "key": "f030", "value": 8, "status": "ok", "message": null },
+          { "key": "f031", "value": 22.9, "status": "ok", "message": null }
+        ],
+        "errors": [],
+        "warnings": []
+      }
+    },
+    {
+      "name": "A-FLD-004 是否死亡=是：死亡日期显示、必填缺失拦截；死亡原因已填不报",
+      "fields": [
+        { "key": "f011", "categoryKey": "basic_info", "label": "身高", "type": "number", "hardRange": { "min": 50, "max": 250 }, "softRange": { "min": 130, "max": 210 } },
+        { "key": "f013", "categoryKey": "basic_info", "label": "体重", "type": "number", "hardRange": { "min": 2, "max": 300 } },
+        { "key": "f020", "categoryKey": "surgery", "label": "手术日期", "type": "date", "required": true },
+        { "key": "f021", "categoryKey": "surgery", "label": "出院日期", "type": "date", "required": true },
+        { "key": "f030", "categoryKey": "surgery", "label": "术后住院天数", "type": "derived", "derived": { "fn": "DAYS_INCLUSIVE", "args": ["f020", "f021"] } },
+        { "key": "f031", "categoryKey": "basic_info", "label": "BMI", "type": "derived", "derived": { "fn": "BMI", "args": ["f013", "f011"] } },
+        { "key": "f215", "categoryKey": "endpoint", "label": "是否死亡", "type": "radio", "required": true },
+        { "key": "f216", "categoryKey": "endpoint", "label": "死亡日期", "type": "date", "visibleWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] }, "requiredWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] } },
+        { "key": "f217", "categoryKey": "endpoint", "label": "死亡原因", "type": "text", "visibleWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] }, "requiredWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] } },
+        { "key": "f300", "categoryKey": "readmit", "label": "再住院类型", "type": "select", "required": true },
+        { "key": "f301", "categoryKey": "readmit", "label": "再住院日期", "type": "date", "visibleWhen": { "all": [{ "field": "f300", "op": "in", "value": [1, 2, 3] }] }, "requiredWhen": { "all": [{ "field": "f300", "op": "in", "value": [1, 2, 3] }] } },
+        { "key": "f400", "categoryKey": "echo", "label": "复查超声", "type": "boolean", "required": true },
+        { "key": "f401", "categoryKey": "echo", "label": "LVEF", "type": "number", "hardRange": { "min": 10, "max": 90 }, "softRange": { "min": 50, "max": 70 }, "visibleWhen": { "all": [{ "field": "f400", "op": "eq", "value": true }] }, "requiredWhen": { "all": [{ "field": "f400", "op": "eq", "value": true }] } },
+        { "key": "f501", "categoryKey": "surgery", "label": "预期术后住院天数", "type": "number" }
+      ],
+      "rules": [
+        { "id": "surgery_le_discharge", "severity": "HARD", "categoryKey": "surgery", "key": "f021", "params": { "leftField": "f020", "op": "lte", "rightField": "f021" }, "message": "手术日期不能晚于出院日期" },
+        { "id": "discharge_le_death", "severity": "HARD", "categoryKey": "endpoint", "key": "f216", "params": { "leftField": "f021", "op": "lte", "rightField": "f216" }, "message": "出院日期不能晚于死亡日期" },
+        { "id": "stay_le_expect", "severity": "HARD", "categoryKey": "surgery", "key": "f030", "params": { "leftField": "f030", "op": "lte", "rightField": "f501" }, "message": "术后住院天数超过预期，请核对手术与出院日期" }
+      ],
+      "data": { "f011": 175, "f013": 70, "f020": "2026-03-01", "f021": "2026-03-08", "f215": 1, "f217": "心源性猝死（示例）", "f300": 0, "f400": true, "f401": 62, "f501": 15 },
+      "expected": {
+        "visible": ["f011", "f013", "f020", "f021", "f030", "f031", "f215", "f216", "f217", "f300", "f400", "f401", "f501"],
+        "clearedHidden": [],
+        "derived": [
+          { "key": "f030", "value": 8, "status": "ok", "message": null },
+          { "key": "f031", "value": 22.9, "status": "ok", "message": null }
+        ],
+        "errors": [
+          { "key": "f216", "categoryKey": "endpoint", "rule": "required", "message": "必填" }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "A-FLD-004 是否死亡=否：残留死亡日期清空 → 随访年限回落按今天、跨字段不再比较（清空先于派生与校验）",
+      "fields": [
+        { "key": "f011", "categoryKey": "basic_info", "label": "身高", "type": "number", "hardRange": { "min": 50, "max": 250 }, "softRange": { "min": 130, "max": 210 } },
+        { "key": "f013", "categoryKey": "basic_info", "label": "体重", "type": "number", "hardRange": { "min": 2, "max": 300 } },
+        { "key": "f020", "categoryKey": "surgery", "label": "手术日期", "type": "date", "required": true },
+        { "key": "f021", "categoryKey": "surgery", "label": "出院日期", "type": "date", "required": true },
+        { "key": "f030", "categoryKey": "surgery", "label": "术后住院天数", "type": "derived", "derived": { "fn": "DAYS_INCLUSIVE", "args": ["f020", "f021"] } },
+        { "key": "f031", "categoryKey": "basic_info", "label": "BMI", "type": "derived", "derived": { "fn": "BMI", "args": ["f013", "f011"] } },
+        { "key": "f215", "categoryKey": "endpoint", "label": "是否死亡", "type": "radio", "required": true },
+        { "key": "f216", "categoryKey": "endpoint", "label": "死亡日期", "type": "date", "visibleWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] }, "requiredWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] } },
+        { "key": "f217", "categoryKey": "endpoint", "label": "死亡原因", "type": "text", "visibleWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] }, "requiredWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] } },
+        { "key": "f232", "categoryKey": "endpoint", "label": "随访年限", "type": "derived", "derived": { "fn": "YEARS_SINCE", "args": ["f021", "f216"] } },
+        { "key": "f300", "categoryKey": "readmit", "label": "再住院类型", "type": "select", "required": true },
+        { "key": "f301", "categoryKey": "readmit", "label": "再住院日期", "type": "date", "visibleWhen": { "all": [{ "field": "f300", "op": "in", "value": [1, 2, 3] }] }, "requiredWhen": { "all": [{ "field": "f300", "op": "in", "value": [1, 2, 3] }] } },
+        { "key": "f400", "categoryKey": "echo", "label": "复查超声", "type": "boolean", "required": true },
+        { "key": "f401", "categoryKey": "echo", "label": "LVEF", "type": "number", "hardRange": { "min": 10, "max": 90 }, "softRange": { "min": 50, "max": 70 }, "visibleWhen": { "all": [{ "field": "f400", "op": "eq", "value": true }] }, "requiredWhen": { "all": [{ "field": "f400", "op": "eq", "value": true }] } },
+        { "key": "f501", "categoryKey": "surgery", "label": "预期术后住院天数", "type": "number" }
+      ],
+      "rules": [
+        { "id": "surgery_le_discharge", "severity": "HARD", "categoryKey": "surgery", "key": "f021", "params": { "leftField": "f020", "op": "lte", "rightField": "f021" }, "message": "手术日期不能晚于出院日期" },
+        { "id": "discharge_le_death", "severity": "HARD", "categoryKey": "endpoint", "key": "f216", "params": { "leftField": "f021", "op": "lte", "rightField": "f216" }, "message": "出院日期不能晚于死亡日期" },
+        { "id": "stay_le_expect", "severity": "HARD", "categoryKey": "surgery", "key": "f030", "params": { "leftField": "f030", "op": "lte", "rightField": "f501" }, "message": "术后住院天数超过预期，请核对手术与出院日期" }
+      ],
+      "data": { "f011": 175, "f013": 70, "f020": "2016-05-20", "f021": "2016-05-25", "f215": 0, "f216": "2016-05-22", "f300": 0, "f400": false, "f501": 15 },
+      "today": "2026-11-03",
+      "expected": {
+        "visible": ["f011", "f013", "f020", "f021", "f030", "f031", "f215", "f232", "f300", "f400", "f501"],
+        "clearedHidden": ["f216"],
+        "derived": [
+          { "key": "f030", "value": 6, "status": "ok", "message": null },
+          { "key": "f031", "value": 22.9, "status": "ok", "message": null },
+          { "key": "f232", "value": 10, "status": "ok", "message": null }
+        ],
+        "errors": [],
+        "warnings": []
+      }
+    },
+    {
+      "name": "A-FLD-006+005 死亡早于出院：跨字段 HARD 拦截两条；术后住院天数手工值结果无效再拦截（rule=derived 追加在最后）",
+      "fields": [
+        { "key": "f011", "categoryKey": "basic_info", "label": "身高", "type": "number", "hardRange": { "min": 50, "max": 250 }, "softRange": { "min": 130, "max": 210 } },
+        { "key": "f013", "categoryKey": "basic_info", "label": "体重", "type": "number", "hardRange": { "min": 2, "max": 300 } },
+        { "key": "f020", "categoryKey": "surgery", "label": "手术日期", "type": "date", "required": true },
+        { "key": "f021", "categoryKey": "surgery", "label": "出院日期", "type": "date", "required": true },
+        { "key": "f030", "categoryKey": "surgery", "label": "术后住院天数", "type": "derived", "derived": { "fn": "DAYS_INCLUSIVE", "args": ["f020", "f021"] } },
+        { "key": "f031", "categoryKey": "basic_info", "label": "BMI", "type": "derived", "derived": { "fn": "BMI", "args": ["f013", "f011"] } },
+        { "key": "f215", "categoryKey": "endpoint", "label": "是否死亡", "type": "radio", "required": true },
+        { "key": "f216", "categoryKey": "endpoint", "label": "死亡日期", "type": "date", "visibleWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] }, "requiredWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] } },
+        { "key": "f217", "categoryKey": "endpoint", "label": "死亡原因", "type": "text", "visibleWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] }, "requiredWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] } },
+        { "key": "f232", "categoryKey": "endpoint", "label": "随访年限", "type": "derived", "derived": { "fn": "YEARS_SINCE", "args": ["f021", "f216"] } },
+        { "key": "f300", "categoryKey": "readmit", "label": "再住院类型", "type": "select", "required": true },
+        { "key": "f301", "categoryKey": "readmit", "label": "再住院日期", "type": "date", "visibleWhen": { "all": [{ "field": "f300", "op": "in", "value": [1, 2, 3] }] }, "requiredWhen": { "all": [{ "field": "f300", "op": "in", "value": [1, 2, 3] }] } },
+        { "key": "f400", "categoryKey": "echo", "label": "复查超声", "type": "boolean", "required": true },
+        { "key": "f401", "categoryKey": "echo", "label": "LVEF", "type": "number", "hardRange": { "min": 10, "max": 90 }, "softRange": { "min": 50, "max": 70 }, "visibleWhen": { "all": [{ "field": "f400", "op": "eq", "value": true }] }, "requiredWhen": { "all": [{ "field": "f400", "op": "eq", "value": true }] } },
+        { "key": "f501", "categoryKey": "surgery", "label": "预期术后住院天数", "type": "number" }
+      ],
+      "rules": [
+        { "id": "surgery_le_discharge", "severity": "HARD", "categoryKey": "surgery", "key": "f021", "params": { "leftField": "f020", "op": "lte", "rightField": "f021" }, "message": "手术日期不能晚于出院日期" },
+        { "id": "discharge_le_death", "severity": "HARD", "categoryKey": "endpoint", "key": "f216", "params": { "leftField": "f021", "op": "lte", "rightField": "f216" }, "message": "出院日期不能晚于死亡日期" },
+        { "id": "stay_le_expect", "severity": "HARD", "categoryKey": "surgery", "key": "f030", "params": { "leftField": "f030", "op": "lte", "rightField": "f501" }, "message": "术后住院天数超过预期，请核对手术与出院日期" }
+      ],
+      "data": { "f011": 175, "f013": 70, "f020": "2026-03-10", "f021": "2026-03-08", "f030": 5, "f215": 1, "f216": "2026-03-05", "f217": "心力衰竭（示例）", "f300": 0, "f400": false, "f501": 15 },
+      "expected": {
+        "visible": ["f011", "f013", "f020", "f021", "f030", "f031", "f215", "f216", "f217", "f232", "f300", "f400", "f501"],
+        "clearedHidden": [],
+        "derived": [
+          { "key": "f030", "value": null, "status": "invalid", "message": "出院日期早于手术日期" },
+          { "key": "f031", "value": 22.9, "status": "ok", "message": null },
+          { "key": "f232", "value": null, "status": "invalid", "message": "死亡日期早于出院日期" }
+        ],
+        "errors": [
+          { "key": "f021", "categoryKey": "surgery", "rule": "surgery_le_discharge", "message": "手术日期不能晚于出院日期" },
+          { "key": "f216", "categoryKey": "endpoint", "rule": "discharge_le_death", "message": "出院日期不能晚于死亡日期" },
+          { "key": "f030", "categoryKey": "surgery", "rule": "derived", "message": "出院日期早于手术日期" }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "A-FLD-005 派生计算值回写后参与跨字段：术后住院天数 58 > 预期 30 拦截（派生先于校验）；随访年限按今天 = 0 也是已算出",
+      "fields": [
+        { "key": "f011", "categoryKey": "basic_info", "label": "身高", "type": "number", "hardRange": { "min": 50, "max": 250 }, "softRange": { "min": 130, "max": 210 } },
+        { "key": "f013", "categoryKey": "basic_info", "label": "体重", "type": "number", "hardRange": { "min": 2, "max": 300 } },
+        { "key": "f020", "categoryKey": "surgery", "label": "手术日期", "type": "date", "required": true },
+        { "key": "f021", "categoryKey": "surgery", "label": "出院日期", "type": "date", "required": true },
+        { "key": "f030", "categoryKey": "surgery", "label": "术后住院天数", "type": "derived", "derived": { "fn": "DAYS_INCLUSIVE", "args": ["f020", "f021"] } },
+        { "key": "f031", "categoryKey": "basic_info", "label": "BMI", "type": "derived", "derived": { "fn": "BMI", "args": ["f013", "f011"] } },
+        { "key": "f215", "categoryKey": "endpoint", "label": "是否死亡", "type": "radio", "required": true },
+        { "key": "f216", "categoryKey": "endpoint", "label": "死亡日期", "type": "date", "visibleWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] }, "requiredWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] } },
+        { "key": "f217", "categoryKey": "endpoint", "label": "死亡原因", "type": "text", "visibleWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] }, "requiredWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] } },
+        { "key": "f232", "categoryKey": "endpoint", "label": "随访年限", "type": "derived", "derived": { "fn": "YEARS_SINCE", "args": ["f021", "f216"] } },
+        { "key": "f300", "categoryKey": "readmit", "label": "再住院类型", "type": "select", "required": true },
+        { "key": "f301", "categoryKey": "readmit", "label": "再住院日期", "type": "date", "visibleWhen": { "all": [{ "field": "f300", "op": "in", "value": [1, 2, 3] }] }, "requiredWhen": { "all": [{ "field": "f300", "op": "in", "value": [1, 2, 3] }] } },
+        { "key": "f400", "categoryKey": "echo", "label": "复查超声", "type": "boolean", "required": true },
+        { "key": "f401", "categoryKey": "echo", "label": "LVEF", "type": "number", "hardRange": { "min": 10, "max": 90 }, "softRange": { "min": 50, "max": 70 }, "visibleWhen": { "all": [{ "field": "f400", "op": "eq", "value": true }] }, "requiredWhen": { "all": [{ "field": "f400", "op": "eq", "value": true }] } },
+        { "key": "f501", "categoryKey": "surgery", "label": "预期术后住院天数", "type": "number" }
+      ],
+      "rules": [
+        { "id": "surgery_le_discharge", "severity": "HARD", "categoryKey": "surgery", "key": "f021", "params": { "leftField": "f020", "op": "lte", "rightField": "f021" }, "message": "手术日期不能晚于出院日期" },
+        { "id": "discharge_le_death", "severity": "HARD", "categoryKey": "endpoint", "key": "f216", "params": { "leftField": "f021", "op": "lte", "rightField": "f216" }, "message": "出院日期不能晚于死亡日期" },
+        { "id": "stay_le_expect", "severity": "HARD", "categoryKey": "surgery", "key": "f030", "params": { "leftField": "f030", "op": "lte", "rightField": "f501" }, "message": "术后住院天数超过预期，请核对手术与出院日期" }
+      ],
+      "data": { "f011": 175, "f013": 70, "f020": "2026-01-10", "f021": "2026-03-08", "f215": 0, "f300": 0, "f400": false, "f501": 30 },
+      "today": "2026-11-03",
+      "expected": {
+        "visible": ["f011", "f013", "f020", "f021", "f030", "f031", "f215", "f232", "f300", "f400", "f501"],
+        "clearedHidden": [],
+        "derived": [
+          { "key": "f030", "value": 58, "status": "ok", "message": null },
+          { "key": "f031", "value": 22.9, "status": "ok", "message": null },
+          { "key": "f232", "value": 0, "status": "ok", "message": null }
+        ],
+        "errors": [
+          { "key": "f030", "categoryKey": "surgery", "rule": "stay_le_expect", "message": "术后住院天数超过预期，请核对手术与出院日期" }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "A-FLD-005 派生来源字段被条件隐藏清空 → BMI 留空提示「缺少体重」（不报错可保存）",
+      "fields": [
+        { "key": "f011", "categoryKey": "basic_info", "label": "身高", "type": "number", "hardRange": { "min": 50, "max": 250 }, "softRange": { "min": 130, "max": 210 } },
+        { "key": "f222", "categoryKey": "basic_info", "label": "是否测量体征", "type": "boolean", "required": true },
+        { "key": "f013", "categoryKey": "basic_info", "label": "体重", "type": "number", "hardRange": { "min": 2, "max": 300 }, "visibleWhen": { "all": [{ "field": "f222", "op": "eq", "value": true }] } },
+        { "key": "f020", "categoryKey": "surgery", "label": "手术日期", "type": "date", "required": true },
+        { "key": "f021", "categoryKey": "surgery", "label": "出院日期", "type": "date", "required": true },
+        { "key": "f030", "categoryKey": "surgery", "label": "术后住院天数", "type": "derived", "derived": { "fn": "DAYS_INCLUSIVE", "args": ["f020", "f021"] } },
+        { "key": "f031", "categoryKey": "basic_info", "label": "BMI", "type": "derived", "derived": { "fn": "BMI", "args": ["f013", "f011"] } },
+        { "key": "f215", "categoryKey": "endpoint", "label": "是否死亡", "type": "radio", "required": true },
+        { "key": "f300", "categoryKey": "readmit", "label": "再住院类型", "type": "select", "required": true },
+        { "key": "f400", "categoryKey": "echo", "label": "复查超声", "type": "boolean", "required": true },
+        { "key": "f501", "categoryKey": "surgery", "label": "预期术后住院天数", "type": "number" }
+      ],
+      "rules": [
+        { "id": "surgery_le_discharge", "severity": "HARD", "categoryKey": "surgery", "key": "f021", "params": { "leftField": "f020", "op": "lte", "rightField": "f021" }, "message": "手术日期不能晚于出院日期" },
+        { "id": "stay_le_expect", "severity": "HARD", "categoryKey": "surgery", "key": "f030", "params": { "leftField": "f030", "op": "lte", "rightField": "f501" }, "message": "术后住院天数超过预期，请核对手术与出院日期" }
+      ],
+      "data": { "f011": 175, "f222": false, "f013": 70, "f020": "2026-03-01", "f021": "2026-03-08", "f215": 0, "f300": 0, "f400": false, "f501": 15 },
+      "expected": {
+        "visible": ["f011", "f222", "f020", "f021", "f030", "f031", "f215", "f300", "f400", "f501"],
+        "clearedHidden": ["f013"],
+        "derived": [
+          { "key": "f030", "value": 8, "status": "ok", "message": null },
+          { "key": "f031", "value": null, "status": "missing", "message": "缺少体重" }
+        ],
+        "errors": [],
+        "warnings": []
+      }
+    },
+    {
+      "name": "A-FLD-003+005 身高 0 超硬范围拦截 + BMI 结果无效且带手工值再拦截（errors 顺序：范围先、派生闸门后）",
+      "fields": [
+        { "key": "f011", "categoryKey": "basic_info", "label": "身高", "type": "number", "hardRange": { "min": 50, "max": 250 }, "softRange": { "min": 130, "max": 210 } },
+        { "key": "f013", "categoryKey": "basic_info", "label": "体重", "type": "number", "hardRange": { "min": 2, "max": 300 } },
+        { "key": "f020", "categoryKey": "surgery", "label": "手术日期", "type": "date", "required": true },
+        { "key": "f021", "categoryKey": "surgery", "label": "出院日期", "type": "date", "required": true },
+        { "key": "f030", "categoryKey": "surgery", "label": "术后住院天数", "type": "derived", "derived": { "fn": "DAYS_INCLUSIVE", "args": ["f020", "f021"] } },
+        { "key": "f031", "categoryKey": "basic_info", "label": "BMI", "type": "derived", "derived": { "fn": "BMI", "args": ["f013", "f011"] } },
+        { "key": "f215", "categoryKey": "endpoint", "label": "是否死亡", "type": "radio", "required": true },
+        { "key": "f300", "categoryKey": "readmit", "label": "再住院类型", "type": "select", "required": true },
+        { "key": "f400", "categoryKey": "echo", "label": "复查超声", "type": "boolean", "required": true },
+        { "key": "f501", "categoryKey": "surgery", "label": "预期术后住院天数", "type": "number" }
+      ],
+      "rules": [
+        { "id": "surgery_le_discharge", "severity": "HARD", "categoryKey": "surgery", "key": "f021", "params": { "leftField": "f020", "op": "lte", "rightField": "f021" }, "message": "手术日期不能晚于出院日期" },
+        { "id": "stay_le_expect", "severity": "HARD", "categoryKey": "surgery", "key": "f030", "params": { "leftField": "f030", "op": "lte", "rightField": "f501" }, "message": "术后住院天数超过预期，请核对手术与出院日期" }
+      ],
+      "data": { "f011": 0, "f013": 70, "f031": 21, "f020": "2026-03-01", "f021": "2026-03-08", "f215": 0, "f300": 0, "f400": false, "f501": 15 },
+      "expected": {
+        "visible": ["f011", "f013", "f020", "f021", "f030", "f031", "f215", "f300", "f400", "f501"],
+        "clearedHidden": [],
+        "derived": [
+          { "key": "f030", "value": 8, "status": "ok", "message": null },
+          { "key": "f031", "value": null, "status": "invalid", "message": "身高必须大于 0" }
+        ],
+        "errors": [
+          { "key": "f011", "categoryKey": "basic_info", "rule": "hardRange", "message": "取值应在 50–250 之间" },
+          { "key": "f031", "categoryKey": "basic_info", "rule": "derived", "message": "身高必须大于 0" }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "C 器械上下文 device.type=ICD：ICD 放电次数条件必填缺失拦截；植入时长「3 年 1 个月」、负荷变化率 25.0 算出",
+      "fields": [
+        { "key": "f241", "categoryKey": "device", "label": "植入日期", "type": "date", "required": true },
+        { "key": "f242", "categoryKey": "device", "label": "植入时长", "type": "derived", "derived": { "fn": "DURATION_YM", "args": ["f241"] } },
+        { "key": "f240", "categoryKey": "device", "label": "ICD 放电次数", "type": "number", "hardRange": { "min": 0, "max": 50 }, "visibleWhen": { "all": [{ "ctx": "device.type", "op": "in", "value": ["ICD", "CRT-D"] }] }, "requiredWhen": { "all": [{ "ctx": "device.type", "op": "in", "value": ["ICD", "CRT-D"] }] } },
+        { "key": "f244", "categoryKey": "device", "label": "本次房颤负荷", "type": "number", "hardRange": { "min": 0, "max": 100 } },
+        { "key": "f245", "categoryKey": "device", "label": "上次房颤负荷", "type": "number", "hardRange": { "min": 0, "max": 100 } },
+        { "key": "f246", "categoryKey": "device", "label": "负荷变化率", "type": "derived", "derived": { "fn": "CHANGE_PCT", "args": ["f244", "f245"] } }
+      ],
+      "rules": [],
+      "data": { "f241": "2023-09-05", "f244": 5.0, "f245": 4.0 },
+      "context": { "device": { "type": "ICD" } },
+      "today": "2026-11-03",
+      "expected": {
+        "visible": ["f241", "f242", "f240", "f244", "f245", "f246"],
+        "clearedHidden": [],
+        "derived": [
+          { "key": "f242", "value": "3 年 1 个月", "status": "ok", "message": null },
+          { "key": "f246", "value": 25.0, "status": "ok", "message": null }
+        ],
+        "errors": [
+          { "key": "f240", "categoryKey": "device", "rule": "required", "message": "必填" }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "C 无上下文：ctx 操作数缺失不成立 → 放电次数隐藏、残留值清空后不报必填不查范围",
+      "fields": [
+        { "key": "f241", "categoryKey": "device", "label": "植入日期", "type": "date", "required": true },
+        { "key": "f242", "categoryKey": "device", "label": "植入时长", "type": "derived", "derived": { "fn": "DURATION_YM", "args": ["f241"] } },
+        { "key": "f240", "categoryKey": "device", "label": "ICD 放电次数", "type": "number", "hardRange": { "min": 0, "max": 50 }, "visibleWhen": { "all": [{ "ctx": "device.type", "op": "in", "value": ["ICD", "CRT-D"] }] }, "requiredWhen": { "all": [{ "ctx": "device.type", "op": "in", "value": ["ICD", "CRT-D"] }] } },
+        { "key": "f244", "categoryKey": "device", "label": "本次房颤负荷", "type": "number", "hardRange": { "min": 0, "max": 100 } },
+        { "key": "f245", "categoryKey": "device", "label": "上次房颤负荷", "type": "number", "hardRange": { "min": 0, "max": 100 } },
+        { "key": "f246", "categoryKey": "device", "label": "负荷变化率", "type": "derived", "derived": { "fn": "CHANGE_PCT", "args": ["f244", "f245"] } }
+      ],
+      "rules": [],
+      "data": { "f241": "2023-09-05", "f240": 3, "f244": 5.0, "f245": 4.0 },
+      "today": "2026-11-03",
+      "expected": {
+        "visible": ["f241", "f242", "f244", "f245", "f246"],
+        "clearedHidden": ["f240"],
+        "derived": [
+          { "key": "f242", "value": "3 年 1 个月", "status": "ok", "message": null },
+          { "key": "f246", "value": 25.0, "status": "ok", "message": null }
+        ],
+        "errors": [],
+        "warnings": []
+      }
+    },
+    {
+      "name": "A-FLD-004 隐藏字段残留值不参与跨字段：再住院类型=无时残留再住院日期（晚于随访日期）被清空、规则不触发",
+      "fields": [
+        { "key": "f500", "categoryKey": "followup", "label": "本次随访日期", "type": "date", "required": true },
+        { "key": "f501", "categoryKey": "surgery", "label": "预期术后住院天数", "type": "number" },
+        { "key": "f300", "categoryKey": "readmit", "label": "再住院类型", "type": "select", "required": true },
+        { "key": "f301", "categoryKey": "readmit", "label": "再住院日期", "type": "date", "visibleWhen": { "all": [{ "field": "f300", "op": "in", "value": [1, 2, 3] }] }, "requiredWhen": { "all": [{ "field": "f300", "op": "in", "value": [1, 2, 3] }] } }
+      ],
+      "rules": [
+        { "id": "readmit_le_visit", "severity": "HARD", "categoryKey": "readmit", "key": "f301", "params": { "leftField": "f301", "op": "lte", "rightField": "f500" }, "message": "再住院日期不能晚于本次随访日期" }
+      ],
+      "data": { "f500": "2026-11-03", "f501": 15, "f300": 0, "f301": "2026-12-01" },
+      "expected": {
+        "visible": ["f500", "f501", "f300"],
+        "clearedHidden": ["f301"],
+        "derived": [],
+        "errors": [],
+        "warnings": []
+      }
+    },
+    {
+      "name": "A-FLD-005 派生依赖派生（SUM 依赖 SUM）按拓扑算出 → 计算值参与跨字段：桥血管 5 超术前评估上限 4 拦截",
+      "fields": [
+        { "key": "f261", "categoryKey": "surgery", "label": "动脉桥数量", "type": "number", "hardRange": { "min": 0, "max": 10 } },
+        { "key": "f262", "categoryKey": "surgery", "label": "静脉桥数量", "type": "number", "hardRange": { "min": 0, "max": 10 } },
+        { "key": "f260", "categoryKey": "surgery", "label": "桥血管数量", "type": "derived", "derived": { "fn": "SUM", "args": ["f261", "f262"] } },
+        { "key": "f263", "categoryKey": "surgery", "label": "冠脉支架数量", "type": "number", "hardRange": { "min": 0, "max": 10 } },
+        { "key": "f264", "categoryKey": "surgery", "label": "血管操作总数", "type": "derived", "derived": { "fn": "SUM", "args": ["f260", "f263"] } },
+        { "key": "f265", "categoryKey": "surgery", "label": "桥血管上限", "type": "number" }
+      ],
+      "rules": [
+        { "id": "grafts_le_plan", "severity": "HARD", "categoryKey": "surgery", "key": "f260", "params": { "leftField": "f260", "op": "lte", "rightField": "f265" }, "message": "桥血管数量超过术前评估上限" }
+      ],
+      "data": { "f261": 2, "f262": 3, "f263": 1, "f265": 4 },
+      "expected": {
+        "visible": ["f261", "f262", "f260", "f263", "f264", "f265"],
+        "clearedHidden": [],
+        "derived": [
+          { "key": "f260", "value": 5, "status": "ok", "message": null },
+          { "key": "f264", "value": 6, "status": "ok", "message": null }
+        ],
+        "errors": [
+          { "key": "f260", "categoryKey": "surgery", "rule": "grafts_le_plan", "message": "桥血管数量超过术前评估上限" }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "A-FLD-004 触发字段未答（未答 ≠ 否）：后续字段隐藏不报必填；触发字段自身与显示中必填缺失拦截；派生提示缺少来源",
+      "fields": [
+        { "key": "f011", "categoryKey": "basic_info", "label": "身高", "type": "number", "hardRange": { "min": 50, "max": 250 }, "softRange": { "min": 130, "max": 210 } },
+        { "key": "f013", "categoryKey": "basic_info", "label": "体重", "type": "number", "hardRange": { "min": 2, "max": 300 } },
+        { "key": "f020", "categoryKey": "surgery", "label": "手术日期", "type": "date", "required": true },
+        { "key": "f021", "categoryKey": "surgery", "label": "出院日期", "type": "date", "required": true },
+        { "key": "f030", "categoryKey": "surgery", "label": "术后住院天数", "type": "derived", "derived": { "fn": "DAYS_INCLUSIVE", "args": ["f020", "f021"] } },
+        { "key": "f031", "categoryKey": "basic_info", "label": "BMI", "type": "derived", "derived": { "fn": "BMI", "args": ["f013", "f011"] } },
+        { "key": "f215", "categoryKey": "endpoint", "label": "是否死亡", "type": "radio", "required": true },
+        { "key": "f216", "categoryKey": "endpoint", "label": "死亡日期", "type": "date", "visibleWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] }, "requiredWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] } },
+        { "key": "f217", "categoryKey": "endpoint", "label": "死亡原因", "type": "text", "visibleWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] }, "requiredWhen": { "all": [{ "field": "f215", "op": "eq", "value": 1 }] } },
+        { "key": "f300", "categoryKey": "readmit", "label": "再住院类型", "type": "select", "required": true },
+        { "key": "f301", "categoryKey": "readmit", "label": "再住院日期", "type": "date", "visibleWhen": { "all": [{ "field": "f300", "op": "in", "value": [1, 2, 3] }] }, "requiredWhen": { "all": [{ "field": "f300", "op": "in", "value": [1, 2, 3] }] } },
+        { "key": "f400", "categoryKey": "echo", "label": "复查超声", "type": "boolean", "required": true },
+        { "key": "f401", "categoryKey": "echo", "label": "LVEF", "type": "number", "hardRange": { "min": 10, "max": 90 }, "softRange": { "min": 50, "max": 70 }, "visibleWhen": { "all": [{ "field": "f400", "op": "eq", "value": true }] }, "requiredWhen": { "all": [{ "field": "f400", "op": "eq", "value": true }] } },
+        { "key": "f501", "categoryKey": "surgery", "label": "预期术后住院天数", "type": "number" }
+      ],
+      "rules": [
+        { "id": "surgery_le_discharge", "severity": "HARD", "categoryKey": "surgery", "key": "f021", "params": { "leftField": "f020", "op": "lte", "rightField": "f021" }, "message": "手术日期不能晚于出院日期" },
+        { "id": "discharge_le_death", "severity": "HARD", "categoryKey": "endpoint", "key": "f216", "params": { "leftField": "f021", "op": "lte", "rightField": "f216" }, "message": "出院日期不能晚于死亡日期" },
+        { "id": "stay_le_expect", "severity": "HARD", "categoryKey": "surgery", "key": "f030", "params": { "leftField": "f030", "op": "lte", "rightField": "f501" }, "message": "术后住院天数超过预期，请核对手术与出院日期" }
+      ],
+      "data": { "f013": 70, "f400": true },
+      "expected": {
+        "visible": ["f011", "f013", "f020", "f021", "f030", "f031", "f215", "f300", "f400", "f401", "f501"],
+        "clearedHidden": [],
+        "derived": [
+          { "key": "f030", "value": null, "status": "missing", "message": "缺少手术日期、出院日期" },
+          { "key": "f031", "value": null, "status": "missing", "message": "缺少身高" }
+        ],
+        "errors": [
+          { "key": "f020", "categoryKey": "surgery", "rule": "required", "message": "必填" },
+          { "key": "f021", "categoryKey": "surgery", "rule": "required", "message": "必填" },
+          { "key": "f215", "categoryKey": "endpoint", "rule": "required", "message": "必填" },
+          { "key": "f300", "categoryKey": "readmit", "rule": "required", "message": "必填" },
+          { "key": "f401", "categoryKey": "echo", "rule": "required", "message": "必填" }
+        ],
+        "warnings": []
+      }
+    }
+  ]
+}
