@@ -79,7 +79,7 @@ export type FieldControlKind =
 /**
  * 控件形态推导：
  * - 敏感字段（storage=encrypted，值不经表单 JSON）渲染脱敏只读（「敏感 · 默认脱敏」chip）；
- * - 派生字段只读（「自动计算 · 只读」chip，重算随 E11-T05）；
+ * - 派生字段只读（「自动计算 · 只读」chip；来源缺失时放开手工录入，E11-T05 / A-FLD-005）；
  * - 单选（radio / select / boolean）：启用选项 ≤ 4 用单选按钮组，否则下拉（§10.3 选项）；
  * - 多选用复选组（互斥 / 补充说明见 multiselect.ts）。
  */
