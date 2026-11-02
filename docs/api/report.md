@@ -8,13 +8,15 @@
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| POST | `/api/hospital/files` | `followup:scan:upload` | multipart（字段 `file`，单文件）；返回 `{ fileId, sha256, size, mime, format, originalName }`（`pages` 随 E10-T03 回填）。后端用 Tika 按内容判断真实类型（不信任扩展名），拒绝可执行文件、脚本、宏 Office、压缩包等不支持格式及扩展名与真实类型不符的文件（A-ATT-008、C-SCAN-018）→ 40001 + 原因；写 `FILE_UPLOAD` 审计。**已实现（E10-T01）** |
+| POST | `/api/hospital/files` | `followup:scan:upload` | multipart（字段 `file`，单文件）；返回 `{ fileId, sha256, size, mime, format, originalName, pages }`（`pages` 图片恒为 1，PDF 待回填，OQ-61）。后端用 Tika 按内容判断真实类型（不信任扩展名），拒绝可执行文件、脚本、宏 Office、压缩包等不支持格式及扩展名与真实类型不符的文件（A-ATT-008、C-SCAN-018）→ 40001 + 原因；写 `FILE_UPLOAD` 审计。**已实现（E10-T01；E10-T03 增补 `pages` 与图片缩略图）** |
 | GET | `/api/hospital/files/policy` | 登录即可 | 本院生效的上传策略：`{ formats: [{ format, label, extensions, category, maxBytes }], maxDocumentMb, maxAudioMb, maxFilesPerReport }`（PLT-CFG-010，上传对话框前置提示用）。**已实现（E10-T01）** |
 | GET | `/api/hospital/files/{fileId}/preview-url` | 能看到所属报告单 | 预览代理短时链接（≤ 5 分钟），每次写审计；前端不缓存（E10-T04） |
 | POST | `/api/hospital/files/{fileId}/download-url` | `followup:scan:download` | 5 分钟签名链接，写审计（谁、何时、哪份报告单的哪个文件，A-ATT-006）（E10-T05） |
 | GET | `/api/hospital/files/check-duplicate?sha256=` | `followup:scan:upload` | C 重复文件提示（C-SCAN-017，P1），只返回可见范围内的患者（脱敏） |
 
 格式与大小按租户配置（A：单个 20 MB、每份 10 个，录音 50 MB；C：20 MB、每份 50 个）；超限 40001。上传配置是平台参数（`file.upload.allowed.types` / `file.upload.max.size.mb` / `file.upload.audio.max.size.mb` / `file.upload.max.files.per.report`，平台库迁移 V33 登记），租户经机构设置 → 租户参数覆盖；**每份数量上限在报告单保存时校验（fileIds ≤ maxFilesPerReport，随 E16 报告单创建落地），上传接口本身不感知报告单**。上传台账表 `sys_file`（租户库 followup V25）；E10-T02 起文件体只在对象存储（生产 OBS 业务桶，每次 PUT 强制 SSE-KMS 服务端加密；本机 / CI 为文件系统替身 `crdp.storage.type=local`，目录结构与桶一致），对象键 `t/{租户编码}/files/{年月}/{uuid}.{扩展名}`（租户前缀由存储端口按登录租户强制，一桶按前缀隔离，ADR 0006），台账不再存文件体（followup V26 清 body 列）。multipart 兜底上限 200 MB（`application.yml`）。不做 DICOM（A-ATT-009）与图片增强（C-SCAN-019）。
+
+**图片缩略图（E10-T03，已实现）**：上传图片（jpg / png）通过校验后同步生成缩略图——等比缩到最大边 ≤ 128 px（`crdp.file.thumbnail.max-edge`，设计稿缩略图 64×64 的 2 倍视网膜余量，OQ-61），**保持原格式、不转码、不放大**（各边都不超过最大边的小图直接复用原字节）；缩略图对象键 `t/{租户编码}/thumbnails/{年月}/{uuid}.{扩展名}`（同一业务桶、同一租户前缀隔离），完整键记 `sys_file.thumbnail_key`（followup V27），`pages` 恒为 1。非图片不生成任何派生对象：**录音不转码、不另存副本**（MP3 浏览器原生播放），PDF / DOCX / XLSX 无缩略图（列表显示文件图标；PDF 首页缩略图不在首期范围）。Tika 认魔数但解码不出像素的损坏图片、单边 > 12000 px 或 > 4000 万像素的图片（防解压炸弹）→ 40001 拒绝，且发生在写对象存储之前（不留半成品）。缩略图的查看链路（预览代理、审计）随 E10-T04。
 
 ## 2. 报告单
 

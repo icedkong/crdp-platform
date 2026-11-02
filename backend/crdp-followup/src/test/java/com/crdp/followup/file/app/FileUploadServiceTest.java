@@ -2,7 +2,10 @@ package com.crdp.followup.file.app;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -10,11 +13,14 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.crdp.followup.file.infra.detect.FileTypeDetector;
 import com.crdp.followup.file.infra.detect.FileTypeDetectorTest;
+import com.crdp.followup.file.infra.image.ImageThumbnailGenerator;
+import com.crdp.followup.file.infra.image.ImageThumbnailGeneratorTest;
 import com.crdp.followup.file.infra.mapper.SysFileMapper;
 import com.crdp.followup.file.infra.mapper.SysFileRow;
 import com.crdp.followup.file.infra.mapper.UploadParamMapper;
@@ -26,11 +32,14 @@ import com.crdp.framework.storage.LocalObjectStorage;
 import com.crdp.framework.storage.ObjectStorage;
 import com.crdp.framework.tenant.TenantContext;
 import com.crdp.framework.web.ApiException;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
+import javax.imageio.ImageIO;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -48,6 +57,9 @@ import org.springframework.security.core.context.SecurityContextHolder;
  * <p>锁定任务验收：改扩展名的可执行文件（report.pdf 实为 PE）被拒 40001；此外：白名单外扩展名、 宏 Office / 脚本 /
  * 压缩包内容、扩展名与真实类型不符、空文件、超大小（文档 / 录音两类上限）、 文件名缺扩展名 / 超长全部 40001；合法 PDF 通过、 对象带 t/{租户}/ 前缀入桶、台账落
  * PENDING（SHA-256、真实类型）且写 FILE_UPLOAD 审计。全部合成样例，不含真实文件。
+ *
+ * <p>E10-T03（图片缩略图）：图片上传后同步生成缩略图对象（thumbnails/ 前缀、保持原格式）并记 thumbnail_key 与 pages=1；非图片（录音 /
+ * 文档）不生成任何派生对象（录音不转码、不另存副本）；损坏图片在写桶前 40001 拒绝。
  */
 @ExtendWith(MockitoExtension.class)
 class FileUploadServiceTest {
@@ -70,7 +82,14 @@ class FileUploadServiceTest {
         // @TempDir 在每个用例前注入，存储替身与其后的服务在此组装
         storage = new LocalObjectStorage(storageRoot);
         policy = new FilePolicyService(defaults, overrides);
-        service = new FileUploadService(policy, new FileTypeDetector(), files, storage, audit);
+        service =
+                new FileUploadService(
+                        policy,
+                        new FileTypeDetector(),
+                        new ImageThumbnailGenerator(128),
+                        files,
+                        storage,
+                        audit);
         SecurityContextHolder.getContext()
                 .setAuthentication(
                         new UsernamePasswordAuthenticationToken(principal(), null, List.of()));
@@ -214,6 +233,9 @@ class FileUploadServiceTest {
         assertEquals("pdf", row.getValue().getFormatCode());
         assertEquals(USER, row.getValue().getUploaderId());
         assertEquals(view.sha256(), row.getValue().getSha256());
+        // 非图片无派生文件：PDF 不生成缩略图、pages 留空（页数解析随 E10-T04 预览，OQ-61）
+        assertNull(row.getValue().getThumbnailKey());
+        assertNull(row.getValue().getPages());
         // E10-T02 验收：对象键按租户前缀隔离（t/{租户编码}/files/…），完整键入库
         assertTrue(
                 row.getValue().getObjectKey().startsWith("t/demoa/files/"),
@@ -231,12 +253,94 @@ class FileUploadServiceTest {
         assertNotNull(event.getValue().detail());
     }
 
+    /** 任务验收（E10-T03）：上传图片后生成缩略图——JPEG 入桶 thumbnails/ 前缀、台账记缩略图键、pages=1、原图不受影响。 */
+    @Test
+    void imageUploadGeneratesThumbnail() throws IOException {
+        byte[] body = ImageThumbnailGeneratorTest.jpeg(300, 200);
+        FileUploadService.FileUploadView view = service.upload("超声报告（示例）.jpg", body);
+
+        assertEquals("jpg", view.format());
+        assertEquals(Integer.valueOf(1), view.pages(), "图片页数恒为 1");
+
+        ArgumentCaptor<SysFileRow> row = ArgumentCaptor.forClass(SysFileRow.class);
+        verify(files).insert(row.capture());
+        String thumbnailKey = row.getValue().getThumbnailKey();
+        assertTrue(
+                thumbnailKey != null && thumbnailKey.startsWith("t/demoa/thumbnails/"),
+                "缩略图对象带租户前缀 + thumbnails/ 前缀：" + thumbnailKey);
+        assertTrue(thumbnailKey.endsWith(".jpg"), "缩略图保持原扩展名（无转码）");
+        assertEquals(Integer.valueOf(1), row.getValue().getPages());
+
+        // 桶里两个对象：原文件字节不变；缩略图可解码且最大边 ≤ 128
+        assertArrayEquals(
+                body, storage.get(row.getValue().getObjectKey().substring("t/demoa/".length())));
+        byte[] thumbBytes = storage.get(thumbnailKey.substring("t/demoa/".length()));
+        BufferedImage thumb = ImageIO.read(new ByteArrayInputStream(thumbBytes));
+        assertTrue(
+                Math.max(thumb.getWidth(), thumb.getHeight()) <= 128,
+                "缩略图最大边 ≤ 128：" + thumb.getWidth() + "×" + thumb.getHeight());
+        // 原图与缩略图是两个不同对象
+        assertNotEquals(row.getValue().getObjectKey(), thumbnailKey);
+    }
+
+    /** PNG 上传同样生成缩略图，且仍是 PNG（格式不变 = 无转码）。 */
+    @Test
+    void pngUploadKeepsThumbnailFormat() throws IOException {
+        service.upload("心电图（示例）.png", ImageThumbnailGeneratorTest.png(300, 200));
+
+        ArgumentCaptor<SysFileRow> row = ArgumentCaptor.forClass(SysFileRow.class);
+        verify(files).insert(row.capture());
+        assertEquals("png", row.getValue().getFormatCode());
+        assertTrue(row.getValue().getThumbnailKey().endsWith(".png"));
+        byte[] thumbBytes =
+                storage.get(row.getValue().getThumbnailKey().substring("t/demoa/".length()));
+        assertEquals((byte) 0x89, thumbBytes[0], "缩略图仍是 PNG 魔数");
+    }
+
+    /** 非图片（录音 / 文档）不生成任何派生对象：录音不转码、不另存副本（tech-plan §10「派生文件」）。 */
+    @Test
+    void nonImageUploadHasNoDerivedObjects() throws IOException {
+        service.upload("通话（示例）.mp3", FileTypeDetectorTest.mp3(128));
+        service.upload("出院小结（示例）.pdf", FileTypeDetectorTest.pdf());
+
+        ArgumentCaptor<SysFileRow> row = ArgumentCaptor.forClass(SysFileRow.class);
+        verify(files, times(2)).insert(row.capture());
+        for (SysFileRow captured : row.getAllValues()) {
+            assertNull(captured.getThumbnailKey(), captured.getFormatCode() + " 不生成缩略图");
+        }
+        // 桶里只有两个原文件对象，没有 thumbnails/ 目录（不另存副本）
+        try (var paths = Files.walk(storageRoot)) {
+            assertEquals(2, paths.filter(Files::isRegularFile).count(), "桶里只有原文件对象");
+        }
+        assertFalse(Files.exists(storageRoot.resolve("t/demoa/thumbnails")), "无 thumbnails/ 派生目录");
+    }
+
+    /** 损坏图片（Tika 认魔数、解码不出像素）：40001 拒绝，且不 PUT 原图、不落台账（解码在写桶之前）。 */
+    @Test
+    void corruptImageRejectedBeforeStoring() throws IOException {
+        ApiException ex =
+                assertThrows(
+                        ApiException.class,
+                        () -> service.upload("照片（示例）.jpg", FileTypeDetectorTest.jpeg()));
+        assertEquals(40001, ex.code());
+        assertTrue(ex.getMessage().contains("无法解析"), ex.getMessage());
+        verify(files, never()).insert(any(SysFileRow.class));
+        try (var paths = Files.walk(storageRoot)) {
+            assertEquals(0, paths.filter(Files::isRegularFile).count(), "不留任何对象");
+        }
+    }
+
     /** 存储端口失败：统一 50000 抛给调用方，且不落台账（先 PUT 后 INSERT，ADR 0006 §4）。 */
     @Test
     void storageFailureSurfacesAs50000AndNoRow() {
         FileUploadService failing =
                 new FileUploadService(
-                        policy, new FileTypeDetector(), files, brokenStorage(), audit);
+                        policy,
+                        new FileTypeDetector(),
+                        new ImageThumbnailGenerator(128),
+                        files,
+                        brokenStorage(),
+                        audit);
         ApiException ex =
                 assertThrows(
                         ApiException.class,

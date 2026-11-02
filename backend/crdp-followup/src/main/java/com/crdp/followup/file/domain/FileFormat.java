@@ -117,6 +117,11 @@ public enum FileFormat {
         return Optional.ofNullable(BY_MIME.get(mime.toLowerCase(Locale.ROOT)));
     }
 
+    /** 是否图片（E10-T03 缩略图口径：只有图片生成派生缩略图；录音不转码、文档无缩略图）。 */
+    public boolean isImage() {
+        return this == JPG || this == PNG;
+    }
+
     /** 全部格式编码（按声明顺序）。 */
     public static List<String> allCodes() {
         return Arrays.stream(values()).map(FileFormat::code).toList();
