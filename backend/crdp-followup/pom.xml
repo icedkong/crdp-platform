@@ -25,5 +25,10 @@
       <groupId>org.springdoc</groupId>
       <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
     </dependency>
+    <!-- E10-T01 / A-ATT-008、C-SCAN-018：上传文件真实类型检测（魔数），拒绝伪装扩展名的可执行文件 -->
+    <dependency>
+      <groupId>org.apache.tika</groupId>
+      <artifactId>tika-core</artifactId>
+    </dependency>
   </dependencies>
 </project>

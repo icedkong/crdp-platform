@@ -11,6 +11,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -51,6 +52,13 @@ public class GlobalExceptionHandler {
         // Security 过滤链的拒绝同样落 DENIED 审计（40300）
         deniedLoggers.ifAvailable(logger -> logger.onDenied(new ApiException(403, 40300, "没有权限")));
         return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiResponse.fail(40300, "没有权限"));
+    }
+
+    /** 单请求超出 multipart 兜底上限（E10-T01：spring.servlet.multipart，200 MB）：40001 而非 500。 */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMaxUpload(MaxUploadSizeExceededException ex) {
+        log.warn("上传超过 multipart 兜底上限：{}", ex.getMessage());
+        return ResponseEntity.badRequest().body(ApiResponse.fail(40001, "文件过大，超过系统单文件大小上限"));
     }
 
     @ExceptionHandler(Exception.class)

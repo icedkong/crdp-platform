@@ -7,6 +7,13 @@ spring:
     default: local
   jackson:
     time-zone: Asia/Shanghai
+  servlet:
+    multipart:
+      # E10-T01 / A-ATT-004：录音单个最大 50 MB，参数可覆盖上限 200 MB（平台库 V33 取值范围），
+      # 这里取参数上限做兜底（超限由 MaxUploadSizeExceededException 处理器转 40001）；
+      # 本院生效的更小上限（20 MB / 50 MB）在 FileUploadService 按策略校验并给出精确提示。
+      max-file-size: 200MB
+      max-request-size: 200MB
   flyway:
     enabled: false
   data:

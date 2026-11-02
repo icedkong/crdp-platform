@@ -30,6 +30,7 @@
     <logstash.version>8.1</logstash.version>
     <spotless.version>2.44.5</spotless.version>
     <bouncycastle.version>1.80.2</bouncycastle.version>
+    <tika.version>3.3.3</tika.version>
     <surefire.version>3.5.3</surefire.version>
     <compiler.version>3.14.0</compiler.version>
     <jacoco.version>0.8.16</jacoco.version>
@@ -93,6 +94,12 @@
         <groupId>org.bouncycastle</groupId>
         <artifactId>bcprov-jdk18on</artifactId>
         <version>${bouncycastle.version}</version>
+      </dependency>
+      <!-- E10-T01 / A-ATT-008、C-SCAN-018：真实文件类型识别（只引 tika-core 按魔数检测，不带解析器全家桶） -->
+      <dependency>
+        <groupId>org.apache.tika</groupId>
+        <artifactId>tika-core</artifactId>
+        <version>${tika.version}</version>
       </dependency>
     </dependencies>
   </dependencyManagement>

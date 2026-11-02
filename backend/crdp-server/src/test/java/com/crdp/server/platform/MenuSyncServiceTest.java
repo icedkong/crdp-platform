@@ -146,6 +146,18 @@ class MenuSyncServiceTest {
                         "followup/notice/index",
                         "followup:notice:config",
                         45,
+                        "ENABLED"),
+                // E10-T01 上传按钮（followup:scan:upload，OQ-12）：报告单菜单下的非敏感 followup 项
+                manifestRow(
+                        231L,
+                        23L,
+                        "BUTTON",
+                        "上传文件",
+                        null,
+                        null,
+                        null,
+                        "followup:scan:upload",
+                        10,
                         "ENABLED"));
     }
 
@@ -162,6 +174,9 @@ class MenuSyncServiceTest {
         lenient()
                 .when(platformMapper.findMenuIdByRouteName("HOSPITAL", "FollowupPatient"))
                 .thenReturn(21L);
+        lenient()
+                .when(platformMapper.findMenuIdByRouteName("HOSPITAL", "FollowupReport"))
+                .thenReturn(23L);
         lenient()
                 .when(platformMapper.findMenuIdByRouteName("HOSPITAL", "HospitalSystem"))
                 .thenReturn(30L);

@@ -2,18 +2,19 @@
 
 > 后端：`crdp-followup`（报告单子域，A-ATT-018 平台通用、按租户配置）+ 文件服务（OSS + 预览代理）。表：`rpt_report`、`rpt_report_link`（位置，见 OQ-02：统一用 `rpt_report_link`）、`rpt_report_file`、`rpt_type`、`rpt_name`、`rpt_indicator_tpl`、`sys_file`。
 > 页面：`docs/design/pages.md` §4（报告单页签、左栏附件导航）、§6（上传、H5、批量、全院报告单）；组件：AttachmentNav、LocationPicker、WatermarkPreview、ReportFormModal。
-> 全部路径 **推断，待确认**。权限：上传 `followup:scan:upload`、下载 `followup:scan:download`、删除 `followup:scan:delete`、配置 `followup:scan:config`；全院报告单菜单种子是 `followup:report:view`，与规格待统一（见 OQ-12）。
+> 路径除 §1 已标注「已实现（E10-T01）」的两个文件接口外，其余 **推断，待确认**。权限：上传 `followup:scan:upload`、下载 `followup:scan:download`、删除 `followup:scan:delete`、配置 `followup:scan:config`；全院报告单菜单种子是 `followup:report:view`，与规格待统一（见 OQ-12）。
 
 ## 1. 文件
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| POST | `/api/hospital/files` | `followup:scan:upload` | multipart；返回 `{ fileId, sha256, size, mime, pages? }`。后端用 Tika 判断真实类型，拒绝可执行文件与不支持格式（A-ATT-008、C-SCAN-018）→ 40001 + 原因 |
-| GET | `/api/hospital/files/{fileId}/preview-url` | 能看到所属报告单 | 预览代理短时链接（≤ 5 分钟），每次写审计；前端不缓存 |
-| POST | `/api/hospital/files/{fileId}/download-url` | `followup:scan:download` | 5 分钟签名链接，写审计（谁、何时、哪份报告单的哪个文件，A-ATT-006） |
+| POST | `/api/hospital/files` | `followup:scan:upload` | multipart（字段 `file`，单文件）；返回 `{ fileId, sha256, size, mime, format, originalName }`（`pages` 随 E10-T03 回填）。后端用 Tika 按内容判断真实类型（不信任扩展名），拒绝可执行文件、脚本、宏 Office、压缩包等不支持格式及扩展名与真实类型不符的文件（A-ATT-008、C-SCAN-018）→ 40001 + 原因；写 `FILE_UPLOAD` 审计。**已实现（E10-T01）** |
+| GET | `/api/hospital/files/policy` | 登录即可 | 本院生效的上传策略：`{ formats: [{ format, label, extensions, category, maxBytes }], maxDocumentMb, maxAudioMb, maxFilesPerReport }`（PLT-CFG-010，上传对话框前置提示用）。**已实现（E10-T01）** |
+| GET | `/api/hospital/files/{fileId}/preview-url` | 能看到所属报告单 | 预览代理短时链接（≤ 5 分钟），每次写审计；前端不缓存（E10-T04） |
+| POST | `/api/hospital/files/{fileId}/download-url` | `followup:scan:download` | 5 分钟签名链接，写审计（谁、何时、哪份报告单的哪个文件，A-ATT-006）（E10-T05） |
 | GET | `/api/hospital/files/check-duplicate?sha256=` | `followup:scan:upload` | C 重复文件提示（C-SCAN-017，P1），只返回可见范围内的患者（脱敏） |
 
-格式与大小按租户配置（A：单个 20 MB、每份 10 个，录音 50 MB；C：20 MB、每份 50 个）；超限 40001。不做 DICOM（A-ATT-009）与图片增强（C-SCAN-019）。
+格式与大小按租户配置（A：单个 20 MB、每份 10 个，录音 50 MB；C：20 MB、每份 50 个）；超限 40001。上传配置是平台参数（`file.upload.allowed.types` / `file.upload.max.size.mb` / `file.upload.audio.max.size.mb` / `file.upload.max.files.per.report`，平台库迁移 V33 登记），租户经机构设置 → 租户参数覆盖；**每份数量上限在报告单保存时校验（fileIds ≤ maxFilesPerReport，随 E16 报告单创建落地），上传接口本身不感知报告单**。上传台账表 `sys_file`（租户库 followup V25），文件体在 E10-T02 OBS 接入前暂存表内 LONGBLOB（与 OQ-56 同款暂行做法）。multipart 兜底上限 200 MB（`application.yml`）。不做 DICOM（A-ATT-009）与图片增强（C-SCAN-019）。
 
 ## 2. 报告单
 
