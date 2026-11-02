@@ -75,6 +75,7 @@ export const timings = {
   localDraftIntervalMs: 30_000, // 本地草稿每 30 秒（另有 blur 时保存）
   serverDraftIntervalMs: 120_000, // 服务器草稿每 2 分钟，仅有改动时
   anchorHighlightMs: 2_000, // 位置跳转高亮 2 秒
+  notifyPollMs: 60_000, // 站内信铃铛未读数轮询 60 秒（docs/api/notify.md §1）
   mobileUploadQrMinutes: 15, // A-ATT-015 一次性二维码
   downloadLinkMinutes: 5, // 下载签名链接有效期
 } as const;
