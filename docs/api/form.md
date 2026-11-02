@@ -3,7 +3,7 @@
 > 后端：`crdp-form`（字段字典、表单模板、规则）；前端：`frontend/packages/form-engine`（`FormRenderer`）与 `frontend/packages/rules`（前后端共用的校验 / 派生规则，见技术方案 §15 前端结构）。
 > 契约基准：`docs/design/components.md` §10.1 的 `FormSchema` 类型 —— **本文件与之保持一致，有变化两处同改**。
 > 原则：**字段由表单模板驱动**，页面不得硬编码业务字段；新增 / 改字段 = 改模板 + 新 Flyway 迁移（种子）或字典维护页，不改页面代码。
-> §1 模板按版本读取与发布、§3 字段字典维护已随 E11-T01 / E11-T02 落地、§2 规则执行已随 E11-T04 落地、§2.4 条件显示与条件必填已随 E11-T03 落地、§1.2 字段级变更历史已随 E11-T06 落地、§2.6 派生函数库已随 E11-T05 落地、§3 变更记录已随 E11-T08 落地（实现即定义）；其余路径 **推断，待确认**。
+> §1 模板按版本读取与发布、§3 字段字典维护已随 E11-T01 / E11-T02 落地、§2 规则执行已随 E11-T04 落地、§2.4 条件显示与条件必填已随 E11-T03 落地、§1.2 字段级变更历史已随 E11-T06 落地、§2.6 派生函数库已随 E11-T05 落地、§3 变更记录已随 E11-T08 落地、§3 Excel 批量导入已随 E11-T09 落地（实现即定义）；其余路径 **推断，待确认**。
 
 ## 1. 读取表单模板（E11-T02 已实现）
 
@@ -142,7 +142,7 @@ E11-T02 落地（A-NFR-002 / C-NFR-002「JSON 文档存储」）。数据记录�
 - 防御（与条件 / 规则引擎坏配置同口径，OQ-68）：未知函数、参数个数不符、坏 JSON、依赖成环的字段不出结果（不炸保存、不产出误导值）。
 - 演示种子：followup V33（体重 f013、出院日期 f021、BMI f031，并把 V28 已建的术后住院天数 f030 来源补齐）；真实派生配置随 E23-T01 / C 字段字典录入。
 
-## 3. 字段字典维护（A-FLD-001..009/012/013、C-FLD-001..010；E11-T01 已实现前两行与 publish）
+## 3. 字段字典维护（A-FLD-001..009/012/013、C-FLD-001..010；E11-T01 已实现前两行与 publish，E11-T08 变更记录，E11-T09 Excel 批量导入）
 
 字段元数据存租户库 `fe_form` / `fe_field` / `fe_option_set` / `fe_option`（tech-plan §6「元数据模型」）。
 稳定键 `field_key` 与字段编码 `field_code`（导入导出名）**表单内唯一**、创建后不可改；显示名与编码分离
@@ -153,10 +153,14 @@ ENABLED/DISABLED，停用不删除；**模板下发与校验只取启用字段**
 |---|---|---|---|
 | GET | `/api/hospital/form/fields?formCode=&categoryKey=` | `followup:field:edit` | 按分类列字段；行含 `key/code/label/categoryKey/categoryLabel/type/unit/decimals/hardRange/softRange/options/required/visibleWhen/requiredWhen/derivedDef/sensitive/storage/help/sortNo/status/updatedAt`（`categoryKey` 可省略 = 全部分类） |
 | PUT | `/api/hospital/form/fields/{key}?formCode=` | `followup:field:edit` | 全量覆盖可维护列：显示名、帮助文字、单位显示、`softRange`、必填、**状态（启停）**、选项（`options[]`：`code` 已存在为改显示名 / 排序 / 停用，不存在为新增；不能删除已用选项、不能改选项 `code`）；**不能改** `key`、`code`、类型、存储方式、敏感标记、`hardRange`（请求体不携带这些列，A-FLD-002/008）。写审计 `FIELD_DICT_UPDATE`（前后值，启停在描述点明）。校验失败 40001（显示名必填 ≤128、软范围 min≤max、状态只认 ENABLED/DISABLED、选项编码必填且不重复）；字段 / 表单不存在 40400 |
-| GET | `/api/hospital/form/fields/{key}/logs` | `followup:field:edit` | **E11-T08 已实现**。字段字典变更记录（A-FLD-009、C-FLD-009）：`[{id,formCode,fieldKey,action(FIELD_UPDATE),beforeJson,afterJson,operatorId,operatorName(联查 sys_user),createdAt}]`，倒序最近 100 条；每次「维护字段」（含启停与选项调整）写一条 `fe_field_dict_log`（租户库 followup V35）与 FIELD_DICT_UPDATE 审计双写；字段 / 表单不存在 40400 |
+| GET | `/api/hospital/form/fields/{key}/logs` | `followup:field:edit` | **E11-T08 已实现**。字段字典变更记录（A-FLD-009、C-FLD-009）：`[{id,formCode,fieldKey,action(FIELD_UPDATE\|FIELD_CREATE),beforeJson,afterJson,operatorId,operatorName(联查 sys_user),createdAt}]`，倒序最近 100 条；每次「维护字段」（含启停与选项调整）写 `FIELD_UPDATE`，每次导入的新增 / 更新（E11-T09）各写 `FIELD_CREATE` / `FIELD_UPDATE`，同落 `fe_field_dict_log`（租户库 followup V35）并与审计双写；字段 / 表单不存在 40400 |
+| GET | `/api/hospital/form/fields/import-template` | `followup:field:edit` | **E11-T09 已实现**。字段字典导入模板（xlsx 单工作表）：27 列表头 `表单编码、稳定键、字段编码、显示名、分类键、类型、单位、小数位、硬范围下限、硬范围上限、提示范围下限、提示范围上限、必填、敏感、存储方式、选项集编码、选项、选项序数、互斥选项编码、需补充说明选项编码、选项别名、派生公式、条件显示、条件必填、帮助说明、排序、状态` + 三行示例（全部虚构数据，覆盖数值范围 / 选项 / 派生） |
+| POST | `/api/hospital/form/fields/import` | `followup:field:edit` | **E11-T09 已实现**（验收「产品可用 Excel 批量导入字段定义」，E23-T01 / C 字段字典录入工具；multipart `file`，≤500 行）。同步一次性模型（OQ-52）：逐行校验并落库，**单行失败不影响其他行**，返回 `{ total, created, updated, failed, rows[{ rowNo, formCode, fieldKey, action(CREATED\|UPDATED\|FAILED), message }] }`。语义：按「表单编码 + 稳定键」命中——已有为**更新**（行是字段完整定义，可维护与实施列全量覆盖：显示名、分类、单位、小数位、硬 / 软范围、必填、条件、派生、帮助、排序、状态、选项），没有为**新增**；`字段编码`、类型、存储方式、敏感标记不可改（更新行留空保留原值，填写须与库内一致，否则该行失败，A-FLD-008）；选项集不存在自动建集（名称先取编码），选项 `编码=显示名` 新编码插入（带序数 / 互斥 / 需补充说明 / 别名四列实施标记）、已有编码更新显示名与实施列、不删除；派生公式列写 `AGE_YEARS(f003,f020)`（9 内置函数、arity 配置期校验、参数可前向引用同文件字段），条件列写 `f010=1`（多条件逗号分隔=全部成立，比较符 `= != > >= < <=`，值数字按数字 / 其余按字符串）→ 解析为 §2.4 条件树；表单 / 分类键 / 类型 / 选项集 / 公式与条件引用不合法 → 该行失败。文件级 40001：非 xlsx / 表头不符 / 无数据行 / 超 500 行；无医院会话 40100。写 `FIELD_DICT_IMPORT` 作业级审计 + 每字段一条 `fe_field_dict_log`（A-FLD-009） |
 | POST | `/api/hospital/form/forms/{code}/publish` | `followup:field:edit` | **E11-T02 已实现**：无请求体；把当前分类与启用字段固化成新版本快照并前移 `currentVersion`，响应 `{ code, name, version, fieldCount, publishedAt }`。没有字典修改也允许发布（版本是显式动作）；并发发布后到者 40900。写审计 `FORM_PUBLISH`（前后版本与字段数）。停用表单发布 40001；表单不存在 40400 |
 
-不做：医院自助新增字段（A-FLD-010）、通用表单设计器（A-FLD-011）——延后（见 `docs/tasks/tasks.md`）。C-FLD-008 “新增字段”指由实施通过迁移新增，不提供页面。页面 `/system/field`（菜单 `FollowupField`，平台库迁移 V35）。
+不做：医院自助新增字段（A-FLD-010）、通用表单设计器（A-FLD-011）——延后（见 `docs/tasks/tasks.md`）。C-FLD-008 “新增字段”由实施经迁移或 §3 的 Excel 批量导入（E11-T09）录入，不提供页面。页面 `/system/field`（菜单 `FollowupField`，平台库迁移 V35）；导入是实施 / 产品工具（E23-T01 录医院 A 的 266 字段、C 字段字典随 E21 录入），经 Swagger / 接口调用，无专门页面。
+
+A-FLD-013（E11-T09，followup V36）：示例基线补「手术年龄」派生字段 `f032 = AGE_YEARS(f003 出生日期, f020 手术日期)`（手术日期 − 出生日期取周岁）；出生日期 `f003` 由 V28 预置（date、basic_info），不采集身份证号。
 
 ## 4. 业务字典（A-FLD-012、C-FLD-002/003）
 

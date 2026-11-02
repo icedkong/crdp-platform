@@ -218,11 +218,12 @@ class TenantOnboardingServiceMySqlIT {
                 // E11-T05 增加 V33（派生字段演示：体重 / 出院日期 / BMI，followup 目录）。
                 // E11-T08 增加 V34（cfg_dict_item.aliases + cfg_dict_log，base 目录）与 V35
                 // （字段字典变更记录 fe_field_dict_log，followup 目录）。
+                // E11-T09 增加 V36（手术年龄派生演示字段，followup 目录）。
                 // 此处随迁移清单维护
                 List.of(
                         "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14",
                         "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26",
-                        "27", "28", "29", "30", "31", "32", "33", "34", "35"),
+                        "27", "28", "29", "30", "31", "32", "33", "34", "35", "36"),
                 root.queryForList(
                         "SELECT version FROM "
                                 + DB
