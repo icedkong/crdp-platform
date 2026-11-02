@@ -158,6 +158,19 @@ class MenuSyncServiceTest {
                         null,
                         "followup:scan:upload",
                         10,
+                        "ENABLED"),
+                // E10-T05 下载按钮（followup:scan:download，敏感权限 V34）：报告单菜单下的
+                // 敏感 followup 项（清单只登记菜单结构，授权范围与角色授予都不预置）
+                manifestRow(
+                        232L,
+                        23L,
+                        "BUTTON",
+                        "下载文件",
+                        null,
+                        null,
+                        null,
+                        "followup:scan:download",
+                        20,
                         "ENABLED"));
     }
 

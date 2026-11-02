@@ -119,7 +119,23 @@ public class MenuManifest {
                             null,
                             "followup:scan:upload",
                             null,
-                            10));
+                            10),
+                    // E10-T05 / tech-plan §10「下载」、A-ATT-006：报告单页签下的下载按钮（平台库 V34 同构）。
+                    // 敏感权限（V18 plt_sensitive_perm）：不进授权范围模板、不预授予内置角色，
+                    // 平台按租户放开后医院端才可授权（与查看明文按钮同口径）
+                    new MenuManifestItem(
+                            "followup",
+                            "HOSPITAL",
+                            "BUTTON",
+                            "followup:scan:download",
+                            "FollowupReport",
+                            "下载文件",
+                            null,
+                            null,
+                            null,
+                            "followup:scan:download",
+                            null,
+                            20));
 
     public List<MenuManifestItem> items() {
         return ITEMS;
