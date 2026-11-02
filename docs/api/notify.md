@@ -2,7 +2,7 @@
 
 > 后端：`crdp-followup`（通知子域，事件来自 outbox）+ 平台短信通道（PLT-CFG-005）。表：`ntf_rule`、`ntf_message`（站内信）、`ntf_send_log`、`ntf_user_pref`、`sys_webhook`。
 > 页面：顶栏铃铛（components.md AppHeader）、`/system/notice`（通知设置）、`/profile`（通知偏好）、`/system/settings`（Webhook）。
-> §1 已随 E09-T02 落地（其余章节路径 **推断，待确认**）。需求：A-NTF-001…008、C-NTF-001…008。**A-NTF-009 通知患者首期不做**：任何通知只发医生、随访员、护士。
+> §1 已随 E09-T02 落地；§3.1 短信通道与 §3.2 回执回调已随 E09-T03 落地（其余章节路径 **推断，待确认**）。需求：A-NTF-001…008、C-NTF-001…008。**A-NTF-009 通知患者首期不做**：任何通知只发医生、随访员、护士。
 
 ## 1. 站内信（A-NTF-002、C-NTF-002；E09-T02 已实现）
 
@@ -26,14 +26,27 @@
 | GET | `/api/hospital/notify/sms-templates` | 只能选平台审核过的模板（只读） |
 | PUT | `/api/hospital/notify/settings` | 免打扰时段（默认 21:00–08:00）、每人每天短信上限（默认 3）、逾期类是否允许个人关闭 |
 
-## 3. 发送规则（后端，无独立接口）
+## 3. 发送规则与短信通道（后端，通道随 E09-T03 落地）
 
-- 短信按人合并为汇总短信，**不含任何患者信息**（A-NTF-003、C-NTF-003），只写“您有 N 项随访任务待处理”之类。
-- 免打扰时段内产生的短信推迟到 08:00 后；超出每日上限的并入次日汇总（A-NTF-005、C-NTF-005）。
+- 短信按人合并为汇总短信，**不含任何患者信息**（A-NTF-003、C-NTF-003、A-NFR-007），只写“您有 N 项随访任务待处理”之类。
+- 免打扰时段内产生的短信推迟到 08:00 后；超出每日上限的并入次日汇总（A-NTF-005、C-NTF-005，随 E09-T05）。
 - 无负责人时按 A-NTF-004 / C-NTF-004 扩大接收人。
-- 事件经框架 outbox 分发器（E09-T01，`sys_outbox` PENDING → SENT / FAILED）进入通知子域：投递失败指数退避重试，超限转死信 `FAILED`。**站内信通道已随 E09-T02 落地**（`NoticeInboxService.deliver`，dedup_key 幂等；E09-T04 规则引擎接入后消费事件）；短信随 E09-T03、Webhook 随 E09-T06。
+- 事件经框架 outbox 分发器（E09-T01，`sys_outbox` PENDING → SENT / FAILED）进入通知子域：投递失败指数退避重试，超限转死信 `FAILED`。**站内信通道已随 E09-T02 落地**（`NoticeInboxService.deliver`，dedup_key 幂等；E09-T04 规则引擎接入后消费事件）；**短信通道已随 E09-T03 落地**（`TencentSmsChannel`，E09-T04/T05 的短信队列汇入）；Webhook 随 E09-T06。
 - 每条通知写 `ntf_send_log`：事件、接收人、渠道、时间、结果、失败原因。
 - 租户停用、模块关闭时不发送。
+
+### 3.1 平台短信通道（PLT-CFG-005/006，E09-T03）
+
+- **模板**：平台库 `plt_sms_template`（迁移 V31）——`code`（AUTH_LOGIN_CODE / AUTH_RESET_CODE / AUTH_BIND_CODE / NOTIFY_DAILY_SUMMARY / NOTIFY_OVERDUE 等）、`scene`（参数白名单依据）、`content`（`{1}..{n}` 变量占位）、`provider_template_id`（腾讯云模板 ID，E01-T13 报备审核通过后回填，**未回填不能发**）、`sign_name`（模板级签名，空用通道默认 `crdp.sms.sign-name`）、`status`（APPROVED 才可发）。短信模板全部平台内置（签名与模板主体是平台，租户只能选，PLT-CFG-006 的“租户自定义模板”落在站内信 / Webhook 文案，随 E09-T04）。
+- **发送**：`TencentSmsChannel.send(SmsSendCommand)`——通道开关 / 密钥自检 → 手机号校验 → 模板校验 → 签名 → **敏感信息两道闸** → 腾讯云 SendSms（TC3-HMAC-SHA256 自签，不引 SDK）→ 台账。`SmsCodeSender`（登录 / 重置 / 换绑验证码）已接到本通道（替换 M0 占位实现）。密钥经配置注入（生产环境变量 `CRDP_SMS_*`，技术方案第 4 章：DEW 凭据管理），不落库不进仓库；未配置（`crdp.sms.enabled=false` 默认）发送明确报 `CHANNEL_DISABLED`，不假装成功。
+- **敏感信息两道闸（验收“短信不含患者敏感信息”）**：① 场景参数白名单（`SmsScene`）——AUTH_* 只放 4–8 位数字验证码、NOTIFY 只放 1–6 位数字（数量 / 天数）与 `yyyy-MM-dd` 日期，姓名 / 诊断 / 病案号等自由文本结构上进不来；② 渲染反扫——占位符替换后的完整内容按「大陆手机号 / 15 或 18 位证件号 / ≥10 位连续数字」拒绝（兜模板文案自身与参数拼接成型）。违规抛 `SENSITIVE_CONTENT`，**不触服务商**。
+- **发送与回执台账（验收“回执入库”）**：平台库 `plt_sms_send_log`（迁移 V31）——每条发送 SUBMITTED（带腾讯云流水号）/ SUBMIT_FAILED（失败类别，如 SENSITIVE_CONTENT、CHANNEL_DISABLED、PROVIDER_REJECTED）；手机号只存脱敏值（138****0000），模板参数不落库。回执按 sid（= SendSms 返回的 SerialNo）回填 DELIVERED / RECEIVE_FAILED；对不上发送行的回执落 `UNMATCHED_RECEIPT` 行（purpose=UNMATCHED）不丢对账依据。
+
+### 3.2 腾讯云状态回执回调（公开口）
+
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| POST | `/api/notify/sms/receipt` | 免登录（@PublicApi 登记，按 IP 每小时限流 `crdp.sms.receipt-ip-hourly-limit` 默认 600，超限 42900） | 腾讯云控制台配置的回执推送地址。报文兼容三种形态（根数组 / `sms_status_callback` 数组 / `sms_status_callback.content` 数组），逐条入库（见 §3.1 台账）；应答按腾讯云约定 `{"result":0,"errmsg":"OK"}`（非 200 / 非 0 会触发重推）。回执只含流水号 / 状态 / 时间 / 手机号（入库脱敏），不含患者信息 |
 
 ## 4. 发送记录（A-NTF-006、C-NTF-006）
 

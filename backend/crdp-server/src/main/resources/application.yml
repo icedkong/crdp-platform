@@ -86,6 +86,14 @@ crdp:
       online-retention-months: 12
       worm-retention-years: 15
       partitions-ahead: 3 # 预建未来月分区，保证新月份写入即有分区
+  sms:
+    # E09-T03 / PLT-CFG-005：腾讯云短信通道（平台统一账号、签名与模板）。
+    # enabled=false（默认）时发送明确失败（CHANNEL_DISABLED），不假装发送成功；生产经环境变量 / 凭据管理注入密钥
+    enabled: false
+    sdk-app-id: ""
+    sign-name: ""
+    region: ap-guangzhou
+    receipt-ip-hourly-limit: 600 # 回执回调公开口按 IP 每小时限流
 
 info:
   app:

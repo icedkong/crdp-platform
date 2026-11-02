@@ -83,6 +83,12 @@ public class SecurityConfig {
                                                 "/api/hospital/auth/password/forgot",
                                                 "/api/hospital/auth/password/reset")
                                         .permitAll()
+                                        // E09-T03 / A-NTF-003：腾讯云短信状态回执回调（服务器间推送，无法登录）。
+                                        // 公开口限流（SmsReceiptController 按 IP 每小时限流）；@PublicApi
+                                        // 经启动扫描登记 plt_api_resource，未登记时 ApiResourceGuardFilter
+                                        // 40307
+                                        .requestMatchers(HttpMethod.POST, "/api/notify/sms/receipt")
+                                        .permitAll()
                                         // E04-T03 / PLT-AUTH-005：平台端与医院端接口前缀各自只接受
                                         // 对应端的会话（令牌由 TokenAuthenticationFilter 附带端别权限），
                                         // 跨端令牌一律 40300，不依赖各控制器自行调用 require* 系列
