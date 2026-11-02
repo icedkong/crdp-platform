@@ -48,4 +48,8 @@ public interface NotifyRecipientMapper {
     /** 病区默认随访负责人（A-WARD-001；「逾期抄送病区负责人」暂按此解析，OQ-60）。 */
     @Select("SELECT default_owner_id FROM ward WHERE id = #{wardId}")
     Long findWardDefaultOwner(@Param("wardId") long wardId);
+
+    /** 用户绑定手机号密文（purpose=sys-user-phone 的信封加密；未绑定为 null）。E09-T05 汇总作业取号，解密走 CryptoService。 */
+    @Select("SELECT phone FROM sys_user WHERE id = #{userId}")
+    String findPhone(@Param("userId") long userId);
 }

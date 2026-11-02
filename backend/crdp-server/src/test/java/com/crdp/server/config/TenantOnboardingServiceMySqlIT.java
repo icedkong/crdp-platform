@@ -205,10 +205,11 @@ class TenantOnboardingServiceMySqlIT {
                 // E09-T02 增加 V21（站内信收件箱 ntf_message，followup 目录）。
                 // E09-T04 增加 V22（通知规则 ntf_rule / 发送台账 ntf_send_log / 病区默认负责人，followup 目录）。
                 // E09-T07 增加 V23（个人通知偏好 ntf_user_pref / 租户发送设置 ntf_setting，followup 目录）。
+                // E09-T05 增加 V24（ntf_send_log 汇总作业索引，followup 目录）。
                 // 此处随迁移清单维护
                 List.of(
                         "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14",
-                        "15", "16", "17", "18", "19", "20", "21", "22", "23"),
+                        "15", "16", "17", "18", "19", "20", "21", "22", "23", "24"),
                 root.queryForList(
                         "SELECT version FROM "
                                 + DB
