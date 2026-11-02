@@ -105,7 +105,21 @@ public class MenuManifest {
                             "followup/notice/index",
                             "followup:notice:config",
                             null,
-                            45));
+                            45),
+                    // E10-T01 / A-ATT-008、PLT-CFG-010：报告单页签下的上传按钮（平台库 V33 同构，OQ-12 权限码）
+                    new MenuManifestItem(
+                            "followup",
+                            "HOSPITAL",
+                            "BUTTON",
+                            "followup:scan:upload",
+                            "FollowupReport",
+                            "上传文件",
+                            null,
+                            null,
+                            null,
+                            "followup:scan:upload",
+                            null,
+                            10));
 
     public List<MenuManifestItem> items() {
         return ITEMS;
