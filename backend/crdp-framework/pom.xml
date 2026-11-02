@@ -54,6 +54,11 @@
       <artifactId>spring-boot-starter-test</artifactId>
       <scope>test</scope>
     </dependency>
+    <!-- E10-T02 / C-NFR-003：OBS 适配器（ADR 0006；版本与 log4j 排除在父 POM dependencyManagement） -->
+    <dependency>
+      <groupId>com.huaweicloud</groupId>
+      <artifactId>esdk-obs-java</artifactId>
+    </dependency>
   </dependencies>
 
   <build>

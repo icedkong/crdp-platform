@@ -31,6 +31,7 @@
     <spotless.version>2.44.5</spotless.version>
     <bouncycastle.version>1.80.2</bouncycastle.version>
     <tika.version>3.3.3</tika.version>
+    <obs-sdk.version>3.26.9</obs-sdk.version>
     <surefire.version>3.5.3</surefire.version>
     <compiler.version>3.14.0</compiler.version>
     <jacoco.version>0.8.16</jacoco.version>
@@ -100,6 +101,24 @@
         <groupId>org.apache.tika</groupId>
         <artifactId>tika-core</artifactId>
         <version>${tika.version}</version>
+      </dependency>
+      <!-- E10-T02 / C-NFR-003：华为云 OBS Java SDK（tech-plan §2 选型；SSE-KMS 头与签名由 SDK 保证）。
+        log4j-core / log4j-api 属该 POM 冗余声明（3.26.9 的 com/obs、com/oef 全部类零引用 org.apache.logging，
+        见 ADR 0006），排除避免与 logback 双日志栈。 -->
+      <dependency>
+        <groupId>com.huaweicloud</groupId>
+        <artifactId>esdk-obs-java</artifactId>
+        <version>${obs-sdk.version}</version>
+        <exclusions>
+          <exclusion>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-core</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-api</artifactId>
+          </exclusion>
+        </exclusions>
       </dependency>
     </dependencies>
   </dependencyManagement>

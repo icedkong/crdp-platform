@@ -13,24 +13,24 @@ import org.apache.ibatis.annotations.Select;
 @Mapper
 public interface SysFileMapper {
 
-    /** 落一行上传台账（状态 PENDING，未关联报告单）；回填自增 id。 */
+    /** 落一行上传台账（状态 PENDING，未关联报告单；文件体在对象存储，不带 body）；回填自增 id。 */
     @Insert(
             """
             INSERT INTO sys_file
               (object_key, original_name, format_code, mime_type, size_bytes, sha256,
-               status, body, uploader_id)
+               status, uploader_id)
             VALUES (#{objectKey}, #{originalName}, #{formatCode}, #{mimeType}, #{sizeBytes},
-                    #{sha256}, #{status}, #{body}, #{uploaderId})
+                    #{sha256}, #{status}, #{uploaderId})
             """)
     @Options(useGeneratedKeys = true, keyProperty = "id", keyColumn = "id")
     int insert(SysFileRow row);
 
-    /** 按 id 取行（应用层判定归属与状态）。 */
+    /** 按 id 取行（应用层判定归属与状态；文件体经对象键从对象存储取，随 E10-T04/T05 下载链路）。 */
     @Select(
             """
             SELECT id, object_key AS objectKey, original_name AS originalName,
                    format_code AS formatCode, mime_type AS mimeType, size_bytes AS sizeBytes,
-                   sha256, status, body, uploader_id AS uploaderId
+                   sha256, status, uploader_id AS uploaderId
             FROM sys_file WHERE id = #{id}
             """)
     SysFileRow find(@org.apache.ibatis.annotations.Param("id") long id);

@@ -14,7 +14,7 @@
 | POST | `/api/hospital/files/{fileId}/download-url` | `followup:scan:download` | 5 分钟签名链接，写审计（谁、何时、哪份报告单的哪个文件，A-ATT-006）（E10-T05） |
 | GET | `/api/hospital/files/check-duplicate?sha256=` | `followup:scan:upload` | C 重复文件提示（C-SCAN-017，P1），只返回可见范围内的患者（脱敏） |
 
-格式与大小按租户配置（A：单个 20 MB、每份 10 个，录音 50 MB；C：20 MB、每份 50 个）；超限 40001。上传配置是平台参数（`file.upload.allowed.types` / `file.upload.max.size.mb` / `file.upload.audio.max.size.mb` / `file.upload.max.files.per.report`，平台库迁移 V33 登记），租户经机构设置 → 租户参数覆盖；**每份数量上限在报告单保存时校验（fileIds ≤ maxFilesPerReport，随 E16 报告单创建落地），上传接口本身不感知报告单**。上传台账表 `sys_file`（租户库 followup V25），文件体在 E10-T02 OBS 接入前暂存表内 LONGBLOB（与 OQ-56 同款暂行做法）。multipart 兜底上限 200 MB（`application.yml`）。不做 DICOM（A-ATT-009）与图片增强（C-SCAN-019）。
+格式与大小按租户配置（A：单个 20 MB、每份 10 个，录音 50 MB；C：20 MB、每份 50 个）；超限 40001。上传配置是平台参数（`file.upload.allowed.types` / `file.upload.max.size.mb` / `file.upload.audio.max.size.mb` / `file.upload.max.files.per.report`，平台库迁移 V33 登记），租户经机构设置 → 租户参数覆盖；**每份数量上限在报告单保存时校验（fileIds ≤ maxFilesPerReport，随 E16 报告单创建落地），上传接口本身不感知报告单**。上传台账表 `sys_file`（租户库 followup V25）；E10-T02 起文件体只在对象存储（生产 OBS 业务桶，每次 PUT 强制 SSE-KMS 服务端加密；本机 / CI 为文件系统替身 `crdp.storage.type=local`，目录结构与桶一致），对象键 `t/{租户编码}/files/{年月}/{uuid}.{扩展名}`（租户前缀由存储端口按登录租户强制，一桶按前缀隔离，ADR 0006），台账不再存文件体（followup V26 清 body 列）。multipart 兜底上限 200 MB（`application.yml`）。不做 DICOM（A-ATT-009）与图片增强（C-SCAN-019）。
 
 ## 2. 报告单
 
