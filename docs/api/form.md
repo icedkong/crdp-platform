@@ -3,7 +3,7 @@
 > 后端：`crdp-form`（字段字典、表单模板、规则）；前端：`frontend/packages/form-engine`（`FormRenderer`）与 `frontend/packages/rules`（前后端共用的校验 / 派生规则，见技术方案 §15 前端结构）。
 > 契约基准：`docs/design/components.md` §10.1 的 `FormSchema` 类型 —— **本文件与之保持一致，有变化两处同改**。
 > 原则：**字段由表单模板驱动**，页面不得硬编码业务字段；新增 / 改字段 = 改模板 + 新 Flyway 迁移（种子）或字典维护页，不改页面代码。
-> §1 模板按版本读取与发布、§3 字段字典维护已随 E11-T01 / E11-T02 落地、§2 规则执行已随 E11-T04 落地、§2.4 条件显示与条件必填已随 E11-T03 落地（实现即定义）；其余路径 **推断，待确认**。
+> §1 模板按版本读取与发布、§3 字段字典维护已随 E11-T01 / E11-T02 落地、§2 规则执行已随 E11-T04 落地、§2.4 条件显示与条件必填已随 E11-T03 落地、§1.2 字段级变更历史已随 E11-T06 落地（实现即定义）；其余路径 **推断，待确认**。
 
 ## 1. 读取表单模板（E11-T02 已实现）
 
@@ -42,12 +42,40 @@ E11-T02 落地（A-NFR-002 / C-NFR-002「JSON 文档存储」）。数据记录�
 - 记录读写是**引擎服务**（无独立 HTTP 端点），业务接口（基线 E13、随访记录 E15、报告单映射 E16-T07、草稿 E25）复用同一服务与校验；患者域业务表（`pt_baseline_section` / `fu_record` 等）的 `data` JSON 列同样经 FormService 写入，见 OQ-63 ①。
 - 草稿不逐次写审计（技术方案「服务器自动保存」）；提交、修改已提交与覆盖他人版本的审计随业务接口（E15 / E25）。
 
+## 1.2 字段级变更历史（FieldHistoryService，E11-T06 已实现；A-PAT-005、C-PAT-011）
+
+「每个字段的修改都记录旧值、新值、修改人、时间、原因」。历史存租户库 `fe_field_history`（followup V32），
+**只追加**（无修改 / 删除接口）；与 FormService 记录读写同口径：**引擎服务、无独立 HTTP 端点**（OQ-63 ①），
+业务流程（提交 / 保存修改 E15 与 E25、导入更新 E18、报告单映射 E16-T07、派生重算 E11-T05）在自己的事务里调用
+（`@Transactional` REQUIRED 自动加入调用方事务，tech-plan §7「同一事务写 fe_field_history」）；
+「变更记录 / 操作日志」页（pages.md §4.1）的 HTTP 接口随患者域 E13 暴露。
+**草稿不写字段历史**（tech-plan §6「草稿语义」）——FormService 的草稿口（createRecord / saveRecord）不调用本服务。
+
+| 方法（`com.crdp.form.history.app.FieldHistoryService`） | 用途 |
+|---|---|
+| `logChanges(recordType, recordId, formCode, templateVersion, before, after, source, reason)` | 逐字段比较旧值与新值，一个字段一行（未变不写；行序 = 模板快照 sortNo），返回实际写下的改动 |
+| `logChange(recordType, recordId, formCode, templateVersion, fieldKey, oldValue, newValue, source, reason, triggerFields)` | 单字段留痕（系统重算带依赖来源字段、报告单映射、平台支持修正） |
+| `logClearedHidden(recordType, recordId, formCode, templateVersion, clearedValues)` | 隐藏字段清空留痕（§2.4）：旧值保留、新值为空、触发字段取 visibleWhen 引用的稳定键 |
+| `history(recordType, recordId[, fieldKey])` | 查询：按记录（可按字段过滤），新到旧，默认 200 条；`HistoryView` 含旧值、新值、来源（含中文标签）、触发字段、原因、操作人（id + 显示名快照）、时间（北京时间 ISO-8601） |
+
+- `recordType` + `recordId`（tech-plan §6 列定义）：`FE_RECORD`（引擎表单记录，常量 `FieldHistoryService.FORM_RECORD`）；
+  业务记录（`PT_BASELINE_SECTION` / `FU_RECORD` 等）随 E13 / E15 接入同一表。
+- `source`（tech-plan §6「来源」）：`USER` 用户 / `SYSTEM_RECALC` 系统重算 / `IMPORT` 导入 / `REPORT` 报告单 / `PLATFORM_SUPPORT` 平台支持。
+  USER / IMPORT / REPORT 须有医院会话（否则 40100，A-PAT-005「修改人」必填口径）；SYSTEM_RECALC 允许无会话
+  （定时作业无 SecurityContext，操作人记「系统重算」）；PLATFORM_SUPPORT 显示名追加「（平台支持）」，会话号关联随 E20 租户视角落地。
+- 值口径（与 fe_record.data 同一值编码）：旧值 / 新值存 JSON（新填旧值为 NULL、清空新值为 NULL）；比较**严格同型**
+  （1 与 true、`"1"` 与 1 算变化，与条件 DSL eq 同口径 OQ-65 ②），数值按值比较（170 与 170.0 不算变化），空值 = null / 空串 / 空数组（OQ-65 ①）。
+- 敏感字段不经表单 JSON（storage=encrypted 走实体加密列）；快照里标记敏感的键**防御性跳过**（不落明文历史）；
+  实体加密列字段的历史值加密随 E13 患者域接入在业务侧处理（tech-plan §7「敏感字段的历史值同样加密存储」）。
+- 入参校验 40001：`recordType` 必填 ≤32、`fieldKey` 必填 ≤32、`reason` ≤500、`triggerFields` 拼接 ≤255；`formCode + templateVersion` 版本快照不存在 40400。
+- 留痕行不另写平台审计——审计由业务操作（提交、导入等）记一条操作摘要（tech-plan §14「审计中另记一条操作摘要」）。
+
 ## 2. 规则执行（前后端一致，E11-T04 / E11-T03 已落地）
 
 - 校验类型：类型与范围（`hardRange` 不能保存、`softRange` 提示，A-FLD-003、C-FLD-007，已落地）、条件显示与条件必填（A-FLD-004、C-FLD-005，已落地，见 §2.4）、派生字段（A-FLD-005、C-FLD-006，随 E11-T05）、跨字段校验（A-FLD-006，已落地）。
 - 前端用 `packages/rules` 即时执行；后端在**提交 / 保存修改**时用同一份规则定义再执行一次（Java 端实现同语义，用共享测试用例 JSON 保证一致，见 §2.5 与 components.md §10.5）。
 - 草稿保存只做类型检查与**硬范围拦截**（tech-plan §6 写入闸门含范围），不做必填、条件与跨字段校验（技术方案“草稿语义”；草稿闸门不做条件求值——隐藏字段残留值照常查硬范围，提交时按 §2.4 掩蔽与清空）。
-- 条件变为不显示时，后端提交时清空该字段的值（`FormService.stripHiddenFields`，E11-T03 已落地，提交流程 E15 / E25 调用）；清空动作写 `fe_field_history` 随 E11-T06。
+- 条件变为不显示时，后端提交时清空该字段的值（`FormService.stripHiddenFields`，E11-T03 已落地，提交流程 E15 / E25 调用）；清空动作经 `FieldHistoryService.logClearedHidden` 写 `fe_field_history`（E11-T06 已落地，见 §1.2）。
 - 失败返回 42200：
 ```json
 { "code": 42200, "message": "表单校验未通过",
@@ -75,7 +103,7 @@ E11-T02 落地（A-NFR-002 / C-NFR-002「JSON 文档存储」）。数据记录�
 |---|---|---|
 | 草稿创建 / 保存（FormService.createRecord / saveRecord） | 类型 + 选项（40001）+ 硬范围（不做条件求值） | 硬范围违反 42200（fieldErrors），不落库 |
 | 提交 / 保存修改（业务接口 E15 / E25 调 `FormService.validateForSubmit(formCode, templateVersion, data[, context])`） | 全量：类型 + 硬范围 + 软范围 + 条件必填 + 跨字段（按 severity）；隐藏字段值掩蔽（§2.4） | 硬违反与必填缺失 42200；软命中**不拦截**，作为警告列表返回（调用方做确认流） |
-| 提交落库前（提交流程调 `FormService.stripHiddenFields(formCode, templateVersion, data, context)`） | 按当前答案求值 visibleWhen，移除隐藏字段残留值 | 返回清洗后 data 与被清空键（cleared-hidden 口径；写字段历史随 E11-T06） |
+| 提交落库前（提交流程调 `FormService.stripHiddenFields(formCode, templateVersion, data, context)`） | 按当前答案求值 visibleWhen，移除隐藏字段残留值 | 返回清洗后 data 与被清空键（cleared-hidden 口径；清洗前值交 `FieldHistoryService.logClearedHidden` 写 `fe_field_history`，E11-T06 已落地） |
 
 ### 2.4 条件显示与条件必填（fe_field.visible_when / required_when，E11-T03 / A-FLD-004、C-FLD-005）
 
