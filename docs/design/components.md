@@ -542,6 +542,7 @@ interface FormField {
   requiredWhen?: ConditionTree;
   derived?: { fn: 'DAYS_INCLUSIVE' | 'MINUTES_BETWEEN' | 'HOURS_BETWEEN_1DP' | 'BMI' | 'AGE_YEARS' | 'SUM' | 'YEARS_SINCE' | 'DURATION_YM' | 'CHANGE_PCT'; args: string[] };
   sensitive?: boolean;           // 敏感字段：服务端脱敏，表单内显示 MaskedField 只读
+  carryOver?: boolean;           // 带入上次值适用字段（A-FU-015 / C-FU-016，E11-T07）：设置项 true、测量值缺省；「带入上次值」按钮一键带入 previous 的值再修改
   storage: 'json' | 'column' | 'encrypted';
   help?: string;
   width?: 'number' | 'date' | 'select' | 'short' | 'long'; // 缺省按 type 推导（tokens.sizes.fieldWidth）
@@ -580,11 +581,13 @@ interface FormRendererProps {
 }
 // emits:
 //   update:modelValue(data)
-//   field-blur(key)                 — useAutoSave 本地草稿
+//   update:meta(meta)               — 「其他」说明等写入 data_meta
+//   fieldBlur(key)                  — useAutoSave 本地草稿（E11-T07 落地 camelCase；模板监听 @field-blur 等价）
+//   carryOver(keys)                 — 「带入上次值」按钮带入的字段键（E11-T07）
+//   clearedHidden(keys)             — 条件变为不显示时被清空的字段（同上 camelCase；后端提交时也会清空并写字段历史）
 //   progress(items: CategoryProgress[]) — 给 CategoryBar
 //   validate(result: { ok: boolean; missingRequired: Array<{ key: string; categoryKey: string }>; hardErrors: [...] })
 //   highlight(result: Array<{ key: string; categoryKey: string; ruleId: string; message: string }>)
-//   cleared-hidden(keys: string[])  — 条件变为不显示时被清空的字段（后端提交时也会清空并写字段历史）
 // expose: validate(): Promise<ValidateResult>; scrollTo(categoryKey): void; focusFirstError(): void
 ```
 
@@ -598,7 +601,7 @@ interface FormRendererProps {
 | 选项 | 单选：选项 ≤ 4 用 `a-radio-group`（按钮样式），否则 `a-select`（120–180px）；多选：`a-checkbox-group` 或 `a-select mode="multiple"`；互斥选项（“无”）选中时清除其他；“其他”需补充说明时出短文本 |
 | 条件显示 | 实时求值 `visibleWhen`；隐藏字段**不进 Tab 顺序**、不计完整度、值清空并 `cleared-hidden`；`requiredWhen` 动态加必填 * |
 | 派生字段 | 灰色文字 + 「自动计算 · 只读」chip，永不可编辑；来源缺失时允许手工录入并 `meta.manual = true`；依赖拓扑顺序实时重算（`packages/rules`） |
-| 上次值 | 字段下方 12px 次要色「上次 xx」；「历史」`a-popover`（手机底部抽屉）标题「最近 3 次（已提交记录，不含计划外与草稿）」，列「前 2 次 / 前 1 次 / 上次 / 本次」；没有对比规则的字段显示「仅显示上次值，无对比规则」 |
+| 上次值 | 字段下方 12px 次要色「上次 xx」；「历史」`a-popover`（手机底部抽屉）标题「最近 3 次（已提交记录，不含计划外与草稿）」，列「前 2 次 / 前 1 次 / 上次 / 本次」；没有对比规则的字段显示「仅显示上次值，无对比规则」；「带入上次值（日期）」按钮一键带入 `carryOver` 字段的 previous 值（E11-T07 / A-FU-015、C-FU-016），带入后浅色标出、改动即恢复 |
 | 对比标红 | `highlightEnabled` 时按 `compareRules` 实时求值；命中字段：红底 + 「▲」+ 规则说明（tooltip，如「射血分数下降：比上次下降 ≥ 10 个百分点；或超出提示范围 EF ＜ 40%（A-FU-027 / Q41，阈值可由租户管理员调整）」）；分组标题、锚点、CategoryBar 显示该组标红数；**不弹窗、不发通知、不拦提交**；C 脉宽不同追加「；脉宽不同，仅供参考」 |
 | 必填错误 | 红边框 + 「必填」；与标红靠形状区分 |
 | 报告单带入 | `meta.fromReport` 的字段：主色浅底 + 「报告单带入」chip |

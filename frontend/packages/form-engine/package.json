@@ -4,5 +4,15 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@crdp/api": "workspace:*",
+    "@crdp/rules": "workspace:*",
+    "@crdp/tokens": "workspace:*",
+    "ant-design-vue": "catalog:",
+    "vue": "catalog:"
+  },
+  "devDependencies": {
+    "@vue/test-utils": "catalog:"
   }
 }
