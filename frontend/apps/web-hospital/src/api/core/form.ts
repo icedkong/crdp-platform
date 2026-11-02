@@ -4,6 +4,7 @@
  * （显示名、帮助、单位、软范围、必填、选项、状态），键与编码在后端不可改。
  */
 import type {
+  FieldDictLogView,
   FormFieldDef,
   FormFieldUpdateRequest,
   FormSummary,
@@ -33,5 +34,12 @@ export function updateFormField(
   return requestClient.put<FormFieldDef>(
     apiPath(`/form/fields/${fieldKey}?formCode=${formCode}`),
     data,
+  );
+}
+
+/** 字段字典变更记录（A-FLD-009、C-FLD-009：倒序最近 100 条，前后值、操作人、时间）。 */
+export function listFormFieldLogs(formCode: string, fieldKey: string) {
+  return requestClient.get<FieldDictLogView[]>(
+    apiPath(`/form/fields/${fieldKey}/logs?formCode=${formCode}`),
   );
 }

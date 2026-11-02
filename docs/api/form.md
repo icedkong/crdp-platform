@@ -3,7 +3,7 @@
 > 后端：`crdp-form`（字段字典、表单模板、规则）；前端：`frontend/packages/form-engine`（`FormRenderer`）与 `frontend/packages/rules`（前后端共用的校验 / 派生规则，见技术方案 §15 前端结构）。
 > 契约基准：`docs/design/components.md` §10.1 的 `FormSchema` 类型 —— **本文件与之保持一致，有变化两处同改**。
 > 原则：**字段由表单模板驱动**，页面不得硬编码业务字段；新增 / 改字段 = 改模板 + 新 Flyway 迁移（种子）或字典维护页，不改页面代码。
-> §1 模板按版本读取与发布、§3 字段字典维护已随 E11-T01 / E11-T02 落地、§2 规则执行已随 E11-T04 落地、§2.4 条件显示与条件必填已随 E11-T03 落地、§1.2 字段级变更历史已随 E11-T06 落地、§2.6 派生函数库已随 E11-T05 落地（实现即定义）；其余路径 **推断，待确认**。
+> §1 模板按版本读取与发布、§3 字段字典维护已随 E11-T01 / E11-T02 落地、§2 规则执行已随 E11-T04 落地、§2.4 条件显示与条件必填已随 E11-T03 落地、§1.2 字段级变更历史已随 E11-T06 落地、§2.6 派生函数库已随 E11-T05 落地、§3 变更记录已随 E11-T08 落地（实现即定义）；其余路径 **推断，待确认**。
 
 ## 1. 读取表单模板（E11-T02 已实现）
 
@@ -153,14 +153,14 @@ ENABLED/DISABLED，停用不删除；**模板下发与校验只取启用字段**
 |---|---|---|---|
 | GET | `/api/hospital/form/fields?formCode=&categoryKey=` | `followup:field:edit` | 按分类列字段；行含 `key/code/label/categoryKey/categoryLabel/type/unit/decimals/hardRange/softRange/options/required/visibleWhen/requiredWhen/derivedDef/sensitive/storage/help/sortNo/status/updatedAt`（`categoryKey` 可省略 = 全部分类） |
 | PUT | `/api/hospital/form/fields/{key}?formCode=` | `followup:field:edit` | 全量覆盖可维护列：显示名、帮助文字、单位显示、`softRange`、必填、**状态（启停）**、选项（`options[]`：`code` 已存在为改显示名 / 排序 / 停用，不存在为新增；不能删除已用选项、不能改选项 `code`）；**不能改** `key`、`code`、类型、存储方式、敏感标记、`hardRange`（请求体不携带这些列，A-FLD-002/008）。写审计 `FIELD_DICT_UPDATE`（前后值，启停在描述点明）。校验失败 40001（显示名必填 ≤128、软范围 min≤max、状态只认 ENABLED/DISABLED、选项编码必填且不重复）；字段 / 表单不存在 40400 |
-| GET | `/api/hospital/form/fields/{key}/logs` | `followup:field:edit` | 字典变更记录（A-FLD-009、C-FLD-009；随 E11-T08） |
+| GET | `/api/hospital/form/fields/{key}/logs` | `followup:field:edit` | **E11-T08 已实现**。字段字典变更记录（A-FLD-009、C-FLD-009）：`[{id,formCode,fieldKey,action(FIELD_UPDATE),beforeJson,afterJson,operatorId,operatorName(联查 sys_user),createdAt}]`，倒序最近 100 条；每次「维护字段」（含启停与选项调整）写一条 `fe_field_dict_log`（租户库 followup V35）与 FIELD_DICT_UPDATE 审计双写；字段 / 表单不存在 40400 |
 | POST | `/api/hospital/form/forms/{code}/publish` | `followup:field:edit` | **E11-T02 已实现**：无请求体；把当前分类与启用字段固化成新版本快照并前移 `currentVersion`，响应 `{ code, name, version, fieldCount, publishedAt }`。没有字典修改也允许发布（版本是显式动作）；并发发布后到者 40900。写审计 `FORM_PUBLISH`（前后版本与字段数）。停用表单发布 40001；表单不存在 40400 |
 
 不做：医院自助新增字段（A-FLD-010）、通用表单设计器（A-FLD-011）——延后（见 `docs/tasks/tasks.md`）。C-FLD-008 “新增字段”指由实施通过迁移新增，不提供页面。页面 `/system/field`（菜单 `FollowupField`，平台库迁移 V35）。
 
 ## 4. 业务字典（A-FLD-012、C-FLD-002/003）
 
-表单选项可引用租户字典（`optionSource: { dict: 'pacing_mode' }`，推断，待确认），由 `system.md` §4 维护；后端在下发 schema 时展开为 `optionSet`。C 的统一起搏模式字典（C-FLD-003）为预置字典。
+E11-T08 已落地业务字典的维护能力（取值新增、停用、排序、**别名**与变更记录，接口见 `system.md` §4；「患者类型」「术者」平台预置字典见平台库 V36）。表单选项引用租户字典（`optionSource: { dict: 'pacing_mode' }`，后端下发 schema 时展开为 `optionSet`）仍为**推断，待确认**：fe_field 加 `dict_code` 列与展开逻辑随 E21-T04 / E23-T01 字段录入配套落地（见 OQ-69）；C 的统一起搏模式字典（C-FLD-003）为预置字典，其取值随 E21-T04。
 
 ## 5. 租户配置模板（A-FLD-014）
 

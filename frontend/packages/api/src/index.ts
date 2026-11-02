@@ -105,8 +105,11 @@ export type {
 } from './brand';
 
 export {
+  DICT_LOG_ACTION_TEXT,
   DICT_SOURCE_TEXT,
   DICT_STATUS_TEXT,
+  dictLogActionText,
+  dictLogTargetText,
   dictSourceText,
   dictStatusText,
   PARAM_LOG_ACTION_TEXT,
@@ -129,6 +132,7 @@ export type {
   PlatformParamView,
   TenantDictItemSaveRequest,
   TenantDictItemView,
+  TenantDictLogView,
   TenantDictSaveRequest,
   TenantDictTypeView,
   TenantParamLogView,
@@ -184,6 +188,7 @@ export {
 } from './form';
 export type {
   FieldDerivedDef,
+  FieldDictLogView,
   FieldDictStatus,
   FieldOption,
   FieldOptionUpdate,

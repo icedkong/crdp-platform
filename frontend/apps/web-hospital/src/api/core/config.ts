@@ -1,6 +1,7 @@
 import type {
   TenantDictItemSaveRequest,
   TenantDictItemView,
+  TenantDictLogView,
   TenantDictSaveRequest,
   TenantDictTypeView,
   TenantParamLogView,
@@ -41,11 +42,18 @@ export function updateDict(code: string, data: TenantDictSaveRequest) {
   );
 }
 
-/** 新增本院自有项（加进平台字典或本院字典）。 */
+/** 新增本院自有项（加进平台字典或本院字典；aliases 为别名 CSV，A-FLD-012）。 */
 export function createDictItem(code: string, data: TenantDictItemSaveRequest) {
   return requestClient.post<TenantDictItemView[]>(
     apiPath(`/system/dicts/${code}/items`),
     data,
+  );
+}
+
+/** 字典变更记录（A-FLD-009、C-FLD-009：倒序最近 100 条，前后值、操作人、时间）。 */
+export function listDictLogs(code: string) {
+  return requestClient.get<TenantDictLogView[]>(
+    apiPath(`/system/dicts/${code}/logs`),
   );
 }
 

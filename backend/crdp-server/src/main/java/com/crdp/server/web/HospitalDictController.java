@@ -19,6 +19,8 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * E06-T10 / PLT-CFG-002：医院端「机构设置 · 租户字典」API（docs/api/system.md §4，pages.md §10）。 查看与维护同码
  * tenant:dict:edit。继承平台字典：可新增本院自有项或停用 / 恢复平台项（不能改平台项文字与 排序）；本院自有字典可建可改。写操作写租户审计（PLT-CFG-011）。
+ * E11-T08 / A-FLD-012、A-FLD-009、C-FLD-002、C-FLD-009：本院自有项支持别名（历史写法映射与导入匹配）； 增改停用恢复写 cfg_dict_log
+ * 变更记录，GET /{code}/logs 查询（前后值、操作人、时间）。
  */
 @Tag(name = "医院端租户字典")
 @RestController
@@ -41,6 +43,7 @@ public class HospitalDictController {
     public record ItemRequest(
             @Size(max = 64) String itemCode,
             @Size(max = 128) String label,
+            @Size(max = 255) String aliases,
             Integer sortNo,
             String status) {}
 
@@ -52,12 +55,22 @@ public class HospitalDictController {
     }
 
     @Operation(
-            summary = "字典项列表（生效集）：平台项 − 本院停用 + 本院自有项；平台项 editable=false" + "（只能停用 / 恢复），本院自有项可维护")
+            summary =
+                    "字典项列表（生效集）：平台项 − 本院停用 + 本院自有项；平台项 editable=false"
+                            + "（只能停用 / 恢复），本院自有项可维护（含别名）")
     @GetMapping("/{code}/items")
     @RequiresPermission("tenant:dict:edit")
     public ApiResponse<List<TenantDictService.DictItemView>> items(
             @PathVariable("code") String code) {
         return ApiResponse.ok(service.items(code));
+    }
+
+    @Operation(summary = "字典变更记录（A-FLD-009、C-FLD-009）：倒序最近 100 条，含前后值快照、操作人与时间；" + "未知字典 40400")
+    @GetMapping("/{code}/logs")
+    @RequiresPermission("tenant:dict:edit")
+    public ApiResponse<List<TenantDictService.DictLogView>> logs(
+            @PathVariable("code") String code) {
+        return ApiResponse.ok(service.logs(code));
     }
 
     @Operation(summary = "新建本院字典：编码本院唯一（含与平台字典冲突 40902），创建后不可改")
@@ -82,7 +95,7 @@ public class HospitalDictController {
                                 request.name(), request.description(), request.status())));
     }
 
-    @Operation(summary = "新增本院自有项（加进平台字典或本院字典）：项编码在生效集内唯一（40902）")
+    @Operation(summary = "新增本院自有项（加进平台字典或本院字典）：项编码在生效集内唯一（40902）；" + "别名为历史写法映射（A-FLD-012）")
     @PostMapping("/{code}/items")
     @RequiresPermission("tenant:dict:edit")
     public ApiResponse<List<TenantDictService.DictItemView>> addItem(
@@ -91,10 +104,13 @@ public class HospitalDictController {
                 service.addItem(
                         code,
                         new TenantDictService.ItemSave(
-                                request.itemCode(), request.label(), request.sortNo())));
+                                request.itemCode(),
+                                request.label(),
+                                request.aliases(),
+                                request.sortNo())));
     }
 
-    @Operation(summary = "维护字典项：本院自有项可改文字 / 排序 / 停用；平台项只能停用 / 恢复" + "（改文字与排序 40001）")
+    @Operation(summary = "维护字典项：本院自有项可改文字 / 别名 / 排序 / 停用；平台项只能停用 / 恢复" + "（改文字、排序或别名 40001）")
     @PutMapping("/{code}/items/{itemCode}")
     @RequiresPermission("tenant:dict:edit")
     public ApiResponse<List<TenantDictService.DictItemView>> updateItem(
@@ -106,6 +122,9 @@ public class HospitalDictController {
                         code,
                         itemCode,
                         new TenantDictService.ItemUpdate(
-                                request.label(), request.sortNo(), request.status())));
+                                request.label(),
+                                request.aliases(),
+                                request.sortNo(),
+                                request.status())));
     }
 }

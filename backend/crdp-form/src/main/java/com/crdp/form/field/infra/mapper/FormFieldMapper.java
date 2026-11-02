@@ -137,4 +137,52 @@ public interface FormFieldMapper {
             @Param("sortNo") int sortNo,
             @Param("status") String status,
             @Param("updatedBy") Long updatedBy);
+
+    // --------------------------------------------------------------- 字段字典变更记录（E11-T08 /
+    // A-FLD-009、C-FLD-009）
+
+    /** 追加一条字段字典变更记录（每次「维护字段」一条，含字段启停与选项调整；只追加）。 */
+    @Insert(
+            """
+            INSERT INTO fe_field_dict_log
+              (form_code, field_key, action, before_json, after_json, operator_id)
+            VALUES (#{formCode}, #{fieldKey}, #{action}, #{beforeJson}, #{afterJson}, #{operatorId})
+            """)
+    int insertFieldDictLog(
+            @Param("formCode") String formCode,
+            @Param("fieldKey") String fieldKey,
+            @Param("action") String action,
+            @Param("beforeJson") String beforeJson,
+            @Param("afterJson") String afterJson,
+            @Param("operatorId") Long operatorId);
+
+    /** 字段字典变更记录（倒序最近 100 条；operatorName 联查 sys_user）。 */
+    @Select(
+            """
+            SELECT l.id, l.form_code AS formCode, l.field_key AS fieldKey, l.action,
+                   l.before_json AS beforeJson, l.after_json AS afterJson,
+                   l.operator_id AS operatorId, u.display_name AS operatorName,
+                   l.created_at AS createdAt
+            FROM fe_field_dict_log l
+            LEFT JOIN sys_user u ON u.id = l.operator_id
+            WHERE l.form_code = #{formCode} AND l.field_key = #{fieldKey}
+            ORDER BY l.id DESC
+            LIMIT #{limit}
+            """)
+    List<FieldDictLogRow> findFieldDictLogs(
+            @Param("formCode") String formCode,
+            @Param("fieldKey") String fieldKey,
+            @Param("limit") int limit);
+
+    /** fe_field_dict_log 行（只追加；操作人姓名联查 sys_user.display_name）。 */
+    record FieldDictLogRow(
+            long id,
+            String formCode,
+            String fieldKey,
+            String action,
+            String beforeJson,
+            String afterJson,
+            Long operatorId,
+            String operatorName,
+            java.time.LocalDateTime createdAt) {}
 }

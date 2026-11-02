@@ -9,6 +9,7 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
@@ -601,5 +602,95 @@ class FieldDictionaryServiceTest {
         assertEquals(1, forms.get(0).currentVersion());
 
         lenient().when(mapper.findForm(anyString())).thenReturn(null);
+    }
+
+    // ---------------------------------------------------------------
+    // E11-T08：变更记录（A-FLD-009、C-FLD-009）
+
+    /** 维护（含停用）写 fe_field_dict_log：前后值快照 + 操作人（与 FIELD_DICT_UPDATE 审计双写）。 */
+    @Test
+    void updateWritesFieldDictChangeLog() {
+        FieldRow row = smokingRow();
+        FieldRow disabled =
+                new FieldRow(
+                        10L,
+                        "A_BASELINE",
+                        "f010",
+                        "smoking_history",
+                        "吸烟史",
+                        "basic_info",
+                        "radio",
+                        null,
+                        null,
+                        null,
+                        null,
+                        "yesno",
+                        true,
+                        null,
+                        null,
+                        null,
+                        false,
+                        "json",
+                        null,
+                        40,
+                        "DISABLED",
+                        7L,
+                        LocalDateTime.of(2027, 2, 15, 9, 30));
+        when(mapper.findForm("A_BASELINE")).thenReturn(BASELINE);
+        when(mapper.findField("A_BASELINE", "f010")).thenReturn(row, disabled);
+        when(mapper.findOptions("yesno")).thenReturn(List.of());
+
+        service.update(
+                "A_BASELINE",
+                "f010",
+                new FieldDictionaryService.FieldUpdate(
+                        "吸烟史", null, null, null, true, "DISABLED", null));
+
+        verify(mapper)
+                .insertFieldDictLog(
+                        eq("A_BASELINE"),
+                        eq("f010"),
+                        eq("FIELD_UPDATE"),
+                        argThat(before -> before != null && before.contains("\"ENABLED\"")),
+                        argThat(after -> after != null && after.contains("\"DISABLED\"")),
+                        eq(7L));
+    }
+
+    /** 变更记录查询（倒序，含操作人姓名）；字段 / 表单不存在 40400。 */
+    @Test
+    void logsReturnsRecordsAndUnknownFieldIs40400() {
+        when(mapper.findForm("A_BASELINE")).thenReturn(BASELINE);
+        when(mapper.findField("A_BASELINE", "f010")).thenReturn(smokingRow());
+        when(mapper.findFieldDictLogs("A_BASELINE", "f010", 100))
+                .thenReturn(
+                        List.of(
+                                new FormFieldMapper.FieldDictLogRow(
+                                        5L,
+                                        "A_BASELINE",
+                                        "f010",
+                                        "FIELD_UPDATE",
+                                        "{\"status\":\"ENABLED\"}",
+                                        "{\"status\":\"DISABLED\"}",
+                                        7L,
+                                        "张医生（示例）",
+                                        LocalDateTime.of(2027, 3, 1, 9, 0))));
+
+        List<FieldDictionaryService.FieldLogView> logs = service.logs("A_BASELINE", "f010");
+
+        assertEquals(1, logs.size());
+        FieldDictionaryService.FieldLogView view = logs.get(0);
+        assertEquals("FIELD_UPDATE", view.action());
+        assertEquals("张医生（示例）", view.operatorName(), "操作人姓名（sys_user 联查）");
+        assertNotNull(view.createdAt());
+        assertTrue(view.afterJson().contains("DISABLED"));
+
+        when(mapper.findField("A_BASELINE", "f999")).thenReturn(null);
+        ApiException missing =
+                assertThrows(ApiException.class, () -> service.logs("A_BASELINE", "f999"));
+        assertEquals(40400, missing.code());
+
+        when(mapper.findForm("NOPE")).thenReturn(null);
+        ApiException noForm = assertThrows(ApiException.class, () -> service.logs("NOPE", "f010"));
+        assertEquals(40400, noForm.code());
     }
 }

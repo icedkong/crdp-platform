@@ -6,6 +6,8 @@ import com.crdp.framework.security.CurrentSession;
 import com.crdp.framework.web.ApiException;
 import com.crdp.system.config.PlatformConfigPort;
 import com.crdp.system.infra.mapper.ConfigMapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
@@ -13,7 +15,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * E06-T10 / PLT-CFG-002：租户字典（租户库 cfg_dict / cfg_dict_item，权限 tenant:dict:edit）。
+ * E06-T10 / PLT-CFG-002：租户字典（租户库 cfg_dict / cfg_dict_item，权限 tenant:dict:edit）。 E11-T08 /
+ * A-FLD-012、C-FLD-002：业务字典（患者类型、术者与 C 的起搏器类型等）走同一模型——租户管理员 维护取值（新增、停用、排序、<b>别名</b>，aliases
+ * 供历史写法映射与导入匹配）。
  *
  * <p>继承平台字典、增量覆盖（platform-spec §10「租户字典：继承平台字典，可新增租户自有项或停用平台项」）：
  *
@@ -24,7 +28,9 @@ import org.springframework.transaction.annotation.Transactional;
  *   <li>租户不能修改平台字典类型（名称 / 状态），只能维护自有字典。
  * </ul>
  *
- * <p>写操作写租户审计（DICT_CREATE / DICT_UPDATE / DICT_ITEM_ADD / DICT_ITEM_UPDATE， PLT-CFG-011）。
+ * <p>写操作写租户审计（DICT_CREATE / DICT_UPDATE / DICT_ITEM_ADD / DICT_ITEM_UPDATE， PLT-CFG-011），并写
+ * cfg_dict_log 变更记录（A-FLD-009、C-FLD-009「记录每次字典调整的前后值、操作人、时间」； 与 cfg_param_log
+ * 同款双写，停用不删除——停用项不再出现在下拉、历史值保留照常显示）。
  */
 @Service
 public class TenantDictService {
@@ -38,10 +44,15 @@ public class TenantDictService {
     private static final int NAME_MAX = 128;
     private static final int LABEL_MAX = 128;
     private static final int DESC_MAX = 255;
+    private static final int ALIASES_MAX = 255;
+
+    /** 变更记录查询上限（与 TenantParamService.LOG_LIMIT 同口径：倒序最近 100 条）。 */
+    private static final int LOG_LIMIT = 100;
 
     private final PlatformConfigPort platformConfig;
     private final ConfigMapper mapper;
     private final AuditLogger audit;
+    private final ObjectMapper json = new ObjectMapper();
 
     public TenantDictService(
             PlatformConfigPort platformConfig, ConfigMapper mapper, AuditLogger audit) {
@@ -64,10 +75,11 @@ public class TenantDictService {
             int disabledPlatformCount,
             String updatedAt) {}
 
-    /** 字典项视图：平台项 editable=false（只能停用 / 恢复），本院自有项可维护文字与排序。 */
+    /** 字典项视图：平台项 editable=false（只能停用 / 恢复），本院自有项可维护文字、别名与排序。 */
     public record DictItemView(
             String itemCode,
             String label,
+            String aliases,
             int sortNo,
             String status,
             String source,
@@ -80,11 +92,23 @@ public class TenantDictService {
     /** 维护本院字典（名称 / 说明 / 停用）。 */
     public record DictUpdate(String name, String description, String status) {}
 
-    /** 新增字典项（本院自有项，加进平台字典或本院字典）。 */
-    public record ItemSave(String itemCode, String label, Integer sortNo) {}
+    /** 新增字典项（本院自有项，加进平台字典或本院字典）；别名为 CSV（历史写法映射，A-FLD-012）。 */
+    public record ItemSave(String itemCode, String label, String aliases, Integer sortNo) {}
 
-    /** 维护字典项：本院自有项可改文字与排序；平台项只认 status（停用 / 恢复）。 */
-    public record ItemUpdate(String label, Integer sortNo, String status) {}
+    /** 维护字典项：本院自有项可改文字 / 别名 / 排序；平台项只认 status（停用 / 恢复）。 */
+    public record ItemUpdate(String label, String aliases, Integer sortNo, String status) {}
+
+    /** 字典变更记录行（A-FLD-009：前后值、操作人、时间；倒序）。 */
+    public record DictLogView(
+            long id,
+            String dictCode,
+            String itemCode,
+            String action,
+            String beforeJson,
+            String afterJson,
+            Long operatorId,
+            String operatorName,
+            String createdAt) {}
 
     // ---------------------------------------------------------------- 读取
 
@@ -157,6 +181,29 @@ public class TenantDictService {
         return merged;
     }
 
+    /**
+     * 字典变更记录（A-FLD-009、C-FLD-009）：倒序最近 {@value LOG_LIMIT} 条，含前后值快照、操作人（联查 sys_user 姓名）与时间；未知字典
+     * 40400。
+     */
+    public List<DictLogView> logs(String code) {
+        requireDict(code);
+        List<DictLogView> views = new ArrayList<>();
+        for (ConfigMapper.DictLogRow row : mapper.listDictLogs(code, LOG_LIMIT)) {
+            views.add(
+                    new DictLogView(
+                            row.getId(),
+                            row.getDictCode(),
+                            row.getItemCode(),
+                            row.getAction(),
+                            row.getBeforeJson(),
+                            row.getAfterJson(),
+                            row.getOperatorId(),
+                            row.getOperatorName(),
+                            TenantTime.format(row.getCreatedAt())));
+        }
+        return views;
+    }
+
     // ---------------------------------------------------------------- 字典类型维护
 
     /** 新建本院字典：编码本院唯一（含与平台字典冲突，40902），创建后不可改。 */
@@ -188,6 +235,7 @@ public class TenantDictService {
                         "CREATE",
                         "cfg_dict:" + code,
                         "租户字典已创建：" + code + "（" + name + "）"));
+        appendLog(code, null, "DICT_CREATE", null, dictSnapshot(row));
         return viewOf(code);
     }
 
@@ -204,6 +252,7 @@ public class TenantDictService {
         if (row == null) {
             throw new ApiException(404, 40400, "字典不存在");
         }
+        String beforeJson = dictSnapshot(row);
         row.setName(requireName(update.name()));
         row.setDescription(optionalLength(update.description(), DESC_MAX, "说明"));
         String status = statusOf(update.status());
@@ -216,6 +265,7 @@ public class TenantDictService {
                         "UPDATE",
                         "cfg_dict:" + code,
                         "租户字典已更新：" + code + "，状态=" + status));
+        appendLog(code, null, "DICT_UPDATE", beforeJson, dictSnapshot(row));
         return viewOf(code);
     }
 
@@ -242,11 +292,13 @@ public class TenantDictService {
         if (label.length() > LABEL_MAX) {
             throw bad("显示文字不能超过 " + LABEL_MAX + " 个字符");
         }
+        String aliases = aliasesOf(save.aliases());
         int sortNo = sortNo(save.sortNo());
         ConfigMapper.ItemRow row = new ConfigMapper.ItemRow();
         row.setDictCode(dictCode);
         row.setItemCode(itemCode);
         row.setLabel(label);
+        row.setAliases(aliases);
         row.setSortNo(sortNo);
         row.setSource("TENANT");
         row.setStatus("ENABLED");
@@ -259,10 +311,13 @@ public class TenantDictService {
                         "CREATE",
                         "cfg_dict_item:" + dictCode + ":" + itemCode,
                         "租户字典项已新增：" + dictCode + "/" + itemCode + "（" + label + "）"));
+        appendLog(dictCode, itemCode, "ITEM_ADD", null, itemSnapshot(dictCode, row));
         return items(dictCode);
     }
 
-    /** 维护字典项：本院自有项可改文字 / 排序 / 停用； 平台项只能停用 / 恢复（改文字与排序 40001， PLT-CFG-002「租户不能删除或修改平台字典项，只能停用」）。 */
+    /**
+     * 维护字典项：本院自有项可改文字 / 别名 / 排序 / 停用； 平台项只能停用 / 恢复（改文字与排序 40001， PLT-CFG-002「租户不能删除或修改平台字典项，只能停用」）。
+     */
     @Transactional
     public List<DictItemView> updateItem(String dictCode, String itemCode, ItemUpdate update) {
         if (update == null) {
@@ -280,16 +335,18 @@ public class TenantDictService {
         if (platformDict != null
                 && platformDict.item(itemCode).isPresent()
                 && (row == null || "PLATFORM".equals(row.getSource()))) {
-            // 平台项：只允许停用 / 恢复（落 cfg_dict_item 标记行，label 不落库）
-            if (update.label() != null || update.sortNo() != null) {
-                throw bad("平台字典项不能修改文字或排序，只能停用 / 恢复");
+            // 平台项：只允许停用 / 恢复（落 cfg_dict_item 标记行，label 不落库；别名同文字不可改）
+            if (update.label() != null || update.sortNo() != null || update.aliases() != null) {
+                throw bad("平台字典项不能修改文字、排序或别名，只能停用 / 恢复");
             }
+            PlatformConfigPort.PlatformDictItem def = platformDict.item(itemCode).orElseThrow();
+            String beforeJson = platformItemSnapshot(def, markerStatusOf(row, def));
             if (row == null) {
                 row = new ConfigMapper.ItemRow();
                 row.setDictCode(dictCode);
                 row.setItemCode(itemCode);
                 row.setLabel(null);
-                row.setSortNo(platformDict.item(itemCode).orElseThrow().sortNo());
+                row.setSortNo(def.sortNo());
                 row.setSource("PLATFORM");
                 row.setStatus(status);
                 row.setUpdatedBy(operator());
@@ -306,6 +363,12 @@ public class TenantDictService {
                             "UPDATE",
                             "cfg_dict_item:" + dictCode + ":" + itemCode,
                             "平台字典项在本院已" + ("DISABLED".equals(status) ? "停用" : "恢复")));
+            appendLog(
+                    dictCode,
+                    itemCode,
+                    "ITEM_UPDATE",
+                    beforeJson,
+                    platformItemSnapshot(def, status));
             return items(dictCode);
         }
 
@@ -317,7 +380,9 @@ public class TenantDictService {
             if (label.length() > LABEL_MAX) {
                 throw bad("显示文字不能超过 " + LABEL_MAX + " 个字符");
             }
+            String beforeJson = itemSnapshot(dictCode, row);
             row.setLabel(label);
+            row.setAliases(aliasesOf(update.aliases()));
             row.setSortNo(sortNo(update.sortNo()));
             row.setStatus(status);
             row.setUpdatedBy(operator());
@@ -329,9 +394,100 @@ public class TenantDictService {
                             "UPDATE",
                             "cfg_dict_item:" + dictCode + ":" + itemCode,
                             "租户字典项已更新：" + dictCode + "/" + itemCode + "，状态=" + status));
+            appendLog(dictCode, itemCode, "ITEM_UPDATE", beforeJson, itemSnapshot(dictCode, row));
             return items(dictCode);
         }
         throw new ApiException(404, 40400, "字典项不存在");
+    }
+
+    // ---------------------------------------------------------------- 变更记录（A-FLD-009、C-FLD-009）
+
+    /** 字典行快照（变更记录用）。 */
+    private String dictSnapshot(ConfigMapper.DictRow row) {
+        return writeJson(
+                java.util.Map.of(
+                        "code",
+                        row.getCode() == null ? "" : row.getCode(),
+                        "name",
+                        row.getName() == null ? "" : row.getName(),
+                        "description",
+                        row.getDescription() == null ? "" : row.getDescription(),
+                        "status",
+                        row.getStatus() == null ? "" : row.getStatus()));
+    }
+
+    /** 本院自有项快照（变更记录用；label / 别名 / 排序 / 状态都在）。 */
+    private String itemSnapshot(String dictCode, ConfigMapper.ItemRow row) {
+        return writeJson(
+                java.util.Map.of(
+                        "dictCode",
+                        dictCode,
+                        "itemCode",
+                        row.getItemCode(),
+                        "label",
+                        row.getLabel() == null ? "" : row.getLabel(),
+                        "aliases",
+                        row.getAliases() == null ? "" : row.getAliases(),
+                        "sortNo",
+                        row.getSortNo(),
+                        "status",
+                        row.getStatus() == null ? "" : row.getStatus(),
+                        "source",
+                        "TENANT"));
+    }
+
+    /** 平台项快照（本院视角状态 = 平台状态叠加本院停用标记；文字与排序取平台定义）。 */
+    private String platformItemSnapshot(
+            PlatformConfigPort.PlatformDictItem item, String effectiveStatus) {
+        return writeJson(
+                java.util.Map.of(
+                        "itemCode", item.itemCode(),
+                        "label", item.label(),
+                        "sortNo", item.sortNo(),
+                        "status", effectiveStatus,
+                        "source", "PLATFORM"));
+    }
+
+    /** 平台项在本院的当前生效状态（有停用标记行取标记，否则取平台状态）。 */
+    private String markerStatusOf(
+            ConfigMapper.ItemRow marker, PlatformConfigPort.PlatformDictItem def) {
+        if (marker != null && "DISABLED".equals(marker.getStatus())) {
+            return "DISABLED";
+        }
+        return def.status();
+    }
+
+    /** 追加一条变更记录（前后值 + 操作人；A-FLD-009）。 */
+    private void appendLog(
+            String dictCode, String itemCode, String action, String before, String after) {
+        ConfigMapper.DictLogRow row = new ConfigMapper.DictLogRow();
+        row.setDictCode(dictCode);
+        row.setItemCode(itemCode);
+        row.setAction(action);
+        row.setBeforeJson(before);
+        row.setAfterJson(after);
+        row.setOperatorId(operator());
+        mapper.insertDictLog(row);
+    }
+
+    /** 别名：去空白、超长 40001；空 → null（A-FLD-012）。 */
+    private static String aliasesOf(String raw) {
+        String value = trim(raw);
+        if (value == null) {
+            return null;
+        }
+        if (value.length() > ALIASES_MAX) {
+            throw bad("别名不能超过 " + ALIASES_MAX + " 个字符");
+        }
+        return value;
+    }
+
+    private String writeJson(Object value) {
+        try {
+            return json.writeValueAsString(value);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("字典变更记录序列化失败", e);
+        }
     }
 
     // ---------------------------------------------------------------- 私有
@@ -361,6 +517,7 @@ public class TenantDictService {
                         new DictItemView(
                                 item.itemCode(),
                                 item.label(),
+                                null,
                                 item.sortNo(),
                                 status,
                                 "PLATFORM",
@@ -376,6 +533,7 @@ public class TenantDictService {
                     new DictItemView(
                             row.getItemCode(),
                             row.getLabel(),
+                            row.getAliases(),
                             row.getSortNo(),
                             row.getStatus(),
                             "TENANT",

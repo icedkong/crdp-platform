@@ -32,7 +32,9 @@ import org.springframework.transaction.annotation.Transactional;
  * （A-FLD-002）：显示名租户可调，选项页面显示显示名、数据库存编码。字段可启停：停用不删除，模板下发与 校验都只取启用字段（E11-T02 的 FormService 读取时过滤）。
  *
  * <p>维护范围（form.md §3）：显示名、帮助说明、单位显示、软范围（提示范围）、必填、选项（显示名 / 排序 / 停用 /
- * 新增，不能删除、不能改选项编码）、状态（启停）。写操作写租户审计 FIELD_DICT_UPDATE（含前后值； 状态启停在描述中单独点明，AGENTS.md 规则 4「状态变更写审计」）。
+ * 新增，不能删除、不能改选项编码）、状态（启停）。写操作写租户审计 FIELD_DICT_UPDATE（含前后值； 状态启停在描述中单独点明，AGENTS.md 规则 4「状态变更写审计」），并写
+ * fe_field_dict_log 变更记录（E11-T08 / A-FLD-009、C-FLD-009：每次字典调整的前后值、操作人、 时间；与 cfg_param_log
+ * 同款双写）。停用选项不删除——schema 下发带停用标记（下拉不再出现），历史记录的值 照常显示（C-FLD-009）。
  */
 @Service
 public class FieldDictionaryService {
@@ -40,6 +42,9 @@ public class FieldDictionaryService {
     private static final int LABEL_MAX = 128;
     private static final int HELP_MAX = 500;
     private static final int UNIT_MAX = 32;
+
+    /** 变更记录查询上限（倒序最近 100 条，与 TenantDictService / TenantParamService 同口径）。 */
+    private static final int LOG_LIMIT = 100;
 
     private final FormFieldMapper mapper;
     private final AuditLogger audit;
@@ -107,6 +112,18 @@ public class FieldDictionaryService {
             Boolean required,
             String status,
             List<OptionUpdate> options) {}
+
+    /** 字段字典变更记录行（A-FLD-009、C-FLD-009：前后值、操作人、时间；倒序）。 */
+    public record FieldLogView(
+            long id,
+            String formCode,
+            String fieldKey,
+            String action,
+            String beforeJson,
+            String afterJson,
+            Long operatorId,
+            String operatorName,
+            String createdAt) {}
 
     // ---------------------------------------------------------------- 读取
 
@@ -191,7 +208,37 @@ public class FieldDictionaryService {
                         .beforeJson(writeJson(before))
                         .afterJson(writeJson(view))
                         .build());
+        // E11-T08 / A-FLD-009：变更记录（前后值 + 操作人 + 时间），与审计双写（同 cfg_param_log 口径）
+        mapper.insertFieldDictLog(
+                formCode, fieldKey, "FIELD_UPDATE", writeJson(before), writeJson(view), operator);
         return view;
+    }
+
+    /**
+     * 字段字典变更记录（A-FLD-009、C-FLD-009）：倒序最近 {@value LOG_LIMIT} 条，含前后值快照、 操作人（联查 sys_user 姓名）与时间；字段 /
+     * 表单不存在 40400。
+     */
+    public List<FieldLogView> logs(String formCode, String fieldKey) {
+        requireForm(formCode);
+        if (mapper.findField(formCode, fieldKey) == null) {
+            throw new ApiException(404, 40400, "字段不存在");
+        }
+        List<FieldLogView> views = new ArrayList<>();
+        for (FormFieldMapper.FieldDictLogRow row :
+                mapper.findFieldDictLogs(formCode, fieldKey, LOG_LIMIT)) {
+            views.add(
+                    new FieldLogView(
+                            row.id(),
+                            row.formCode(),
+                            row.fieldKey(),
+                            row.action(),
+                            row.beforeJson(),
+                            row.afterJson(),
+                            row.operatorId(),
+                            row.operatorName(),
+                            Time.format(row.createdAt())));
+        }
+        return views;
     }
 
     // ---------------------------------------------------------------- 选项维护

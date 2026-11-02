@@ -57,7 +57,7 @@ public interface ConfigMapper {
 
     @Select(
             """
-            SELECT id, dict_code AS dictCode, item_code AS itemCode, label, sort_no AS sortNo,
+            SELECT id, dict_code AS dictCode, item_code AS itemCode, label, aliases, sort_no AS sortNo,
                    source, status, updated_by AS updatedBy, updated_at AS updatedAt
             FROM cfg_dict_item
             WHERE dict_code = #{dictCode}
@@ -67,7 +67,7 @@ public interface ConfigMapper {
 
     @Select(
             """
-            SELECT id, dict_code AS dictCode, item_code AS itemCode, label, sort_no AS sortNo,
+            SELECT id, dict_code AS dictCode, item_code AS itemCode, label, aliases, sort_no AS sortNo,
                    source, status, updated_by AS updatedBy, updated_at AS updatedAt
             FROM cfg_dict_item
             WHERE dict_code = #{dictCode} AND item_code = #{itemCode}
@@ -77,19 +77,43 @@ public interface ConfigMapper {
     @Insert(
             """
             INSERT INTO cfg_dict_item
-              (dict_code, item_code, label, sort_no, source, status, updated_by)
-            VALUES (#{dictCode}, #{itemCode}, #{label}, #{sortNo}, #{source}, #{status}, #{updatedBy})
+              (dict_code, item_code, label, aliases, sort_no, source, status, updated_by)
+            VALUES (#{dictCode}, #{itemCode}, #{label}, #{aliases}, #{sortNo}, #{source}, #{status}, #{updatedBy})
             """)
     int insertItem(ItemRow row);
 
     @Update(
             """
             UPDATE cfg_dict_item
-            SET label = #{label}, sort_no = #{sortNo}, status = #{status},
+            SET label = #{label}, aliases = #{aliases}, sort_no = #{sortNo}, status = #{status},
                 updated_by = #{updatedBy}
             WHERE id = #{id}
             """)
     int updateItem(ItemRow row);
+
+    // --------------------------------------------------------------- 字典变更记录（A-FLD-009、C-FLD-009）
+
+    @Insert(
+            """
+            INSERT INTO cfg_dict_log
+              (dict_code, item_code, action, before_json, after_json, operator_id)
+            VALUES (#{dictCode}, #{itemCode}, #{action}, #{beforeJson}, #{afterJson}, #{operatorId})
+            """)
+    int insertDictLog(DictLogRow row);
+
+    @Select(
+            """
+            SELECT l.id, l.dict_code AS dictCode, l.item_code AS itemCode, l.action,
+                   l.before_json AS beforeJson, l.after_json AS afterJson,
+                   l.operator_id AS operatorId, u.display_name AS operatorName,
+                   l.created_at AS createdAt
+            FROM cfg_dict_log l
+            LEFT JOIN sys_user u ON u.id = l.operator_id
+            WHERE l.dict_code = #{dictCode}
+            ORDER BY l.id DESC
+            LIMIT #{limit}
+            """)
+    List<DictLogRow> listDictLogs(@Param("dictCode") String dictCode, @Param("limit") int limit);
 
     // --------------------------------------------------------------- 租户参数覆盖
 
@@ -213,6 +237,7 @@ public interface ConfigMapper {
         private String dictCode;
         private String itemCode;
         private String label;
+        private String aliases;
         private int sortNo;
         private String source;
         private String status;
@@ -249,6 +274,14 @@ public interface ConfigMapper {
 
         public void setLabel(String label) {
             this.label = label;
+        }
+
+        public String getAliases() {
+            return aliases;
+        }
+
+        public void setAliases(String aliases) {
+            this.aliases = aliases;
         }
 
         public int getSortNo() {
@@ -289,6 +322,91 @@ public interface ConfigMapper {
 
         public void setUpdatedAt(LocalDateTime updatedAt) {
             this.updatedAt = updatedAt;
+        }
+    }
+
+    /** cfg_dict_log 变更记录行（A-FLD-009、C-FLD-009；只追加）。operatorName 联查 sys_user。 */
+    class DictLogRow {
+        private Long id;
+        private String dictCode;
+        private String itemCode;
+        private String action;
+        private String beforeJson;
+        private String afterJson;
+        private Long operatorId;
+        private String operatorName;
+        private LocalDateTime createdAt;
+
+        public Long getId() {
+            return id;
+        }
+
+        public void setId(Long id) {
+            this.id = id;
+        }
+
+        public String getDictCode() {
+            return dictCode;
+        }
+
+        public void setDictCode(String dictCode) {
+            this.dictCode = dictCode;
+        }
+
+        public String getItemCode() {
+            return itemCode;
+        }
+
+        public void setItemCode(String itemCode) {
+            this.itemCode = itemCode;
+        }
+
+        public String getAction() {
+            return action;
+        }
+
+        public void setAction(String action) {
+            this.action = action;
+        }
+
+        public String getBeforeJson() {
+            return beforeJson;
+        }
+
+        public void setBeforeJson(String beforeJson) {
+            this.beforeJson = beforeJson;
+        }
+
+        public String getAfterJson() {
+            return afterJson;
+        }
+
+        public void setAfterJson(String afterJson) {
+            this.afterJson = afterJson;
+        }
+
+        public Long getOperatorId() {
+            return operatorId;
+        }
+
+        public void setOperatorId(Long operatorId) {
+            this.operatorId = operatorId;
+        }
+
+        public String getOperatorName() {
+            return operatorName;
+        }
+
+        public void setOperatorName(String operatorName) {
+            this.operatorName = operatorName;
+        }
+
+        public LocalDateTime getCreatedAt() {
+            return createdAt;
+        }
+
+        public void setCreatedAt(LocalDateTime createdAt) {
+            this.createdAt = createdAt;
         }
     }
 

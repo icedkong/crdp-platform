@@ -109,6 +109,20 @@ export interface FormFieldUpdateRequest {
   unit?: null | string;
 }
 
+/** 字段字典变更记录行（GET /fields/{key}/logs?formCode=，倒序最近 100 条；A-FLD-009、C-FLD-009，E11-T08）。 */
+export interface FieldDictLogView {
+  action: string;
+  afterJson: null | string;
+  beforeJson: null | string;
+  createdAt: string;
+  fieldKey: string;
+  formCode: string;
+  id: number;
+  operatorId: null | number;
+  /** 操作人姓名（联查 sys_user；账号已删除时为 null）。 */
+  operatorName: null | string;
+}
+
 export const FIELD_DICT_STATUS_TEXT: Record<FieldDictStatus, string> = {
   DISABLED: '已停用',
   ENABLED: '启用',

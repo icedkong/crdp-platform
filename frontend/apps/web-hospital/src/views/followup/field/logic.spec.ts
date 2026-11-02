@@ -7,6 +7,7 @@ import {
   buildStatusToggleUpdate,
   isOptionField,
   statusActionText,
+  summarizeFieldChange,
   toFieldEditModel,
   validateFieldEditModel,
 } from './logic';
@@ -133,5 +134,56 @@ describe('e11-t01 字段字典页逻辑', () => {
   it('选项维护区只对带选项集的下拉 / 单选 / 多选开放', () => {
     expect(isOptionField(smoking)).toBe(true);
     expect(isOptionField(height)).toBe(false);
+  });
+});
+
+describe('e11-t08 字段字典变更记录摘要（A-FLD-009、C-FLD-009）', () => {
+  const before = JSON.stringify({
+    label: '吸烟史',
+    required: true,
+    softRange: null,
+    status: 'ENABLED',
+    unit: null,
+  });
+
+  it('显示名与启停的变化逐项列出（前后值、操作人由表格列展示）', () => {
+    const summary = summarizeFieldChange(
+      before,
+      JSON.stringify({
+        label: '吸烟史（修订）',
+        required: true,
+        softRange: null,
+        status: 'DISABLED',
+        unit: null,
+      }),
+    );
+    expect(summary).toContain('显示名「吸烟史」→「吸烟史（修订）」');
+    expect(summary).toContain('字段停用');
+  });
+
+  it('软范围与必填变化点明；停用选项进「选项已调整」（C-FLD-009 停用不删除）', () => {
+    const summary = summarizeFieldChange(
+      before,
+      JSON.stringify({
+        label: '吸烟史',
+        options: [
+          { code: 0, label: '否', sortNo: 10, status: 'ENABLED' },
+          { code: 1, label: '是', sortNo: 20, status: 'DISABLED' },
+        ],
+        required: false,
+        softRange: { max: 210, min: 130 },
+        status: 'ENABLED',
+        unit: null,
+      }),
+    );
+    expect(summary).toContain('提示范围「无」→「130–210」');
+    expect(summary).toContain('改为选填');
+    expect(summary).toContain('选项已调整');
+  });
+
+  it('无前值（新增配置）与快照缺失有兜底文案；无变化如实说', () => {
+    expect(summarizeFieldChange(null, before)).toContain('显示名「吸烟史」');
+    expect(summarizeFieldChange(before, null)).toBe('快照缺失');
+    expect(summarizeFieldChange(before, before)).toBe('无变化');
   });
 });
