@@ -65,12 +65,13 @@ class PlatformTenantScopeMySqlIT {
                     341L, 342L, 351L, 352L);
 
     /**
-     * 期望可分配全集（base 全部 + followup 模板默认 20/21/23/36/231，收回 22 随访任务）。 36 通知设置为 E09-T04 新增的非敏感 followup
-     * 菜单（V32 进授权范围模板，与 V102 同口径）；231 上传按钮为 E10-T01 新增的非敏感 followup 项（V33 同口径）。
+     * 期望可分配全集（base 全部 + followup 模板默认 20/21/23/36/37/231，收回 22 随访任务）。 36 通知设置为 E09-T04 新增的非敏感
+     * followup 菜单（V32 进授权范围模板，与 V102 同口径）；231 上传按钮为 E10-T01 新增的非敏感 followup 项（V33 同口径）； 37 字段字典为
+     * E11-T01 新增的非敏感 followup 菜单（V35 同口径）。
      */
     private static final List<Object> WITHOUT_TASK =
             java.util.stream.Stream.concat(
-                            BASE_ALL.stream(), List.of(20L, 21L, 23L, 36L, 231L).stream())
+                            BASE_ALL.stream(), List.of(20L, 21L, 23L, 36L, 37L, 231L).stream())
                     .toList();
 
     private static JdbcTemplate platform;

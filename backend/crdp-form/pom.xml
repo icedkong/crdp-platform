@@ -10,11 +10,20 @@
   </parent>
   <artifactId>crdp-form</artifactId>
   <name>crdp-form</name>
-  <description>字段字典与表单引擎（M0 占位）</description>
+  <description>字段字典与表单引擎（E11-T01 起落地字段元数据与管理接口）</description>
   <dependencies>
     <dependency>
       <groupId>com.crdp</groupId>
       <artifactId>crdp-framework</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.springdoc</groupId>
+      <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
     </dependency>
   </dependencies>
 </project>

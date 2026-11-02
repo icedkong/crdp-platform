@@ -167,6 +167,34 @@ export {
 } from './enums';
 export type { FilePreviewGrant } from './file';
 export { previewGrantExpired } from './file';
+// E11-T01 字段字典（A-FLD-001、A-FLD-002、C-FLD-001：显示名与编码分离，字段可启停）
+export {
+  FIELD_DICT_STATUS_TEXT,
+  FIELD_STORAGE_TEXT,
+  fieldDictStatusText,
+  fieldRangeText,
+  fieldStorageText,
+  FORM_FIELD_TYPE_TEXT,
+  FORM_USAGE_TEXT,
+  formFieldTypeText,
+  formUsageText,
+  isOptionFieldType,
+  isValidFieldRange,
+  matchFieldKeyword,
+} from './form';
+export type {
+  FieldDerivedDef,
+  FieldDictStatus,
+  FieldOption,
+  FieldOptionUpdate,
+  FieldRange,
+  FieldStorage,
+  FormFieldDef,
+  FormFieldType,
+  FormFieldUpdateRequest,
+  FormSummary,
+  FormUsage,
+} from './form';
 export {
   errorBody,
   lockedMessage,

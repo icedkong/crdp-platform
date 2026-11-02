@@ -3,14 +3,14 @@
 > 后端：`crdp-form`（字段字典、表单模板、规则）；前端：`frontend/packages/form-engine`（`FormRenderer`）与 `frontend/packages/rules`（前后端共用的校验 / 派生规则，见技术方案 §15 前端结构）。
 > 契约基准：`docs/design/components.md` §10.1 的 `FormSchema` 类型 —— **本文件与之保持一致，有变化两处同改**。
 > 原则：**字段由表单模板驱动**，页面不得硬编码业务字段；新增 / 改字段 = 改模板 + 新 Flyway 迁移（种子）或字典维护页，不改页面代码。
-> 全部路径 **推断，待确认**。
+> §3 字段字典维护已随 E11-T01 落地（实现即定义）；其余路径 **推断，待确认**。
 
 ## 1. 读取表单模板
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| GET | `/api/hospital/form/forms` | 登录 | 当前租户可用表单列表 `{ code, name, currentVersion, usage: BASELINE|FOLLOWUP|IMPLANT|REPORT }[]` |
-| GET | `/api/hospital/form/forms/{code}?version=` | 登录 | 返回 `FormSchema`（components.md §10.1）；不传 `version` 取当前发布版；**已有记录按记录保存时的版本渲染** |
+| GET | `/api/hospital/form/forms` | 登录 | 当前租户可用表单列表 `{ code, name, currentVersion, usage: BASELINE|FOLLOWUP|IMPLANT|REPORT, status }[]`（E11-T01 已实现，`@PublicApi` + `@RequireModule("followup")`） |
+| GET | `/api/hospital/form/forms/{code}?version=` | 登录 | 返回 `FormSchema`（components.md §10.1）；不传 `version` 取当前发布版；**已有记录按记录保存时的版本渲染**（随 E11-T02） |
 
 示例 `code`：`A_BASELINE`、`A_ANNUAL_FU`、`C_PROGRAM_FU`、`C_IMPLANT`（命名推断，待确认）。
 
@@ -32,16 +32,21 @@
   "data": { "fieldErrors": [ { "key": "f019", "categoryKey": "echo", "rule": "hardRange", "message": "取值应在 20–90 之间" } ] } }
 ```
 
-## 3. 字段字典维护（A-FLD-001..009/012/013、C-FLD-001..010）
+## 3. 字段字典维护（A-FLD-001..009/012/013、C-FLD-001..010；E11-T01 已实现前两行）
+
+字段元数据存租户库 `fe_form` / `fe_field` / `fe_option_set` / `fe_option`（tech-plan §6「元数据模型」）。
+稳定键 `field_key` 与字段编码 `field_code`（导入导出名）**表单内唯一**、创建后不可改；显示名与编码分离
+（A-FLD-002：页面显示「吸烟史」与选项「否 / 是」，数据库存 0 / 1）。字段可启停（`status`
+ENABLED/DISABLED，停用不删除；E11-T02 起模板下发与校验只取启用字段）。
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| GET | `/api/hospital/form/fields?formCode=&categoryKey=` | `followup:field:edit` | 按分类列字段 |
-| PUT | `/api/hospital/form/fields/{key}` | `followup:field:edit` | 可改：显示名、帮助文字、单位显示、`softRange`、必填、选项（新增 / 停用 / 排序，不能删除已用选项、不能改选项 `code`）；**不能改** `key`、`code`、类型、存储方式（A-FLD-002） |
-| GET | `/api/hospital/form/fields/{key}/logs` | `followup:field:edit` | 字典变更记录（A-FLD-009、C-FLD-009） |
-| POST | `/api/hospital/form/forms/{code}/publish` | `followup:field:edit` | 字段修改生成新模板版本并发布（推断，待确认） |
+| GET | `/api/hospital/form/fields?formCode=&categoryKey=` | `followup:field:edit` | 按分类列字段；行含 `key/code/label/categoryKey/categoryLabel/type/unit/decimals/hardRange/softRange/options/required/visibleWhen/requiredWhen/derivedDef/sensitive/storage/help/sortNo/status/updatedAt`（`categoryKey` 可省略 = 全部分类） |
+| PUT | `/api/hospital/form/fields/{key}?formCode=` | `followup:field:edit` | 全量覆盖可维护列：显示名、帮助文字、单位显示、`softRange`、必填、**状态（启停）**、选项（`options[]`：`code` 已存在为改显示名 / 排序 / 停用，不存在为新增；不能删除已用选项、不能改选项 `code`）；**不能改** `key`、`code`、类型、存储方式、敏感标记、`hardRange`（请求体不携带这些列，A-FLD-002/008）。写审计 `FIELD_DICT_UPDATE`（前后值，启停在描述点明）。校验失败 40001（显示名必填 ≤128、软范围 min≤max、状态只认 ENABLED/DISABLED、选项编码必填且不重复）；字段 / 表单不存在 40400 |
+| GET | `/api/hospital/form/fields/{key}/logs` | `followup:field:edit` | 字典变更记录（A-FLD-009、C-FLD-009；随 E11-T08） |
+| POST | `/api/hospital/form/forms/{code}/publish` | `followup:field:edit` | 字段修改生成新模板版本并发布（推断，待确认；随 E11-T02） |
 
-不做：医院自助新增字段（A-FLD-010）、通用表单设计器（A-FLD-011）——延后（见 `docs/tasks/tasks.md`）。C-FLD-008 “新增字段”指由实施通过迁移新增，不提供页面。
+不做：医院自助新增字段（A-FLD-010）、通用表单设计器（A-FLD-011）——延后（见 `docs/tasks/tasks.md`）。C-FLD-008 “新增字段”指由实施通过迁移新增，不提供页面。页面 `/system/field`（菜单 `FollowupField`，平台库迁移 V35）。
 
 ## 4. 业务字典（A-FLD-012、C-FLD-002/003）
 
