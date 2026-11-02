@@ -89,6 +89,15 @@ public class SecurityConfig {
                                         // 40307
                                         .requestMatchers(HttpMethod.POST, "/api/notify/sms/receipt")
                                         .permitAll()
+                                        // E10-T04 / tech-plan §10「预览」：预览内容经应用代理按流返回。pdf.js、
+                                        // docx-preview 与原生 <audio> 是浏览器子资源请求，带不了登录令牌，取流凭
+                                        // preview-url 签发的 ≤ 5 分钟随机令牌（公开口按 IP 每小时限流，
+                                        // FilePreviewService；@PublicApi 经启动扫描登记）。必须排在
+                                        // /api/hospital/**
+                                        // 端别判定之前
+                                        .requestMatchers(
+                                                HttpMethod.GET, "/api/hospital/files/preview/*")
+                                        .permitAll()
                                         // E04-T03 / PLT-AUTH-005：平台端与医院端接口前缀各自只接受
                                         // 对应端的会话（令牌由 TokenAuthenticationFilter 附带端别权限），
                                         // 跨端令牌一律 40300，不依赖各控制器自行调用 require* 系列

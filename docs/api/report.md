@@ -10,13 +10,16 @@
 |---|---|---|---|
 | POST | `/api/hospital/files` | `followup:scan:upload` | multipart（字段 `file`，单文件）；返回 `{ fileId, sha256, size, mime, format, originalName, pages }`（`pages` 图片恒为 1，PDF 待回填，OQ-61）。后端用 Tika 按内容判断真实类型（不信任扩展名），拒绝可执行文件、脚本、宏 Office、压缩包等不支持格式及扩展名与真实类型不符的文件（A-ATT-008、C-SCAN-018）→ 40001 + 原因；写 `FILE_UPLOAD` 审计。**已实现（E10-T01；E10-T03 增补 `pages` 与图片缩略图）** |
 | GET | `/api/hospital/files/policy` | 登录即可 | 本院生效的上传策略：`{ formats: [{ format, label, extensions, category, maxBytes }], maxDocumentMb, maxAudioMb, maxFilesPerReport }`（PLT-CFG-010，上传对话框前置提示用）。**已实现（E10-T01）** |
-| GET | `/api/hospital/files/{fileId}/preview-url` | 能看到所属报告单 | 预览代理短时链接（≤ 5 分钟），每次写审计；前端不缓存（E10-T04） |
+| GET | `/api/hospital/files/{fileId}/preview-url` | 登录即可 + `followup` 模块 | 预览代理短时链接（≤ 5 分钟，`crdp.file.preview.ttl-seconds`，配置写大按 5 分钟执行），**每次签发写 `FILE_PREVIEW` 审计**（用户、租户、文件、时间、IP）；返回 `{ url, expiresAt, format, mime, originalName, inlinePlayable }`（AMR 与 XLSX 的 `inlinePlayable=false`，只下载）；文件不存在 / 已删除 → 40400。「能看到所属报告单」的数据范围校验随 E16 报告单子域（sys_file 尚未挂 rpt_report_file，见 OQ-62 ①）。**已实现（E10-T04）** |
+| GET | `/api/hospital/files/preview/{token}` | 公开口（随机令牌，SecurityConfig permitAll + 按 IP 每小时限流） | 预览内容取流（pdf.js、docx-preview、原生 `<audio>` 带不了登录令牌）：凭 preview-url 签发的 256 位随机令牌（Redis 只存 SHA-256 摘要，值 = 租户ID/租户编码/文件ID，TTL ≤ 5 分钟，窗口内可多次取流）恢复租户上下文后从对象存储按流返回；响应 `no-store` 不缓存、inline 展示、nosniff；令牌无效 / 过期 / 跨租户 / 对象缺失一律 40400，超限 42900。**已实现（E10-T04）** |
 | POST | `/api/hospital/files/{fileId}/download-url` | `followup:scan:download` | 5 分钟签名链接，写审计（谁、何时、哪份报告单的哪个文件，A-ATT-006）（E10-T05） |
 | GET | `/api/hospital/files/check-duplicate?sha256=` | `followup:scan:upload` | C 重复文件提示（C-SCAN-017，P1），只返回可见范围内的患者（脱敏） |
 
 格式与大小按租户配置（A：单个 20 MB、每份 10 个，录音 50 MB；C：20 MB、每份 50 个）；超限 40001。上传配置是平台参数（`file.upload.allowed.types` / `file.upload.max.size.mb` / `file.upload.audio.max.size.mb` / `file.upload.max.files.per.report`，平台库迁移 V33 登记），租户经机构设置 → 租户参数覆盖；**每份数量上限在报告单保存时校验（fileIds ≤ maxFilesPerReport，随 E16 报告单创建落地），上传接口本身不感知报告单**。上传台账表 `sys_file`（租户库 followup V25）；E10-T02 起文件体只在对象存储（生产 OBS 业务桶，每次 PUT 强制 SSE-KMS 服务端加密；本机 / CI 为文件系统替身 `crdp.storage.type=local`，目录结构与桶一致），对象键 `t/{租户编码}/files/{年月}/{uuid}.{扩展名}`（租户前缀由存储端口按登录租户强制，一桶按前缀隔离，ADR 0006），台账不再存文件体（followup V26 清 body 列）。multipart 兜底上限 200 MB（`application.yml`）。不做 DICOM（A-ATT-009）与图片增强（C-SCAN-019）。
 
 **图片缩略图（E10-T03，已实现）**：上传图片（jpg / png）通过校验后同步生成缩略图——等比缩到最大边 ≤ 128 px（`crdp.file.thumbnail.max-edge`，设计稿缩略图 64×64 的 2 倍视网膜余量，OQ-61），**保持原格式、不转码、不放大**（各边都不超过最大边的小图直接复用原字节）；缩略图对象键 `t/{租户编码}/thumbnails/{年月}/{uuid}.{扩展名}`（同一业务桶、同一租户前缀隔离），完整键记 `sys_file.thumbnail_key`（followup V27），`pages` 恒为 1。非图片不生成任何派生对象：**录音不转码、不另存副本**（MP3 浏览器原生播放），PDF / DOCX / XLSX 无缩略图（列表显示文件图标；PDF 首页缩略图不在首期范围）。Tika 认魔数但解码不出像素的损坏图片、单边 > 12000 px 或 > 4000 万像素的图片（防解压炸弹）→ 40001 拒绝，且发生在写对象存储之前（不留半成品）。缩略图的查看链路（预览代理、审计）随 E10-T04。
+
+**预览代理与水印（E10-T04，已实现）**：预览**经应用代理按流返回、不缓存**（不暴露对象存储直链）——登录态调 `preview-url` 换短时链接，浏览器子资源凭令牌从 `/files/preview/{token}` 取流（OQ-62 ②：审计记在**签发**一次，取流不重复记，音频 range / pdf.js 分页多次请求不刷审计）。水印在前端（`packages/viewer`）：平铺文本「姓名（账号）· 医院名称 · 预览时间（精确到分钟）」，canvas 平铺、旋转 -20°、透明度约 0.15、`pointer-events: none`，**不可关闭**——节点被删 / 样式被改由 MutationObserver 立即重绘并每 2 秒自检兜底；MP3 / M4A / WAV 原生 `<audio controls controlsList="nodownload">` 播放（不转码、播放器内无下载按钮），AMR 与 XLSX 只下载（下载按钮按 `followup:scan:download` 显示，签名下载随 E10-T05）；PDF 用 pdf.js、DOCX 用 docx-preview 页内渲染（懒加载）。PDF 页数不回填 `sys_file.pages`：预览解析在前端完成，后端仍不引 PDF 解析依赖（OQ-61 ④）。
 
 ## 2. 报告单
 

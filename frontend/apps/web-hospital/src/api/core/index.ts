@@ -2,6 +2,7 @@ export * from './audit';
 export * from './auth';
 export * from './brand';
 export * from './config';
+export * from './file';
 export * from './menu';
 export * from './notify';
 export * from './patient';

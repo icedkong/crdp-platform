@@ -4,5 +4,14 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@crdp/tokens": "workspace:*",
+    "docx-preview": "catalog:",
+    "pdfjs-dist": "catalog:",
+    "vue": "catalog:"
+  },
+  "devDependencies": {
+    "@vue/test-utils": "catalog:"
   }
 }

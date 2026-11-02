@@ -165,6 +165,8 @@ export {
   tenantModuleStatusText,
   tenantStatusText,
 } from './enums';
+export type { FilePreviewGrant } from './file';
+export { previewGrantExpired } from './file';
 export {
   errorBody,
   lockedMessage,
@@ -225,6 +227,7 @@ export type {
   OrgTreeView,
   OrgView,
 } from './org';
+
 export {
   PASSWORD_EXPIRY_REMIND_DAYS,
   PASSWORD_HISTORY_COUNT,
@@ -239,7 +242,6 @@ export type {
   PasswordPolicyOptions,
   PasswordRuleItem,
 } from './password-policy';
-
 export {
   buildPlaintextRevealRequest,
   normalizePatientPlainField,
@@ -252,6 +254,7 @@ export type {
   PatientPlaintextResult,
   PatientPlaintextScene,
 } from './patient';
+
 export {
   API_ACTION_TYPE_TEXT,
   API_AUDIT_LEVEL_TEXT,
@@ -268,6 +271,7 @@ export {
   menuSyncActionText,
   menuTypeText,
 } from './perm-resources';
+
 export type {
   ApiMarkRequest,
   ApiResourceItem,
@@ -280,29 +284,6 @@ export type {
   MenuSyncDiffResult,
   MenuUpdateRequest,
 } from './perm-resources';
-
-export {
-  platformAccountStatusText,
-  platformRoleStatusText,
-  platformRoleViewSummary,
-  platformTenantScopeText,
-  platformVisibleScopeText,
-  validatePlatformAccount,
-  validatePlatformRole,
-} from './platform-role';
-
-export type {
-  PlatformAccountResetResult,
-  PlatformAccountSaveRequest,
-  PlatformAccountView,
-  PlatformGrantMenuNode,
-  PlatformRoleHolder,
-  PlatformRoleSaveRequest,
-  PlatformRoleView,
-  PlatformRoleViewFields,
-  PlatformTenantScope,
-  PlatformVisibleScope,
-} from './platform-role';
 
 export interface CreateTenantRequest {
   /** 不填由后端自动生成（页面展示建议值可改）。 */
@@ -638,6 +619,28 @@ export interface ModuleOpenLog {
   tenantName: string;
 }
 
+export {
+  platformAccountStatusText,
+  platformRoleStatusText,
+  platformRoleViewSummary,
+  platformTenantScopeText,
+  platformVisibleScopeText,
+  validatePlatformAccount,
+  validatePlatformRole,
+} from './platform-role';
+export type {
+  PlatformAccountResetResult,
+  PlatformAccountSaveRequest,
+  PlatformAccountView,
+  PlatformGrantMenuNode,
+  PlatformRoleHolder,
+  PlatformRoleSaveRequest,
+  PlatformRoleView,
+  PlatformRoleViewFields,
+  PlatformTenantScope,
+  PlatformVisibleScope,
+} from './platform-role';
+
 // E04-T08 / PLT-AUTH-012：敏感操作二次认证（明文查看、导出、下载、重置密码）
 export {
   isReauthCancelled,
@@ -710,7 +713,6 @@ export {
   userOptionLabel,
   userStatusText,
 } from './tenant-user';
-
 export type {
   FieldPolicyPreviewView,
   MenuPreviewNode,
@@ -738,11 +740,11 @@ export {
   userImportActionText,
   userImportSummary,
 } from './user-import';
+
 export type {
   UserImportAction,
   UserImportReport,
   UserImportRowResult,
 } from './user-import';
 export { menuNodesToRoutes, menuNodeToRoute, toIconifyIcon } from './vben-menu';
-
 export type { VbenMenuRoute } from './vben-menu';
