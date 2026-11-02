@@ -616,7 +616,7 @@ interface FormRendererProps {
 
 ### 10.5 共享用例
 
-条件求值、派生函数、对比规则在 `packages/rules` 与后端 Java 各一份，**同一份用例文件**（JSON，放 `backend/crdp-form/src/test/resources/shared-cases/`，前端测试按相对路径读取——已定稿），取自需求验收标准（例如：出院 − 手术 + 1；160 小时 54 分 → 160.9；EF 56 → 45 下降 11 → 标红）。范围与跨字段校验用例已随 E11-T04 落地：`shared-cases/form-validation-cases.json` 由后端 `FormRuleEngineTest` 与前端 `packages/rules/src/form-validation.test.ts` 各执行一遍，errors / warnings 逐条（key、categoryKey、rule、message）一致；条件求值（E11-T03）、派生（E11-T05）、对比（E17）沿用同一目录。
+条件求值、派生函数、对比规则在 `packages/rules` 与后端 Java 各一份，**同一份用例文件**（JSON，放 `backend/crdp-form/src/test/resources/shared-cases/`，前端测试按相对路径读取——已定稿），取自需求验收标准（例如：出院 − 手术 + 1；160 小时 54 分 → 160.9；EF 56 → 45 下降 11 → 标红）。范围与跨字段校验用例已随 E11-T04 落地：`shared-cases/form-validation-cases.json` 由后端 `FormRuleEngineTest` 与前端 `packages/rules/src/form-validation.test.ts` 各执行一遍，errors / warnings 逐条（key、categoryKey、rule、message）一致；条件求值已随 E11-T03 落地：`shared-cases/form-condition-cases.json` 由后端 `FormConditionEngineTest` 与前端 `packages/rules/src/form-condition.test.ts` 各执行一遍，visible / missingRequired 逐条一致（求值语义见 docs/api/form.md §2.4）；派生（E11-T05）、对比（E17）沿用同一目录。
 
 ---
 

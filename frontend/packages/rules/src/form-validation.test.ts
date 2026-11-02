@@ -17,10 +17,12 @@ import { compareValues, validateFormData } from './form-validation';
  * 验收原文：前后端校验一致，超范围拦截。「一致」由共享用例锁定——同一份
  * backend/crdp-form/src/test/resources/shared-cases/form-validation-cases.json 由后端
  * FormRuleEngineTest 与本文件各执行一遍，errors / warnings 逐条（key、categoryKey、rule、message）
- * 完全一致（components.md §10.5）。
+ * 完全一致（components.md §10.5）。E11-T03 起用例可带条件字段（required / visibleWhen /
+ * requiredWhen）与条件上下文（context）——条件求值本身见 form-condition.test。
  */
 
 interface SharedCase {
+  context?: Record<string, unknown>;
   data: Record<string, unknown>;
   expectedErrors: FieldIssue[];
   expectedWarnings: FieldIssue[];
@@ -61,12 +63,17 @@ describe('e11-t04 共享用例（与后端 FormRuleEngine 同一份用例、同�
   const cases = loadSharedCases();
 
   it('共享用例文件可读且不少于既有用例数（增删须两端同步）', () => {
-    expect(cases.length).toBeGreaterThanOrEqual(19);
+    expect(cases.length).toBeGreaterThanOrEqual(22);
   });
 
   it('全部共享用例：errors / warnings 与后端逐条一致（含文案，用例名见断言消息）', () => {
     for (const item of cases) {
-      const result = validateFormData(item.fields, item.rules, item.data);
+      const result = validateFormData(
+        item.fields,
+        item.rules,
+        item.data,
+        item.context,
+      );
       expect(result.errors, `${item.name} → errors`).toEqual(
         item.expectedErrors,
       );

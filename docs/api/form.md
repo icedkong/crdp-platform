@@ -3,7 +3,7 @@
 > 后端：`crdp-form`（字段字典、表单模板、规则）；前端：`frontend/packages/form-engine`（`FormRenderer`）与 `frontend/packages/rules`（前后端共用的校验 / 派生规则，见技术方案 §15 前端结构）。
 > 契约基准：`docs/design/components.md` §10.1 的 `FormSchema` 类型 —— **本文件与之保持一致，有变化两处同改**。
 > 原则：**字段由表单模板驱动**，页面不得硬编码业务字段；新增 / 改字段 = 改模板 + 新 Flyway 迁移（种子）或字典维护页，不改页面代码。
-> §1 模板按版本读取与发布、§3 字段字典维护已随 E11-T01 / E11-T02 落地、§2 规则执行已随 E11-T04 落地（实现即定义）；其余路径 **推断，待确认**。
+> §1 模板按版本读取与发布、§3 字段字典维护已随 E11-T01 / E11-T02 落地、§2 规则执行已随 E11-T04 落地、§2.4 条件显示与条件必填已随 E11-T03 落地（实现即定义）；其余路径 **推断，待确认**。
 
 ## 1. 读取表单模板（E11-T02 已实现）
 
@@ -21,6 +21,7 @@
 - 停用字段不进新版本；旧版本快照里仍在——旧记录（`data` JSON 键 = 稳定键）按其保存时版本渲染与校验，模板改版不影响。
 - 选项（`fe_option`）不进快照：选项编码创建后不可改、停用不删除（V28），显示名与停用标记读取时现取；停用选项在 `optionSet[]` 带 `disabled: true`（不可新选，历史值仍可显示）。
 - `rules` 为 `fe_rule` 跨字段校验（E11-T04 已落地）：实时读取启用规则、**不进版本快照**，形状见 §2.2；`compareRules` 随 E17。
+- 字段的 `visibleWhen` / `requiredWhen` 条件树随版本快照下发（`fe_form_version_field`，E11-T03）：旧版本按其快照口径求值；求值语义见 §2.4。
 - 记录侧绑定见 §1.1：记录存 `templateVersion`，读取时前端用 `GET /forms/{code}?version={templateVersion}` 取渲染口径。
 
 响应要求：
@@ -36,17 +37,17 @@ E11-T02 落地（A-NFR-002 / C-NFR-002「JSON 文档存储」）。数据记录�
 `template_version`（**创建时固化** = 当时 `current_version`，发布新版不升级）、`version`（乐观锁）、
 `status`（DRAFT / SUBMITTED，提交流转随 E15）。
 
-- **写入只经 FormService**（`crdp-form` 的 `com.crdp.form.record.app.FormService`，技术方案 §6「禁止绕过服务直接写 JSON」）：键必须在记录模板版本内且为 json 存储、类型按值编码口径检查（单选 / 下拉存选项编码整数、多选存编码数组、数值存数字、日期 `YYYY-MM-DD`、日期时间 `YYYY-MM-DDTHH:mm`、是否存 true/false、数值 × 2 存 `{length,width}`、派生字段不查类型随 E11-T05 重算）；范围 / 必填 / 条件 / 跨字段随 E11-T03 / E11-T04。
+- **写入只经 FormService**（`crdp-form` 的 `com.crdp.form.record.app.FormService`，技术方案 §6「禁止绕过服务直接写 JSON」）：键必须在记录模板版本内且为 json 存储、类型按值编码口径检查（单选 / 下拉存选项编码整数、多选存编码数组、数值存数字、日期 `YYYY-MM-DD`、日期时间 `YYYY-MM-DDTHH:mm`、是否存 true/false、数值 × 2 存 `{length,width}`、派生字段不查类型随 E11-T05 重算）；范围 / 必填 / 条件 / 跨字段已随 E11-T04 / E11-T03 落地（§2）。
 - 保存带 `baseVersion`：缺失 40001；与当前不一致 **40900**，`data` 附 `{ serverVersion, changedFields[], updatedBy, updatedAt }`（README §错误码 40900、技术方案「版本冲突」；E25 草稿接口复用本口径）。已提交记录 40901（修改走 E15 编辑流程）。
 - 记录读写是**引擎服务**（无独立 HTTP 端点），业务接口（基线 E13、随访记录 E15、报告单映射 E16-T07、草稿 E25）复用同一服务与校验；患者域业务表（`pt_baseline_section` / `fu_record` 等）的 `data` JSON 列同样经 FormService 写入，见 OQ-63 ①。
 - 草稿不逐次写审计（技术方案「服务器自动保存」）；提交、修改已提交与覆盖他人版本的审计随业务接口（E15 / E25）。
 
-## 2. 规则执行（前后端一致，E11-T04 已落地）
+## 2. 规则执行（前后端一致，E11-T04 / E11-T03 已落地）
 
-- 校验类型：类型与范围（`hardRange` 不能保存、`softRange` 提示，A-FLD-003、C-FLD-007，已落地）、条件显示与条件必填（A-FLD-004、C-FLD-005，随 E11-T03）、派生字段（A-FLD-005、C-FLD-006，随 E11-T05）、跨字段校验（A-FLD-006，已落地）。
-- 前端用 `packages/rules` 即时执行；后端在**提交 / 保存修改**时用同一份规则定义再执行一次（Java 端实现同语义，用共享测试用例 JSON 保证一致，见 §2.4 与 components.md §10.5）。
-- 草稿保存只做类型检查与**硬范围拦截**（tech-plan §6 写入闸门含范围），不做必填与跨字段校验（技术方案“草稿语义”）。
-- 条件变为不显示时，后端提交时清空该字段并写字段历史（随 E11-T03）。
+- 校验类型：类型与范围（`hardRange` 不能保存、`softRange` 提示，A-FLD-003、C-FLD-007，已落地）、条件显示与条件必填（A-FLD-004、C-FLD-005，已落地，见 §2.4）、派生字段（A-FLD-005、C-FLD-006，随 E11-T05）、跨字段校验（A-FLD-006，已落地）。
+- 前端用 `packages/rules` 即时执行；后端在**提交 / 保存修改**时用同一份规则定义再执行一次（Java 端实现同语义，用共享测试用例 JSON 保证一致，见 §2.5 与 components.md §10.5）。
+- 草稿保存只做类型检查与**硬范围拦截**（tech-plan §6 写入闸门含范围），不做必填、条件与跨字段校验（技术方案“草稿语义”；草稿闸门不做条件求值——隐藏字段残留值照常查硬范围，提交时按 §2.4 掩蔽与清空）。
+- 条件变为不显示时，后端提交时清空该字段的值（`FormService.stripHiddenFields`，E11-T03 已落地，提交流程 E15 / E25 调用）；清空动作写 `fe_field_history` 随 E11-T06。
 - 失败返回 42200：
 ```json
 { "code": 42200, "message": "表单校验未通过",
@@ -72,12 +73,22 @@ E11-T02 落地（A-NFR-002 / C-NFR-002「JSON 文档存储」）。数据记录�
 
 | 时机 | 执行内容 | 结果 |
 |---|---|---|
-| 草稿创建 / 保存（FormService.createRecord / saveRecord） | 类型 + 选项（40001）+ 硬范围 | 硬范围违反 42200（fieldErrors），不落库 |
-| 提交 / 保存修改（业务接口 E15 / E25 调 `FormService.validateForSubmit(formCode, templateVersion, data)`） | 全量：类型 + 硬范围 + 软范围 + 跨字段（按 severity） | 硬违反 42200；软命中**不拦截**，作为警告列表返回（调用方做确认流） |
+| 草稿创建 / 保存（FormService.createRecord / saveRecord） | 类型 + 选项（40001）+ 硬范围（不做条件求值） | 硬范围违反 42200（fieldErrors），不落库 |
+| 提交 / 保存修改（业务接口 E15 / E25 调 `FormService.validateForSubmit(formCode, templateVersion, data[, context])`） | 全量：类型 + 硬范围 + 软范围 + 条件必填 + 跨字段（按 severity）；隐藏字段值掩蔽（§2.4） | 硬违反与必填缺失 42200；软命中**不拦截**，作为警告列表返回（调用方做确认流） |
+| 提交落库前（提交流程调 `FormService.stripHiddenFields(formCode, templateVersion, data, context)`） | 按当前答案求值 visibleWhen，移除隐藏字段残留值 | 返回清洗后 data 与被清空键（cleared-hidden 口径；写字段历史随 E11-T06） |
 
-### 2.4 共享用例（前后端一致的事实来源）
+### 2.4 条件显示与条件必填（fe_field.visible_when / required_when，E11-T03 / A-FLD-004、C-FLD-005）
 
-`backend/crdp-form/src/test/resources/shared-cases/form-validation-cases.json`：后端 `FormRuleEngineTest` 与前端 `packages/rules/src/form-validation.test.ts` 各执行一遍，errors / warnings 逐条（`key`、`categoryKey`、`rule`、`message`）完全一致。条件求值（E11-T03）、派生（E11-T05）、对比规则（E17）沿用同一目录。
+- 条件树与高级检索同构（tech-plan §6）：节点 `{all: [...]}`（全部成立，空数组恒真）/ `{any: [...]}`（任一成立，空数组恒假）可嵌套；叶子 `{field | ctx, op, value}`——`field` 取本表单字段稳定键的值，`ctx` 取上下文变量（如医院 C 的 `device.type` / `device.hasRaLead`，按点路径 `a.b` 在嵌套对象取值；上下文由业务侧随 `validateForSubmit` / `stripHiddenFields` 的 `context` 参数与页面 `FormRenderer` 的 `context` prop 传入，器械匹配随 E21-T03）。操作符 `eq | ne | in | nin | gt | gte | lt | lte | empty | notEmpty`（components.md §10.1 ConditionTree）。
+- 求值语义（实现即定义，暂行口径见 OQ-65）：eq / in 按值编码口径**严格同型**比较（数值与数值、布尔与布尔、字符串与字符串；`1` 与 `"1"` 不等——条件值必须按值编码写：选项编码整数、日期字符串）；gt / gte / lt / lte 只比数值与日期 / 日期时间（日期归一当日 00:00，与 §2.2 COMPARE 同口径），普通文本不可比 → 不成立；**操作数缺失（未答 / null）除 `empty` / `notEmpty` 外一律不成立**（未答 ≠ 否：「是否死亡」未答 → 死亡日期不显示、不加必填）；空值口径 = null / 空串 / 空数组 / 分量全缺的 pair_number 对象（`0` 与 `false` 是已答）；条件为空或解析失败 / 残缺（无 op、field 与 ctx 并存或全无、op 不认识）**恒真**——坏配置不隐藏字段、不加必填、不炸保存。
+- **条件必填**：有效必填 = 字段显示 &&（`required` || `requiredWhen` 成立）；缺失 → 42200 `fieldErrors` 带 `rule=required`、`message="必填"`（与渲染器 §10.3 同词，前后端逐字一致）。只查 `storage=json` 且非派生的字段（引擎只校验记录 JSON；实体 / 加密列必填随业务接口 E13，派生随 E11-T05）；`requiredWhen` 为空不追加必填（无条件必填就是 `required` 列）。
+- **隐藏字段**：visibleWhen 不成立的字段不参与必填、其值不参与范围与跨字段校验（掩蔽，按「提交时已清空」口径）；提交落库前由 `stripHiddenFields` 移除残留值并返回被清空键（渲染器同语义 `hiddenFieldKeys` / `stripHiddenFieldValues`，`cleared-hidden` 事件）。完整度只把显示中的必填字段计入分母（A-PAT-019，渲染器随 E11-T07 / E11-T11）。
+- 实现位置：后端 `FormConditionEngine`（求值）+ `FormRuleEngine.validate(data, fields, rules, context)`（必填与掩蔽进提交校验）；前端 `@crdp/rules` 的 `evaluateCondition` / `isFieldVisible` / `missingRequiredFields` / `stripHiddenFieldValues` 与 `validateFormData` 的第 4 参 `context`。演示种子：followup V31（吸烟史=是 → 每日吸烟支数显示并必填）；真实条件配置随 E23-T01 / C 字段字典录入。
+- 条件列维护：`visible_when` / `required_when` 由实施经迁移配置（字典维护页 PUT 不改条件，form.md §3）。
+
+### 2.5 共享用例（前后端一致的事实来源）
+
+`backend/crdp-form/src/test/resources/shared-cases/form-validation-cases.json`：后端 `FormRuleEngineTest` 与前端 `packages/rules/src/form-validation.test.ts` 各执行一遍，errors / warnings 逐条（`key`、`categoryKey`、`rule`、`message`）完全一致（E11-T03 起用例可带条件字段与 `context`）。条件求值专用 `shared-cases/form-condition-cases.json`：后端 `FormConditionEngineTest` 与前端 `packages/rules/src/form-condition.test.ts` 各执行一遍，visible / missingRequired 逐条一致。派生（E11-T05）、对比规则（E17）沿用同一目录。
 
 ## 3. 字段字典维护（A-FLD-001..009/012/013、C-FLD-001..010；E11-T01 已实现前两行与 publish）
 

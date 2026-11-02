@@ -25,6 +25,7 @@ import com.crdp.form.record.infra.mapper.FormVersionInsert;
 import com.crdp.form.record.infra.mapper.FormVersionRow;
 import com.crdp.form.record.infra.mapper.VersionFieldRow;
 import com.crdp.form.rule.app.FieldIssue;
+import com.crdp.form.rule.app.FormConditionEngine;
 import com.crdp.form.rule.app.FormRuleEngine;
 import com.crdp.form.rule.infra.mapper.FormRuleMapper;
 import com.crdp.form.rule.infra.mapper.RuleRow;
@@ -71,7 +72,8 @@ class FormServiceTest {
                     recordMapper,
                     new FormDataValidator(fieldMapper),
                     ruleMapper,
-                    new FormRuleEngine(),
+                    new FormRuleEngine(new FormConditionEngine()),
+                    new FormConditionEngine(),
                     audit);
 
     @BeforeEach
@@ -722,6 +724,119 @@ class FormServiceTest {
                 "版本不存在 40400");
     }
 
+    // ---------------------------------------------------------------- E11-T03：条件必填与隐藏清空（A-FLD-004）
+
+    /** 提交校验（带上下文）：条件必填缺失 42200（rule=required）；条件不成立（ctx 或 field 不满足）时同一字段隐藏—— 不报必填、残留值不查范围（掩蔽）。 */
+    @Test
+    void validateForSubmitAppliesConditionalRequiredAndContext() {
+        when(fieldMapper.findForm("C_PROGRAM_FU"))
+                .thenReturn(
+                        new FormRow(
+                                1L,
+                                "C_PROGRAM_FU",
+                                "程控随访（示例）",
+                                "FOLLOWUP",
+                                1,
+                                CATEGORIES,
+                                "ENABLED"));
+        when(recordMapper.findVersion("C_PROGRAM_FU", 1)).thenReturn(versionRow(1L, 1, 2));
+        when(recordMapper.findVersionFields("C_PROGRAM_FU", 1))
+                .thenReturn(List.of(icdDischarge(), smokingRadioC(), cigarettesC()));
+        when(fieldMapper.findOptions("yesno")).thenReturn(List.of(option(0, "否"), option(1, "是")));
+        when(ruleMapper.findRules("C_PROGRAM_FU")).thenReturn(List.of());
+
+        // device.type=ICD：ICD 放电次数显示并必填，值缺失 → 42200（f012 已填满足自身条件必填）
+        ApiException missing =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.validateForSubmit(
+                                        "C_PROGRAM_FU",
+                                        1,
+                                        Map.of("f010", 1, "f012", 20),
+                                        Map.of("device", Map.of("type", "ICD"))));
+        assertEquals(42200, missing.code());
+        assertEquals(
+                List.of(new FieldIssue("f700", "icd", "required", "必填")),
+                ((Map<?, ?>) missing.data()).get("fieldErrors"),
+                "条件必填缺失拦截提交（文案与前端逐字一致）");
+
+        // device.type=VVIR：f700 隐藏 → 残留超范围值不查、不报必填；吸烟史=1 → f012 显示并必填、缺失拦截
+        ApiException smokingRequired =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.validateForSubmit(
+                                        "C_PROGRAM_FU",
+                                        1,
+                                        Map.of("f010", 1, "f700", 9999),
+                                        Map.of("device", Map.of("type", "VVIR"))));
+        assertEquals(
+                List.of(new FieldIssue("f012", "basic_info", "required", "必填")),
+                ((Map<?, ?>) smokingRequired.data()).get("fieldErrors"),
+                "隐藏字段（f700）的残留值被掩蔽，只剩显示中的必填缺失");
+
+        // 全部满足：通过且无警告
+        List<FieldIssue> warnings =
+                service.validateForSubmit(
+                        "C_PROGRAM_FU",
+                        1,
+                        Map.of("f010", 1, "f012", 20),
+                        Map.of("device", Map.of("type", "VVIR")));
+        assertTrue(warnings.isEmpty());
+    }
+
+    /**
+     * tech-plan §6「被隐藏字段的值清空」：stripHiddenFields 移除隐藏字段残留值并返回被清空键（写 cleared-hidden / 字段历史，
+     * E11-T06）；已空 / 缺键不产生清空记录。
+     */
+    @Test
+    void stripHiddenFieldsClearsStaleValuesOnly() {
+        when(fieldMapper.findForm("C_PROGRAM_FU"))
+                .thenReturn(
+                        new FormRow(
+                                1L,
+                                "C_PROGRAM_FU",
+                                "程控随访（示例）",
+                                "FOLLOWUP",
+                                1,
+                                CATEGORIES,
+                                "ENABLED"));
+        when(recordMapper.findVersion("C_PROGRAM_FU", 1)).thenReturn(versionRow(1L, 1, 2));
+        when(recordMapper.findVersionFields("C_PROGRAM_FU", 1))
+                .thenReturn(List.of(icdDischarge(), smokingRadioC(), cigarettesC()));
+
+        // device.type=VVIR 且吸烟史=是：f700 隐藏（残留 15 被清空）；f012 显示（保留）
+        FormService.StrippedData stripped =
+                service.stripHiddenFields(
+                        "C_PROGRAM_FU",
+                        1,
+                        new java.util.LinkedHashMap<>(Map.of("f010", 1, "f700", 15, "f012", 20)),
+                        Map.of("device", Map.of("type", "VVIR")));
+        assertEquals(Map.of("f010", 1, "f012", 20), stripped.data());
+        assertEquals(List.of("f700"), stripped.clearedKeys(), "只清空有值的隐藏字段");
+
+        // device.type=ICD 且吸烟史=否：f700 显示 → 无清空；f012 隐藏但无值 → 不进 clearedKeys
+        FormService.StrippedData none =
+                service.stripHiddenFields(
+                        "C_PROGRAM_FU",
+                        1,
+                        new java.util.LinkedHashMap<>(Map.of("f010", 0, "f700", 15)),
+                        Map.of("device", Map.of("type", "ICD")));
+        assertEquals(Map.of("f010", 0, "f700", 15), none.data());
+        assertTrue(none.clearedKeys().isEmpty(), "缺键 / 已空的隐藏字段无需清空");
+
+        assertEquals(
+                40400,
+                assertThrows(
+                                ApiException.class,
+                                () ->
+                                        service.stripHiddenFields(
+                                                "C_PROGRAM_FU", 9, Map.of(), Map.of()))
+                        .code(),
+                "版本不存在 40400");
+    }
+
     // ---------------------------------------------------------------- 辅助（全部虚构）
 
     private static FormVersionRow versionRow(long id, int version, int fieldCount) {
@@ -859,6 +974,90 @@ class FormServiceTest {
                 false,
                 null,
                 null,
+                null,
+                false,
+                "json",
+                null,
+                10);
+    }
+
+    /** 吸烟史（radio 0=否 / 1=是，示例；条件触发字段）。 */
+    private static VersionFieldRow smokingRadioC() {
+        return new VersionFieldRow(
+                10L,
+                1L,
+                "C_PROGRAM_FU",
+                1,
+                "f010",
+                "smoking_history",
+                "吸烟史",
+                "basic_info",
+                "radio",
+                null,
+                null,
+                null,
+                null,
+                "yesno",
+                true,
+                null,
+                null,
+                null,
+                false,
+                "json",
+                null,
+                40);
+    }
+
+    /** 每日吸烟支数（V31 种子同款示例：吸烟史=1 才显示并必填，硬范围 1–100）。 */
+    private static VersionFieldRow cigarettesC() {
+        String condition = "{\"all\":[{\"field\":\"f010\",\"op\":\"eq\",\"value\":1}]}";
+        return new VersionFieldRow(
+                11L,
+                1L,
+                "C_PROGRAM_FU",
+                1,
+                "f012",
+                "cigarettes_per_day",
+                "每日吸烟支数（示例）",
+                "basic_info",
+                "number",
+                "支",
+                0,
+                "{\"min\":1,\"max\":100}",
+                null,
+                null,
+                false,
+                condition,
+                condition,
+                null,
+                false,
+                "json",
+                null,
+                45);
+    }
+
+    /** ICD 放电次数（示例：ctx device.type 为 ICD / CRT-D 才显示并必填，C-FLD-005）。 */
+    private static VersionFieldRow icdDischarge() {
+        String condition =
+                "{\"all\":[{\"ctx\":\"device.type\",\"op\":\"in\",\"value\":[\"ICD\",\"CRT-D\"]}]}";
+        return new VersionFieldRow(
+                12L,
+                1L,
+                "C_PROGRAM_FU",
+                1,
+                "f700",
+                "icd_discharge",
+                "ICD 放电次数（示例）",
+                "icd",
+                "number",
+                null,
+                null,
+                null,
+                null,
+                null,
+                false,
+                condition,
+                condition,
                 null,
                 false,
                 "json",
