@@ -133,6 +133,19 @@ class MenuSyncServiceTest {
                         null,
                         "followup:patient:export",
                         20,
+                        "ENABLED"),
+                // E09-T04 通知设置：followup 菜单挂在 base 的系统设置目录（30）下，
+                // 父项经 findMenuIdByRouteName 跨模块解析（MenuSyncService.resolveParentLater 回落）
+                manifestRow(
+                        36L,
+                        30L,
+                        "MENU",
+                        "通知设置",
+                        "FollowupNotice",
+                        "/system/notice",
+                        "followup/notice/index",
+                        "followup:notice:config",
+                        45,
                         "ENABLED"));
     }
 
@@ -149,6 +162,9 @@ class MenuSyncServiceTest {
         lenient()
                 .when(platformMapper.findMenuIdByRouteName("HOSPITAL", "FollowupPatient"))
                 .thenReturn(21L);
+        lenient()
+                .when(platformMapper.findMenuIdByRouteName("HOSPITAL", "HospitalSystem"))
+                .thenReturn(30L);
     }
 
     @Test

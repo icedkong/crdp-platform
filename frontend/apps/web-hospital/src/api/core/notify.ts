@@ -6,6 +6,9 @@ import type {
   NoticeMarkedCount,
   NoticeMessagePage,
   NoticeUnreadCount,
+  NotifyRule,
+  NotifyRuleUpdate,
+  NotifySmsTemplate,
 } from '@crdp/api';
 
 import { apiPath, requestClient } from '#/api/request';
@@ -38,5 +41,29 @@ export function markNoticeMessageRead(id: number) {
 export function markAllNoticeMessagesRead() {
   return requestClient.post<NoticeMarkedCount>(
     apiPath('/notify/messages/read-all'),
+  );
+}
+
+// ---------------------------------------------------------------- 通知设置（E09-T04 / A-NTF-001、C-NTF-001）
+
+/**
+ * 逐事件规则清单（目录全集，缺行回落默认值）。权限 followup:notice:config。
+ */
+export function fetchNotifyRules() {
+  return requestClient.get<NotifyRule[]>(apiPath('/notify/rules'));
+}
+
+/** 修改单事件规则（全量覆盖，写 NOTICE_RULE_UPDATE 审计）。 */
+export function updateNotifyRule(eventType: string, update: NotifyRuleUpdate) {
+  return requestClient.put<NotifyRule>(
+    apiPath(`/notify/rules/${eventType}`),
+    update,
+  );
+}
+
+/** 可选短信模板（只读：平台审核过的 NOTIFY 场景模板）。 */
+export function fetchNotifySmsTemplates() {
+  return requestClient.get<NotifySmsTemplate[]>(
+    apiPath('/notify/sms-templates'),
   );
 }
