@@ -198,6 +198,19 @@ export type {
   NotifyRuleUpdate,
   NotifySmsTemplate,
 } from './notify';
+// E09-T07 发送记录与个人通知偏好（A-NTF-006、A-NTF-007）
+export { NOTIFY_SEND_STATUS_LABELS } from './notify';
+export type {
+  NotifyPrefOption,
+  NotifyPrefUpdate,
+  NotifyPrefView,
+  NotifySendLog,
+  NotifySendLogPage,
+  NotifySendLogSearch,
+  NotifySendStatus,
+  NotifySettings,
+  NotifySettingsUpdate,
+} from './notify';
 export { DEPT_TYPE_OPTIONS, ORG_STATUS_TEXT, orgStatusText } from './org';
 export type {
   DeptImpactView,

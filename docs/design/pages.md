@@ -523,7 +523,7 @@
 | 字段字典 | `/system/field` | `followup:field:edit` | A-FLD-001…009、012、013；C-FLD-001…010 | 按分类列字段；编辑显示名、帮助、范围、必填、选项；变更记录。**不做**医院自助新增字段与表单设计器（A-FLD-010/011 延后） |
 | 报告单设置 | `/system/report-config` | `followup:scan:config` | A-ATT-003、011、012、013、018；C-SCAN-002、003、004、005 | 资料类型、字段集、名称字典、指标模板、字段映射、格式与大小 |
 | 对比规则 | `/system/abnormal-rule` | `followup:abnormal:config`（C）；A 见 OQ-16 | A-FU-027；C-FU-011 | 每条规则可开关、调阈值；条件行复用 `AdvancedSearch` |
-| 通知设置 | `/system/notice` | `followup:notice:config` | A-NTF-001…008；C-NTF-001…008 | 逐事件：开关、提前天数、发送时间、渠道、接收人；短信模板只能选平台审核过的 |
+| 通知设置 | `/system/notice` | `followup:notice:config` | A-NTF-001…008；C-NTF-001…008 | 三页签：事件规则（逐事件开关、提前天数、发送时间、渠道、接收人；短信模板只能选平台审核过的）/ 发送设置（免打扰时段、每日短信上限、逾期短信可否个人关闭，E09-T07）/ 发送记录（按事件、渠道、结果、日期筛选，失败可重试，E09-T07） |
 | 首页卡片配置 | `/system/dashboard-layout` | `followup:dashboard:config` | A-DASH-013 | 选角色 → 左卡片目录勾选 / 右顺序上下移 / 预览 / 恢复默认 |
 | 审计中心 | `/system/audit` | `tenant:audit:view` / `export` | PLT-AUD-001、002、003、005、006、007 | 页签：操作日志 / 登录日志 / 数据访问日志；不含平台访问记录 |
 | 在线用户 | `/system/session` | `tenant:session:view` / `kick` | PLT-AUTH-008、009 | 强制下线 |

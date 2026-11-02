@@ -18,6 +18,9 @@ import com.crdp.followup.notice.infra.mapper.NotifyRuleMapper;
 import com.crdp.followup.notice.infra.mapper.NotifyRuleRow;
 import com.crdp.followup.notice.infra.mapper.NotifySendLogMapper;
 import com.crdp.followup.notice.infra.mapper.NotifySendLogRow;
+import com.crdp.followup.notice.infra.mapper.NotifySettingMapper;
+import com.crdp.followup.notice.infra.mapper.NotifySettingRow;
+import com.crdp.followup.notice.infra.mapper.NotifyUserPrefMapper;
 import com.crdp.framework.outbox.OutboxEvent;
 import java.time.Instant;
 import java.time.LocalTime;
@@ -45,9 +48,11 @@ class NotifyEventSubscriberTest {
     private final NotifySendLogMapper sendLog = mock(NotifySendLogMapper.class);
     private final NotifyRecipientResolver recipientResolver = mock(NotifyRecipientResolver.class);
     private final NoticeInboxService inbox = mock(NoticeInboxService.class);
+    private final NotifyUserPrefMapper prefs = mock(NotifyUserPrefMapper.class);
+    private final NotifySettingMapper settings = mock(NotifySettingMapper.class);
 
     private final NotifyEventSubscriber subscriber =
-            new NotifyEventSubscriber(rules, sendLog, recipientResolver, inbox);
+            new NotifyEventSubscriber(rules, sendLog, recipientResolver, inbox, prefs, settings);
 
     @BeforeEach
     void commonStubs() {
@@ -55,6 +60,12 @@ class NotifyEventSubscriberTest {
         lenient()
                 .when(recipientResolver.resolve(any(), any(), any()))
                 .thenReturn(NotifyRecipientResolver.Resolution.of(List.of(OWNER), "负责人命中"));
+        lenient().when(prefs.findSmsOffUsers(any(), anyString())).thenReturn(List.of());
+        lenient()
+                .when(settings.find())
+                .thenReturn(
+                        new NotifySettingRow(
+                                1L, LocalTime.of(21, 0), LocalTime.of(8, 0), 3, false, null, null));
     }
 
     private static OutboxEvent openedEvent() {
@@ -217,5 +228,76 @@ class NotifyEventSubscriberTest {
         verify(inbox).deliver(delivery.capture());
         assertEquals("每日汇总", delivery.getValue().title());
         assertEquals(null, delivery.getValue().targetType(), "汇总无任务落点");
+    }
+
+    // ------------------------------------------ 个人通知偏好（E09-T07 / A-NTF-007）
+
+    /** 本人已关闭该事件短信（非逾期类）：SMS 记 SKIPPED（带说明）不并入汇总，站内信照发。 */
+    @Test
+    void smsOffByPersonalPreferenceIsSkippedButInboxStillDelivered() {
+        when(rules.find("DAILY_DIGEST")).thenReturn(Optional.empty()); // 默认 INBOX,SMS
+        when(recipientResolver.resolve(eq(NotifyEventType.DAILY_DIGEST), any(), any()))
+                .thenReturn(NotifyRecipientResolver.Resolution.of(List.of(OWNER), "显式接收人"));
+        when(inbox.deliver(any())).thenReturn(true);
+        when(prefs.findSmsOffUsers(List.of(OWNER), "DAILY_DIGEST")).thenReturn(List.of(OWNER));
+
+        subscriber.onEvent(
+                new OutboxEvent(
+                        EVENT_ID + 2, "DAILY_DIGEST", "{\"recipientIds\":[11]}", Instant.now()));
+
+        ArgumentCaptor<NotifySendLogRow> rows = ArgumentCaptor.forClass(NotifySendLogRow.class);
+        verify(sendLog, org.mockito.Mockito.times(2)).insert(rows.capture());
+        assertEquals("INBOX", rows.getAllValues().get(0).channel());
+        assertEquals("SENT", rows.getAllValues().get(0).sendStatus(), "站内信不受个人短信偏好影响");
+        assertEquals("SMS", rows.getAllValues().get(1).channel());
+        assertEquals("SKIPPED", rows.getAllValues().get(1).sendStatus(), "本人已关短信 → 不并入汇总");
+        assertEquals("个人通知偏好已关闭该事件短信", rows.getAllValues().get(1).detail());
+    }
+
+    /** 逾期类：租户不允许个人关闭时偏好不生效（历史残留偏好立即失效，短信照常 QUEUED）。 */
+    @Test
+    void overdueSmsOffIgnoredWhenTenantDisallows() {
+        when(rules.find("TASK_OVERDUE")).thenReturn(Optional.empty()); // 默认 INBOX,SMS
+        when(inbox.deliver(any())).thenReturn(true);
+        // settings.find() 默认桩：overdue_sms_off_allowed = false
+        when(prefs.findSmsOffUsers(List.of(OWNER), "TASK_OVERDUE")).thenReturn(List.of(OWNER));
+
+        subscriber.onEvent(
+                new OutboxEvent(EVENT_ID + 3, "TASK_OVERDUE", "{\"taskId\":4245}", Instant.now()));
+
+        // 偏好不被尊重：不查偏好、短信照常 QUEUED
+        verify(prefs, never()).findSmsOffUsers(any(), anyString());
+        ArgumentCaptor<NotifySendLogRow> rows = ArgumentCaptor.forClass(NotifySendLogRow.class);
+        verify(sendLog, org.mockito.Mockito.times(2)).insert(rows.capture());
+        assertEquals("QUEUED", rows.getAllValues().get(1).sendStatus());
+    }
+
+    /** 逾期类：租户允许个人关闭时偏好生效（SKIPPED）。 */
+    @Test
+    void overdueSmsOffHonoredWhenTenantAllows() {
+        when(rules.find("TASK_OVERDUE")).thenReturn(Optional.empty());
+        when(inbox.deliver(any())).thenReturn(true);
+        when(settings.find())
+                .thenReturn(
+                        new NotifySettingRow(
+                                1L, LocalTime.of(21, 0), LocalTime.of(8, 0), 3, true, null, null));
+        when(prefs.findSmsOffUsers(List.of(OWNER), "TASK_OVERDUE")).thenReturn(List.of(OWNER));
+
+        subscriber.onEvent(
+                new OutboxEvent(EVENT_ID + 4, "TASK_OVERDUE", "{\"taskId\":4246}", Instant.now()));
+
+        ArgumentCaptor<NotifySendLogRow> rows = ArgumentCaptor.forClass(NotifySendLogRow.class);
+        verify(sendLog, org.mockito.Mockito.times(2)).insert(rows.capture());
+        assertEquals("SKIPPED", rows.getAllValues().get(1).sendStatus());
+    }
+
+    /** 规则不含 SMS 渠道：不查个人偏好（少一次查询）。 */
+    @Test
+    void inboxOnlyRuleDoesNotLoadPreferences() {
+        when(rules.find("TASK_OPENED")).thenReturn(Optional.empty());
+
+        subscriber.onEvent(openedEvent());
+
+        verify(prefs, never()).findSmsOffUsers(any(), anyString());
     }
 }

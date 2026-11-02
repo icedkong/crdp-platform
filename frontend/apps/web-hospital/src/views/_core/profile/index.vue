@@ -31,6 +31,7 @@ import {
 } from '#/api/core/profile';
 
 import ProfileLoginLogs from './login-logs.vue';
+import ProfileNotifyPref from './notify-pref.vue';
 import ProfilePasswordSetting from './password-setting.vue';
 import {
   canRequestBindCode,
@@ -43,9 +44,9 @@ defineOptions({ name: 'HospitalProfile' });
 
 /**
  * E06-T11 / PLT-ORG-011 · pages.md §10「个人中心」：基本信息（姓名、换绑手机号）、
- * 安全设置（修改密码 / 在线会话）与登录记录。登录即可访问（/profile 核心路由 + 顶栏入口）。
+ * 安全设置（修改密码 / 在线会话）、登录记录与通知偏好（A-NTF-007，E09-T07）。
+ * 登录即可访问（/profile 核心路由 + 顶栏入口）。
  * 修改密码接口复用 /auth/password（E04-T05）；在线会话复用 /auth/sessions（E04-T06）。
- * 通知偏好（A-NTF-007）随通知任务落地，不在本任务范围。
  */
 const userStore = useUserStore();
 
@@ -58,6 +59,7 @@ const tabs = [
   { label: '修改密码', value: 'password' },
   { label: '登录记录', value: 'logs' },
   { label: '在线会话', value: 'sessions' },
+  { label: '通知偏好', value: 'notify-pref' },
 ];
 const tabsValue = ref('basic');
 
@@ -255,6 +257,7 @@ onUnmounted(stopCountdown);
             <ProfilePasswordSetting v-else-if="tabsValue === 'password'" />
             <ProfileLoginLogs v-else-if="tabsValue === 'logs'" />
             <ProfileSessions v-else-if="tabsValue === 'sessions'" />
+            <ProfileNotifyPref v-else-if="tabsValue === 'notify-pref'" />
           </template>
         </Profile>
       </Spin>

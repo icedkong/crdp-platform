@@ -6,8 +6,14 @@ import type {
   NoticeMarkedCount,
   NoticeMessagePage,
   NoticeUnreadCount,
+  NotifyPrefUpdate,
+  NotifyPrefView,
   NotifyRule,
   NotifyRuleUpdate,
+  NotifySendLogPage,
+  NotifySendLogSearch,
+  NotifySettings,
+  NotifySettingsUpdate,
   NotifySmsTemplate,
 } from '@crdp/api';
 
@@ -65,5 +71,45 @@ export function updateNotifyRule(eventType: string, update: NotifyRuleUpdate) {
 export function fetchNotifySmsTemplates() {
   return requestClient.get<NotifySmsTemplate[]>(
     apiPath('/notify/sms-templates'),
+  );
+}
+
+// ------------------------------------------ 发送设置、发送记录、个人偏好（E09-T07 / A-NTF-006、A-NTF-007）
+
+/** 生效发送设置（免打扰、每日上限、逾期类可否个人关闭）。 */
+export function fetchNotifySettings() {
+  return requestClient.get<NotifySettings>(apiPath('/notify/settings'));
+}
+
+/** 修改发送设置（全量覆盖，写 NOTICE_SETTINGS_UPDATE 审计）。 */
+export function updateNotifySettings(update: NotifySettingsUpdate) {
+  return requestClient.put<NotifySettings>(apiPath('/notify/settings'), update);
+}
+
+/** 发送记录（POST search：空条件查全部）。 */
+export function searchNotifySendLogs(search: NotifySendLogSearch) {
+  return requestClient.post<NotifySendLogPage>(
+    apiPath('/notify/send-logs/search'),
+    search,
+  );
+}
+
+/** 失败重试（FAILED → QUEUED，等待 E09-T05 汇总发送）。 */
+export function retryNotifySendLog(id: number) {
+  return requestClient.post<{ item: unknown; requeued: boolean }>(
+    apiPath(`/notify/send-logs/${id}/retry`),
+  );
+}
+
+/** 本人通知偏好（登录即可；含可选项与逾期类可否关闭）。 */
+export function fetchNotifyPref() {
+  return requestClient.get<NotifyPrefView>(apiPath('/profile/notify-pref'));
+}
+
+/** 保存本人通知偏好（只影响短信；本院不允许关闭逾期类时后端 40001）。 */
+export function updateNotifyPref(update: NotifyPrefUpdate) {
+  return requestClient.put<NotifyPrefView>(
+    apiPath('/profile/notify-pref'),
+    update,
   );
 }

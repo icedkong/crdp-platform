@@ -10,6 +10,9 @@ import com.crdp.followup.notice.infra.mapper.NotifyRuleMapper;
 import com.crdp.followup.notice.infra.mapper.NotifyRuleRow;
 import com.crdp.followup.notice.infra.mapper.NotifySendLogMapper;
 import com.crdp.followup.notice.infra.mapper.NotifySendLogRow;
+import com.crdp.followup.notice.infra.mapper.NotifySettingMapper;
+import com.crdp.followup.notice.infra.mapper.NotifySettingRow;
+import com.crdp.followup.notice.infra.mapper.NotifyUserPrefMapper;
 import com.crdp.framework.outbox.OutboxEvent;
 import com.crdp.framework.outbox.OutboxSubscriber;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -35,6 +38,8 @@ import org.springframework.stereotype.Component;
  *
  * <p>幂等（outbox 至少一次）：ntf_message.dedup_key 与 ntf_send_log.dedup_key 都是「outbox 事件 ID + 接收人 + 渠道」
  * 唯一键，重放不重发不重记。负载解析失败抛异常交给分发器退避重试（发布方缺陷最终转死信，不静默丢）。
+ *
+ * <p>个人通知偏好（E09-T07 / A-NTF-007）：本人已关闭该事件短信的接收人，SMS 记 SKIPPED 不并入汇总（站内信不受影响）。
  */
 @Component
 public class NotifyEventSubscriber implements OutboxSubscriber {
@@ -47,21 +52,33 @@ public class NotifyEventSubscriber implements OutboxSubscriber {
     /** 台账状态：已投递（站内信落 ntf_message）。 */
     static final String STATUS_SENT = "SENT";
 
+    /** 台账状态：按个人通知偏好跳过（A-NTF-007，本人已关闭该事件短信）。 */
+    static final String STATUS_SKIPPED = "SKIPPED";
+
+    /** 台账跳过说明（detail，不含患者信息）。 */
+    static final String DETAIL_SMS_OFF_BY_PREF = "个人通知偏好已关闭该事件短信";
+
     private final NotifyRuleMapper rules;
     private final NotifySendLogMapper sendLog;
     private final NotifyRecipientResolver recipients;
     private final NoticeInboxService inbox;
+    private final NotifyUserPrefMapper prefs;
+    private final NotifySettingMapper settings;
     private final ObjectMapper mapper = new ObjectMapper();
 
     public NotifyEventSubscriber(
             NotifyRuleMapper rules,
             NotifySendLogMapper sendLog,
             NotifyRecipientResolver recipients,
-            NoticeInboxService inbox) {
+            NoticeInboxService inbox,
+            NotifyUserPrefMapper prefs,
+            NotifySettingMapper settings) {
         this.rules = rules;
         this.sendLog = sendLog;
         this.recipients = recipients;
         this.inbox = inbox;
+        this.prefs = prefs;
+        this.settings = settings;
     }
 
     @Override
@@ -92,9 +109,16 @@ public class NotifyEventSubscriber implements OutboxSubscriber {
         }
         String title = NotifyTexts.title(type, payload);
         String summary = NotifyTexts.summary(type, payload);
+        // 个人通知偏好（A-NTF-007）：本人已关闭该事件短信的人不并入汇总，台账记 SKIPPED（每事件查一次）。
+        // 逾期类只有在租户设置允许时才尊重个人关闭（投递时兜底：设置收紧后历史偏好立即失效）。
+        java.util.Set<Long> smsOffUsers =
+                rule.channels().contains(NotifyChannel.SMS) && prefHonored(type)
+                        ? java.util.Set.copyOf(
+                                prefs.findSmsOffUsers(resolution.recipientIds(), type.name()))
+                        : java.util.Set.of();
         for (long recipientId : resolution.recipientIds()) {
             for (NotifyChannel channel : rule.channels()) {
-                dispatch(type, event, payload, recipientId, channel, title, summary);
+                dispatch(type, event, payload, recipientId, channel, title, summary, smsOffUsers);
             }
         }
         log.info(
@@ -115,7 +139,8 @@ public class NotifyEventSubscriber implements OutboxSubscriber {
             long recipientId,
             NotifyChannel channel,
             String title,
-            String summary) {
+            String summary,
+            java.util.Set<Long> smsOffUsers) {
         String dedupKey = event.id() + ":" + recipientId + ":" + channel.name();
         if (sendLog.countByDedupKey(dedupKey) > 0) {
             return; // 重放（至少一次语义），首投台账已在
@@ -149,18 +174,29 @@ public class NotifyEventSubscriber implements OutboxSubscriber {
         }
         // SMS：并入每日汇总发送（E09-T05 按人合并、免打扰与频控），此处只记 QUEUED。
         // 模板参数（待办数量等）由汇总作业发送时按当日待办统计生成，短信不含患者信息（A-NTF-003）。
+        // 本人已关闭该事件短信（A-NTF-007）→ 记 SKIPPED，不并入汇总；站内信不受影响。
+        boolean offByPref = smsOffUsers.contains(recipientId);
         sendLog.insert(
                 new NotifySendLogRow(
                         null,
                         type.name(),
                         recipientId,
                         channel.name(),
-                        STATUS_QUEUED,
+                        offByPref ? STATUS_SKIPPED : STATUS_QUEUED,
                         title,
-                        null,
+                        offByPref ? DETAIL_SMS_OFF_BY_PREF : null,
                         dedupKey,
                         null,
                         null));
+    }
+
+    /** 该事件的个人短信关闭是否被尊重：逾期类（TASK_OVERDUE）须租户设置允许（投递时兜底）。 */
+    private boolean prefHonored(NotifyEventType type) {
+        if (type != NotifyEventType.TASK_OVERDUE) {
+            return true;
+        }
+        NotifySettingRow row = settings.find();
+        return row != null && row.overdueSmsOffAllowed();
     }
 
     private EffectiveRule loadRule(NotifyEventType type) {

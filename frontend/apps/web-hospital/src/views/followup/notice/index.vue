@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import type { NotifyRule, NotifySmsTemplate } from '@crdp/api';
 
-import { onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
 
@@ -21,6 +21,8 @@ import {
   Spin,
   Switch,
   Table,
+  TabPane,
+  Tabs,
   Tag,
   TimePicker,
 } from 'ant-design-vue';
@@ -44,16 +46,20 @@ import {
   timingText,
   validateRuleModel,
 } from './rules';
+import NoticeSendLogs from './send-logs.vue';
+import NoticeSendSettings from './send-settings.vue';
 
 defineOptions({ name: 'FollowupNotice' });
 
 /**
- * E09-T04 / A-NTF-001、C-NTF-001 · 通知设置（/system/notice，pages.md §10）：
- * 逐事件配置开关、提前天数、发送时间、渠道、接收人规则；短信模板只能选平台
- * 审核过的（PLT-CFG-006）。A / C 的事件差异（C 首期无窗口预告）由本院停用对应
- * 事件实现，不写租户分支。保存写 NOTICE_RULE_UPDATE 审计。仅桌面 / 平板。
+ * E09-T04 + E09-T07 / A-NTF-001…007 · 通知设置（/system/notice，pages.md §10）：
+ * 三个页签——事件规则（逐事件开关、提前天数、发送时间、渠道、接收人；短信模板只能选
+ * 平台审核过的）、发送设置（免打扰 / 频控 / 逾期短信可否个人关闭）、发送记录
+ * （A-NTF-006 每条发送结果可查、失败可重试）。修改记录操作日志。仅桌面 / 平板。
  */
 const { isMobile } = useBreakpoint();
+
+const activeTab = ref('rules');
 
 const loading = ref(false);
 const loadError = ref('');
@@ -64,7 +70,6 @@ const saving = ref(false);
 const editing = ref(false);
 const editingRule = ref<NotifyRule | null>(null);
 const editErrors = ref<string[]>([]);
-const formRef = ref();
 
 const form = reactive({
   advanceDays: null as null | number,
@@ -74,6 +79,11 @@ const form = reactive({
   sendTime: '',
   smsTemplateCode: '',
 });
+
+/** 发送记录页签的事件筛选选项（规则目录同源）。 */
+const eventOptions = computed(() =>
+  rules.value.map((rule) => ({ label: rule.label, value: rule.eventType })),
+);
 
 const columns = [
   { title: '事件', dataIndex: 'label', key: 'label' },
@@ -182,49 +192,62 @@ onMounted(load);
   <Page
     v-else
     title="通知设置"
-    description="逐个随访事件配置开关、提前天数、发送时间、通知渠道与接收人规则；短信模板只能选择平台审核过的模板。修改后记录操作日志。"
+    description="配置随访事件的通知规则与发送设置，并可查询每条通知的发送结果；短信按人并入每日汇总发送。修改后记录操作日志。"
   >
-    <Spin :spinning="loading">
-      <Alert
-        v-if="loadError"
-        class="mb-4"
-        :message="loadError"
-        show-icon
-        type="error"
-      />
-      <Table
-        v-else
-        :columns="columns"
-        :data-source="rules"
-        :pagination="false"
-        row-key="eventType"
-        size="middle"
-      >
-        <template #bodyCell="{ column, record }">
-          <template v-if="column.key === 'enabled'">
-            <Tag v-if="record.enabled" color="success">启用</Tag>
-            <Tag v-else>停用</Tag>
-          </template>
-          <template v-else-if="column.key === 'timing'">
-            {{ timingText(record) }}
-          </template>
-          <template v-else-if="column.key === 'channels'">
-            {{ channelText(record.channels) }}
-          </template>
-          <template v-else-if="column.key === 'recipients'">
-            {{ recipientText(record.recipients) }}
-          </template>
-          <template v-else-if="column.key === 'smsTemplateCode'">
-            {{ templateLabel(record.smsTemplateCode) }}
-          </template>
-          <template v-else-if="column.key === 'action'">
-            <Button size="small" type="link" @click="openEdit(record)">
-              设置
-            </Button>
-          </template>
-        </template>
-      </Table>
-    </Spin>
+    <Tabs v-model:active-key="activeTab">
+      <TabPane key="rules" tab="事件规则">
+        <Spin :spinning="loading">
+          <Alert
+            v-if="loadError"
+            class="mb-4"
+            :message="loadError"
+            show-icon
+            type="error"
+          />
+          <Table
+            v-else
+            :columns="columns"
+            :data-source="rules"
+            :pagination="false"
+            row-key="eventType"
+            size="middle"
+          >
+            <template #bodyCell="{ column, record }">
+              <template v-if="column.key === 'enabled'">
+                <Tag v-if="record.enabled" color="success">启用</Tag>
+                <Tag v-else>停用</Tag>
+              </template>
+              <template v-else-if="column.key === 'timing'">
+                {{ timingText(record) }}
+              </template>
+              <template v-else-if="column.key === 'channels'">
+                {{ channelText(record.channels) }}
+              </template>
+              <template v-else-if="column.key === 'recipients'">
+                {{ recipientText(record.recipients) }}
+              </template>
+              <template v-else-if="column.key === 'smsTemplateCode'">
+                {{ templateLabel(record.smsTemplateCode) }}
+              </template>
+              <template v-else-if="column.key === 'action'">
+                <Button size="small" type="link" @click="openEdit(record)">
+                  设置
+                </Button>
+              </template>
+            </template>
+          </Table>
+        </Spin>
+      </TabPane>
+      <TabPane key="settings" tab="发送设置">
+        <NoticeSendSettings v-if="activeTab === 'settings'" />
+      </TabPane>
+      <TabPane key="logs" tab="发送记录">
+        <NoticeSendLogs
+          v-if="activeTab === 'logs'"
+          :event-options="eventOptions"
+        />
+      </TabPane>
+    </Tabs>
 
     <Modal
       v-model:open="editing"
@@ -243,12 +266,7 @@ onMounted(load);
         show-icon
         type="error"
       />
-      <Form
-        ref="formRef"
-        :label-col="{ span: 6 }"
-        :model="form"
-        @keyup.enter.prevent
-      >
+      <Form :label-col="{ span: 6 }" :model="form" @keyup.enter.prevent>
         <FormItem label="事件开关">
           <Switch
             v-model:checked="form.enabled"
@@ -295,7 +313,7 @@ onMounted(load);
             </CheckboxOption>
           </CheckboxGroup>
           <p class="mb-0 text-xs text-gray-500">
-            短信按人并入每日汇总发送（免打扰时段与每日上限随后续版本生效）
+            短信按人并入每日汇总发送（免打扰时段与每日上限见「发送设置」页签）
           </p>
         </FormItem>
         <FormItem label="接收人规则">
