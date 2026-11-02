@@ -24,6 +24,10 @@ import com.crdp.form.record.infra.mapper.FormRecordRow;
 import com.crdp.form.record.infra.mapper.FormVersionInsert;
 import com.crdp.form.record.infra.mapper.FormVersionRow;
 import com.crdp.form.record.infra.mapper.VersionFieldRow;
+import com.crdp.form.rule.app.FieldIssue;
+import com.crdp.form.rule.app.FormRuleEngine;
+import com.crdp.form.rule.infra.mapper.FormRuleMapper;
+import com.crdp.form.rule.infra.mapper.RuleRow;
 import com.crdp.framework.audit.AuditEntry;
 import com.crdp.framework.audit.AuditLogger;
 import com.crdp.framework.security.ScopeSnapshot;
@@ -47,7 +51,8 @@ import org.springframework.security.core.context.SecurityContextHolder;
  * <p>验收原文：表单按版本读写，旧版本可读。锁定：FormSchema 不传 version 取当前发布版、指定旧版本取旧快照 （字段口径与最新版不同也不受影响）、版本 / 表单不存在
  * 40400；发布固化启用字段并前移 current_version、写 FORM_PUBLISH 审计、并发发布 40900；记录创建固化 templateVersion、保存带
  * baseVersion（缺失 40001、过期 40900 附更新人与不同字段、已提交 40901）、保存按<b>记录版本</b>校验值；值闸门见 {@link
- * FormDataValidatorTest}。 全部虚构数据。
+ * FormDataValidatorTest}。E11-T04（验收「前后端校验一致，超范围拦截」）：schema 下发 fe_rule 规则、写入闸门拦硬范围（42200
+ * fieldErrors）、草稿放行软范围且不做跨字段、validateForSubmit 跑完整规则（硬规则 42200、软命中返回警告）。 全部虚构数据。
  */
 @ExtendWith(MockitoExtension.class)
 class FormServiceTest {
@@ -58,9 +63,16 @@ class FormServiceTest {
 
     private final FormFieldMapper fieldMapper = mock(FormFieldMapper.class);
     private final FormRecordMapper recordMapper = mock(FormRecordMapper.class);
+    private final FormRuleMapper ruleMapper = mock(FormRuleMapper.class);
     private final AuditLogger audit = mock(AuditLogger.class);
     private final FormService service =
-            new FormService(fieldMapper, recordMapper, new FormDataValidator(fieldMapper), audit);
+            new FormService(
+                    fieldMapper,
+                    recordMapper,
+                    new FormDataValidator(fieldMapper),
+                    ruleMapper,
+                    new FormRuleEngine(),
+                    audit);
 
     @BeforeEach
     void login() {
@@ -94,7 +106,7 @@ class FormServiceTest {
         assertEquals(2, current.version(), "不传 version 取当前发布版");
         assertEquals("基线档案（示例）", current.name());
         assertEquals("BASELINE", current.usage());
-        assertTrue(current.rules().isEmpty(), "rules 随 E11-T04");
+        assertTrue(current.rules().isEmpty(), "无规则表单 rules 为空数组");
         assertEquals(
                 List.of("basic_info", "surgery"),
                 current.categories().stream().map(FormService.CategoryView::key).toList(),
@@ -526,6 +538,190 @@ class FormServiceTest {
         assertEquals(40400, assertThrows(ApiException.class, () -> service.record(404L)).code());
     }
 
+    // ---------------------------------------------------------------- E11-T04：范围与跨字段（A-FLD-003 /
+    // A-FLD-006 / C-FLD-007）
+
+    /** FormSchema 下发 fe_rule 启用规则（components.md §10.1 rules[]；实时读取，不进版本快照）。 */
+    @Test
+    void schemaCarriesCrossFieldRules() {
+        when(fieldMapper.findForm("A_BASELINE"))
+                .thenReturn(
+                        new FormRow(
+                                1L,
+                                "A_BASELINE",
+                                "基线档案（示例）",
+                                "BASELINE",
+                                1,
+                                CATEGORIES,
+                                "ENABLED"));
+        when(recordMapper.findVersion("A_BASELINE", 1)).thenReturn(versionRow(1L, 1, 2));
+        when(recordMapper.findVersionFields("A_BASELINE", 1)).thenReturn(List.of(surgeryDate(1)));
+        when(ruleMapper.findRules("A_BASELINE")).thenReturn(List.of(birthLeSurgery()));
+
+        FormService.SchemaView schema = service.schema("A_BASELINE", null);
+        assertEquals(1, schema.rules().size());
+        FormService.RuleView rule = schema.rules().get(0);
+        assertEquals("birth_le_surgery", rule.id());
+        assertEquals("HARD", rule.severity());
+        assertEquals("f020", rule.key(), "提示挂靠字段（fieldErrors[].key 同源）");
+        assertEquals("surgery", rule.categoryKey());
+        assertEquals("手术日期不能早于出生日期（示例）", rule.message());
+        assertEquals(Map.of("leftField", "f003", "op", "lte", "rightField", "f020"), rule.params());
+    }
+
+    /** 写入闸门：超硬范围不可保存（A-FLD-003）——创建与保存都 42200，附 fieldErrors，不落库。 */
+    @Test
+    void writeGateBlocksHardRangeOnCreateAndSave() {
+        when(fieldMapper.findForm("A_BASELINE"))
+                .thenReturn(
+                        new FormRow(
+                                1L,
+                                "A_BASELINE",
+                                "基线档案（示例）",
+                                "BASELINE",
+                                1,
+                                CATEGORIES,
+                                "ENABLED"));
+        when(recordMapper.findVersion("A_BASELINE", 1)).thenReturn(versionRow(1L, 1, 2));
+        when(recordMapper.findVersionFields("A_BASELINE", 1))
+                .thenReturn(List.of(smoking(1), height(1)));
+        when(fieldMapper.findOptions("yesno")).thenReturn(List.of(option(0, "否"), option(1, "是")));
+
+        ApiException created =
+                assertThrows(
+                        ApiException.class,
+                        () -> service.createRecord("A_BASELINE", Map.of("f011", 300), null));
+        assertEquals(42200, created.code());
+        assertEquals(422, created.httpStatus());
+        assertEquals(
+                List.of(new FieldIssue("f011", "basic_info", "hardRange", "取值应在 50–250 之间")),
+                ((Map<?, ?>) created.data()).get("fieldErrors"),
+                "fieldErrors 指到具体字段（form.md §2）");
+        verify(recordMapper, never()).insertRecord(any(FormRecordInsert.class));
+
+        FormRecordRow row =
+                new FormRecordRow(
+                        101L,
+                        "A_BASELINE",
+                        1,
+                        "{}",
+                        null,
+                        0,
+                        "DRAFT",
+                        7L,
+                        LocalDateTime.now(),
+                        null,
+                        LocalDateTime.now());
+        when(recordMapper.findRecord(101L)).thenReturn(row);
+        ApiException saved =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.saveRecord(
+                                        101L,
+                                        new FormService.SaveRecordCommand(
+                                                0, Map.of("f011", 300), null)));
+        assertEquals(42200, saved.code(), "保存同样拦截");
+        verify(recordMapper, never()).updateRecord(anyLong(), anyInt(), any(), any(), anyLong());
+    }
+
+    /** 草稿语义：软范围外可保存（A-FLD-003「提示但可保存」），且草稿闸门不做跨字段（form.md §2）—— ruleMapper 不被咨询，规则违反也不拦草稿。 */
+    @Test
+    void draftSaveIgnoresSoftRangeAndCrossFieldRules() {
+        FormRecordRow row =
+                new FormRecordRow(
+                        101L,
+                        "A_BASELINE",
+                        1,
+                        "{}",
+                        null,
+                        0,
+                        "DRAFT",
+                        7L,
+                        LocalDateTime.now(),
+                        null,
+                        LocalDateTime.now());
+        FormRecordRow saved =
+                new FormRecordRow(
+                        101L,
+                        "A_BASELINE",
+                        1,
+                        "{\"f011\":120}",
+                        null,
+                        1,
+                        "DRAFT",
+                        7L,
+                        LocalDateTime.now(),
+                        9L,
+                        LocalDateTime.now());
+        when(recordMapper.findRecord(101L)).thenReturn(row, saved);
+        when(recordMapper.findVersionFields("A_BASELINE", 1))
+                .thenReturn(List.of(smoking(1), height(1)));
+        when(fieldMapper.findOptions("yesno")).thenReturn(List.of(option(0, "否"), option(1, "是")));
+        when(recordMapper.updateRecord(eq(101L), eq(0), anyString(), any(), eq(9L))).thenReturn(1);
+
+        FormService.RecordView view =
+                service.saveRecord(
+                        101L, new FormService.SaveRecordCommand(0, Map.of("f011", 120), null));
+        assertEquals(120, ((Number) view.data().get("f011")).intValue(), "软范围外（120 < 130）可保存");
+        verify(ruleMapper, never()).findRules(anyString());
+    }
+
+    /**
+     * 提交前完整校验（form.md §2「后端在提交 / 保存修改时再执行一次」）：硬规则违反 42200；通过时软范围 命中作为警告返回
+     * （C-FLD-007「黄色提示并要求确认」，确认流由调用方处理）。
+     */
+    @Test
+    void validateForSubmitRunsFullRuleSet() {
+        when(fieldMapper.findForm("A_BASELINE"))
+                .thenReturn(
+                        new FormRow(
+                                1L,
+                                "A_BASELINE",
+                                "基线档案（示例）",
+                                "BASELINE",
+                                1,
+                                CATEGORIES,
+                                "ENABLED"));
+        when(recordMapper.findVersion("A_BASELINE", 1)).thenReturn(versionRow(1L, 1, 2));
+        when(recordMapper.findVersionFields("A_BASELINE", 1))
+                .thenReturn(List.of(birthDate(1), surgeryDateJson(1), height(1)));
+        when(ruleMapper.findRules("A_BASELINE")).thenReturn(List.of(birthLeSurgery()));
+
+        ApiException rejected =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.validateForSubmit(
+                                        "A_BASELINE",
+                                        1,
+                                        Map.of(
+                                                "f003", "2024-05-06",
+                                                "f020", "2024-05-01")));
+        assertEquals(42200, rejected.code(), "手术早于出生：跨字段硬规则拦截提交");
+        assertEquals(
+                List.of(new FieldIssue("f020", "surgery", "birth_le_surgery", "手术日期不能早于出生日期（示例）")),
+                ((Map<?, ?>) rejected.data()).get("fieldErrors"));
+
+        // 通过：软范围命中（120 < 130）作为警告返回，不拦截
+        List<FieldIssue> warnings =
+                service.validateForSubmit(
+                        "A_BASELINE",
+                        1,
+                        Map.of("f003", "2024-05-01", "f020", "2024-05-06", "f011", 120));
+        assertEquals(
+                List.of(new FieldIssue("f011", "basic_info", "softRange", "取值应在 130–210 之间")),
+                warnings);
+
+        assertEquals(
+                40400,
+                assertThrows(
+                                ApiException.class,
+                                () -> service.validateForSubmit("A_BASELINE", 9, Map.of()))
+                        .code(),
+                "版本不存在 40400");
+    }
+
     // ---------------------------------------------------------------- 辅助（全部虚构）
 
     private static FormVersionRow versionRow(long id, int version, int fieldCount) {
@@ -613,6 +809,75 @@ class FormServiceTest {
                 false,
                 "column",
                 null,
+                10);
+    }
+
+    /** 出生日期（V28 种子同款：json 存储的日期，跨字段规则用它）。 */
+    private static VersionFieldRow birthDate(int version) {
+        return new VersionFieldRow(
+                4L,
+                (long) version,
+                "A_BASELINE",
+                version,
+                "f003",
+                "birth_date",
+                "出生日期",
+                "basic_info",
+                "date",
+                null,
+                null,
+                null,
+                null,
+                null,
+                false,
+                null,
+                null,
+                null,
+                false,
+                "json",
+                null,
+                30);
+    }
+
+    /** 手术日期（json 存储版，区别于实体列存储的 {@link #surgeryDate(int)}，供跨字段规则用）。 */
+    private static VersionFieldRow surgeryDateJson(int version) {
+        return new VersionFieldRow(
+                5L,
+                (long) version,
+                "A_BASELINE",
+                version,
+                "f020",
+                "surgery_date",
+                "手术日期",
+                "surgery",
+                "date",
+                null,
+                null,
+                null,
+                null,
+                null,
+                false,
+                null,
+                null,
+                null,
+                false,
+                "json",
+                null,
+                10);
+    }
+
+    /** 演示规则（V30 种子同款）：出生日期 ≤ 手术日期，HARD。 */
+    private static RuleRow birthLeSurgery() {
+        return new RuleRow(
+                1L,
+                "A_BASELINE",
+                "birth_le_surgery",
+                "surgery",
+                "f020",
+                "HARD",
+                "COMPARE",
+                "{\"leftField\":\"f003\",\"op\":\"lte\",\"rightField\":\"f020\"}",
+                "手术日期不能早于出生日期（示例）",
                 10);
     }
 

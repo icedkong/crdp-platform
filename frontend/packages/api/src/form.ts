@@ -6,6 +6,8 @@
  * 1=是），页面显示 `label`。字段可启停（ENABLED/DISABLED，停用不删除）。
  */
 
+import type { CrossFieldRule } from '@crdp/rules';
+
 /** 表单摘要（GET /api/hospital/form/forms；完整模板见 FormSchema，E11-T02）。 */
 export interface FormSummary {
   code: string;
@@ -200,15 +202,16 @@ export function matchFieldKeyword(
 /* ----------------------------------------------------------------------
  * E11-T02 / A-NFR-002、C-NFR-002：FormSchema（GET /api/hospital/form/forms/{code}?version=，
  * components.md §10.1 契约 + name / usage）。不传 version 取当前发布版；已有记录按其保存时的
- * 版本取（旧版本快照永久可读）。rules 为 fe_rule 跨字段校验（E11-T04 前为空数组）。
+ * 版本取（旧版本快照可读）。rules 为 fe_rule 跨字段校验（E11-T04 已落地：实时读取、不进版本快照），
+ * 前后端同语义校验见 @crdp/rules 的 validateFormData（共享用例锁定一致）。
  */
 
 export interface FormSchema {
   categories: FormSchemaCategory[];
   code: string;
   name: string;
-  /** fe_rule 跨字段校验（E11-T04 落地前恒为空数组）。 */
-  rules: unknown[];
+  /** fe_rule 跨字段校验（E11-T04）：severity=HARD 违反拦截（后端提交 42200），SOFT 黄色提示可保存。 */
+  rules: CrossFieldRule[];
   usage: FormUsage;
   /** 模板版本：记录保存时固化的 formVersion 用它取旧版本渲染。 */
   version: number;

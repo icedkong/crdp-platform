@@ -10,6 +10,11 @@ import com.crdp.form.record.infra.mapper.FormRecordRow;
 import com.crdp.form.record.infra.mapper.FormVersionInsert;
 import com.crdp.form.record.infra.mapper.FormVersionRow;
 import com.crdp.form.record.infra.mapper.VersionFieldRow;
+import com.crdp.form.rule.app.FieldIssue;
+import com.crdp.form.rule.app.FormRuleEngine;
+import com.crdp.form.rule.app.RuleResult;
+import com.crdp.form.rule.infra.mapper.FormRuleMapper;
+import com.crdp.form.rule.infra.mapper.RuleRow;
 import com.crdp.framework.audit.AuditEntry;
 import com.crdp.framework.audit.AuditLogger;
 import com.crdp.framework.security.CurrentSession;
@@ -36,6 +41,10 @@ import org.springframework.transaction.annotation.Transactional;
  * 类型检查，tech-plan「禁止绕过服务直接写 JSON」）。template_version 创建时固化、保存不升级（升级属业务重映射， 随 E13+）；version
  * 乐观锁，baseVersion 不一致返回 40900 并附更新人与两边不同字段（E25 草稿接口复用本口径）。
  * 草稿不逐次写审计（技术方案「服务器自动保存」），提交与覆盖他人版本的审计随业务接口（E15 / E25）。
+ *
+ * <p>E11-T04（A-FLD-003 / A-FLD-006 / C-FLD-007）：写入闸门在类型检查后加<b>硬范围</b>拦截（超硬范围不可保存， 42200 带
+ * fieldErrors）；软范围与跨字段规则不在草稿闸门里（form.md §2 草稿语义），提交 / 保存修改前调 {@link #validateForSubmit(String, int,
+ * Map)} 再执行一次（硬规则违反 42200，软规则返回警告由调用方做确认流）。
  */
 @Service
 public class FormService {
@@ -43,6 +52,8 @@ public class FormService {
     private final FormFieldMapper fieldMapper;
     private final FormRecordMapper recordMapper;
     private final FormDataValidator validator;
+    private final FormRuleMapper ruleMapper;
+    private final FormRuleEngine ruleEngine;
     private final AuditLogger audit;
     private final ObjectMapper json = new ObjectMapper();
 
@@ -50,24 +61,41 @@ public class FormService {
             FormFieldMapper fieldMapper,
             FormRecordMapper recordMapper,
             FormDataValidator validator,
+            FormRuleMapper ruleMapper,
+            FormRuleEngine ruleEngine,
             AuditLogger audit) {
         this.fieldMapper = fieldMapper;
         this.recordMapper = recordMapper;
         this.validator = validator;
+        this.ruleMapper = ruleMapper;
+        this.ruleEngine = ruleEngine;
         this.audit = audit;
     }
 
     // ---------------------------------------------------------------- 视图（components.md §10.1
     // FormSchema）
 
-    /** FormSchema（§10.1 契约 + name / usage 便于直接展示；rules 随 E11-T04、compareRules 随 E17）。 */
+    /**
+     * FormSchema（§10.1 契约 + name / usage 便于直接展示；rules 为 fe_rule 跨字段规则 E11-T04、compareRules 随 E17）。
+     */
     public record SchemaView(
             String code,
             String name,
             String usage,
             int version,
             List<CategoryView> categories,
-            List<Object> rules) {}
+            List<RuleView> rules) {}
+
+    /**
+     * 跨字段规则下发口径（components.md §10.1 rules[]；与 42200 fieldErrors 同源：key / categoryKey / rule= id）。
+     */
+    public record RuleView(
+            String id,
+            String severity,
+            String categoryKey,
+            String key,
+            Object params,
+            String message) {}
 
     /** 分类（基线「分类」/ 随访「分组」统一口径；key 为稳定锚点键）。 */
     public record CategoryView(String key, String label, int order, List<FieldView> fields) {}
@@ -129,7 +157,7 @@ public class FormService {
 
     // ---------------------------------------------------------------- 模板：按版本读（旧版本可读）
 
-    /** FormSchema：version 省略取当前发布版；版本不存在 40400。 */
+    /** FormSchema：version 省略取当前发布版；版本不存在 40400。rules 为 fe_rule 当前启用规则（实时读取，不进快照）。 */
     public SchemaView schema(String formCode, Integer version) {
         FormRow form = requireForm(formCode);
         int resolved = version == null ? form.currentVersion() : version;
@@ -201,7 +229,7 @@ public class FormService {
 
     // ---------------------------------------------------------------- 记录：JSON 读写（版本固化 + 乐观锁）
 
-    /** 新建记录（DRAFT）：template_version 固化为当前发布版；值经 {@link FormDataValidator} 检查。 */
+    /** 新建记录（DRAFT）：template_version 固化为当前发布版；值经 {@link FormDataValidator} 与硬范围闸门检查。 */
     @Transactional
     public RecordView createRecord(
             String formCode, Map<String, Object> data, Map<String, Object> dataMeta) {
@@ -210,6 +238,7 @@ public class FormService {
         List<VersionFieldRow> fields =
                 recordMapper.findVersionFields(formCode, form.currentVersion());
         validator.validateData(data, fields);
+        enforceHardRange(data, fields);
 
         long operator = CurrentSession.requireHospital().userId();
         FormRecordInsert insert =
@@ -230,7 +259,8 @@ public class FormService {
     }
 
     /**
-     * 保存修改（草稿语义：只做键与类型检查，tech-plan「草稿保存只做类型检查」）。
+     * 保存修改（草稿语义：只做键、类型与硬范围检查——硬范围属写入闸门（A-FLD-003「超出硬范围不可保存」、tech-plan §6），软范围与跨字段不做，form.md
+     * §2「草稿保存只做类型检查，不做必填与跨字段校验」）。
      *
      * <p>baseVersion 必填且须等于当前 version，否则 40900（附更新人、更新时间、两边不同字段）；已提交记录走 修改流程（E15 edit-session），这里
      * 40901。值按<b>记录的模板版本</b>校验（不是最新版）。
@@ -253,6 +283,7 @@ public class FormService {
             throw new ApiException(404, 40400, "记录的模板版本不存在（formCode=" + row.formCode() + "）");
         }
         validator.validateData(command.data(), fields);
+        enforceHardRange(command.data(), fields);
 
         long operator = CurrentSession.requireHospital().userId();
         int updated =
@@ -267,6 +298,30 @@ public class FormService {
             throw conflict(current, command);
         }
         return record(id);
+    }
+
+    /**
+     * 提交 / 保存修改前的完整规则校验（form.md §2「后端在提交 / 保存修改时用同一份规则定义再执行一次」；业务接口 E15 / E25 在状态流转前调用）。
+     *
+     * <p>执行范围（硬 + 软）与跨字段规则（按 fe_rule severity）：硬校验违反抛 42200（data.fieldErrors 与前端提示 同构）；软范围 /
+     * 软规则命中<b>不拦截</b>，作为警告返回（A-FLD-003「提示但可保存」、C-FLD-007「黄色提示并要求确认」），由调用方 走确认流（确认人记
+     * data_meta，tech-plan §6）。按记录的模板版本取字段口径。
+     *
+     * @return 软校验警告（可能为空，顺序与 FormSchema 一致）
+     */
+    public List<FieldIssue> validateForSubmit(
+            String formCode, int templateVersion, Map<String, Object> data) {
+        FormVersionRow snapshot = requireVersion(requireForm(formCode), templateVersion);
+        List<VersionFieldRow> fields = recordMapper.findVersionFields(formCode, snapshot.version());
+        if (fields.isEmpty()) {
+            throw new ApiException(404, 40400, "记录的模板版本不存在（formCode=" + formCode + "）");
+        }
+        validator.validateData(data, fields);
+        RuleResult result = ruleEngine.validate(data, fields, ruleMapper.findRules(formCode));
+        if (!result.ok()) {
+            throw new ApiException(422, 42200, "表单校验未通过", Map.of("fieldErrors", result.errors()));
+        }
+        return result.warnings();
     }
 
     // ---------------------------------------------------------------- 内部
@@ -342,7 +397,45 @@ public class FormService {
                 form.usageType(),
                 snapshot.version(),
                 categories,
-                List.of());
+                ruleViews(form.code()));
+    }
+
+    /** fe_rule 当前启用规则（实时读取、不进版本快照；停用即不生效）。 */
+    private List<RuleView> ruleViews(String formCode) {
+        List<RuleView> rules = new ArrayList<>();
+        for (RuleRow rule : ruleMapper.findRules(formCode)) {
+            rules.add(
+                    new RuleView(
+                            rule.ruleId(),
+                            rule.severity(),
+                            rule.categoryKey(),
+                            rule.targetField(),
+                            readParams(rule.params()),
+                            rule.message()));
+        }
+        return rules;
+    }
+
+    /** 规则参数 JSON → 对象（components.md §10.1 params；非对象返回 null 防御）。 */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> readParams(String raw) {
+        JsonNode node = readTree(raw);
+        if (node == null || !node.isObject()) {
+            return null;
+        }
+        try {
+            return json.readValue(raw, LinkedHashMap.class);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("表单规则参数解析失败", e);
+        }
+    }
+
+    /** 硬范围写入闸门（A-FLD-003「超出硬范围不可保存」）：违反 42200，fieldErrors 指到具体字段。 */
+    private void enforceHardRange(Map<String, Object> data, List<VersionFieldRow> fields) {
+        List<FieldIssue> errors = ruleEngine.rangeErrors(data, fields);
+        if (!errors.isEmpty()) {
+            throw new ApiException(422, 42200, "表单校验未通过", Map.of("fieldErrors", errors));
+        }
     }
 
     /** 快照 categories JSON（[{key,label,sortNo}]）→ 有序 (key, order)；解析失败回落空（字段兜底输出）。 */

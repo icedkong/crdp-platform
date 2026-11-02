@@ -552,6 +552,14 @@ type Condition =
   | { field: string; op: ConditionOp; value?: unknown }  // 本表单字段
   | { ctx: string; op: ConditionOp; value?: unknown }    // 上下文变量，如 'device.type'、'device.hasRaLead'、'device.chambers'
   | ConditionTree;                                       // 嵌套
+interface CrossFieldRule {   // fe_rule（E11-T04 已落地；实时下发，不进版本快照，docs/api/form.md §2.2）
+  id: string;                // 规则稳定编码（命中时 fieldErrors[].rule）
+  severity: 'HARD' | 'SOFT'; // HARD 违反拦截（42200）/ SOFT 黄色提示可保存（C-FLD-007）
+  categoryKey: string;       // 命中提示挂靠分类锚点键
+  key: string;               // 命中提示挂靠字段稳定键
+  params: { leftField: string; op: 'lt' | 'lte'; rightField: string };  // 「leftField op rightField 须成立」
+  message: string;           // 违反提示文案（前后端同源）
+}
 ```
 
 ### 10.2 Props / Emits
@@ -608,7 +616,7 @@ interface FormRendererProps {
 
 ### 10.5 共享用例
 
-条件求值、派生函数、对比规则在 `packages/rules` 与后端 Java 各一份，**同一份用例文件**（JSON，放 `backend/.../src/test/resources/shared-cases/` 并由前端测试读取，路径推断，待确认），取自需求验收标准（例如：出院 − 手术 + 1；160 小时 54 分 → 160.9；EF 56 → 45 下降 11 → 标红）。
+条件求值、派生函数、对比规则在 `packages/rules` 与后端 Java 各一份，**同一份用例文件**（JSON，放 `backend/crdp-form/src/test/resources/shared-cases/`，前端测试按相对路径读取——已定稿），取自需求验收标准（例如：出院 − 手术 + 1；160 小时 54 分 → 160.9；EF 56 → 45 下降 11 → 标红）。范围与跨字段校验用例已随 E11-T04 落地：`shared-cases/form-validation-cases.json` 由后端 `FormRuleEngineTest` 与前端 `packages/rules/src/form-validation.test.ts` 各执行一遍，errors / warnings 逐条（key、categoryKey、rule、message）一致；条件求值（E11-T03）、派生（E11-T05）、对比（E17）沿用同一目录。
 
 ---
 

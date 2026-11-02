@@ -3,7 +3,7 @@
 > 后端：`crdp-form`（字段字典、表单模板、规则）；前端：`frontend/packages/form-engine`（`FormRenderer`）与 `frontend/packages/rules`（前后端共用的校验 / 派生规则，见技术方案 §15 前端结构）。
 > 契约基准：`docs/design/components.md` §10.1 的 `FormSchema` 类型 —— **本文件与之保持一致，有变化两处同改**。
 > 原则：**字段由表单模板驱动**，页面不得硬编码业务字段；新增 / 改字段 = 改模板 + 新 Flyway 迁移（种子）或字典维护页，不改页面代码。
-> §1 模板按版本读取与发布、§3 字段字典维护已随 E11-T01 / E11-T02 落地（实现即定义）；其余路径 **推断，待确认**。
+> §1 模板按版本读取与发布、§3 字段字典维护已随 E11-T01 / E11-T02 落地、§2 规则执行已随 E11-T04 落地（实现即定义）；其余路径 **推断，待确认**。
 
 ## 1. 读取表单模板（E11-T02 已实现）
 
@@ -20,7 +20,7 @@
 - 模板版本快照存租户库 `fe_form_version` / `fe_form_version_field`（followup V29）：publish 把当时的分类与**启用字段**固化成快照并前移 `fe_form.current_version`；快照不可变，旧版本永久可读。
 - 停用字段不进新版本；旧版本快照里仍在——旧记录（`data` JSON 键 = 稳定键）按其保存时版本渲染与校验，模板改版不影响。
 - 选项（`fe_option`）不进快照：选项编码创建后不可改、停用不删除（V28），显示名与停用标记读取时现取；停用选项在 `optionSet[]` 带 `disabled: true`（不可新选，历史值仍可显示）。
-- `rules` 为 `fe_rule` 跨字段校验，随 E11-T04 落地（当前恒为 `[]`）；`compareRules` 随 E17。
+- `rules` 为 `fe_rule` 跨字段校验（E11-T04 已落地）：实时读取启用规则、**不进版本快照**，形状见 §2.2；`compareRules` 随 E17。
 - 记录侧绑定见 §1.1：记录存 `templateVersion`，读取时前端用 `GET /forms/{code}?version={templateVersion}` 取渲染口径。
 
 响应要求：
@@ -41,17 +41,43 @@ E11-T02 落地（A-NFR-002 / C-NFR-002「JSON 文档存储」）。数据记录�
 - 记录读写是**引擎服务**（无独立 HTTP 端点），业务接口（基线 E13、随访记录 E15、报告单映射 E16-T07、草稿 E25）复用同一服务与校验；患者域业务表（`pt_baseline_section` / `fu_record` 等）的 `data` JSON 列同样经 FormService 写入，见 OQ-63 ①。
 - 草稿不逐次写审计（技术方案「服务器自动保存」）；提交、修改已提交与覆盖他人版本的审计随业务接口（E15 / E25）。
 
-## 2. 规则执行（前后端一致）
+## 2. 规则执行（前后端一致，E11-T04 已落地）
 
-- 校验类型：类型与范围（`hardRange` 不能保存、`softRange` 提示，A-FLD-003、C-FLD-007）、条件显示与条件必填（A-FLD-004、C-FLD-005）、派生字段（A-FLD-005、C-FLD-006）、跨字段校验（A-FLD-006）。
-- 前端用 `packages/rules` 即时执行；后端在**提交 / 保存修改**时用同一份规则定义再执行一次（Java 端实现同语义，用共享测试用例 JSON 保证一致，见 components.md §10 共用测试用例）。
-- 草稿保存只做类型检查，不做必填与跨字段校验（技术方案“草稿语义”）。
-- 条件变为不显示时，后端提交时清空该字段并写字段历史。
+- 校验类型：类型与范围（`hardRange` 不能保存、`softRange` 提示，A-FLD-003、C-FLD-007，已落地）、条件显示与条件必填（A-FLD-004、C-FLD-005，随 E11-T03）、派生字段（A-FLD-005、C-FLD-006，随 E11-T05）、跨字段校验（A-FLD-006，已落地）。
+- 前端用 `packages/rules` 即时执行；后端在**提交 / 保存修改**时用同一份规则定义再执行一次（Java 端实现同语义，用共享测试用例 JSON 保证一致，见 §2.4 与 components.md §10.5）。
+- 草稿保存只做类型检查与**硬范围拦截**（tech-plan §6 写入闸门含范围），不做必填与跨字段校验（技术方案“草稿语义”）。
+- 条件变为不显示时，后端提交时清空该字段并写字段历史（随 E11-T03）。
 - 失败返回 42200：
 ```json
 { "code": 42200, "message": "表单校验未通过",
   "data": { "fieldErrors": [ { "key": "f019", "categoryKey": "echo", "rule": "hardRange", "message": "取值应在 20–90 之间" } ] } }
 ```
+
+### 2.1 范围（fe_field.hard_range / soft_range，随版本快照）
+
+- `number` 与 `pair_number`（length / width 各查同一范围）参与；闭区间；空值（null / 缺键 / 分量缺失）与派生字段跳过；硬范围命中时不再叠加软提示。
+- 文案（前后端逐字一致，共享用例锁定）：两端都有 → `取值应在 min–max 之间`；只有下限 → `取值不能小于 min`；只有上限 → `取值不能大于 max`（整数不带小数点，如 `50`）。
+- 单位（unit）不换算：范围值与录入值同单位（A-FLD-003「数值有单位与合理范围」），单位由渲染器展示（E11-T07）。
+- 超软范围保存时 tech-plan §6 口径把确认人记 `data_meta`（「超出范围的确认人」），随提交确认流（E15 / E25）落地。
+
+### 2.2 跨字段规则（fe_rule，followup V30；FormSchema `rules[]` 实时读取）
+
+- 通用比较规则 `COMPARE`：`params = { leftField, op: lt|lte, rightField }`（字段稳定键），语义「leftField op rightField 须成立」。覆盖 A-FLD-006 全部形态（入院 ≤ 手术 ≤ 出院、手术开始 < 结束、进 ICU < 出 ICU、死亡日期 ≥ 出院日期以「出院 ≤ 死亡」表达、随访事件日期 ≥ 出院日期）与 C-FLD-007（上限频率 > 下限频率）。
+- 值按 tech-plan §6 值编码口径比较：数值比大小；日期 `YYYY-MM-DD` / 日期时间 `YYYY-MM-DDTHH:mm` 比先后（日期按当日 00:00 归一，分钟与带秒写法等价）；一侧为空或不可比（数值 × 日期、普通文本）不触发。
+- `severity`：`HARD` 违反拦截（提交 / 保存修改 42200）；`SOFT` 黄色提示并要求确认、不阻止保存（A-FLD-003 软范围、C-FLD-007 程控参数建议范围同一语义）。
+- 命中挂靠：`target_field` / `category_key`（`rules[].key / categoryKey` 与 `fieldErrors[].key / categoryKey` 同源），`rule` = `rule_id`（范围命中用固定码 `hardRange` / `softRange`）。
+- 维护：规则由实施经迁移配置（A-FLD-006 完整规则链随 E23-T01 字段录入、C 程控规则随 C 字段字典落地；V30 带演示规则）；`status=DISABLED` 停用即不生效、不删除。
+
+### 2.3 执行时机
+
+| 时机 | 执行内容 | 结果 |
+|---|---|---|
+| 草稿创建 / 保存（FormService.createRecord / saveRecord） | 类型 + 选项（40001）+ 硬范围 | 硬范围违反 42200（fieldErrors），不落库 |
+| 提交 / 保存修改（业务接口 E15 / E25 调 `FormService.validateForSubmit(formCode, templateVersion, data)`） | 全量：类型 + 硬范围 + 软范围 + 跨字段（按 severity） | 硬违反 42200；软命中**不拦截**，作为警告列表返回（调用方做确认流） |
+
+### 2.4 共享用例（前后端一致的事实来源）
+
+`backend/crdp-form/src/test/resources/shared-cases/form-validation-cases.json`：后端 `FormRuleEngineTest` 与前端 `packages/rules/src/form-validation.test.ts` 各执行一遍，errors / warnings 逐条（`key`、`categoryKey`、`rule`、`message`）完全一致。条件求值（E11-T03）、派生（E11-T05）、对比规则（E17）沿用同一目录。
 
 ## 3. 字段字典维护（A-FLD-001..009/012/013、C-FLD-001..010；E11-T01 已实现前两行与 publish）
 

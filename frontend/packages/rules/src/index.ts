@@ -14,6 +14,16 @@ export function permissionCode(
   return `${module}:${resource}:${action}`;
 }
 
+export {
+  compareValues,
+  type CrossFieldCompareParams,
+  type CrossFieldRule,
+  type FieldIssue,
+  type FormValidationResult,
+  type ValidatableField,
+  validateFormData,
+  type ValidationRange,
+} from './form-validation';
 export { hasPermission } from './has-permission';
 export {
   PERMISSION_REFRESH_CODES,
