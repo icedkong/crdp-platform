@@ -2,7 +2,7 @@
 
 > 后端：`crdp-followup`（通知子域，事件来自 outbox）+ 平台短信通道（PLT-CFG-005）。表：`ntf_rule`、`ntf_message`（站内信）、`ntf_send_log`、`ntf_user_pref`、`ntf_setting`（迁移 V23）、`sys_webhook`。
 > 页面：顶栏铃铛（components.md AppHeader）、`/system/notice`（通知设置：事件规则 / 发送设置 / 发送记录三页签）、`/profile`（通知偏好）、`/system/settings`（Webhook）。
-> §1 已随 E09-T02 落地；§2 通知事件与规则、接收人规则已随 E09-T04 落地（settings 接口随 E09-T07）；§3.1 短信通道与 §3.2 回执回调已随 E09-T03 落地；§4 发送记录与 §5 个人通知偏好已随 E09-T07 落地（其余章节路径 **推断，待确认**）。需求：A-NTF-001…008、C-NTF-001…008。**A-NTF-009 通知患者首期不做**：任何通知只发医生、随访员、护士。
+> §1 已随 E09-T02 落地；§2 通知事件与规则、接收人规则已随 E09-T04 落地（settings 接口随 E09-T07）；§3.1 短信通道与 §3.2 回执回调已随 E09-T03 落地；§3 汇总作业（每日汇总、免打扰、频控）已随 E09-T05 落地；§4 发送记录与 §5 个人通知偏好已随 E09-T07 落地（其余章节路径 **推断，待确认**）。需求：A-NTF-001…008、C-NTF-001…008。**A-NTF-009 通知患者首期不做**：任何通知只发医生、随访员、护士。
 
 ## 1. 站内信（A-NTF-002、C-NTF-002；E09-T02 已实现）
 
@@ -33,13 +33,14 @@
 | PUT | `/api/hospital/notify/rules/{eventType}` | 全量覆盖（校验：渠道 / 接收人非空且只认已知编码、sendTime `HH:mm`、advanceDays 0–365、渠道含 SMS 必配 APPROVED 的 NOTIFY 模板、不含 SMS 须为 null）；写 `NOTICE_RULE_UPDATE` 审计（ objectType=NTF_RULE，含前后值） |
 | GET | `/api/hospital/notify/sms-templates` | 只读：平台审核过的 NOTIFY 场景模板 `{code, name, content}`（PLT-CFG-006 租户只能选不能写） |
 | GET | `/api/hospital/notify/settings` | 生效发送设置 `{dndStart, dndEnd, smsDailyLimit, overdueSmsOffAllowed}`（E09-T07 落地；缺行回落默认 21:00–08:00 / 3 / false） |
-| PUT | `/api/hospital/notify/settings` | 全量覆盖（校验：HH:mm、起止不同、上限 1–20），写 `NOTICE_SETTINGS_UPDATE` 审计；免打扰与上限的**发送侧执行随 E09-T05 汇总作业**（本任务只落配置面），`overdueSmsOffAllowed` 即时生效 |
+| PUT | `/api/hospital/notify/settings` | 全量覆盖（校验：HH:mm、起止不同、上限 1–20），写 `NOTICE_SETTINGS_UPDATE` 审计；免打扰与上限由 §3 汇总作业在每轮发送时读现行值执行（E09-T05 已落地），`overdueSmsOffAllowed` 即时生效 |
 
 ## 3. 发送规则与短信通道（后端，通道随 E09-T03 落地）
 
 - 短信按人合并为汇总短信，**不含任何患者信息**（A-NTF-003、C-NTF-003、A-NFR-007），只写“您有 N 项随访任务待处理”之类。
-- 免打扰时段内产生的短信推迟到 08:00 后；超出每日上限的并入次日汇总（A-NTF-005、C-NTF-005，随 E09-T05）。
+- 免打扰时段内产生的短信推迟到 08:00 后；超出每日上限的并入次日汇总（A-NTF-005、C-NTF-005）。
 - 无负责人时按 A-NTF-004 / C-NTF-004 扩大接收人（病区成员兜底，§2）。
+- **每日汇总作业（E09-T05 已落地）**：`NotifyDigestService` + `NotifyDigestScheduler`（每分钟级 tick `crdp.notify.digest.tick-ms`，默认 60 秒）。逐租户读本院 DAILY_DIGEST 规则的 `send_time`（默认 08:30，容差 5 分钟，每日只触发一次——内存标记、重启清零，每日上限是持久兜底）执行一轮：① 按人把 `ntf_send_log` 全部 QUEUED 短信行合并成**一条**汇总短信（模板 NOTIFY_DAILY_SUMMARY、参数只有待办总数，5 项待随访 + 2 项逾期 = 「您有 7 项…」）；② 免打扰（`ntf_setting`，默认 21:00–08:00，起点含终点不含）时段内短信一律不发、行保持 QUEUED 并入次轮，**站内信汇总不受免打扰约束**；③ 每人每日上限（默认 3）：当日 SENT 短信数已满则本轮并入次日；④ 手机号取 `sys_user.phone` 密文经 CryptoService 解密（未绑定 / 解密失败记 FAILED，接收人停用记 SKIPPED）；⑤ 成功并入行整体记 SENT（带 sent_at），服务商失败记 FAILED（detail 只含失败类别，走 §4 重试）；⑥ 每人补投一条「每日汇总」站内信（dedup `digest:{日期}:{接收人}:INBOX`，当日事件侧已投过 DAILY_DIGEST 站内信则不重复）。今日待办口径暂为「该接收人的 QUEUED 短信台账行」；E14 任务域落地后可改为按 fu_task 统计（负载 `recipientIds` 随事件下发的通道已就绪，§2）。租户停用不执行（TenantDirectory 只列启用 / 试用 / 宽限期）；触发即先标记后执行，作业中断当日不补跑（QUEUED 行不丢，次日带上）。
 - 事件经框架 outbox 分发器（E09-T01，`sys_outbox` PENDING → SENT / FAILED）进入通知子域：投递失败指数退避重试，超限转死信 `FAILED`。**站内信通道已随 E09-T02 落地**（`NoticeInboxService.deliver`，dedup_key 幂等）；**规则引擎（事件 → 规则 → 接收人 → 渠道）已随 E09-T04 落地**（`NotifyEventSubscriber`，§2）；**短信通道已随 E09-T03 落地**（`TencentSmsChannel`，E09-T05 汇总作业消费 `ntf_send_log` 的 QUEUED 行）；Webhook 随 E09-T06。
 - 每条通知写 `ntf_send_log`（E09-T04 落表）：事件、接收人、渠道、时间、结果、失败原因；查询 / 重试随 E09-T07。
 - 租户停用、模块关闭时不发送。
@@ -64,7 +65,7 @@
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
 | POST | `/api/hospital/notify/send-logs/search` | `followup:notice:config` | body `{ pageNo, pageSize(≤100), eventType?, channel?, sendStatus?, recipientId?, dateFrom?, dateTo? }`（全部可空；日期按记录时间闭区间按日）→ `{ items, total, pageNo, pageSize }`；行 `{ id, eventType, eventLabel, recipientId, recipientName, channel, sendStatus, title?, detail?, sentAt?, createdAt }`（title/detail 不含患者信息；接收人名来自 sys_user） |
-| POST | `/api/hospital/notify/send-logs/{id}/retry` | `followup:notice:config` | 失败重试：FAILED → QUEUED（detail 保留原失败原因），返回 `{ item, requeued }`；短信由 E09-T05 汇总作业按人合并发送，**同样受免打扰与上限约束**（作业未落地前队列等待不丢）；非 FAILED 40001、不存在 40400、并发已重试幂等返回现行值；写 `NOTICE_SEND_RETRY` 审计 |
+| POST | `/api/hospital/notify/send-logs/{id}/retry` | `followup:notice:config` | 失败重试：FAILED → QUEUED（detail 保留原失败原因），返回 `{ item, requeued }`；短信由 §3 汇总作业（E09-T05）按人合并发送，**同样受免打扰与上限约束**（回到队列等待次轮，不丢）；非 FAILED 40001、不存在 40400、并发已重试幂等返回现行值；写 `NOTICE_SEND_RETRY` 审计 |
 
 send_status 口径：`QUEUED`（短信待 E09-T05 汇总发送）/ `SENT`（站内信已投 ntf_message）/ `FAILED`（发送失败，可重试；当前产生方为 E09-T05 汇总作业）/ `SKIPPED`（事件停用、规则不含该渠道或个人偏好关闭——个人关闭短信记 SKIPPED，detail=「个人通知偏好已关闭该事件短信」）。
 
@@ -84,8 +85,8 @@ send_status 口径：`QUEUED`（短信待 E09-T05 汇总发送）/ `SENT`（站�
 
 ## 7. 测试要点
 
-- 21:30 产生的短信 08:00 后才发；第 4 条并入次日。
-- 短信正文与 Webhook 负载里检查不到姓名、手机号、证件号、病案号。
+- 21:30 产生的短信 08:00 后才发；第 4 条并入次日（E09-T05 `NotifyDigestServiceTest` 免打扰边界与频控、`NotifyDigestIT` 真库端到端：5+2 行合并 1 条、参数只有总数、免打扰行保持 QUEUED 次日发出、上限并入次日、失败记 FAILED、双租户互不影响）。
+- 短信正文与 Webhook 负载里检查不到姓名、手机号、证件号、病案号（NOTIFY 场景参数白名单 + 渲染反扫两道闸；汇总参数只有数量）。
 - 接收人失去病区权限后，旧站内信打开 → 40400，列表里姓名改为脱敏。
 - 发送记录按事件 / 渠道 / 结果 / 日期 / 接收人可查（E09-T07 `NotifySendLogsIT`）；失败重试回 QUEUED 且保留原失败原因。
 - 个人关闭非逾期类短信后：该事件 SMS 记 SKIPPED、站内信照发；逾期类在租户不允许时 PUT 含 TASK_OVERDUE → 40001。
