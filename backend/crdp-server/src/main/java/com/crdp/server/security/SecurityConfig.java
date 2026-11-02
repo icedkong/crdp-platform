@@ -98,6 +98,15 @@ public class SecurityConfig {
                                         .requestMatchers(
                                                 HttpMethod.GET, "/api/hospital/files/preview/*")
                                         .permitAll()
+                                        // E10-T05 / tech-plan §10「下载」：下载走 5 分钟 HMAC 签名链接。
+                                        // 签发口要登录 + followup:scan:download（敏感权限）；
+                                        // 取流口凭签名定位租户与文件（公开口按 IP 每小时限流，
+                                        // FileDownloadService；@PublicApi 经启动扫描登记）。必须排在
+                                        // /api/hospital/**
+                                        // 端别判定之前
+                                        .requestMatchers(
+                                                HttpMethod.GET, "/api/hospital/files/download/*")
+                                        .permitAll()
                                         // E04-T03 / PLT-AUTH-005：平台端与医院端接口前缀各自只接受
                                         // 对应端的会话（令牌由 TokenAuthenticationFilter 附带端别权限），
                                         // 跨端令牌一律 40300，不依赖各控制器自行调用 require* 系列

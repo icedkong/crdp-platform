@@ -118,6 +118,14 @@ crdp:
       ttl-seconds: 300
       # 公开取流口同一 IP 每小时上限（pdf.js / audio 拉流会多次请求，取宽；AGENTS.md 第 6 节公开口限流）
       ip-hourly-limit: 600
+    download:
+      # E10-T05 / tech-plan §10「下载」：下载签名链接有效期（秒，上限 5 分钟，配置写大按 5 分钟执行）
+      ttl-seconds: 300
+      # 公开取流口同一 IP 每小时上限（浏览器断点续传 / 重试会多次请求，取宽；AGENTS.md 第 6 节公开口限流）
+      ip-hourly-limit: 600
+      # 链接签名密钥（Base64，解码后 ≥ 32 字节）。这里只放开发默认值（与 crdp.crypto.local-key 同口径），
+      # 生产经环境变量 CRDP_FILE_DOWNLOAD_SIGNING_KEY 注入（application-prod.yml 无默认，缺省启动即失败）
+      signing-key: "ZGV2LW9ubHktZmlsZS1kb3dubG9hZC1zaWduaW5nLWtleQ=="
 
 info:
   app:
