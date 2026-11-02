@@ -98,4 +98,24 @@ describe('e10-t04 FilePreview（水印不可关闭；MP3 原生播放；AMR 仅�
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(wrapper.find('[data-watermark]').exists()).toBe(true);
   });
+
+  it('e10-t06：组件不提供关闭水印的入口——伪造关闭属性传入也无效', () => {
+    // 契约锁定：props 只有 canDownload / file / url / viewer，不存在任何水印开关；
+    // 多传的未知属性只会落到根元素 attrs 上，水印层照常渲染（水印不可关闭）。
+    const wrapper = mount(FilePreview, {
+      props: {
+        canDownload: false,
+        file: { fileId: 9, format: 'mp3', name: '通话录音（示例）.mp3' },
+        url: '/api/hospital/files/preview/token-e10t06',
+        viewer,
+        // @ts-expect-error 伪造的“关闭水印”属性：组件不认，也不应生效
+        showWatermark: false,
+        watermarkable: false,
+      } as Record<string, unknown>,
+    });
+    const overlay = wrapper.find('[data-watermark]');
+    expect(overlay.exists()).toBe(true);
+    expect(overlay.attributes('style')).toContain('pointer-events: none');
+    wrapper.unmount();
+  });
 });

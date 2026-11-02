@@ -167,7 +167,8 @@ export function createWatermarkGuard(
   function observe() {
     observer.observe(container, { childList: true });
     observer.observe(overlay, {
-      attributeFilter: ['class', 'style'],
+      // data-watermark 也要盯：isTampered 把标记被清视为篡改（E10-T06 对抗用例）
+      attributeFilter: ['class', 'style', 'data-watermark'],
       attributes: true,
     });
   }

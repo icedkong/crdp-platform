@@ -109,3 +109,92 @@ describe('e10-t04 水印层（不可关闭 + 防篡改）', () => {
     }
   });
 });
+
+describe('e10-t06 水印不可关（对抗路径：换着法子关都被恢复）', () => {
+  const tile = 'data:image/png;base64,TILE-E10T06';
+
+  function mountGuard() {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const guard = createWatermarkGuard(container, {
+      makeTileUrl: () => tile,
+      text: '王医生（示例）（doctor.demo）· 医院 A（示例租户）· 2026-10-31 14:05',
+    });
+    return { container, guard };
+  }
+
+  /** 篡改后等 MutationObserver 微任务触发，取恢复出的新水印节点（断言在各用例体内，expect-expect 要求）。 */
+  async function restoredAfterTamper(
+    container: HTMLElement,
+    guard: ReturnType<typeof createWatermarkGuard>,
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const restored = container.querySelector<HTMLElement>('[data-watermark]');
+    guard.destroy();
+    return { guard, restored };
+  }
+
+  it('visibility:hidden 隐藏水印 → 恢复', async () => {
+    const { container, guard } = mountGuard();
+    const tampered = guard.overlay();
+    tampered.style.setProperty('visibility', 'hidden');
+    const { restored } = await restoredAfterTamper(container, guard);
+    expect(restored).not.toBeNull();
+    expect(restored).not.toBe(tampered);
+    expect(restored?.style.backgroundImage).toContain(tile);
+    expect(restored?.style.visibility).not.toBe('hidden');
+  });
+
+  it('抹掉背景水印图（backgroundImage=none）→ 恢复', async () => {
+    const { container, guard } = mountGuard();
+    const tampered = guard.overlay();
+    tampered.style.setProperty('background-image', 'none');
+    const { restored } = await restoredAfterTamper(container, guard);
+    expect(restored).not.toBeNull();
+    expect(restored).not.toBe(tampered);
+    expect(restored?.style.backgroundImage).toContain(tile);
+  });
+
+  it('清掉 data-watermark 标记冒充普通图层 → 恢复', async () => {
+    const { container, guard } = mountGuard();
+    const tampered = guard.overlay();
+    delete tampered.dataset.watermark;
+    const { restored } = await restoredAfterTamper(container, guard);
+    expect(restored).not.toBeNull();
+    expect(restored).not.toBe(tampered);
+    expect(restored?.dataset.watermark).toBe('1');
+    expect(restored?.style.backgroundImage).toContain(tile);
+  });
+
+  it('把水印节点挪出容器（挂到 body）→ 恢复', async () => {
+    const { container, guard } = mountGuard();
+    const moved = guard.overlay();
+    document.body.append(moved);
+    const { restored } = await restoredAfterTamper(container, guard);
+    expect(restored).not.toBeNull();
+    expect(restored).not.toBe(moved);
+    expect(container.contains(moved)).toBe(false);
+    moved.remove();
+  });
+
+  it('整个容器内容被清空（innerHTML=""）→ 恢复', async () => {
+    const { container, guard } = mountGuard();
+    const first = guard.overlay();
+    container.innerHTML = '';
+    const { restored } = await restoredAfterTamper(container, guard);
+    expect(restored).not.toBeNull();
+    expect(restored).not.toBe(first);
+    expect(restored?.style.backgroundImage).toContain(tile);
+  });
+
+  it('观察者被禁用时，自检兜底同样恢复样式篡改（visibility）', () => {
+    const { container, guard } = mountGuard();
+    guard.overlay().style.setProperty('visibility', 'hidden');
+    guard.selfCheck();
+    const overlay = guard.overlay();
+    expect(container.contains(overlay)).toBe(true);
+    expect(overlay.style.visibility).not.toBe('hidden');
+    expect(overlay.style.backgroundImage).toContain(tile);
+    guard.destroy();
+  });
+});
