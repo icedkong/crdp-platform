@@ -147,6 +147,18 @@ class MenuSyncServiceTest {
                         "followup:notice:config",
                         45,
                         "ENABLED"),
+                // E11-T01 字段字典：followup 菜单挂在 base 的系统设置目录（30）下（平台库 V35 同构）
+                manifestRow(
+                        37L,
+                        30L,
+                        "MENU",
+                        "字段字典",
+                        "FollowupField",
+                        "/system/field",
+                        "followup/field/index",
+                        "followup:field:edit",
+                        50,
+                        "ENABLED"),
                 // E10-T01 上传按钮（followup:scan:upload，OQ-12）：报告单菜单下的非敏感 followup 项
                 manifestRow(
                         231L,

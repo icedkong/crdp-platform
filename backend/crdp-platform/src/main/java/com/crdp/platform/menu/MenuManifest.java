@@ -106,6 +106,20 @@ public class MenuManifest {
                             "followup:notice:config",
                             null,
                             45),
+                    // E11-T01 / A-FLD-001、A-FLD-002、C-FLD-001：字段字典（挂 base 的系统设置目录下，平台库 V35 同构）
+                    new MenuManifestItem(
+                            "followup",
+                            "HOSPITAL",
+                            "MENU",
+                            "FollowupField",
+                            "HospitalSystem",
+                            "字段字典",
+                            "FollowupField",
+                            "/system/field",
+                            "followup/field/index",
+                            "followup:field:edit",
+                            null,
+                            50),
                     // E10-T01 / A-ATT-008、PLT-CFG-010：报告单页签下的上传按钮（平台库 V33 同构，OQ-12 权限码）
                     new MenuManifestItem(
                             "followup",
