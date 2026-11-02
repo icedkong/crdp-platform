@@ -1,11 +1,20 @@
 <script lang="ts" setup>
-import type { TenantDictItemView, TenantDictTypeView } from '@crdp/api';
+import type {
+  TenantDictItemView,
+  TenantDictLogView,
+  TenantDictTypeView,
+} from '@crdp/api';
 
 import type { TenantDictEditModel, TenantDictItemEditModel } from './dicts';
 
 import { computed, h, onMounted, reactive, ref } from 'vue';
 
-import { dictSourceText, dictStatusText } from '@crdp/api';
+import {
+  dictLogActionText,
+  dictLogTargetText,
+  dictSourceText,
+  dictStatusText,
+} from '@crdp/api';
 import { colors } from '@crdp/tokens';
 import {
   Alert,
@@ -28,6 +37,7 @@ import {
   createDict,
   createDictItem,
   listDictItems,
+  listDictLogs,
   listDicts,
   updateDict,
   updateDictItem,
@@ -50,6 +60,8 @@ defineOptions({ name: 'HospitalSettingsDict' });
  * E06-T10 / PLT-CFG-002 · pages.md §10「机构设置 · 租户字典」（tenant:dict:edit）：
  * 继承平台字典——本院可停用 / 恢复平台项（文字与排序不可改）、可新增本院自有项；
  * 平台新增项自动出现；本院自有字典可建可改（平台字典类型不可改）。
+ * E11-T08 / A-FLD-012、A-FLD-009、C-FLD-002、C-FLD-009：本院自有项可维护别名；
+ * 增改停用恢复留变更记录（前后值、操作人、时间），「变更记录」按字典查看。
  */
 const loading = ref(false);
 const loadError = ref('');
@@ -68,6 +80,10 @@ const itemCreating = ref(true);
 const itemSaving = ref(false);
 const itemForm = reactive<TenantDictItemEditModel>(emptyItemModel());
 
+const logsOpen = ref(false);
+const logsLoading = ref(false);
+const logs = ref<TenantDictLogView[]>([]);
+
 const dictColumns = [
   { dataIndex: 'code', title: '编码' },
   { dataIndex: 'name', title: '名称' },
@@ -80,10 +96,19 @@ const dictColumns = [
 const itemColumns = [
   { dataIndex: 'itemCode', title: '项编码' },
   { dataIndex: 'label', title: '显示文字' },
+  { key: 'aliases', title: '别名' },
   { dataIndex: 'sortNo', title: '排序', width: 80 },
   { dataIndex: 'source', title: '来源', width: 90 },
   { dataIndex: 'status', title: '状态', width: 90 },
   { dataIndex: 'action', title: '操作', width: 130 },
+];
+
+const logColumns = [
+  { key: 'createdAt', title: '时间', width: 170 },
+  { key: 'action', title: '动作', width: 100 },
+  { key: 'target', title: '对象' },
+  { key: 'operatorName', title: '操作人', width: 120 },
+  { key: 'change', title: '调整内容（前 → 后）' },
 ];
 
 const selectedDict = computed(() =>
@@ -207,17 +232,19 @@ async function submitItem() {
   try {
     await (itemCreating.value
       ? createDictItem(selectedCode.value, {
+          aliases: itemForm.aliases.trim() || null,
           itemCode: itemForm.itemCode.trim(),
           label: itemForm.label.trim(),
           sortNo: itemForm.sortNo,
         })
       : updateDictItem(selectedCode.value, itemForm.itemCode, {
+          aliases: itemForm.aliases.trim() || null,
           label: itemForm.label.trim(),
           sortNo: itemForm.sortNo,
           status: itemForm.status,
         }));
     itemDialogOpen.value = false;
-    message.success('已保存');
+    message.success('已保存，并已记录变更');
     await loadItems();
     await load();
   } finally {
@@ -225,15 +252,22 @@ async function submitItem() {
   }
 }
 
-/** 平台项：停用 / 恢复（文字与排序不动）。本院项：停用 / 恢复同理。 */
+/** 平台项：停用 / 恢复（后端只认 status，带文字 / 排序 / 别名会 40001）。本院项：全量覆盖可维护列。 */
 async function toggleItem(row: TenantDictItemView) {
   const next = row.status === 'ENABLED' ? 'DISABLED' : 'ENABLED';
   try {
-    await updateDictItem(selectedCode.value, row.itemCode, {
-      label: row.label,
-      sortNo: row.sortNo,
-      status: next,
-    });
+    await updateDictItem(
+      selectedCode.value,
+      row.itemCode,
+      row.editable
+        ? {
+            aliases: row.aliases,
+            label: row.label,
+            sortNo: row.sortNo,
+            status: next,
+          }
+        : { status: next },
+    );
     message.success(next === 'ENABLED' ? '已启用' : '已停用（可恢复）');
     await loadItems();
     await load();
@@ -248,6 +282,69 @@ function dictEmpty() {
 
 function itemEmpty() {
   return h(Empty, { image: Empty.PRESENTED_IMAGE_SIMPLE }, () => '暂无字典项');
+}
+
+// ---------------------------------------------------------------- 变更记录（A-FLD-009）
+
+async function openLogs() {
+  if (!selectedCode.value) {
+    return;
+  }
+  logsOpen.value = true;
+  logsLoading.value = true;
+  try {
+    logs.value = await listDictLogs(selectedCode.value);
+  } catch {
+    logs.value = [];
+  } finally {
+    logsLoading.value = false;
+  }
+}
+
+/** 快照 JSON 里取一个字段（label / status 等；解析失败返回空串）。 */
+function snapshotValue(json: null | string, key: string): string {
+  if (!json) {
+    return '';
+  }
+  try {
+    const parsed = JSON.parse(json) as Record<string, unknown>;
+    const value = parsed[key];
+    return value === undefined || value === null ? '' : String(value);
+  } catch {
+    return '';
+  }
+}
+
+/** 「调整内容」列：显示文字 / 别名 / 状态的前后变化（取值级记录）。 */
+function changeText(log: TenantDictLogView): string {
+  if (!log.itemCode) {
+    return '字典名称与说明（快照见审计）';
+  }
+  const parts: string[] = [];
+  const beforeLabel = snapshotValue(log.beforeJson, 'label');
+  const afterLabel = snapshotValue(log.afterJson, 'label');
+  if (!beforeLabel) {
+    parts.push(`新增「${afterLabel}」`);
+  } else if (beforeLabel !== afterLabel) {
+    parts.push(`显示文字「${beforeLabel}」→「${afterLabel}」`);
+  }
+  const beforeAliases = snapshotValue(log.beforeJson, 'aliases');
+  const afterAliases = snapshotValue(log.afterJson, 'aliases');
+  if (beforeAliases !== afterAliases) {
+    parts.push(
+      `别名「${beforeAliases || '（无）'}」→「${afterAliases || '（无）'}」`,
+    );
+  }
+  const beforeStatus = snapshotValue(log.beforeJson, 'status');
+  const afterStatus = snapshotValue(log.afterJson, 'status');
+  if (beforeStatus && beforeStatus !== afterStatus) {
+    parts.push(
+      afterStatus === 'DISABLED'
+        ? '停用（下拉不再出现，历史值保留）'
+        : '恢复启用',
+    );
+  }
+  return parts.join('；') || '无变化';
 }
 
 onMounted(load);
@@ -338,7 +435,7 @@ onMounted(load);
             : '字典项'
         "
       >
-        <div class="mb-3">
+        <div class="mb-3 action-row">
           <Button
             type="primary"
             data-testid="tenant-dict-item-create"
@@ -346,6 +443,13 @@ onMounted(load);
             @click="openItemCreate"
           >
             新增本院项
+          </Button>
+          <Button
+            data-testid="tenant-dict-logs"
+            :disabled="!selectedCode"
+            @click="openLogs"
+          >
+            变更记录
           </Button>
         </div>
         <Table
@@ -357,7 +461,13 @@ onMounted(load);
           size="small"
         >
           <template #bodyCell="{ column, record }">
-            <template v-if="column.dataIndex === 'source'">
+            <template v-if="column.key === 'aliases'">
+              <span v-if="(record as TenantDictItemView).aliases">
+                {{ (record as TenantDictItemView).aliases }}
+              </span>
+              <span v-else class="hint">—</span>
+            </template>
+            <template v-else-if="column.dataIndex === 'source'">
               <Tag
                 :color="
                   (record as TenantDictItemView).source === 'PLATFORM'
@@ -481,6 +591,21 @@ onMounted(load);
             placeholder="如 其他（本院）"
           />
         </FormItem>
+        <FormItem
+          label="别名（历史写法映射与导入匹配，顿号或逗号分隔）"
+          :validate-status="itemForm.aliases.trim().length > 255 ? 'error' : ''"
+          :help="
+            itemForm.aliases.trim().length > 255
+              ? '别名不能超过 255 个字符'
+              : ''
+          "
+        >
+          <Input
+            v-model:value="itemForm.aliases"
+            :maxlength="255"
+            placeholder="如 老写法、旧名称（可留空）"
+          />
+        </FormItem>
         <FormItem label="排序号（小者在前）">
           <InputNumber
             v-model:value="itemForm.sortNo"
@@ -513,6 +638,50 @@ onMounted(load);
         </FormItem>
       </Form>
     </Modal>
+
+    <Modal
+      v-model:open="logsOpen"
+      :title="`变更记录 · ${selectedDict?.name ?? ''}（${selectedCode}）`"
+      :footer="null"
+      width="860px"
+    >
+      <div class="hint logs-hint">
+        每次新增、维护、停用与恢复都会留痕（前后值、操作人、时间）；停用的取值不再出现在下拉，历史记录的值保留并照常显示。
+      </div>
+      <Spin :spinning="logsLoading">
+        <Empty
+          v-if="logs.length === 0 && !logsLoading"
+          :image="Empty.PRESENTED_IMAGE_SIMPLE"
+          description="暂无变更记录"
+        />
+        <Table
+          v-else
+          :columns="logColumns"
+          :data-source="logs"
+          :pagination="false"
+          row-key="id"
+          size="small"
+        >
+          <template #bodyCell="{ column, record }">
+            <template v-if="column.key === 'createdAt'">
+              {{ (record as TenantDictLogView).createdAt }}
+            </template>
+            <template v-else-if="column.key === 'action'">
+              {{ dictLogActionText((record as TenantDictLogView).action) }}
+            </template>
+            <template v-else-if="column.key === 'target'">
+              {{ dictLogTargetText(record as TenantDictLogView) }}
+            </template>
+            <template v-else-if="column.key === 'operatorName'">
+              {{ (record as TenantDictLogView).operatorName ?? '—' }}
+            </template>
+            <template v-else-if="column.key === 'change'">
+              {{ changeText(record as TenantDictLogView) }}
+            </template>
+          </template>
+        </Table>
+      </Spin>
+    </Modal>
   </div>
 </template>
 
@@ -528,6 +697,15 @@ onMounted(load);
 .hint {
   font-size: 12px;
   color: #8c8c8c;
+}
+
+.action-row {
+  display: flex;
+  gap: 8px;
+}
+
+.logs-hint {
+  margin-bottom: 8px;
 }
 
 .dict-layout {

@@ -4,6 +4,7 @@ import type { TenantDictItemView, TenantDictTypeView } from '@crdp/api';
  * E06-T10 / PLT-CFG-002 · 机构设置「租户字典」逻辑（纯函数）。
  * 继承规则：平台项只能停用 / 恢复（文字与排序不可改）；本院自有项可维护；
  * 平台字典类型不可改，本院自有字典可建可改。校验与后端 TenantDictService 同口径。
+ * E11-T08 / A-FLD-012：本院自有项可维护别名（历史写法映射与导入匹配）。
  */
 
 /** 本院字典编码：小写字母开头（与后端 DICT_CODE 同口径）。 */
@@ -19,6 +20,8 @@ export interface TenantDictEditModel {
 }
 
 export interface TenantDictItemEditModel {
+  /** 别名 CSV（本院自有项；平台项不开放）。 */
+  aliases: string;
   itemCode: string;
   label: string;
   sortNo: number;
@@ -30,7 +33,7 @@ export function emptyDictModel(): TenantDictEditModel {
 }
 
 export function emptyItemModel(): TenantDictItemEditModel {
-  return { itemCode: '', label: '', sortNo: 0, status: 'ENABLED' };
+  return { aliases: '', itemCode: '', label: '', sortNo: 0, status: 'ENABLED' };
 }
 
 export function toDictModel(row: TenantDictTypeView): TenantDictEditModel {
@@ -44,6 +47,7 @@ export function toDictModel(row: TenantDictTypeView): TenantDictEditModel {
 
 export function toItemModel(row: TenantDictItemView): TenantDictItemEditModel {
   return {
+    aliases: row.aliases ?? '',
     itemCode: row.itemCode,
     label: row.label,
     sortNo: row.sortNo,
@@ -94,6 +98,9 @@ export function validateItemModel(
   }
   if (model.label.trim().length > 128) {
     errors.push('显示文字不能超过 128 个字符');
+  }
+  if ((model.aliases ?? '').trim().length > 255) {
+    errors.push('别名不能超过 255 个字符');
   }
   return errors;
 }

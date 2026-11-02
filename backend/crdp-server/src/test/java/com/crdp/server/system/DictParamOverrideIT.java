@@ -33,6 +33,8 @@ import org.springframework.test.context.ActiveProfiles;
  *       PARAM_RESET）；跨租户隔离；
  *   <li>平台改参数（值或锁定）即时下发：缓存立即失效（不等 60 秒 TTL），锁定后租户覆盖失效并提示 （stale），重新放开自动恢复生效（覆盖行保留）；
  *   <li>租户字典：继承平台字典；可停用 / 恢复平台项（不能改文字）、可新增本院自有项；平台新增项即时出现； 本院自有字典可建；编码冲突 40902；写租户审计；
+ *   <li>E11-T08 / A-FLD-012、A-FLD-009、C-FLD-002、C-FLD-009：本院自有项可维护别名；增改停用恢复每次写 cfg_dict_log
+ *       变更记录（前后值、操作人、时间），GET /dicts/{code}/logs 可查；
  *   <li>平台字典 / 参数管理：CRUD 与校验、写平台审计；权限（无码 40300）。
  * </ul>
  *
@@ -88,6 +90,7 @@ class DictParamOverrideIT {
                                         + " ('tenant.db.pool.max','report.footer.note',?)",
                                 PROBE_KEY);
                         jdbc.update("DELETE FROM cfg_param_log");
+                        jdbc.update("DELETE FROM cfg_dict_log");
                         jdbc.update("DELETE FROM cfg_dict_item");
                         jdbc.update("DELETE FROM cfg_dict");
                         AuditTableMaintenance.delete(
@@ -434,6 +437,76 @@ class DictParamOverrideIT {
                                                 + " 'DICT_ITEM_CREATE'",
                                         Integer.class));
         assertTrue(audits != null && audits >= 1);
+    }
+
+    // --------------------------------------------------------------- E11-T08：别名与变更记录
+
+    /** 业务字典（A-FLD-012）：本院项带别名；增改停用留痕（A-FLD-009、C-FLD-009：前后值、操作人、时间）。 */
+    @Test
+    void dictItemsCarryAliasesAndChangesAreLogged() {
+        String admin = hospitalToken("demoa");
+
+        // 平台预置业务字典已继承（V36：patient_type 患者类型）
+        Map<?, ?> patientType = dictOf(listDicts(admin), "patient_type");
+        assertNotNull(patientType, "业务字典 patient_type 已继承：" + listDicts(admin));
+
+        // 新增本院项带别名（A-FLD-012：新增、排序、别名）
+        assertEquals(
+                0,
+                codeOf(
+                        post(
+                                "/api/hospital/system/dicts/patient_type/items",
+                                admin,
+                                Map.of(
+                                        "itemCode", "X_LOCAL",
+                                        "label", "本院分型（示例）",
+                                        "aliases", "本地分型、老分型",
+                                        "sortNo", 40))));
+        Map<?, ?> own = itemOf(items(admin, "patient_type"), "X_LOCAL");
+        assertEquals("本地分型、老分型", own.get("aliases"), "别名随项返回");
+        assertEquals(Boolean.TRUE, own.get("editable"));
+
+        // 改别名并停用（C-FLD-009：停用不删除，下拉不再出现、历史值保留）
+        assertEquals(
+                0,
+                codeOf(
+                        put(
+                                "/api/hospital/system/dicts/patient_type/items/X_LOCAL",
+                                admin,
+                                Map.of(
+                                        "label", "本院分型（示例）",
+                                        "aliases", "旧写法",
+                                        "sortNo", 45,
+                                        "status", "DISABLED"))));
+        own = itemOf(items(admin, "patient_type"), "X_LOCAL");
+        assertEquals("旧写法", own.get("aliases"));
+        assertEquals("DISABLED", own.get("status"), "停用行保留（管理视角可恢复）");
+
+        // 平台项不能改别名（40001，与文字 / 排序同规则）
+        assertEquals(
+                40001,
+                codeOf(
+                        put(
+                                "/api/hospital/system/dicts/patient_type/items/ELECTIVE",
+                                admin,
+                                Map.of("aliases", "择期", "status", "ENABLED"))));
+
+        // 变更记录：新增 + 维护（停用）都有，前后值、操作人与时间齐全
+        Map<?, ?> logsResponse = get("/api/hospital/system/dicts/patient_type/logs", admin);
+        assertEquals(0, codeOf(logsResponse));
+        List<Map<?, ?>> logs = itemsOf(logsResponse);
+        assertTrue(logs.size() >= 2, "新增与停用各留一条：" + logs.size());
+        Map<?, ?> latest = logs.get(0);
+        assertEquals("ITEM_UPDATE", latest.get("action"));
+        assertEquals("X_LOCAL", latest.get("itemCode"));
+        assertTrue(((String) latest.get("beforeJson")).contains("本地分型、老分型"), "调整前别名");
+        assertTrue(((String) latest.get("afterJson")).contains("DISABLED"), "调整后停用");
+        assertEquals("演示护士", latest.get("operatorName"), "操作人姓名（sys_user 联查）");
+        assertNotNull(latest.get("createdAt"), "操作时间");
+        assertEquals("ITEM_ADD", logs.get(1).get("action"), "倒序：最新在前");
+
+        // 未知字典 40400
+        assertEquals(40400, codeOf(get("/api/hospital/system/dicts/nosuch/logs", admin)));
     }
 
     @Test

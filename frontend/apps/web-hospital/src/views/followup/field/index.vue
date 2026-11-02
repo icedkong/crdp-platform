@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import type { FormFieldDef, FormSummary } from '@crdp/api';
+import type { FieldDictLogView, FormFieldDef, FormSummary } from '@crdp/api';
 
 import type { FieldEditModel } from './logic';
 
@@ -38,7 +38,12 @@ import {
   Textarea,
 } from 'ant-design-vue';
 
-import { listFormFields, listForms, updateFormField } from '#/api/core/form';
+import {
+  listFormFieldLogs,
+  listFormFields,
+  listForms,
+  updateFormField,
+} from '#/api/core/form';
 import { useBreakpoint } from '#/reference/use-breakpoint';
 
 import {
@@ -46,6 +51,7 @@ import {
   buildStatusToggleUpdate,
   isOptionField,
   statusActionText,
+  summarizeFieldChange,
   toFieldEditModel,
   validateFieldEditModel,
 } from './logic';
@@ -57,6 +63,7 @@ defineOptions({ name: 'FollowupField' });
  * 按分类列出字段、可搜索；编辑显示名、帮助、单位、软范围、必填、选项（显示名 / 排序 / 停用 / 新增）；
  * 字段可启停（停用不删除）。显示名与编码分离——表格同时展示稳定键、字段编码与显示名，
  * 选项显示「编码 · 显示名」。键、编码、类型、硬范围、敏感标记、存储方式不可改。仅桌面 / 平板。
+ * E11-T08 / A-FLD-009、C-FLD-009：每个字段可查变更记录（前后值、操作人、时间）。
  */
 const { isMobile } = useBreakpoint();
 
@@ -72,6 +79,10 @@ const pageNo = ref(1);
 const pageSize = 20;
 
 const saving = ref(false);
+const logsOpen = ref(false);
+const logsLoading = ref(false);
+const logs = ref<FieldDictLogView[]>([]);
+const logsField = ref<FormFieldDef | null>(null);
 const editOpen = ref(false);
 const editErrors = ref<string[]>([]);
 const editing = ref<FormFieldDef | null>(null);
@@ -108,7 +119,13 @@ const columns = [
   { key: 'sensitive', title: '敏感', width: 70 },
   { key: 'range', title: '范围（提示 / 拦截）', width: 170 },
   { dataIndex: 'status', key: 'status', title: '状态', width: 90 },
-  { key: 'action', title: '操作', width: 150 },
+  { key: 'action', title: '操作', width: 210 },
+];
+
+const logColumns = [
+  { key: 'createdAt', title: '时间', width: 180 },
+  { key: 'operatorName', title: '操作人', width: 130 },
+  { key: 'change', title: '调整内容（前 → 后）' },
 ];
 
 const categoryOptions = computed(() => {
@@ -223,11 +240,25 @@ async function submitEdit() {
     const index = fields.value.findIndex((row) => row.key === field.key);
     if (index !== -1) fields.value.splice(index, 1, updated);
     editOpen.value = false;
-    message.success(`已保存「${updated.label}」的调整，并记录操作日志`);
+    message.success(`已保存「${updated.label}」的调整，并已记录变更`);
   } catch (error) {
     editErrors.value = [error instanceof Error ? error.message : String(error)];
   } finally {
     saving.value = false;
+  }
+}
+
+async function openLogs(row: FormFieldDef) {
+  logsField.value = row;
+  logsOpen.value = true;
+  logsLoading.value = true;
+  try {
+    logs.value = await listFormFieldLogs(row.formCode, row.key);
+  } catch (error) {
+    logs.value = [];
+    message.error(error instanceof Error ? error.message : String(error));
+  } finally {
+    logsLoading.value = false;
   }
 }
 
@@ -392,6 +423,9 @@ async function toggleStatus(row: FormFieldDef) {
                     {{ statusActionText(record.status) }}
                   </Button>
                 </Popconfirm>
+                <Button size="small" type="link" @click="openLogs(record)">
+                  变更记录
+                </Button>
               </template>
             </template>
           </Table>
@@ -529,6 +563,52 @@ async function toggleStatus(row: FormFieldDef) {
         </FormItem>
       </Form>
     </Modal>
+
+    <Modal
+      v-model:open="logsOpen"
+      :title="
+        logsField
+          ? `变更记录 · ${logsField.label}（${logsField.key}）`
+          : '变更记录'
+      "
+      :footer="null"
+      width="760px"
+    >
+      <div class="logs-hint">
+        每次维护（含启停与选项调整）都会留痕：前后值、操作人、时间；完整快照见审计中心。
+      </div>
+      <Spin :spinning="logsLoading">
+        <Empty
+          v-if="logs.length === 0 && !logsLoading"
+          description="暂无变更记录（该字段创建后未被维护过）"
+        />
+        <Table
+          v-else
+          :columns="logColumns"
+          :data-source="logs"
+          :pagination="false"
+          row-key="id"
+          size="small"
+        >
+          <template #bodyCell="{ column, record }">
+            <template v-if="column.key === 'createdAt'">
+              {{ (record as FieldDictLogView).createdAt }}
+            </template>
+            <template v-else-if="column.key === 'operatorName'">
+              {{ (record as FieldDictLogView).operatorName ?? '—' }}
+            </template>
+            <template v-else-if="column.key === 'change'">
+              {{
+                summarizeFieldChange(
+                  (record as FieldDictLogView).beforeJson,
+                  (record as FieldDictLogView).afterJson,
+                )
+              }}
+            </template>
+          </template>
+        </Table>
+      </Spin>
+    </Modal>
   </Page>
 </template>
 
@@ -553,6 +633,12 @@ async function toggleStatus(row: FormFieldDef) {
   display: flex;
   justify-content: flex-end;
   margin-top: 12px;
+}
+
+.logs-hint {
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: rgb(0 0 0 / 45%);
 }
 
 .readonly-grid {

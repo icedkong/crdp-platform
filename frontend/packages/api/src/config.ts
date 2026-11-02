@@ -87,6 +87,8 @@ export interface TenantDictTypeView {
 
 /** 租户字典项视图（生效集 = 平台项 − 本院停用 + 本院自有项）。 */
 export interface TenantDictItemView {
+  /** 别名 CSV（历史写法映射与导入匹配，A-FLD-012；平台项为 null）。 */
+  aliases: null | string;
   editable: boolean;
   itemCode: string;
   label: string;
@@ -105,11 +107,27 @@ export interface TenantDictSaveRequest {
 }
 
 export interface TenantDictItemSaveRequest {
+  /** 别名 CSV（本院自有项；平台项不认，改别名 40001）。 */
+  aliases?: null | string;
   itemCode?: string;
   label: string;
   sortNo?: null | number;
-  /** 平台项只认 status（停用 / 恢复）；本院自有项可改文字与排序。 */
+  /** 平台项只认 status（停用 / 恢复）；本院自有项可改文字、别名与排序。 */
   status?: DictStatus | null;
+}
+
+/** 字典变更记录行（GET /system/dicts/{code}/logs，倒序最近 100 条；A-FLD-009、C-FLD-009）。 */
+export interface TenantDictLogView {
+  action: 'DICT_CREATE' | 'DICT_UPDATE' | 'ITEM_ADD' | 'ITEM_UPDATE';
+  afterJson: null | string;
+  beforeJson: null | string;
+  createdAt: string;
+  dictCode: string;
+  id: number;
+  itemCode: null | string;
+  operatorId: null | number;
+  /** 操作人姓名（联查 sys_user；账号已删除时为 null）。 */
+  operatorName: null | string;
 }
 
 /** 租户参数视图（GET /api/hospital/system/params）。 */
@@ -191,6 +209,38 @@ export function paramLogActionText(action: null | string | undefined): string {
     PARAM_LOG_ACTION_TEXT[action as TenantParamLogView['action']] ??
     String(action ?? '—')
   );
+}
+
+export const DICT_LOG_ACTION_TEXT: Record<TenantDictLogView['action'], string> =
+  {
+    DICT_CREATE: '新建字典',
+    DICT_UPDATE: '维护字典',
+    ITEM_ADD: '新增取值',
+    ITEM_UPDATE: '维护取值',
+  };
+
+export function dictLogActionText(action: null | string | undefined): string {
+  return (
+    DICT_LOG_ACTION_TEXT[action as TenantDictLogView['action']] ??
+    String(action ?? '—')
+  );
+}
+
+/** 变更对象的可读文案：字典项「编码 · 前后显示名」或字典类型本身（记录行的展示辅助）。 */
+export function dictLogTargetText(log: TenantDictLogView): string {
+  if (!log.itemCode) {
+    return log.dictCode;
+  }
+  let afterLabel = '';
+  if (log.afterJson) {
+    try {
+      afterLabel =
+        (JSON.parse(log.afterJson) as { label?: string }).label ?? '';
+    } catch {
+      afterLabel = '';
+    }
+  }
+  return afterLabel ? `${log.itemCode} · ${afterLabel}` : log.itemCode;
 }
 
 /** 取值范围的可读文案（列表列与编辑提示共用）：数值 5–50；文本 ≤255 字；枚举列出选项；空返回「—」。 */

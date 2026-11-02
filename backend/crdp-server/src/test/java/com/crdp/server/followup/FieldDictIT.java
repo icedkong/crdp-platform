@@ -30,7 +30,8 @@ import org.springframework.test.context.ActiveProfiles;
  *
  * <p>覆盖：字段清单按表单 / 分类过滤，视图同时带稳定键、字段编码与显示名，选项「编码 + 显示名」分离（吸烟史 0=否 / 1=是）；维护显示名 / 帮助 / 软范围 / 必勤与选项（新增
  * / 改显示名 / 停用，编码不可改不删除）； 字段停用 / 启用（状态 + 审计）；键、编码、类型、硬范围、敏感标记不可改（请求不携带）； 无权限 40300、 模块关闭 40301、校验失败
- * 40001、字段 / 表单不存在 40400、双租户字典隔离。 全部虚构数据，门控 CRDP_IT_MYSQL_PORT。
+ * 40001、字段 / 表单不存在 40400、双租户字典隔离。E11-T08 / A-FLD-009、C-FLD-009：每次维护写 fe_field_dict_log
+ * 变更记录（前后值、操作人、时间），GET /fields/{key}/logs 可查。 全部虚构数据，门控 CRDP_IT_MYSQL_PORT。
  */
 @ActiveProfiles("local")
 @SpringBootTest(
@@ -72,6 +73,7 @@ class FieldDictIT {
                                         + " WHEN 1 THEN '是' END, sort_no = option_code * 10 + 10,"
                                         + " status = 'ENABLED', updated_by = NULL"
                                         + " WHERE set_code = 'yesno'");
+                        jdbc.update("DELETE FROM fe_field_dict_log");
                         AuditTableMaintenance.delete(
                                 jdbc, "DELETE FROM aud_log WHERE action = 'FIELD_DICT_UPDATE'");
                     });
@@ -261,6 +263,50 @@ class FieldDictIT {
                                         "label", "身高",
                                         "status", "ENABLED",
                                         "options", List.of(Map.of("code", 1, "label", "是"))))));
+    }
+
+    // ---------------------------------------------------------------- E11-T08：变更记录
+
+    /** 维护（含停用）写变更记录：倒序、前后值快照、操作人（sys_user 联查）与时间（A-FLD-009）。 */
+    @Test
+    void updateWritesChangeRecordLogs() {
+        String token = hospitalToken("demoa");
+
+        assertEquals(
+                0,
+                code(
+                        put(
+                                FIELDS + "/f010?formCode=A_BASELINE",
+                                token,
+                                Map.of("label", "吸烟史（修订）", "status", "ENABLED"))));
+        assertEquals(
+                0,
+                code(
+                        put(
+                                FIELDS + "/f010?formCode=A_BASELINE",
+                                token,
+                                Map.of("label", "吸烟史（修订）", "status", "DISABLED"))));
+
+        Map<?, ?> logsResponse = get(FIELDS + "/f010/logs?formCode=A_BASELINE", token);
+        assertEquals(0, code(logsResponse));
+        List<Map<?, ?>> logs = itemsOf(logsResponse);
+        assertEquals(2, logs.size(), "两次维护各留一条：" + logs.size());
+
+        Map<?, ?> latest = logs.get(0);
+        assertEquals("FIELD_UPDATE", latest.get("action"));
+        assertNotNull(latest.get("beforeJson"), "调整前快照");
+        assertNotNull(latest.get("afterJson"), "调整后快照");
+        assertTrue(((String) latest.get("afterJson")).contains("DISABLED"), "停用进快照");
+        assertEquals("演示护士", latest.get("operatorName"), "操作人姓名（联查 sys_user）");
+        assertNotNull(latest.get("createdAt"), "操作时间");
+
+        Map<?, ?> first = logs.get(1);
+        assertTrue(((String) first.get("afterJson")).contains("吸烟史（修订）"));
+
+        // 未知字段 40400；无权限 40300（前端隐藏不能代替后端校验）
+        assertEquals(40400, code(get(FIELDS + "/f999/logs?formCode=A_BASELINE", token)));
+        String doctor = hospitalToken("demoa", "doctor.demo");
+        assertEquals(40300, code(get(FIELDS + "/f010/logs?formCode=A_BASELINE", doctor)));
     }
 
     // ---------------------------------------------------------------- 校验、权限、模块开关、隔离

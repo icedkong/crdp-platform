@@ -157,3 +157,97 @@ export function isOptionField(field: FormFieldDef): boolean {
 export function statusActionText(status: 'DISABLED' | 'ENABLED'): string {
   return status === 'ENABLED' ? '停用' : '启用';
 }
+
+// ---------------------------------------------------------------- 变更记录（A-FLD-009、C-FLD-009）
+
+/** 变更快照里可读比较的列（label / help / unit / required / status / 软范围 / 选项）。 */
+interface FieldSnapshot {
+  help?: null | string;
+  label?: null | string;
+  options?: Array<{
+    code: number;
+    label: string;
+    sortNo: number;
+    status: string;
+  }> | null;
+  required?: boolean;
+  softRange?: null | { max: null | number; min: null | number };
+  status?: null | string;
+  unit?: null | string;
+}
+
+function parseSnapshot(json: null | string): FieldSnapshot | null {
+  if (!json) {
+    return null;
+  }
+  try {
+    return JSON.parse(json) as FieldSnapshot;
+  } catch {
+    return null;
+  }
+}
+
+function rangeText(range: { max: null | number; min: null | number }): string {
+  return `${range.min ?? '不限'}–${range.max ?? '不限'}`;
+}
+
+function optionText(
+  options: Array<{ code: number; label: string }> | null | undefined,
+): string {
+  return (options ?? [])
+    .map((option) => `${option.code}=${option.label}`)
+    .join('、');
+}
+
+/**
+ * 变更摘要（变更记录弹窗「调整内容」列）：比较前后快照的可维护列，逐项列出
+ * 「显示名：A → B」这类变化；新增记录（无前值）列出新值要点；无变化返回兜底文案。
+ */
+export function summarizeFieldChange(
+  beforeJson: null | string,
+  afterJson: null | string,
+): string {
+  const before = parseSnapshot(beforeJson);
+  const after = parseSnapshot(afterJson);
+  if (!after) {
+    return '快照缺失';
+  }
+  const parts: string[] = [];
+  if (!before) {
+    parts.push(`显示名「${after.label ?? ''}」`);
+    if (after.options?.length) {
+      parts.push(`选项 ${optionText(after.options)}`);
+    }
+    return parts.join('；') || '新增配置';
+  }
+  if (before.label !== after.label) {
+    parts.push(`显示名「${before.label ?? ''}」→「${after.label ?? ''}」`);
+  }
+  if ((before.help ?? '') !== (after.help ?? '')) {
+    parts.push('帮助说明已调整');
+  }
+  if ((before.unit ?? '') !== (after.unit ?? '')) {
+    parts.push(`单位「${before.unit || '无'}」→「${after.unit || '无'}」`);
+  }
+  const beforeRange = before.softRange ? rangeText(before.softRange) : '';
+  const afterRange = after.softRange ? rangeText(after.softRange) : '';
+  if (beforeRange !== afterRange) {
+    parts.push(`提示范围「${beforeRange || '无'}」→「${afterRange || '无'}」`);
+  }
+  if (before.required !== after.required) {
+    parts.push(after.required ? '改为必填' : '改为选填');
+  }
+  if (before.status !== after.status) {
+    parts.push(
+      after.status === 'DISABLED'
+        ? '字段停用（表单不再下发，已有数据保留）'
+        : '字段启用',
+    );
+  }
+  const beforeOptions = optionText(before.options);
+  const afterOptions = optionText(after.options);
+  if (beforeOptions !== afterOptions) {
+    parts.push('选项已调整（显示名 / 排序 / 停用 / 新增）');
+  }
+  return parts.join('；') || '无变化';
+}

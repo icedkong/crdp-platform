@@ -75,4 +75,17 @@ public class HospitalFormFieldController {
             @RequestBody FieldDictionaryService.FieldUpdate request) {
         return ApiResponse.ok(service.update(formCode, key, request));
     }
+
+    @Operation(
+            summary =
+                    "字段字典变更记录（A-FLD-009、C-FLD-009，E11-T08）：倒序最近 100 条，"
+                            + "含前后值快照、操作人与时间；字段 / 表单不存在 40400")
+    @GetMapping("/fields/{key}/logs")
+    @RequireModule("followup")
+    @RequiresPermission("followup:field:edit")
+    public ApiResponse<List<FieldDictionaryService.FieldLogView>> logs(
+            @PathVariable("key") @Size(max = 32) String key,
+            @RequestParam("formCode") @Size(max = 64) String formCode) {
+        return ApiResponse.ok(service.logs(formCode, key));
+    }
 }

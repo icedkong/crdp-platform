@@ -1,9 +1,11 @@
 import type { TenantDictItemView, TenantDictTypeView } from '@crdp/api';
 
+import { dictLogActionText, dictLogTargetText } from '@crdp/api';
 import { describe, expect, it } from 'vitest';
 
 import {
   emptyDictModel,
+  emptyItemModel,
   itemCountText,
   toDictModel,
   toItemModel,
@@ -25,6 +27,7 @@ const gender: TenantDictTypeView = {
 };
 
 const ownItem: TenantDictItemView = {
+  aliases: null,
   editable: true,
   itemCode: 'X_OTHER',
   label: '其他（本院）',
@@ -85,5 +88,60 @@ describe('e06-t10 租户字典逻辑', () => {
         tenantItemCount: 5,
       }),
     ).toBe('5');
+  });
+});
+
+describe('e11-t08 业务字典：别名与变更记录', () => {
+  it('本院项的别名进编辑模型；空别名为空串（A-FLD-012）', () => {
+    const model = toItemModel({ ...ownItem, aliases: '老写法、旧名称' });
+    expect(model.aliases).toBe('老写法、旧名称');
+    expect(toItemModel(ownItem).aliases).toBe('');
+  });
+
+  it('别名超长 255 拦住（与后端 40001 同口径）', () => {
+    const model = {
+      ...emptyItemModel(),
+      aliases: '别'.repeat(256),
+      itemCode: 'X_OK',
+      label: '其他',
+    };
+    expect(validateItemModel(model, [], true)).toContain(
+      '别名不能超过 255 个字符',
+    );
+    const ok = { ...model, aliases: '别'.repeat(255) };
+    expect(validateItemModel(ok, [], true)).toEqual([]);
+  });
+
+  it('变更记录动作与对象文案（A-FLD-009）', () => {
+    expect(dictLogActionText('ITEM_ADD')).toBe('新增取值');
+    expect(dictLogActionText('ITEM_UPDATE')).toBe('维护取值');
+    expect(dictLogActionText('DICT_CREATE')).toBe('新建字典');
+    expect(dictLogActionText('DICT_UPDATE')).toBe('维护字典');
+    expect(
+      dictLogTargetText({
+        action: 'ITEM_UPDATE',
+        afterJson: '{"label":"本院分型（示例）"}',
+        beforeJson: null,
+        createdAt: '2027-03-01T09:00:00+08:00',
+        dictCode: 'patient_type',
+        id: 1,
+        itemCode: 'X_LOCAL',
+        operatorId: 7,
+        operatorName: '张医生（示例）',
+      }),
+    ).toBe('X_LOCAL · 本院分型（示例）');
+    expect(
+      dictLogTargetText({
+        action: 'DICT_CREATE',
+        afterJson: '{"name":"转诊来源"}',
+        beforeJson: null,
+        createdAt: '2027-03-01T09:00:00+08:00',
+        dictCode: 'local_referral',
+        id: 2,
+        itemCode: null,
+        operatorId: 7,
+        operatorName: null,
+      }),
+    ).toBe('local_referral');
   });
 });
