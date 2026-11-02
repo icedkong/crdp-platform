@@ -228,6 +228,12 @@ export interface FormSchemaCategory {
 }
 
 export interface FormSchemaField {
+  /**
+   * 带入上次值适用字段（E11-T07 / A-FU-015、C-FU-016）：模板配置——用药等设置项可带入
+   * 上一次的值再修改，测量值不带入；缺省（false / null）不可带入。后端列随模板配置落地
+   * （OQ-67 ①：前端契约先行，fe_field 加列后随 FormSchema 下发）。
+   */
+  carryOver?: boolean | null;
   /** 字段编码（导入导出名）。 */
   code: string;
   decimals?: null | number;

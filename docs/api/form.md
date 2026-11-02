@@ -22,6 +22,7 @@
 - 选项（`fe_option`）不进快照：选项编码创建后不可改、停用不删除（V28），显示名与停用标记读取时现取；停用选项在 `optionSet[]` 带 `disabled: true`（不可新选，历史值仍可显示）。
 - `rules` 为 `fe_rule` 跨字段校验（E11-T04 已落地）：实时读取启用规则、**不进版本快照**，形状见 §2.2；`compareRules` 随 E17。
 - 字段的 `visibleWhen` / `requiredWhen` 条件树随版本快照下发（`fe_form_version_field`，E11-T03）：旧版本按其快照口径求值；求值语义见 §2.4。
+- `carryOver`（带入上次值适用字段，A-FU-015 / C-FU-016）随 E11-T07 定为 FormSchemaField 可选列：模板标记的设置项（A 用药、C 程控起搏模式 / 上下限频率 / AV 间期）可带入、测量值不标记即不带入；`fe_field` 加列 + 快照下发未落地（前端契约先行，渲染器按缺省 false 处理，见 OQ-67 ①）。
 - 记录侧绑定见 §1.1：记录存 `templateVersion`，读取时前端用 `GET /forms/{code}?version={templateVersion}` 取渲染口径。
 
 响应要求：
