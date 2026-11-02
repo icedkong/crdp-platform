@@ -1,6 +1,7 @@
 package com.crdp.followup.file.api;
 
 import com.crdp.followup.file.app.FilePolicyService;
+import com.crdp.followup.file.app.FilePreviewService;
 import com.crdp.followup.file.app.FileUploadService;
 import com.crdp.framework.security.PublicApi;
 import com.crdp.framework.security.RequireModule;
@@ -10,6 +11,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.io.IOException;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -27,10 +29,13 @@ public class FileController {
 
     private final FileUploadService upload;
     private final FilePolicyService policy;
+    private final FilePreviewService preview;
 
-    public FileController(FileUploadService upload, FilePolicyService policy) {
+    public FileController(
+            FileUploadService upload, FilePolicyService policy, FilePreviewService preview) {
         this.upload = upload;
         this.policy = policy;
+        this.preview = preview;
     }
 
     @Operation(
@@ -55,5 +60,18 @@ public class FileController {
     @RequireModule("followup")
     public ApiResponse<FilePolicyService.UploadPolicy> policy() {
         return ApiResponse.ok(policy.policy());
+    }
+
+    @Operation(
+            summary =
+                    "预览短时链接（E10-T04，tech-plan §10「预览」）：≤ 5 分钟的应用代理链接，每次预览写审计；"
+                            + "返回 { url, expiresAt, format, mime, originalName, inlinePlayable }，"
+                            + "AMR 与 XLSX 的 inlinePlayable=false（只下载）；"
+                            + "报告单数据范围校验随 E16 报告单子域")
+    @PublicApi
+    @GetMapping("/api/hospital/files/{fileId}/preview-url")
+    @RequireModule("followup")
+    public ApiResponse<FilePreviewService.PreviewGrant> previewUrl(@PathVariable long fileId) {
+        return ApiResponse.ok(preview.previewUrl(fileId));
     }
 }
