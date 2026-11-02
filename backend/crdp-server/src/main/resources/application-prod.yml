@@ -17,6 +17,17 @@ crdp:
     secret-key: ${CRDP_SMS_SECRET_KEY:}
     sdk-app-id: ${CRDP_SMS_SDK_APP_ID:}
     sign-name: ${CRDP_SMS_SIGN_NAME:}
+  storage:
+    # E10-T02 / C-NFR-003（ADR 0006）：生产走 OBS 业务桶，每次 PUT 强制 SSE-KMS；
+    # AK/SK 只经环境变量注入（DEW 凭据管理，子账号只授予该桶读写权限），桶由运维建好
+    # （多可用区、版本控制，E01-T08 / E22）。一个桶、每院一个 t/{租户编码}/ 对象键前缀。
+    type: ${CRDP_STORAGE_TYPE:obs}
+    obs:
+      endpoint: ${CRDP_OBS_ENDPOINT:}
+      access-key: ${CRDP_OBS_ACCESS_KEY:}
+      secret-key: ${CRDP_OBS_SECRET_KEY:}
+      bucket: ${CRDP_OBS_BUCKET:}
+      kms-key-id: ${CRDP_OBS_KMS_KEY_ID:} # 留空走桶默认 KMS 密钥（加密本身不可关）
 
 spring:
   data:

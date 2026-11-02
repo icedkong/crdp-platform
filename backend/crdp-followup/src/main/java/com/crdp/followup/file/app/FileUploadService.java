@@ -7,6 +7,7 @@ import com.crdp.followup.file.infra.mapper.SysFileRow;
 import com.crdp.framework.audit.AuditEvent;
 import com.crdp.framework.audit.AuditLogger;
 import com.crdp.framework.security.CurrentSession;
+import com.crdp.framework.storage.ObjectStorage;
 import com.crdp.framework.web.ApiException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -26,8 +27,9 @@ import org.springframework.transaction.annotation.Transactional;
  * 扩展名与真实类型一致。改扩展名的可执行文件（如 report.pdf 实为 PE/exe）在真实类型一步被拒——识别结果是
  * application/x-msdownload，不在白名单（任务验收）。 宏 Office（docm/xlsm）、脚本、压缩包等目录外格式同理拒绝（NFR「恶意代码防范」首期口径）。
  *
- * <p>通过后写 sys_file（状态 PENDING，未关联报告单；关联与每份数量上限的落点校验随 E16 报告单）、 文件体暂存表内 LONGBLOB（OBS 适配在
- * E10-T02，届时迁桶并清理 body 列，接口与哈希口径不变）， 并写 FILE_UPLOAD 审计（A-ATT-006 口径：谁、何时、传了什么）。上传接口经
+ * <p>通过后先写对象存储、再落 sys_file 台账（状态 PENDING，未关联报告单；关联与每份数量上限的落点校验随 E16 报告单）。 E10-T02 起文件体只在对象存储（OBS
+ * SSE-KMS 服务端加密；本机为文件系统替身），对象键由存储端口加租户前缀 {@code t/{租户}/files/…} 实现按院隔离（C-NFR-003/005，ADR
+ * 0006）；台账行失败会留下无引用的孤儿对象，清理策略随 E10-T05 / E16。 之后写 FILE_UPLOAD 审计（A-ATT-006 口径：谁、何时、传了什么）。上传接口经
  * {@code @RequiresPermission("followup:scan:upload")} 控制（OQ-12），模块未开通 40301。
  */
 @Service
@@ -43,16 +45,19 @@ public class FileUploadService {
     private final FilePolicyService policy;
     private final FileTypeDetector detector;
     private final SysFileMapper files;
+    private final ObjectStorage storage;
     private final AuditLogger audit;
 
     public FileUploadService(
             FilePolicyService policy,
             FileTypeDetector detector,
             SysFileMapper files,
+            ObjectStorage storage,
             AuditLogger audit) {
         this.policy = policy;
         this.detector = detector;
         this.files = files;
+        this.storage = storage;
         this.audit = audit;
     }
 
@@ -108,15 +113,17 @@ public class FileUploadService {
 
         long uploader = CurrentSession.requireHospital().userId();
         String sha256 = sha256Hex(body);
+        // 先 PUT 对象再落台账（ADR 0006 §4）：台账失败只留下无引用的孤儿对象（键含随机 UUID），
+        // 反过来会留下取不到内容的 PENDING 台账行；租户前缀由存储端口强制（验收：按租户前缀隔离）
+        String objectKey = storage.put(relativeKey(real), body, mime);
         SysFileRow row = new SysFileRow();
-        row.setObjectKey(objectKey(real));
+        row.setObjectKey(objectKey);
         row.setOriginalName(name);
         row.setFormatCode(real.code());
         row.setMimeType(mime);
         row.setSizeBytes(body.length);
         row.setSha256(sha256);
         row.setStatus("PENDING");
-        row.setBody(body);
         row.setUploaderId(uploader);
         files.insert(row);
 
@@ -174,8 +181,8 @@ public class FileUploadService {
                 .orElse("");
     }
 
-    /** 对象键：files/{年月}/{uuid}.{规范扩展名}；租户前缀与桶内隔离随 E10-T02 接入。 */
-    private static String objectKey(FileFormat format) {
+    /** 相对键：files/{年月}/{uuid}.{规范扩展名}；存储端口在其前拼 t/{租户编码}/ 前缀（E10-T02）。 */
+    private static String relativeKey(FileFormat format) {
         String month = LocalDate.now(ZONE).toString().substring(0, 7).replace("-", "");
         return "files/" + month + "/" + UUID.randomUUID() + "." + format.code();
     }

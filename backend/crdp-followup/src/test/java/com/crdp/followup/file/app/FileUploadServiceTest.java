@@ -1,5 +1,6 @@
 package com.crdp.followup.file.app;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -21,45 +22,60 @@ import com.crdp.framework.audit.AuditEvent;
 import com.crdp.framework.audit.AuditLogger;
 import com.crdp.framework.security.ScopeSnapshot;
 import com.crdp.framework.security.SessionPrincipal;
+import com.crdp.framework.storage.LocalObjectStorage;
+import com.crdp.framework.storage.ObjectStorage;
+import com.crdp.framework.tenant.TenantContext;
 import com.crdp.framework.web.ApiException;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 
 /**
- * E10-T01 / A-ATT-008、C-SCAN-018：上传校验单元测试（真实 Tika 检测 + 真实策略解析）。
+ * E10-T01 / A-ATT-008、C-SCAN-018：上传校验单元测试（真实 Tika 检测 + 真实策略解析）； E10-T02 起文件体经存储端口落桶 （本测试用真实 {@link
+ * LocalObjectStorage}，验证租户前缀与内容不进台账）。
  *
  * <p>锁定任务验收：改扩展名的可执行文件（report.pdf 实为 PE）被拒 40001；此外：白名单外扩展名、 宏 Office / 脚本 /
- * 压缩包内容、扩展名与真实类型不符、空文件、超大小（文档 / 录音两类上限）、 文件名缺扩展名 / 超长全部 40001；合法 PDF 通过并落
- * sys_file（PENDING、SHA-256、真实类型） 且写 FILE_UPLOAD 审计。全部合成样例，不含真实文件。
+ * 压缩包内容、扩展名与真实类型不符、空文件、超大小（文档 / 录音两类上限）、 文件名缺扩展名 / 超长全部 40001；合法 PDF 通过、 对象带 t/{租户}/ 前缀入桶、台账落
+ * PENDING（SHA-256、真实类型）且写 FILE_UPLOAD 审计。全部合成样例，不含真实文件。
  */
 @ExtendWith(MockitoExtension.class)
 class FileUploadServiceTest {
 
     private static final long USER = 7L;
 
+    @TempDir Path storageRoot;
+
     private final FileUploadParamDefaults defaults = mock(FileUploadParamDefaults.class);
     private final UploadParamMapper overrides = mock(UploadParamMapper.class);
     private final SysFileMapper files = mock(SysFileMapper.class);
     private final AuditLogger audit = mock(AuditLogger.class);
+    private ObjectStorage storage;
 
-    private final FilePolicyService policy = new FilePolicyService(defaults, overrides);
-    private final FileUploadService service =
-            new FileUploadService(policy, new FileTypeDetector(), files, audit);
+    private FilePolicyService policy;
+    private FileUploadService service;
 
     @BeforeEach
     void loginAndConfig() {
+        // @TempDir 在每个用例前注入，存储替身与其后的服务在此组装
+        storage = new LocalObjectStorage(storageRoot);
+        policy = new FilePolicyService(defaults, overrides);
+        service = new FileUploadService(policy, new FileTypeDetector(), files, storage, audit);
         SecurityContextHolder.getContext()
                 .setAuthentication(
                         new UsernamePasswordAuthenticationToken(principal(), null, List.of()));
+        // 对象键前缀取自租户上下文（TokenAuthenticationFilter 在请求线程里做的事，单测里手工设）
+        TenantContext.useTenant(1L, "demoa");
         lenient().when(overrides.findOverride(anyString())).thenReturn(null);
         lenient()
                 .when(defaults.param(anyString()))
@@ -83,6 +99,7 @@ class FileUploadServiceTest {
     @AfterEach
     void logout() {
         SecurityContextHolder.clearContext();
+        TenantContext.clear();
     }
 
     /** 任务验收：改扩展名的可执行文件被拒（PE 内容伪装成 .pdf）。 */
@@ -179,16 +196,16 @@ class FileUploadServiceTest {
         assertTrue(mp3.getMessage().contains("2 MB"), mp3.getMessage());
     }
 
-    /** 合法 PDF：落 PENDING 台账（对象键、SHA-256、真实类型、上传人）+ FILE_UPLOAD 审计 + 返回视图。 */
+    /** 合法 PDF：对象带租户前缀入桶（文件体不进台账）、落 PENDING 台账（对象键、SHA-256、真实类型、上传人）+ FILE_UPLOAD 审计。 */
     @Test
     void validPdfStoredAndAudited() throws IOException {
-        FileUploadService.FileUploadView view =
-                service.upload("出院小结（示例）.pdf", FileTypeDetectorTest.pdf());
+        byte[] body = FileTypeDetectorTest.pdf();
+        FileUploadService.FileUploadView view = service.upload("出院小结（示例）.pdf", body);
 
         assertEquals("123", view.fileId());
         assertEquals("pdf", view.format());
         assertEquals("application/pdf", view.mime());
-        assertEquals(FileTypeDetectorTest.pdf().length, view.size());
+        assertEquals(body.length, view.size());
         assertEquals(64, view.sha256().length());
 
         ArgumentCaptor<SysFileRow> row = ArgumentCaptor.forClass(SysFileRow.class);
@@ -197,14 +214,36 @@ class FileUploadServiceTest {
         assertEquals("pdf", row.getValue().getFormatCode());
         assertEquals(USER, row.getValue().getUploaderId());
         assertEquals(view.sha256(), row.getValue().getSha256());
-        assertTrue(row.getValue().getObjectKey().startsWith("files/"), "对象键按 files/ 前缀");
+        // E10-T02 验收：对象键按租户前缀隔离（t/{租户编码}/files/…），完整键入库
+        assertTrue(
+                row.getValue().getObjectKey().startsWith("t/demoa/files/"),
+                "对象键带租户前缀：" + row.getValue().getObjectKey());
         assertTrue(row.getValue().getObjectKey().endsWith(".pdf"));
+        // 文件体只存对象存储（桶替身按同一键落盘，内容与上传一致；台账无 body 列，E10-T02 V26）
+        assertArrayEquals(
+                body, storage.get(row.getValue().getObjectKey().substring("t/demoa/".length())));
+        assertTrue(Files.isRegularFile(storageRoot.resolve(row.getValue().getObjectKey())));
 
         ArgumentCaptor<AuditEvent> event = ArgumentCaptor.forClass(AuditEvent.class);
         verify(audit).record(event.capture());
         assertEquals("FILE_UPLOAD", event.getValue().eventType());
         assertEquals("sys_file:123", event.getValue().target());
         assertNotNull(event.getValue().detail());
+    }
+
+    /** 存储端口失败：统一 50000 抛给调用方，且不落台账（先 PUT 后 INSERT，ADR 0006 §4）。 */
+    @Test
+    void storageFailureSurfacesAs50000AndNoRow() {
+        FileUploadService failing =
+                new FileUploadService(
+                        policy, new FileTypeDetector(), files, brokenStorage(), audit);
+        ApiException ex =
+                assertThrows(
+                        ApiException.class,
+                        () -> failing.upload("出院小结（示例）.pdf", FileTypeDetectorTest.pdf()));
+        assertEquals(50000, ex.code());
+        verify(files, never()).insert(any(SysFileRow.class));
+        verify(audit, never()).record(any(AuditEvent.class));
     }
 
     /** 合成录音（MP3 / AMR）：真实类型识别通过、按录音上限放行。 */
@@ -221,6 +260,26 @@ class FileUploadServiceTest {
     }
 
     // ---------------------------------------------------------------- 工具
+
+    /** 永远失败的存储端口（模拟 OBS 侧故障 → 50000）。 */
+    private static ObjectStorage brokenStorage() {
+        return new ObjectStorage() {
+            @Override
+            public String put(String relativeKey, byte[] body, String contentType) {
+                throw new ApiException(500, 50000, "系统繁忙，请稍后再试");
+            }
+
+            @Override
+            public byte[] get(String relativeKey) {
+                throw new ApiException(500, 50000, "系统繁忙，请稍后再试");
+            }
+
+            @Override
+            public void delete(String relativeKey) {
+                throw new ApiException(500, 50000, "系统繁忙，请稍后再试");
+            }
+        };
+    }
 
     private static int codeOf(Runnable call) {
         return assertThrows(ApiException.class, call::run).code();

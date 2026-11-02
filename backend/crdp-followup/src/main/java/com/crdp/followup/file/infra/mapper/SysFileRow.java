@@ -1,6 +1,6 @@
 package com.crdp.followup.file.infra.mapper;
 
-/** sys_file 行（E10-T01）。insert 由 MyBatis 回填自增 id。 */
+/** sys_file 行（E10-T01；E10-T02 起文件体只存对象存储，台账不带 body）。insert 由 MyBatis 回填自增 id。 */
 public class SysFileRow {
 
     private Long id;
@@ -18,8 +18,6 @@ public class SysFileRow {
     private String sha256;
 
     private String status;
-
-    private byte[] body;
 
     private long uploaderId;
 
@@ -85,14 +83,6 @@ public class SysFileRow {
 
     public void setStatus(String status) {
         this.status = status;
-    }
-
-    public byte[] getBody() {
-        return body;
-    }
-
-    public void setBody(byte[] body) {
-        this.body = body;
     }
 
     public long getUploaderId() {

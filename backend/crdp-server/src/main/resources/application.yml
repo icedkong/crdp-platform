@@ -101,6 +101,13 @@ crdp:
     sign-name: ""
     region: ap-guangzhou
     receipt-ip-hourly-limit: 600 # 回执回调公开口按 IP 每小时限流
+  storage:
+    # E10-T02 / C-NFR-003（ADR 0006）：业务文件桶。local（默认，本机 / CI）为文件系统替身，
+    # 目录结构与 OBS 一致（t/{租户}/…）；生产 type=obs（SSE-KMS 服务端加密，密钥经环境变量注入，
+    # 见 application-prod.yml），type=obs 必填项缺失启动即失败。
+    type: local
+    local:
+      root: data/storage # 本地桶根目录（对象按 t/{租户编码}/… 落在其下）
 
 info:
   app:
