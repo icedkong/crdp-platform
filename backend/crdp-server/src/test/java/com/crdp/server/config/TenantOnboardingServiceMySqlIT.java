@@ -208,10 +208,12 @@ class TenantOnboardingServiceMySqlIT {
                 // E09-T05 增加 V24（ntf_send_log 汇总作业索引，followup 目录）。
                 // E10-T01 增加 V25（文件上传台账 sys_file + 上传按钮授权，followup 目录）。
                 // E10-T02 增加 V26（sys_file 迁桶后清理 body 列，followup 目录）。
+                // E10-T03 增加 V27（sys_file 缩略图键 + pages 口径收敛，followup 目录）。
                 // 此处随迁移清单维护
                 List.of(
                         "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14",
-                        "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26"),
+                        "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26",
+                        "27"),
                 root.queryForList(
                         "SELECT version FROM "
                                 + DB

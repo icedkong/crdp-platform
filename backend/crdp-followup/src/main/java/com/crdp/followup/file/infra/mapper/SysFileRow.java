@@ -1,11 +1,16 @@
 package com.crdp.followup.file.infra.mapper;
 
-/** sys_file 行（E10-T01；E10-T02 起文件体只存对象存储，台账不带 body）。insert 由 MyBatis 回填自增 id。 */
+/**
+ * sys_file 行（E10-T01；E10-T02 起文件体只存对象存储，台账不带 body；E10-T03 起图片带缩略图键与页数）。 insert 由 MyBatis 回填自增 id。
+ */
 public class SysFileRow {
 
     private Long id;
 
     private String objectKey;
+
+    /** 缩略图对象键（仅图片有值，E10-T03；完整键含租户前缀）。 */
+    private String thumbnailKey;
 
     private String originalName;
 
@@ -16,6 +21,9 @@ public class SysFileRow {
     private long sizeBytes;
 
     private String sha256;
+
+    /** 页数（图片恒为 1；PDF 待预览解析能力回填，见 OQ-61）。 */
+    private Integer pages;
 
     private String status;
 
@@ -35,6 +43,14 @@ public class SysFileRow {
 
     public void setObjectKey(String objectKey) {
         this.objectKey = objectKey;
+    }
+
+    public String getThumbnailKey() {
+        return thumbnailKey;
+    }
+
+    public void setThumbnailKey(String thumbnailKey) {
+        this.thumbnailKey = thumbnailKey;
     }
 
     public String getOriginalName() {
@@ -75,6 +91,14 @@ public class SysFileRow {
 
     public void setSha256(String sha256) {
         this.sha256 = sha256;
+    }
+
+    public Integer getPages() {
+        return pages;
+    }
+
+    public void setPages(Integer pages) {
+        this.pages = pages;
     }
 
     public String getStatus() {

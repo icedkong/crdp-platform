@@ -2,6 +2,7 @@ package com.crdp.followup.file.app;
 
 import com.crdp.followup.file.domain.FileFormat;
 import com.crdp.followup.file.infra.detect.FileTypeDetector;
+import com.crdp.followup.file.infra.image.ImageThumbnailGenerator;
 import com.crdp.followup.file.infra.mapper.SysFileMapper;
 import com.crdp.followup.file.infra.mapper.SysFileRow;
 import com.crdp.framework.audit.AuditEvent;
@@ -31,6 +32,11 @@ import org.springframework.transaction.annotation.Transactional;
  * SSE-KMS 服务端加密；本机为文件系统替身），对象键由存储端口加租户前缀 {@code t/{租户}/files/…} 实现按院隔离（C-NFR-003/005，ADR
  * 0006）；台账行失败会留下无引用的孤儿对象，清理策略随 E10-T05 / E16。 之后写 FILE_UPLOAD 审计（A-ATT-006 口径：谁、何时、传了什么）。上传接口经
  * {@code @RequiresPermission("followup:scan:upload")} 控制（OQ-12），模块未开通 40301。
+ *
+ * <p>E10-T03（图片缩略图）：图片（jpg / png）通过校验后同步生成缩略图（保持原格式、不放大，见 {@link ImageThumbnailGenerator}），落 {@code
+ * thumbnails/{年月}/…} 前缀对象并记 {@code sys_file.thumbnail_key} 与 {@code
+ * pages=1}；非图片不生成任何派生对象（录音不转码、不另存副本，tech-plan §10「派生文件」）。损坏 / 超尺寸图片在写对象之前 40001 拒绝。缩略图的查看链路（代理、审计）随
+ * E10-T04。
  */
 @Service
 public class FileUploadService {
@@ -44,6 +50,7 @@ public class FileUploadService {
 
     private final FilePolicyService policy;
     private final FileTypeDetector detector;
+    private final ImageThumbnailGenerator thumbnails;
     private final SysFileMapper files;
     private final ObjectStorage storage;
     private final AuditLogger audit;
@@ -51,24 +58,27 @@ public class FileUploadService {
     public FileUploadService(
             FilePolicyService policy,
             FileTypeDetector detector,
+            ImageThumbnailGenerator thumbnails,
             SysFileMapper files,
             ObjectStorage storage,
             AuditLogger audit) {
         this.policy = policy;
         this.detector = detector;
+        this.thumbnails = thumbnails;
         this.files = files;
         this.storage = storage;
         this.audit = audit;
     }
 
-    /** 上传结果（report.md §1：fileId、sha256、size、mime；pages 随 E10-T03 回填）。 */
+    /** 上传结果（report.md §1：fileId、sha256、size、mime、format、originalName、pages）。 */
     public record FileUploadView(
             String fileId,
             String sha256,
             long size,
             String mime,
             String format,
-            String originalName) {}
+            String originalName,
+            Integer pages) {}
 
     /** 校验并保存一个上传文件；任何校验失败抛 40001（前端按 message 提示）。 */
     @Transactional
@@ -113,16 +123,33 @@ public class FileUploadService {
 
         long uploader = CurrentSession.requireHospital().userId();
         String sha256 = sha256Hex(body);
+        // E10-T03 缩略图（图片才有派生；录音不转码、不另存副本）：先在内存里生成——损坏 / 超尺寸图片
+        // 在写任何对象之前 40001 拒绝，不留半成品；小图直接复用原字节（无转码、不放大见生成器注释）
+        ImageThumbnailGenerator.Thumbnail thumbnail = null;
+        Integer pages = null;
+        if (real.isImage()) {
+            thumbnail = thumbnails.generate(body, mime);
+            pages = 1;
+        }
         // 先 PUT 对象再落台账（ADR 0006 §4）：台账失败只留下无引用的孤儿对象（键含随机 UUID），
         // 反过来会留下取不到内容的 PENDING 台账行；租户前缀由存储端口强制（验收：按租户前缀隔离）
-        String objectKey = storage.put(relativeKey(real), body, mime);
+        String objectKey = storage.put(relativeKey("files", real), body, mime);
+        String thumbnailKey =
+                thumbnail == null
+                        ? null
+                        : storage.put(
+                                relativeKey("thumbnails", real),
+                                thumbnail.body(),
+                                thumbnail.contentType());
         SysFileRow row = new SysFileRow();
         row.setObjectKey(objectKey);
+        row.setThumbnailKey(thumbnailKey);
         row.setOriginalName(name);
         row.setFormatCode(real.code());
         row.setMimeType(mime);
         row.setSizeBytes(body.length);
         row.setSha256(sha256);
+        row.setPages(pages);
         row.setStatus("PENDING");
         row.setUploaderId(uploader);
         files.insert(row);
@@ -135,13 +162,14 @@ public class FileUploadService {
                         "sys_file:" + row.getId(),
                         "上传文件：" + name + "（真实类型 " + real.code() + "，" + body.length + " 字节）"));
         log.info(
-                "文件上传成功 id={} format={} size={} sha256={}",
+                "文件上传成功 id={} format={} size={} sha256={} thumbnail={}",
                 row.getId(),
                 real.code(),
                 body.length,
-                sha256);
+                sha256,
+                thumbnailKey != null);
         return new FileUploadView(
-                String.valueOf(row.getId()), sha256, body.length, mime, real.code(), name);
+                String.valueOf(row.getId()), sha256, body.length, mime, real.code(), name, pages);
     }
 
     // ---------------------------------------------------------------- 私有
@@ -181,10 +209,10 @@ public class FileUploadService {
                 .orElse("");
     }
 
-    /** 相对键：files/{年月}/{uuid}.{规范扩展名}；存储端口在其前拼 t/{租户编码}/ 前缀（E10-T02）。 */
-    private static String relativeKey(FileFormat format) {
+    /** 相对键：{前缀}/{年月}/{uuid}.{规范扩展名}（files/ 原件、thumbnails/ 缩略图）；存储端口在其前拼 t/{租户编码}/ 前缀（E10-T02）。 */
+    private static String relativeKey(String prefix, FileFormat format) {
         String month = LocalDate.now(ZONE).toString().substring(0, 7).replace("-", "");
-        return "files/" + month + "/" + UUID.randomUUID() + "." + format.code();
+        return prefix + "/" + month + "/" + UUID.randomUUID() + "." + format.code();
     }
 
     private static String sha256Hex(byte[] body) {
