@@ -54,11 +54,17 @@ describe('e09-T02 站内信铃铛逻辑', () => {
     expect(shouldMarkRead({ ...TASK_MESSAGE, read: true })).toBe(false);
   });
 
-  it('时间文案：当天只写时分，跨天写 MM-DD HH:mm，非法时间空串', () => {
-    const now = new Date('2026-11-02T20:00:00+08:00');
-    expect(noticeTimeText('2026-11-02T08:30:00+08:00', now)).toBe('08:30');
-    expect(noticeTimeText('2026-10-31T09:05:00+08:00', now)).toBe(
-      '10-31 09:05',
+  it('时间文案：当天只写时分，跨天写 MM-DD HH:mm，非法时间空串（本地时区构造，CI 任意时区等价）', () => {
+    const now = new Date(2026, 10, 2, 20, 0);
+    const sameDay = new Date(2026, 10, 2, 8, 30);
+    const otherDay = new Date(2026, 9, 31, 9, 5);
+    const hm = (t: Date) =>
+      `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
+    expect(noticeTimeText(sameDay.toISOString(), now)).toBe(hm(sameDay));
+    expect(noticeTimeText(otherDay.toISOString(), now)).toBe(
+      `${String(otherDay.getMonth() + 1).padStart(2, '0')}-${String(
+        otherDay.getDate(),
+      ).padStart(2, '0')} ${hm(otherDay)}`,
     );
     expect(noticeTimeText('not-a-time', now)).toBe('');
   });
