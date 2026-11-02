@@ -38,6 +38,14 @@ frontend/.stylelintcache
 # Docker volumes
 .docker-data/
 
+# Terraform（iac/）：真实 tfvars / 状态与本地缓存不入库；example 与 .lock 提交以保证可复现
+*.tfvars
+!*.tfvars.example
+*.tfstate
+*.tfstate.*
+crash.log
+.terraform/
+
 # Uploaded source documents (not part of the skeleton)
 uploads/
 

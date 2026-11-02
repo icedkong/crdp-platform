@@ -1,0 +1,51 @@
+{
+  "task": "E22-T04",
+  "source_region": "cn-north-4",
+  "instance": {
+    "engine": "MySQL",
+    "engine_version": "8.0",
+    "time_zone": "UTC+08:00",
+    "lower_case_table_names": "1",
+    "ha_replication_mode": "semisync",
+    "switch_strategy": "reliability",
+    "availability_zones": ["cn-north-4a", "cn-north-4b"],
+    "ssl_enable": true,
+    "port": 3306
+  },
+  "backup": {
+    "start_time": "02:00-03:00",
+    "keep_days": 30
+  },
+  "cross_region_backup": {
+    "enabled": true,
+    "backup_type": "all",
+    "keep_days": 30,
+    "destination_region": "cn-east-3"
+  },
+  "parameters": [
+    {
+      "name": "character_set_server",
+      "value": "utf8mb4",
+      "reason": "新建库默认字符集 utf8mb4，与全部 Flyway 脚本及开发容器（docker-compose.yml --character-set-server=utf8mb4）一致",
+      "source": "docker-compose.yml mysql 服务参数；docs/requirements/tech-plan.md §3（每院一库、同一实例）"
+    },
+    {
+      "name": "collation_server",
+      "value": "utf8mb4_0900_ai_ci",
+      "reason": "MySQL 8.0 默认排序规则，与开发容器 --collation-server=utf8mb4_0900_ai_ci 一致，避免库级排序规则漂移",
+      "source": "docker-compose.yml mysql 服务参数"
+    },
+    {
+      "name": "log_bin_trust_function_creators",
+      "value": "ON",
+      "reason": "RDS binlog 常开（自动备份不可关闭）时，非 SUPER 迁移账号创建审计只读触发器（V17/V26）需要该参数为 1，否则报 MySQL 1419",
+      "source": "docs/open-questions.md OQ-55 ①（明确由 E22 落实）；docker-compose.yml 中开发环境以 --skip-log-bin 规避并注明生产由 RDS 参数组处置"
+    },
+    {
+      "name": "long_query_time",
+      "value": "1",
+      "reason": "慢日志采集口径统一为 1 秒，供 CES 监控与 LTS 日志（E22-T03）按同一阈值告警与排查",
+      "source": "docs/tasks/tasks.csv E22-T03（监控告警与日志接入）；docs/requirements/tech-plan.md §14"
+    }
+  ]
+}
