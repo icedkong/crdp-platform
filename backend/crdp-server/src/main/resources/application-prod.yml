@@ -9,6 +9,14 @@ crdp:
       password: ${CRDP_PLATFORM_DB_PASSWORD}
   cors:
     allowed-origin-patterns: ${CRDP_CORS_ORIGINS:https://*.example.com}
+  sms:
+    # E09-T03：腾讯云短信密钥只经环境变量 / 凭据管理注入（技术方案第 4 章：DEW 凭据管理，
+    # 子账号只授予发短信权限）；缺省 enabled=false，通道报 CHANNEL_DISABLED 不假装发送
+    enabled: ${CRDP_SMS_ENABLED:false}
+    secret-id: ${CRDP_SMS_SECRET_ID:}
+    secret-key: ${CRDP_SMS_SECRET_KEY:}
+    sdk-app-id: ${CRDP_SMS_SDK_APP_ID:}
+    sign-name: ${CRDP_SMS_SIGN_NAME:}
 
 spring:
   data:
