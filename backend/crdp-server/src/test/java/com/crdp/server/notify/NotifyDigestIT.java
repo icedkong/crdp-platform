@@ -11,7 +11,6 @@ import com.crdp.followup.notice.app.NotifyDigestService;
 import com.crdp.framework.notify.sms.SmsChannelException;
 import com.crdp.framework.notify.sms.TencentSmsClient;
 import com.crdp.framework.tenant.TenantContext;
-import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -159,7 +158,9 @@ class NotifyDigestIT {
                                             + " AND channel = 'SMS' AND send_status = 'SENT'"
                                             + " AND sent_at = ?",
                                     Integer.class,
-                                    Timestamp.valueOf(AT_0830)));
+                                    // LocalDateTime 直传：与作业写入同一路径（连接时区渲染），
+                                    // 避免 Timestamp 按 JVM 时区换算在 UTC runner 上错位（OQ-56 ⑤）
+                                    AT_0830));
 
                     // 站内信汇总（每日汇总默认渠道 站内信+短信）
                     assertEquals(1, countDigestInboxMessages(), "作业投一条「每日汇总」站内信，数量口径与短信一致");
@@ -222,7 +223,7 @@ class NotifyDigestIT {
                 () -> {
                     jdbc.update("UPDATE ntf_setting SET sms_daily_limit = 1 WHERE id = 1");
                     seedQueuedRows(0, 1);
-                    // 当日已有 1 条成功短信（sent_at 同日）
+                    // 当日已有 1 条成功短信（sent_at 同日；LocalDateTime 与作业写入同路径，见上）
                     jdbc.update(
                             "INSERT INTO ntf_send_log (event_type, recipient_id, channel,"
                                     + " send_status, title, dedup_key, sent_at) VALUES"
@@ -230,7 +231,7 @@ class NotifyDigestIT {
                                     + " ?, ?)",
                             doctorId(),
                             "it.sent." + System.nanoTime(),
-                            Timestamp.valueOf(AT_0830.plusMinutes(1)));
+                            AT_0830.plusMinutes(1));
 
                     NotifyDigestService.DigestOutcome outcome = digestService.digest(AT_0830);
                     assertEquals(0, outcome.smsSent());
