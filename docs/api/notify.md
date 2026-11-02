@@ -1,8 +1,8 @@
 # 通知：站内信、短信、Webhook（notify）
 
-> 后端：`crdp-followup`（通知子域，事件来自 outbox）+ 平台短信通道（PLT-CFG-005）。表：`ntf_rule`、`ntf_message`（站内信）、`ntf_send_log`、`ntf_user_pref`、`sys_webhook`。
-> 页面：顶栏铃铛（components.md AppHeader）、`/system/notice`（通知设置）、`/profile`（通知偏好）、`/system/settings`（Webhook）。
-> §1 已随 E09-T02 落地；§2 通知事件与规则、接收人规则已随 E09-T04 落地；§3.1 短信通道与 §3.2 回执回调已随 E09-T03 落地（其余章节路径 **推断，待确认**）。需求：A-NTF-001…008、C-NTF-001…008。**A-NTF-009 通知患者首期不做**：任何通知只发医生、随访员、护士。
+> 后端：`crdp-followup`（通知子域，事件来自 outbox）+ 平台短信通道（PLT-CFG-005）。表：`ntf_rule`、`ntf_message`（站内信）、`ntf_send_log`、`ntf_user_pref`、`ntf_setting`（迁移 V23）、`sys_webhook`。
+> 页面：顶栏铃铛（components.md AppHeader）、`/system/notice`（通知设置：事件规则 / 发送设置 / 发送记录三页签）、`/profile`（通知偏好）、`/system/settings`（Webhook）。
+> §1 已随 E09-T02 落地；§2 通知事件与规则、接收人规则已随 E09-T04 落地（settings 接口随 E09-T07）；§3.1 短信通道与 §3.2 回执回调已随 E09-T03 落地；§4 发送记录与 §5 个人通知偏好已随 E09-T07 落地（其余章节路径 **推断，待确认**）。需求：A-NTF-001…008、C-NTF-001…008。**A-NTF-009 通知患者首期不做**：任何通知只发医生、随访员、护士。
 
 ## 1. 站内信（A-NTF-002、C-NTF-002；E09-T02 已实现）
 
@@ -32,7 +32,8 @@
 | GET | `/api/hospital/notify/rules` | 目录全集 10 项（缺行回落默认值）：`eventType / label / enabled / advanceDays / sendTime(HH:mm) / channels: [INBOX, SMS] / recipients: [OWNER, WARD_STAFF, CC_WARD_LEADER] / smsTemplateCode`，无值字段不出现 |
 | PUT | `/api/hospital/notify/rules/{eventType}` | 全量覆盖（校验：渠道 / 接收人非空且只认已知编码、sendTime `HH:mm`、advanceDays 0–365、渠道含 SMS 必配 APPROVED 的 NOTIFY 模板、不含 SMS 须为 null）；写 `NOTICE_RULE_UPDATE` 审计（ objectType=NTF_RULE，含前后值） |
 | GET | `/api/hospital/notify/sms-templates` | 只读：平台审核过的 NOTIFY 场景模板 `{code, name, content}`（PLT-CFG-006 租户只能选不能写） |
-| PUT | `/api/hospital/notify/settings` | 免打扰时段（默认 21:00–08:00）、每人每天短信上限（默认 3）、逾期类是否允许个人关闭（随 E09-T05/T07 落地，路径不变） |
+| GET | `/api/hospital/notify/settings` | 生效发送设置 `{dndStart, dndEnd, smsDailyLimit, overdueSmsOffAllowed}`（E09-T07 落地；缺行回落默认 21:00–08:00 / 3 / false） |
+| PUT | `/api/hospital/notify/settings` | 全量覆盖（校验：HH:mm、起止不同、上限 1–20），写 `NOTICE_SETTINGS_UPDATE` 审计；免打扰与上限的**发送侧执行随 E09-T05 汇总作业**（本任务只落配置面），`overdueSmsOffAllowed` 即时生效 |
 
 ## 3. 发送规则与短信通道（后端，通道随 E09-T03 落地）
 
@@ -56,16 +57,25 @@
 |---|---|---|---|
 | POST | `/api/notify/sms/receipt` | 免登录（@PublicApi 登记，按 IP 每小时限流 `crdp.sms.receipt-ip-hourly-limit` 默认 600，超限 42900） | 腾讯云控制台配置的回执推送地址。报文兼容三种形态（根数组 / `sms_status_callback` 数组 / `sms_status_callback.content` 数组），逐条入库（见 §3.1 台账）；应答按腾讯云约定 `{"result":0,"errmsg":"OK"}`（非 200 / 非 0 会触发重推）。回执只含流水号 / 状态 / 时间 / 手机号（入库脱敏），不含患者信息 |
 
-## 4. 发送记录（A-NTF-006、C-NTF-006）
+## 4. 发送记录（A-NTF-006、C-NTF-006；E09-T07 已实现）
+
+页面：`/system/notice`「发送记录」页签（A 规格「通知发送记录」页：按事件、渠道、结果、日期筛选）。`ntf_send_log` 不在 ControlledTables（台账无患者维度，接口按权限码控制）。查询写 PLT-AUD-003 批量查询审计（`BATCH_QUERY` + 条件摘要 + 命中条数）。
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| POST | `/api/hospital/notify/send-logs/search` | `followup:notice:config` | 按事件、渠道、结果、日期、接收人查询 |
-| POST | `/api/hospital/notify/send-logs/{id}/retry` | `followup:notice:config` | 失败重试（同样受免打扰与上限约束） |
+| POST | `/api/hospital/notify/send-logs/search` | `followup:notice:config` | body `{ pageNo, pageSize(≤100), eventType?, channel?, sendStatus?, recipientId?, dateFrom?, dateTo? }`（全部可空；日期按记录时间闭区间按日）→ `{ items, total, pageNo, pageSize }`；行 `{ id, eventType, eventLabel, recipientId, recipientName, channel, sendStatus, title?, detail?, sentAt?, createdAt }`（title/detail 不含患者信息；接收人名来自 sys_user） |
+| POST | `/api/hospital/notify/send-logs/{id}/retry` | `followup:notice:config` | 失败重试：FAILED → QUEUED（detail 保留原失败原因），返回 `{ item, requeued }`；短信由 E09-T05 汇总作业按人合并发送，**同样受免打扰与上限约束**（作业未落地前队列等待不丢）；非 FAILED 40001、不存在 40400、并发已重试幂等返回现行值；写 `NOTICE_SEND_RETRY` 审计 |
 
-## 5. 个人通知偏好（A-NTF-007、C-NTF-007，P1）
+send_status 口径：`QUEUED`（短信待 E09-T05 汇总发送）/ `SENT`（站内信已投 ntf_message）/ `FAILED`（发送失败，可重试；当前产生方为 E09-T05 汇总作业）/ `SKIPPED`（事件停用、规则不含该渠道或个人偏好关闭——个人关闭短信记 SKIPPED，detail=「个人通知偏好已关闭该事件短信」）。
 
-`GET/PUT /api/hospital/profile/notify-pref`：`{ smsOff: eventType[] }`；逾期类能否关闭由 §2 settings 决定，不允许时 40001。
+## 5. 个人通知偏好（A-NTF-007、C-NTF-007；E09-T07 已实现）
+
+页面：`/profile`「通知偏好」页签。表：租户库 `ntf_user_pref`（迁移 V23，逐用户一行，`sms_off` CSV）。**只影响短信**——本人已关闭该事件的短信在规则引擎投递时记 SKIPPED 不并入每日汇总，站内信不受影响；逾期类（TASK_OVERDUE）在投递时按 §2 settings 兜底（设置收紧后历史偏好立即失效）。
+
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| GET | `/api/hospital/profile/notify-pref` | 登录 | `{ smsOff: eventType[], overdueSmsOffAllowed, options: [{ eventType, label, closeable }] }`；options 只列本院规则含短信渠道的事件（缺行回落默认值，与 §2 同口径），closeable=非逾期类或租户允许 |
+| PUT | `/api/hospital/profile/notify-pref` | 登录 | body `{ smsOff: eventType[] }` 全量覆盖（只认已知编码）；本院不允许关闭逾期类时含 `TASK_OVERDUE` → **40001**；写 `NOTICE_PREF_UPDATE` 审计（本人） |
 
 ## 6. Webhook（A-NTF-008、C-NTF-008，P1；`tenant:webhook:edit`）
 
@@ -77,3 +87,5 @@
 - 21:30 产生的短信 08:00 后才发；第 4 条并入次日。
 - 短信正文与 Webhook 负载里检查不到姓名、手机号、证件号、病案号。
 - 接收人失去病区权限后，旧站内信打开 → 40400，列表里姓名改为脱敏。
+- 发送记录按事件 / 渠道 / 结果 / 日期 / 接收人可查（E09-T07 `NotifySendLogsIT`）；失败重试回 QUEUED 且保留原失败原因。
+- 个人关闭非逾期类短信后：该事件 SMS 记 SKIPPED、站内信照发；逾期类在租户不允许时 PUT 含 TASK_OVERDUE → 40001。

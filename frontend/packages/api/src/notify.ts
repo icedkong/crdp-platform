@@ -138,6 +138,88 @@ export const NOTIFY_RECIPIENT_LABELS: Record<NotifyRecipientOption, string> = {
   WARD_STAFF: '无负责人时病区成员',
 };
 
+// ------------------------------------------ 发送记录与设置、个人偏好（E09-T07 / A-NTF-006、A-NTF-007）
+
+/** 发送台账结果（notify.md §4）：QUEUED 短信待 E09-T05 汇总发送 / SENT 已投递 / FAILED 失败（可重试）/ SKIPPED 按规则或个人偏好跳过。 */
+export type NotifySendStatus = 'FAILED' | 'QUEUED' | 'SENT' | 'SKIPPED';
+
+/** 一条发送记录（POST /api/hospital/notify/send-logs/search 行）；title/detail/sentAt 可空。 */
+export interface NotifySendLog {
+  channel: NotifyChannel;
+  createdAt: string;
+  eventLabel: string;
+  eventType: string;
+  id: number;
+  recipientId: number;
+  recipientName?: null | string;
+  sendStatus: NotifySendStatus;
+  sentAt?: null | string;
+  title?: null | string;
+}
+
+/** 发送记录一页（统一分页口径）。 */
+export interface NotifySendLogPage {
+  items: NotifySendLog[];
+  pageNo: number;
+  pageSize: number;
+  total: number;
+}
+
+/** 发送记录查询条件（全部可空；dateFrom/dateTo 为 yyyy-MM-dd 闭区间按日）。 */
+export interface NotifySendLogSearch {
+  channel?: NotifyChannel | null;
+  dateFrom?: null | string;
+  dateTo?: null | string;
+  eventType?: null | string;
+  pageNo?: null | number;
+  pageSize?: null | number;
+  recipientId?: null | number;
+  sendStatus?: NotifySendStatus | null;
+}
+
+/** 结果展示名（发送记录页）。 */
+export const NOTIFY_SEND_STATUS_LABELS: Record<NotifySendStatus, string> = {
+  FAILED: '失败',
+  QUEUED: '待发送',
+  SENT: '已发送',
+  SKIPPED: '已跳过',
+};
+
+/** 租户通知发送设置（notify.md §2 settings）：免打扰与每日上限的发送侧执行随 E09-T05 汇总作业。 */
+export interface NotifySettings {
+  dndEnd: string;
+  dndStart: string;
+  overdueSmsOffAllowed: boolean;
+  smsDailyLimit: number;
+}
+
+/** PUT /api/hospital/notify/settings 请求体（全量覆盖）。 */
+export interface NotifySettingsUpdate {
+  dndEnd: string;
+  dndStart: string;
+  overdueSmsOffAllowed: boolean;
+  smsDailyLimit: number;
+}
+
+/** 个人通知偏好可选项（本院规则含短信渠道的事件；closeable=false 禁选并说明）。 */
+export interface NotifyPrefOption {
+  closeable: boolean;
+  eventType: string;
+  label: string;
+}
+
+/** GET /api/hospital/profile/notify-pref 响应。 */
+export interface NotifyPrefView {
+  options: NotifyPrefOption[];
+  overdueSmsOffAllowed: boolean;
+  smsOff: string[];
+}
+
+/** PUT /api/hospital/profile/notify-pref 请求体（全量覆盖已关短信的事件集合）。 */
+export interface NotifyPrefUpdate {
+  smsOff: string[];
+}
+
 /**
  * 规则 → 编辑表单初值（通知设置页弹窗）：sendTime 缺省（即时事件）回空串，
  * 避免 TimePicker 收到 null 的告警；advanceDays / smsTemplateCode 允许空。
