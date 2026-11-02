@@ -126,7 +126,10 @@ class TenantOnboardingServiceMySqlIT {
                         null,
                         null,
                         new com.crdp.server.platform.RoleTemplateService(
-                                new JdbcTemplate(routing))));
+                                new JdbcTemplate(routing))),
+                // E06-T12：local/dev 演示占位替换器，本 IT 手工装配传空提供者
+                EmptyObjectProvider.get(),
+                EmptyObjectProvider.get());
     }
 
     @Test
