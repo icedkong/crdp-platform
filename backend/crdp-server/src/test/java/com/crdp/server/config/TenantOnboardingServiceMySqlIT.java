@@ -212,11 +212,12 @@ class TenantOnboardingServiceMySqlIT {
                 // E11-T01 增加 V28（字段元数据 fe_form / fe_field / fe_option_set / fe_option，followup 目录）。
                 // E11-T02 增加 V29（模板版本快照 fe_form_version / fe_form_version_field 与 JSON 记录
                 // fe_record，followup 目录）。
+                // E11-T04 增加 V30（跨字段校验规则 fe_rule，followup 目录）。
                 // 此处随迁移清单维护
                 List.of(
                         "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14",
                         "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26",
-                        "27", "28", "29"),
+                        "27", "28", "29", "30"),
                 root.queryForList(
                         "SELECT version FROM "
                                 + DB

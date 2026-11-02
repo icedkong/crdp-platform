@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.crdp.form.record.app.FormService;
+import com.crdp.form.rule.app.FieldIssue;
 import com.crdp.framework.security.ScopeSnapshot;
 import com.crdp.framework.security.SessionPrincipal;
 import com.crdp.framework.tenant.TenantContext;
@@ -37,7 +38,8 @@ import org.springframework.test.context.ActiveProfiles;
  *
  * <p>覆盖：FormSchema 不传 version 取当前发布版；停用字段后发布新版本，新版本不含停用字段而<b>旧版本快照仍可读</b>； 记录（fe_record）创建时固化
  * templateVersion，发布新版后旧记录仍按旧版本保存与校验；保存带 baseVersion（过期 40900 附更新人与不同字段、已提交 40901、未知键 40001）；发布无权限
- * 40300、模块关闭 40301、表单 / 版本不存在 40400；发布写 FORM_PUBLISH 审计；双租户版本与记录隔离。全部虚构数据，门控 CRDP_IT_MYSQL_PORT。
+ * 40300、模块关闭 40301、表单 / 版本不存在 40400；发布写 FORM_PUBLISH 审计；双租户版本与记录隔离。 E11-T04：超硬范围
+ * 42200（fieldErrors）、软范围放行、跨字段规则提交校验与 FormSchema.rules 下发。全部虚构数据，门控 CRDP_IT_MYSQL_PORT。
  */
 @ActiveProfiles("local")
 @SpringBootTest(
@@ -260,6 +262,100 @@ class FormEngineIT {
                 });
     }
 
+    // ---------------------------------------------------------------- E11-T04：范围与跨字段校验（A-FLD-003
+    // / A-FLD-006 / C-FLD-007）
+
+    /**
+     * E11-T04 验收「前后端校验一致，超范围拦截」：超硬范围 42200（fieldErrors 指到字段）、软范围放行、跨字段规则
+     * 提交校验拦截与软命中返回警告、FormSchema.rules 下发 fe_rule（V30 种子演示规则）。
+     */
+    @Test
+    void rangeAndCrossFieldRulesGateWritesAndSubmits() {
+        loginServicePrincipal();
+
+        // 写入闸门：超硬范围（身高 300 > 250）不可保存（A-FLD-003），42200 附 fieldErrors
+        ApiException hard =
+                callInTenant(
+                        "demoa",
+                        () -> {
+                            try {
+                                formService.createRecord("A_BASELINE", Map.of("f011", 300), null);
+                                return null;
+                            } catch (ApiException e) {
+                                return e;
+                            }
+                        });
+        assertNotNull(hard, "超硬范围必须拦截");
+        assertEquals(42200, hard.code());
+        List<?> fieldErrors = (List<?>) ((Map<?, ?>) hard.data()).get("fieldErrors");
+        assertEquals(1, fieldErrors.size());
+        FieldIssue issue = (FieldIssue) fieldErrors.get(0);
+        assertEquals("f011", issue.key());
+        assertEquals("hardRange", issue.rule());
+
+        // 软范围外（身高 120 < 软下限 130，硬范围内）可保存——A-FLD-003「提示但可保存」
+        FormService.RecordView soft =
+                callInTenant(
+                        "demoa",
+                        () -> formService.createRecord("A_BASELINE", Map.of("f011", 120), null));
+        assertEquals(120, ((Number) soft.data().get("f011")).intValue());
+
+        // 跨字段（V30 演示规则：出生 ≤ 手术）：违反 → 提交校验 42200；通过且软范围命中 → 警告返回不拦截
+        ApiException cross =
+                callInTenant(
+                        "demoa",
+                        () -> {
+                            try {
+                                formService.validateForSubmit(
+                                        "A_BASELINE",
+                                        1,
+                                        Map.of("f003", "2024-05-06", "f020", "2024-05-01"));
+                                return null;
+                            } catch (ApiException e) {
+                                return e;
+                            }
+                        });
+        assertNotNull(cross, "跨字段硬规则违反必须拦截提交");
+        assertEquals(42200, cross.code());
+        assertEquals(
+                "birth_le_surgery",
+                ((FieldIssue) ((List<?>) ((Map<?, ?>) cross.data()).get("fieldErrors")).get(0))
+                        .rule());
+
+        List<FieldIssue> warnings =
+                callInTenant(
+                        "demoa",
+                        () ->
+                                formService.validateForSubmit(
+                                        "A_BASELINE",
+                                        publishedVersionWithSoftRange(),
+                                        Map.of(
+                                                "f003",
+                                                "2024-05-01",
+                                                "f020",
+                                                "2024-05-06",
+                                                "f011",
+                                                120)));
+        assertTrue(
+                warnings.stream()
+                        .anyMatch(
+                                warning ->
+                                        "softRange".equals(warning.rule())
+                                                && "f011".equals(warning.key())),
+                "软范围命中作为警告返回（C-FLD-007 黄色提示语义）");
+
+        // FormSchema.rules 下发 fe_rule 当前启用规则（实时读取）
+        Map<?, ?> schema = data(get(SCHEMA, hospitalToken("demoa")));
+        List<Map<?, ?>> rules = (List<Map<?, ?>>) schema.get("rules");
+        assertTrue(
+                rules.stream()
+                        .anyMatch(
+                                rule ->
+                                        "birth_le_surgery".equals(rule.get("id"))
+                                                && "HARD".equals(rule.get("severity"))),
+                "schema.rules 含 V30 演示规则");
+    }
+
     // ---------------------------------------------------------------- 权限、模块开关、隔离
 
     /** 无 followup:field:edit 的医生：发布 40300；模板读取登录即可（渲染与录入都要用）。 */
@@ -319,6 +415,30 @@ class FormEngineIT {
     }
 
     // ---------------------------------------------------------------- 辅助
+
+    /**
+     * 经字典维护 + 发布把身高软范围固化为 130–210 并返回新版本号（A-FLD-008 软范围租户可调 + E11-T02 快照）。 不依赖 v1
+     * 快照里的软范围（本地演示库的历史快照可能没有），保证提交校验口径确定。
+     */
+    private int publishedVersionWithSoftRange() {
+        String token = hospitalToken("demoa");
+        assertEquals(
+                0,
+                code(
+                        put(
+                                FIELDS + "/f011?formCode=A_BASELINE",
+                                token,
+                                Map.of(
+                                        "label",
+                                        "身高",
+                                        "softRange",
+                                        Map.of("min", 130, "max", 210),
+                                        "required",
+                                        false,
+                                        "status",
+                                        "ENABLED"))));
+        return ((Number) data(post(PUBLISH, token, null)).get("version")).intValue();
+    }
 
     private static List<String> fieldKeys(List<Map<?, ?>> categories) {
         return categories.stream()
