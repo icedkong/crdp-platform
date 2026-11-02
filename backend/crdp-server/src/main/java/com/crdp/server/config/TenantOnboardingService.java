@@ -106,6 +106,16 @@ public class TenantOnboardingService {
     private final ProvisioningProperties properties;
     private final PasswordEncoder passwordEncoder;
     private final com.crdp.server.platform.TenantModuleService tenantModules;
+
+    /**
+     * local/dev 的种子演示占位替换器（E06-T12）：启动扫描只覆盖已注册租户，运行中开通的租户在迁移后就地执行， 否则种子演示账号（占位口令哈希 / PENDING
+     * 手机号）要等下次重启才能登录、用户目录解密 40002。 生产无此 bean，自动跳过。
+     */
+    private final org.springframework.beans.factory.ObjectProvider<DemoPasswordInitializer>
+            demoPasswords;
+
+    private final org.springframework.beans.factory.ObjectProvider<DemoPhoneInitializer> demoPhones;
+
     private final SecureRandom random = new SecureRandom();
 
     public TenantOnboardingService(
@@ -114,13 +124,17 @@ public class TenantOnboardingService {
             ProvisioningDatabase provisioning,
             ProvisioningProperties properties,
             PasswordEncoder passwordEncoder,
-            com.crdp.server.platform.TenantModuleService tenantModules) {
+            com.crdp.server.platform.TenantModuleService tenantModules,
+            org.springframework.beans.factory.ObjectProvider<DemoPasswordInitializer> demoPasswords,
+            org.springframework.beans.factory.ObjectProvider<DemoPhoneInitializer> demoPhones) {
         this.platform = platform;
         this.registry = registry;
         this.provisioning = provisioning;
         this.properties = properties;
         this.passwordEncoder = passwordEncoder;
         this.tenantModules = tenantModules;
+        this.demoPasswords = demoPasswords;
+        this.demoPhones = demoPhones;
     }
 
     public OnboardingResult onboard(OnboardingRequest request) {
@@ -138,7 +152,14 @@ public class TenantOnboardingService {
                         () -> ensureResourceRow(tenantId, request.code()));
         TenantResourceRow resource = resourceRow(tenantId, request.code(), dbPassword);
         provision(steps, tenantId, "database", () -> ensureDatabase(request.code(), dbPassword));
-        provision(steps, tenantId, "migrate-register", () -> registry.register(resource));
+        provision(
+                steps,
+                tenantId,
+                "migrate-register",
+                () -> {
+                    registry.register(resource);
+                    initializeDemoMarkers(tenantId, request.code());
+                });
         if (adminProvided(request)) {
             provision(steps, tenantId, "admin", () -> ensureAdmin(tenantId, request));
         } else {
@@ -325,6 +346,21 @@ public class TenantOnboardingService {
                             "local:" + dbPassword);
                     return dbPassword;
                 });
+    }
+
+    /**
+     * local/dev：种子演示占位（口令哈希 / 手机号）在迁移后就地替换（E06-T12）。生产无种子、无此 bean，空跑。 归入 migrate-register
+     * 步骤：失败即该步失败、可随开通重试重入（UPDATE 按 marker 过滤，幂等）。
+     */
+    private void initializeDemoMarkers(long tenantId, String code) {
+        DemoPasswordInitializer passwords = demoPasswords.getIfAvailable();
+        if (passwords != null) {
+            passwords.migrateTenant(tenantId, code);
+        }
+        DemoPhoneInitializer phones = demoPhones.getIfAvailable();
+        if (phones != null) {
+            phones.migrateTenant(tenantId, code);
+        }
     }
 
     private void ensureDatabase(String code, String dbPassword) {

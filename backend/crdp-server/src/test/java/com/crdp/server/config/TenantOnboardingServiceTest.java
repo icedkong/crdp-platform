@@ -47,7 +47,15 @@ class TenantOnboardingServiceTest {
         properties.setTenantJdbcUrlTemplate("jdbc:mysql://127.0.0.1:13306/{db}");
         service =
                 new TenantOnboardingService(
-                        platform, registry, provisioning, properties, encoder, tenantModules);
+                        platform,
+                        registry,
+                        provisioning,
+                        properties,
+                        encoder,
+                        tenantModules,
+                        // E06-T12：local/dev 演示占位替换器，单测无容器传空提供者（不开通真实租户库）
+                        EmptyObjectProvider.get(),
+                        EmptyObjectProvider.get());
     }
 
     /** 调用链：第 1 次 queryForList（查租户行）为空 → 走插入；其后（角色/用户/绑定查询）都命中。 */

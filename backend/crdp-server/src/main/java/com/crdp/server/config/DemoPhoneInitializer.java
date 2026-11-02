@@ -48,10 +48,19 @@ public class DemoPhoneInitializer implements ApplicationRunner {
                                                         rs.getLong("id"), rs.getString("code"))));
         int tenantRows = 0;
         for (TenantRef tenant : tenants) {
-            tenantRows +=
-                    TenantContext.callAsTenant(tenant.id(), tenant.code(), this::migrateTenant);
+            tenantRows += migrateTenant(tenant.id(), tenant.code());
         }
         log.info("演示手机号已初始化 platformRows={} tenantRows={}", platformRows, tenantRows);
+    }
+
+    /**
+     * 单租户的占位手机号替换（E06-T12）：启动扫描之外，运行中开通的租户由开通编排在迁移后立即调用 （TenantOnboardingService），否则种子里的
+     * PENDING_DEMO_PHONE 标记解不开，用户目录接口 40002。
+     *
+     * @return 替换行数
+     */
+    public int migrateTenant(long tenantId, String code) {
+        return TenantContext.callAsTenant(tenantId, code, this::migrateTenant);
     }
 
     private int migratePlatform() {
