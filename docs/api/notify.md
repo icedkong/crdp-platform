@@ -2,17 +2,20 @@
 
 > 后端：`crdp-followup`（通知子域，事件来自 outbox）+ 平台短信通道（PLT-CFG-005）。表：`ntf_rule`、`ntf_message`（站内信）、`ntf_send_log`、`ntf_user_pref`、`sys_webhook`。
 > 页面：顶栏铃铛（components.md AppHeader）、`/system/notice`（通知设置）、`/profile`（通知偏好）、`/system/settings`（Webhook）。
-> 全部路径 **推断，待确认**。需求：A-NTF-001…008、C-NTF-001…008。**A-NTF-009 通知患者首期不做**：任何通知只发医生、随访员、护士。
+> §1 已随 E09-T02 落地（其余章节路径 **推断，待确认**）。需求：A-NTF-001…008、C-NTF-001…008。**A-NTF-009 通知患者首期不做**：任何通知只发医生、随访员、护士。
 
-## 1. 站内信（A-NTF-002、C-NTF-002）
+## 1. 站内信（A-NTF-002、C-NTF-002；E09-T02 已实现）
+
+表：租户库 `ntf_message`（迁移 V21）——`recipient_id`（sys_user）+ `event_type/title/summary` + `patient_id` + `patient_name_cipher`（信封加密，purpose=`ntf-patient-name`）+ `target_type/target_id` + `dedup_key`（唯一键，outbox 至少一次语义下重复投递不重发）+ `read_flag/read_at`。投递入口 `NoticeInboxService.deliver(...)`：E09-T04 通知规则引擎经 outbox 分发器调用，租户上下文内执行。
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| GET | `/api/hospital/notify/messages?unread=&pageNo=&pageSize=` | 登录 | 本人站内信；`{ id, eventType, title, summary, target: { type: TASK|RECORD|PATIENT, id }, read, createdAt }` |
-| GET | `/api/hospital/notify/messages/unread-count` | 登录 | 铃铛角标，前端 60s 轮询（或页面可见时） |
-| POST | `/api/hospital/notify/messages/{id}/read` · `/read-all` | 登录 | 标为已读 |
+| GET | `/api/hospital/notify/messages?unread=&pageNo=&pageSize=` | 登录 | 本人站内信（id 倒序，pageNo 从 1、pageSize 默认 20 上限 100，越界 40001）；行 `{ id, eventType, title, summary, patientId, patientName, target: { type: TASK\|RECORD\|PATIENT, id }, read, createdAt }`；无值字段不出现 |
+| GET | `/api/hospital/notify/messages/unread-count` | 登录 | `{ unread }` 铃铛角标，前端 60s 轮询（页面可见时也刷新，tokens `notifyPollMs`） |
+| POST | `/api/hospital/notify/messages/{id}/read` | 登录 | 标一条已读（幂等）；别人的消息 / 不存在一律 **40400** 不暴露存在，并写 `NOTICE_INBOX_READ` DENIED 操作审计 |
+| POST | `/api/hospital/notify/messages/read-all` | 登录 | `{ marked }` 只影响本人未读行 |
 
-患者姓名在**读取时**按接收人当前权限脱敏，不在落库时写死明文。点击跳转前后端再校验数据范围（越范围 → 40400）。
+患者姓名**读取时**解密并按接收人当前字段策略脱敏（`@MaskedByPolicy`，HIDDEN 整字段不出现），落库为密文、不写死脱敏值。收件箱按 recipient 隔离（ntf_message 不在 ControlledTables）；点击跳转由前端按 target 路由（TASK→`/followup/task?taskId=`、PATIENT→`/followup/patient?patientId=`、RECORD→`/followup/record/{id}` 随 E15 隐藏菜单），**落点接口按数据范围再校验**（越范围 40400，fu_task 已登记 ControlledTables，接口随 E14/E15 落地）。平台侧 INBOX 派发行（OQ-44 / OQ-58）的消费与平台端收件箱随 E09-T03/T07 接入（见 OQ-59）。
 
 ## 2. 通知规则（`/system/notice`，`followup:notice:config`）
 
@@ -28,7 +31,7 @@
 - 短信按人合并为汇总短信，**不含任何患者信息**（A-NTF-003、C-NTF-003），只写“您有 N 项随访任务待处理”之类。
 - 免打扰时段内产生的短信推迟到 08:00 后；超出每日上限的并入次日汇总（A-NTF-005、C-NTF-005）。
 - 无负责人时按 A-NTF-004 / C-NTF-004 扩大接收人。
-- 事件经框架 outbox 分发器（E09-T01，`sys_outbox` PENDING → SENT / FAILED）进入通知子域：投递失败指数退避重试，超限转死信 `FAILED`；通道（站内信 / 短信 / Webhook）随 E09-T02+ 接入。
+- 事件经框架 outbox 分发器（E09-T01，`sys_outbox` PENDING → SENT / FAILED）进入通知子域：投递失败指数退避重试，超限转死信 `FAILED`。**站内信通道已随 E09-T02 落地**（`NoticeInboxService.deliver`，dedup_key 幂等；E09-T04 规则引擎接入后消费事件）；短信随 E09-T03、Webhook 随 E09-T06。
 - 每条通知写 `ntf_send_log`：事件、接收人、渠道、时间、结果、失败原因。
 - 租户停用、模块关闭时不发送。
 

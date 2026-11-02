@@ -36,7 +36,8 @@ export const overridesPreferences = defineOverridesPreferences({
     globalSearch: false,
     languageToggle: false,
     lockScreen: false,
-    notification: false,
+    // E09-T02 站内信铃铛（A-NTF-002 / C-NTF-002）：顶栏通知位
+    notification: true,
     refresh: true,
     sidebarToggle: true,
     themeToggle: false,

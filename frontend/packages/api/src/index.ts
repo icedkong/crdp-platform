@@ -85,7 +85,6 @@ export {
   maskPhone,
   pickTwoFactorChallenge,
 } from './auth-flow';
-
 export type { TwoFactorChallenge } from './auth-flow';
 
 export {
@@ -104,6 +103,7 @@ export type {
   TenantBrandView,
   ThemeColorOption,
 } from './brand';
+
 export {
   DICT_SOURCE_TEXT,
   DICT_STATUS_TEXT,
@@ -135,7 +135,6 @@ export type {
   TenantParamOverrideRequest,
   TenantParamView,
 } from './config';
-
 export {
   DEPT_IMPORT_COLUMNS,
   deptImportActionText,
@@ -143,11 +142,13 @@ export {
   failedRows,
   isXlsxFile,
 } from './dept-import';
+
 export type {
   DeptImportAction,
   DeptImportReport,
   DeptImportRowResult,
 } from './dept-import';
+
 export {
   EXPIRE_TYPE_TEXT,
   MODULE_LOG_ACTION_TEXT,
@@ -171,6 +172,17 @@ export {
   remainingAttemptsMessage,
 } from './login-rejection';
 export type { LoginRejectionInfo } from './login-rejection';
+// E09-T02 站内信收件箱（A-NTF-002、C-NTF-002）
+export { noticeTargetRoute } from './notify';
+export type {
+  NoticeMarkedCount,
+  NoticeMessage,
+  NoticeMessagePage,
+  NoticeRouteLocation,
+  NoticeTarget,
+  NoticeTargetType,
+  NoticeUnreadCount,
+} from './notify';
 export { DEPT_TYPE_OPTIONS, ORG_STATUS_TEXT, orgStatusText } from './org';
 export type {
   DeptImpactView,

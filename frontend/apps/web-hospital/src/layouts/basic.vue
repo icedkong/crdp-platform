@@ -7,6 +7,7 @@ import { BasicLayout, LockScreen, UserDropdown } from '@vben/layouts';
 import { preferences } from '@vben/preferences';
 import { useAccessStore, useUserStore } from '@vben/stores';
 
+import NoticeBell from '#/components/notify/notice-bell.vue';
 import { useAuthStore } from '#/store';
 import LoginForm from '#/views/_core/authentication/login.vue';
 
@@ -50,6 +51,10 @@ const userMenus = [
 
 <template>
   <BasicLayout @clear-preferences-and-logout="handleLogout">
+    <!-- E09-T02 / A-NTF-002、C-NTF-002：顶栏站内信铃铛（未读角标 60 秒轮询，点击消息跳到对应任务） -->
+    <template #notification>
+      <NoticeBell />
+    </template>
     <template #user-dropdown>
       <UserDropdown
         :avatar

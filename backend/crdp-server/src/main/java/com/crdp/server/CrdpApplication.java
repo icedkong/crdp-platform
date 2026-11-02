@@ -7,7 +7,11 @@ import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 
 @SpringBootApplication(scanBasePackages = "com.crdp")
 @ConfigurationPropertiesScan("com.crdp")
-@MapperScan({"com.crdp.platform.infra.mapper", "com.crdp.system.infra.mapper"})
+@MapperScan({
+    "com.crdp.platform.infra.mapper",
+    "com.crdp.system.infra.mapper",
+    "com.crdp.followup.notice.infra.mapper"
+})
 public class CrdpApplication {
 
     public static void main(String[] args) {
