@@ -440,6 +440,80 @@ class FormEngineIT {
         assertEquals(170, ((Number) stripped.data().get("f011")).intValue(), "显示中字段保留");
     }
 
+    // ----------------------------------------------------------------
+    // E11-T05：派生重算（A-FLD-005、C-FLD-006）
+
+    /**
+     * E11-T05 验收「BMI、年龄等派生字段两端一致」（本用例走服务层端到端，两端一致性由共享 JSON form-derived-cases.json 锁定）：身高 175 体重 70
+     * → BMI 落库 22.9（后端结果为准，tech-plan §6）； 手术 2026-03-01、出院 2026-03-08 → 术后住院天数 8；出院早于手术 → 带手工值
+     * 42200 （rule=derived，结果无效不允许手工录入）；schema 下发 derived 定义（前端用同一函数库实时重算）。
+     */
+    @Test
+    void derivedFieldsAreRecalculatedOnWrite() {
+        loginServicePrincipal();
+
+        // schema 下发派生定义（V33 演示字段 f031：BMI(体重 f013, 身高 f011)）
+        Map<?, ?> schema = data(get(SCHEMA, hospitalToken("demoa")));
+        Map<?, ?> bmi = fieldKeysWithDef((List<Map<?, ?>>) schema.get("categories")).get("f031");
+        assertNotNull(bmi, "v1 快照含 BMI 派生字段");
+        Map<?, ?> derived = (Map<?, ?>) bmi.get("derived");
+        assertEquals("BMI", derived.get("fn"), "schema 下发派生定义（前端同一函数库重算）");
+        assertEquals(List.of("f013", "f011"), derived.get("args"));
+
+        // 身高 175 + 体重 70：BMI 落库 22.9（提交旧值 30 也以计算值为准，A-FLD-005）
+        FormService.RecordView created =
+                callInTenant(
+                        "demoa",
+                        () ->
+                                formService.createRecord(
+                                        "A_BASELINE",
+                                        new java.util.LinkedHashMap<>(
+                                                Map.of("f011", 175, "f013", 70, "f031", 30)),
+                                        null));
+        assertEquals(22.9, ((Number) created.data().get("f031")).doubleValue(), 1e-9, "BMI 以计算值落库");
+
+        // 手术 2026-03-01、出院 2026-03-08 → 术后住院天数 8（含当天）
+        FormService.RecordView stay =
+                callInTenant(
+                        "demoa",
+                        () ->
+                                formService.createRecord(
+                                        "A_BASELINE",
+                                        Map.of("f020", "2026-03-01", "f021", "2026-03-08"),
+                                        null));
+        assertEquals(8, ((Number) stay.data().get("f030")).intValue(), "术后住院天数 = 出院 − 手术 + 1");
+
+        // 出院早于手术且带手工值：42200 rule=derived（结果无效不允许手工录入，应先修正来源字段）
+        ApiException rejected =
+                callInTenant(
+                        "demoa",
+                        () -> {
+                            try {
+                                formService.createRecord(
+                                        "A_BASELINE",
+                                        new java.util.LinkedHashMap<>(
+                                                Map.of(
+                                                        "f020",
+                                                        "2026-03-01",
+                                                        "f021",
+                                                        "2026-02-28",
+                                                        "f030",
+                                                        3)),
+                                        null);
+                                return null;
+                            } catch (ApiException e) {
+                                return e;
+                            }
+                        });
+        assertNotNull(rejected, "结果无效的手工值必须拦截");
+        assertEquals(42200, rejected.code());
+        FieldIssue issue =
+                (FieldIssue) ((List<?>) ((Map<?, ?>) rejected.data()).get("fieldErrors")).get(0);
+        assertEquals("f030", issue.key());
+        assertEquals("derived", issue.rule());
+        assertEquals("出院日期早于手术日期", issue.message());
+    }
+
     // ---------------------------------------------------------------- 权限、模块开关、隔离
 
     /** 无 followup:field:edit 的医生：发布 40300；模板读取登录即可（渲染与录入都要用）。 */

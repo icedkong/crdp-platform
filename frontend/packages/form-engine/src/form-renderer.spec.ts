@@ -402,3 +402,186 @@ describe('e11-t07 FormRenderer：只读视图（mode=readonly）', () => {
     expect(wrapper.find('[data-field-key="f531"]').text()).toContain('是');
   });
 });
+
+/* ----------------------------------------------------------------------
+ * E11-T05 / A-FLD-005：派生重算（渲染器实时重算 + 来源缺失手工录入 + 结果无效提示，
+ * 字段与公式全部虚构；函数语义与后端 FormDerivedEngine 由共享用例锁定）。
+ */
+const derivedSchema: FormSchema = {
+  categories: [
+    {
+      key: 'basic_info',
+      label: '病例基本信息',
+      order: 10,
+      fields: [
+        f({ key: 'f011', label: '身高', type: 'number', unit: 'cm' }),
+        f({ key: 'f013', label: '体重', type: 'number', unit: 'kg' }),
+        f({
+          key: 'f031',
+          label: 'BMI',
+          type: 'derived',
+          derived: { fn: 'BMI', args: ['f013', 'f011'] },
+        }),
+      ],
+    },
+    {
+      key: 'surgery',
+      label: '手术信息',
+      order: 20,
+      fields: [
+        f({ key: 'f020', label: '手术日期', type: 'date' }),
+        f({ key: 'f021', label: '出院日期', type: 'date' }),
+        f({
+          key: 'f030',
+          label: '术后住院天数',
+          type: 'derived',
+          unit: '天',
+          derived: { fn: 'DAYS_INCLUSIVE', args: ['f020', 'f021'] },
+        }),
+      ],
+    },
+  ],
+  code: 'A_BASELINE',
+  name: '基线档案（示例）',
+  rules: [],
+  usage: 'BASELINE',
+  version: 1,
+};
+
+function mountDerived(props: Record<string, unknown> = {}) {
+  return mount(FormRenderer, {
+    props: { schema: derivedSchema, modelValue: {}, ...props },
+  });
+}
+
+describe('e11-t05 FormRenderer：派生重算（A-FLD-005 / C-FLD-006）', () => {
+  it('录入身高 175、体重 70 → BMI 实时算出 22.9（依赖改动即重算并回写）', async () => {
+    const wrapper = mountDerived({ modelValue: { f011: 175, f013: 70 } });
+    // 挂载即重算回写（tech-plan §6「前端实时显示」）
+    expect(wrapper.emitted('update:modelValue')?.at(-1)?.[0]).toEqual({
+      f011: 175,
+      f013: 70,
+      f031: 22.9,
+    });
+    // 父级应用回写后显示计算值（灰底只读 + chip）
+    await wrapper.setProps({
+      modelValue: { f011: 175, f013: 70, f031: 22.9 },
+    });
+    expect(wrapper.find('[data-testid="field-display-f031"]').text()).toContain(
+      '22.9',
+    );
+    expect(wrapper.find('[data-field-key="f031"]').find('input').exists()).toBe(
+      false,
+    );
+
+    // 改体重 → 重算（来源字段改动实时重算，A-FLD-005）
+    await wrapper.setProps({
+      modelValue: { f011: 175, f013: 80, f031: 22.9 },
+    });
+    expect(wrapper.emitted('update:modelValue')?.at(-1)?.[0]).toEqual({
+      f011: 175,
+      f013: 80,
+      f031: 26.1,
+    });
+  });
+
+  it('修改出院日期后术后住院天数随之更新；出院早于手术 → 留空并提示原因', async () => {
+    const wrapper = mountDerived({
+      modelValue: { f020: '2026-03-01', f021: '2026-03-08' },
+    });
+    expect(wrapper.emitted('update:modelValue')?.at(-1)?.[0]).toEqual({
+      f020: '2026-03-01',
+      f021: '2026-03-08',
+      f030: 8,
+    });
+
+    // 出院改为 2026-02-28（早于手术）：留空并提示「出院日期早于手术日期」
+    await wrapper.setProps({
+      modelValue: {
+        f020: '2026-03-01',
+        f021: '2026-02-28',
+        f030: 8,
+      },
+    });
+    expect(wrapper.emitted('update:modelValue')?.at(-1)?.[0]).toEqual({
+      f020: '2026-03-01',
+      f021: '2026-02-28',
+    });
+    expect(wrapper.find('[data-testid="derived-hint-f030"]').text()).toBe(
+      '出院日期早于手术日期',
+    );
+  });
+
+  it('来源缺失 → 留空提示「缺少身高」并允许手工录入（meta.manual = true）；来源补齐后以计算值为准', async () => {
+    const wrapper = mountDerived({ modelValue: { f013: 70 } });
+    expect(wrapper.find('[data-testid="derived-hint-f031"]').text()).toBe(
+      '缺少身高',
+    );
+    // 来源缺失：放开手工录入（多见于历史数据）
+    const input = wrapper.find('[data-field-key="f031"]').find('input');
+    expect(input.exists()).toBe(true);
+    await input.setValue(21.4);
+    expect(wrapper.emitted('update:modelValue')?.at(-1)?.[0]).toEqual({
+      f013: 70,
+      f031: 21.4,
+    });
+    expect(wrapper.emitted('update:meta')?.at(-1)?.[0]).toEqual({
+      f031: { manual: true },
+    });
+
+    // 来源补齐（身高 175）：以计算值为准并清 manual 标记（tech-plan §6「来源补齐后自动改为计算值」）
+    await wrapper.setProps({
+      modelValue: { f011: 175, f013: 70, f031: 21.4 },
+      meta: { f031: { manual: true } },
+    });
+    expect(wrapper.emitted('update:modelValue')?.at(-1)?.[0]).toEqual({
+      f011: 175,
+      f013: 70,
+      f031: 22.9,
+    });
+    const meta = wrapper.emitted('update:meta')?.at(-1)?.[0] as Record<
+      string,
+      { manual?: boolean }
+    >;
+    expect(meta.f031?.manual).toBeUndefined();
+  });
+
+  it('结果无效的派生字段带值 → validate 硬错误（rule=derived，与后端写入闸门同口径）', async () => {
+    // 出院早于手术且残留旧计算值：同步会清空；即便值仍在（竞态）validate 兜底拦截
+    const wrapper = mountDerived({
+      modelValue: { f020: '2026-03-01', f021: '2026-02-28', f030: 8 },
+    });
+    const cleared = wrapper.emitted('update:modelValue')?.at(-1)?.[0] as Record<
+      string,
+      unknown
+    >;
+    expect(cleared).toEqual({ f020: '2026-03-01', f021: '2026-02-28' });
+    const vm = wrapper.vm as unknown as {
+      validate: () => Promise<{
+        hardErrors: Array<{ key: string; message: string; rule: string }>;
+        ok: boolean;
+      }>;
+    };
+    // 父级应用清空后的值 → 无手工值不报错（留空放行，提示已显示在字段旁）
+    await wrapper.setProps({ modelValue: cleared });
+    const result = await vm.validate();
+    expect(result.hardErrors.some((issue) => issue.rule === 'derived')).toBe(
+      false,
+    );
+
+    // 手工塞回无效值（防御）：validate 拦 rule=derived
+    await wrapper.setProps({
+      modelValue: { f020: '2026-03-01', f021: '2026-02-28', f030: 3 },
+    });
+    const rejected = await vm.validate();
+    expect(rejected.ok).toBe(false);
+    expect(
+      rejected.hardErrors.some(
+        (issue) =>
+          issue.key === 'f030' &&
+          issue.rule === 'derived' &&
+          issue.message === '出院日期早于手术日期',
+      ),
+    ).toBe(true);
+  });
+});

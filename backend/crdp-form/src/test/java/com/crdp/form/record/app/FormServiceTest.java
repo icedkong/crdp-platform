@@ -26,6 +26,7 @@ import com.crdp.form.record.infra.mapper.FormVersionRow;
 import com.crdp.form.record.infra.mapper.VersionFieldRow;
 import com.crdp.form.rule.app.FieldIssue;
 import com.crdp.form.rule.app.FormConditionEngine;
+import com.crdp.form.rule.app.FormDerivedEngine;
 import com.crdp.form.rule.app.FormRuleEngine;
 import com.crdp.form.rule.infra.mapper.FormRuleMapper;
 import com.crdp.form.rule.infra.mapper.RuleRow;
@@ -74,6 +75,7 @@ class FormServiceTest {
                     ruleMapper,
                     new FormRuleEngine(new FormConditionEngine()),
                     new FormConditionEngine(),
+                    new FormDerivedEngine(),
                     audit);
 
     @BeforeEach
@@ -837,6 +839,129 @@ class FormServiceTest {
                 "版本不存在 40400");
     }
 
+    // ---------------------------------------------------------------- E11-T05：派生重算写入闸门
+
+    /**
+     * E11-T05 / A-FLD-005 验收「录入身高 175、体重 70 后 BMI 自动显示 22.9」（服务层：落库前重算并以后端结果为准， tech-plan §6）。来源齐全
+     * → 计算值覆盖（含导入场景的旧值，A-FLD-005「以计算值为准」）；来源缺失 → 保留手工值； 结果无效且带手工值 → 42200（rule=derived）。
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void recalculatesDerivedFieldsBeforePersisting() {
+        when(fieldMapper.findForm("A_BASELINE"))
+                .thenReturn(
+                        new FormRow(
+                                1L,
+                                "A_BASELINE",
+                                "基线档案（示例）",
+                                "BASELINE",
+                                1,
+                                CATEGORIES,
+                                "ENABLED"));
+        when(recordMapper.findVersion("A_BASELINE", 1)).thenReturn(versionRow(1L, 1, 6));
+        when(recordMapper.findVersionFields("A_BASELINE", 1))
+                .thenReturn(
+                        List.of(
+                                height(1),
+                                weight(1),
+                                bmi(1),
+                                surgeryDateJson(1),
+                                dischargeDateJson(1),
+                                postopStayDays(1)));
+        when(recordMapper.insertRecord(any(FormRecordInsert.class)))
+                .thenAnswer(
+                        invocation -> {
+                            FormRecordInsert insert = invocation.getArgument(0);
+                            insert.setId(101L);
+                            return 1;
+                        });
+        when(recordMapper.findRecord(101L)).thenReturn(derivedRecord("{\"f011\":175,\"f013\":70}"));
+
+        // 身高 175 + 体重 70：BMI 落库 22.9（后端结果为准，即使提交了旧值 30）
+        service.createRecord(
+                "A_BASELINE",
+                new java.util.LinkedHashMap<>(Map.of("f011", 175, "f013", 70, "f031", 30)),
+                null);
+        ArgumentCaptor<FormRecordInsert> captor = ArgumentCaptor.forClass(FormRecordInsert.class);
+        verify(recordMapper).insertRecord(captor.capture());
+        assertTrue(
+                captor.getValue().getData().contains("\"f031\":22.9"),
+                "BMI 以计算值落库：" + captor.getValue().getData());
+
+        // 来源缺失（体重未填）：手工值保留（历史数据补录口径）
+        when(recordMapper.findRecord(102L))
+                .thenReturn(derivedRecord("{\"f011\":175,\"f031\":21.4}"));
+        when(recordMapper.insertRecord(any(FormRecordInsert.class)))
+                .thenAnswer(
+                        invocation -> {
+                            FormRecordInsert insert = invocation.getArgument(0);
+                            insert.setId(102L);
+                            return 1;
+                        });
+        service.createRecord(
+                "A_BASELINE",
+                new java.util.LinkedHashMap<>(Map.of("f011", 175, "f031", 21.4)),
+                null);
+        ArgumentCaptor<FormRecordInsert> manual = ArgumentCaptor.forClass(FormRecordInsert.class);
+        verify(recordMapper, org.mockito.Mockito.times(2)).insertRecord(manual.capture());
+        assertTrue(
+                manual.getAllValues().get(1).getData().contains("\"f031\":21.4"),
+                "来源缺失保留手工值：" + manual.getAllValues().get(1).getData());
+
+        // 来源无效（出院早于手术）且带手工值 → 42200，不落库
+        ApiException rejected =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.createRecord(
+                                        "A_BASELINE",
+                                        new java.util.LinkedHashMap<>(
+                                                Map.of(
+                                                        "f020",
+                                                        "2026-03-01",
+                                                        "f021",
+                                                        "2026-02-28",
+                                                        "f030",
+                                                        3)),
+                                        null));
+        assertEquals(42200, rejected.code());
+        List<FieldIssue> issues =
+                (List<FieldIssue>) ((Map<?, ?>) rejected.data()).get("fieldErrors");
+        assertEquals(
+                List.of(new FieldIssue("f030", "surgery", "derived", "出院日期早于手术日期")),
+                issues,
+                "结果无效不允许手工录入（提示与留空原因同源）");
+        verify(recordMapper, org.mockito.Mockito.times(2))
+                .insertRecord(any(FormRecordInsert.class));
+    }
+
+    /** 引擎口 recalculateDerived：供提交 / 导入流程 diff 与写「系统重算」历史（E15 / E18 / E25）。 */
+    @Test
+    void exposesDerivedRecalculationForBusinessFlows() {
+        when(fieldMapper.findForm("A_BASELINE"))
+                .thenReturn(
+                        new FormRow(
+                                1L,
+                                "A_BASELINE",
+                                "基线档案（示例）",
+                                "BASELINE",
+                                1,
+                                CATEGORIES,
+                                "ENABLED"));
+        when(recordMapper.findVersion("A_BASELINE", 1)).thenReturn(versionRow(1L, 1, 2));
+        when(recordMapper.findVersionFields("A_BASELINE", 1))
+                .thenReturn(List.of(height(1), bmi(1)));
+
+        Map<String, FormDerivedEngine.DerivedOutcome> outcomes =
+                service.recalculateDerived("A_BASELINE", 1, Map.of("f011", 175, "f013", 70));
+        assertEquals(FormDerivedEngine.DerivedStatus.OK, outcomes.get("f031").status());
+        assertEquals(22.9, ((Number) outcomes.get("f031").value()).doubleValue(), 1e-9);
+
+        Map<String, FormDerivedEngine.DerivedOutcome> missing =
+                service.recalculateDerived("A_BASELINE", 1, Map.of("f013", 70));
+        assertEquals("缺少身高", missing.get("f031").message());
+    }
+
     // ---------------------------------------------------------------- 辅助（全部虚构）
 
     private static FormVersionRow versionRow(long id, int version, int fieldCount) {
@@ -979,6 +1104,130 @@ class FormServiceTest {
                 "json",
                 null,
                 10);
+    }
+
+    /** 体重（E11-T05 示例：BMI 的来源字段，json 存储数值）。 */
+    private static VersionFieldRow weight(int version) {
+        return new VersionFieldRow(
+                6L,
+                (long) version,
+                "A_BASELINE",
+                version,
+                "f013",
+                "weight_kg",
+                "体重",
+                "basic_info",
+                "number",
+                "kg",
+                1,
+                null,
+                null,
+                null,
+                false,
+                null,
+                null,
+                null,
+                false,
+                "json",
+                null,
+                55);
+    }
+
+    /** BMI（E11-T05 示例：BMI(体重, 身高)，1 位小数，前端灰底只读）。 */
+    private static VersionFieldRow bmi(int version) {
+        return new VersionFieldRow(
+                7L,
+                (long) version,
+                "A_BASELINE",
+                version,
+                "f031",
+                "bmi",
+                "BMI",
+                "basic_info",
+                "derived",
+                null,
+                1,
+                null,
+                null,
+                null,
+                false,
+                null,
+                null,
+                "{\"fn\":\"BMI\",\"args\":[\"f013\",\"f011\"]}",
+                false,
+                "json",
+                null,
+                60);
+    }
+
+    /** 出院日期（E11-T05 示例：术后住院天数的止日，json 存储）。 */
+    private static VersionFieldRow dischargeDateJson(int version) {
+        return new VersionFieldRow(
+                8L,
+                (long) version,
+                "A_BASELINE",
+                version,
+                "f021",
+                "discharge_date",
+                "出院日期",
+                "surgery",
+                "date",
+                null,
+                null,
+                null,
+                null,
+                null,
+                false,
+                null,
+                null,
+                null,
+                false,
+                "json",
+                null,
+                15);
+    }
+
+    /** 术后住院天数（V28 种子同款示例：DAYS_INCLUSIVE(手术, 出院)，含当天）。 */
+    private static VersionFieldRow postopStayDays(int version) {
+        return new VersionFieldRow(
+                9L,
+                (long) version,
+                "A_BASELINE",
+                version,
+                "f030",
+                "postop_stay_days",
+                "术后住院天数",
+                "surgery",
+                "derived",
+                "天",
+                0,
+                null,
+                null,
+                null,
+                false,
+                null,
+                null,
+                "{\"fn\":\"DAYS_INCLUSIVE\",\"args\":[\"f020\",\"f021\"]}",
+                false,
+                "json",
+                null,
+                90);
+    }
+
+    /** 记录行（E11-T05：data 可变，单独构造）。 */
+    private static FormRecordRow derivedRecord(String data) {
+        return new FormRecordRow(
+                101L,
+                "A_BASELINE",
+                1,
+                data,
+                null,
+                0,
+                "DRAFT",
+                7L,
+                LocalDateTime.now(),
+                null,
+                LocalDateTime.now());
     }
 
     /** 吸烟史（radio 0=否 / 1=是，示例；条件触发字段）。 */

@@ -3,7 +3,7 @@
 > 后端：`crdp-form`（字段字典、表单模板、规则）；前端：`frontend/packages/form-engine`（`FormRenderer`）与 `frontend/packages/rules`（前后端共用的校验 / 派生规则，见技术方案 §15 前端结构）。
 > 契约基准：`docs/design/components.md` §10.1 的 `FormSchema` 类型 —— **本文件与之保持一致，有变化两处同改**。
 > 原则：**字段由表单模板驱动**，页面不得硬编码业务字段；新增 / 改字段 = 改模板 + 新 Flyway 迁移（种子）或字典维护页，不改页面代码。
-> §1 模板按版本读取与发布、§3 字段字典维护已随 E11-T01 / E11-T02 落地、§2 规则执行已随 E11-T04 落地、§2.4 条件显示与条件必填已随 E11-T03 落地、§1.2 字段级变更历史已随 E11-T06 落地（实现即定义）；其余路径 **推断，待确认**。
+> §1 模板按版本读取与发布、§3 字段字典维护已随 E11-T01 / E11-T02 落地、§2 规则执行已随 E11-T04 落地、§2.4 条件显示与条件必填已随 E11-T03 落地、§1.2 字段级变更历史已随 E11-T06 落地、§2.6 派生函数库已随 E11-T05 落地（实现即定义）；其余路径 **推断，待确认**。
 
 ## 1. 读取表单模板（E11-T02 已实现）
 
@@ -38,7 +38,7 @@ E11-T02 落地（A-NFR-002 / C-NFR-002「JSON 文档存储」）。数据记录�
 `template_version`（**创建时固化** = 当时 `current_version`，发布新版不升级）、`version`（乐观锁）、
 `status`（DRAFT / SUBMITTED，提交流转随 E15）。
 
-- **写入只经 FormService**（`crdp-form` 的 `com.crdp.form.record.app.FormService`，技术方案 §6「禁止绕过服务直接写 JSON」）：键必须在记录模板版本内且为 json 存储、类型按值编码口径检查（单选 / 下拉存选项编码整数、多选存编码数组、数值存数字、日期 `YYYY-MM-DD`、日期时间 `YYYY-MM-DDTHH:mm`、是否存 true/false、数值 × 2 存 `{length,width}`、派生字段不查类型随 E11-T05 重算）；范围 / 必填 / 条件 / 跨字段已随 E11-T04 / E11-T03 落地（§2）。
+- **写入只经 FormService**（`crdp-form` 的 `com.crdp.form.record.app.FormService`，技术方案 §6「禁止绕过服务直接写 JSON」）：键必须在记录模板版本内且为 json 存储、类型按值编码口径检查（单选 / 下拉存选项编码整数、多选存编码数组、数值存数字、日期 `YYYY-MM-DD`、日期时间 `YYYY-MM-DDTHH:mm`、是否存 true/false、数值 × 2 存 `{length,width}`、派生字段不查类型）；范围 / 必填 / 条件 / 跨字段已随 E11-T04 / E11-T03 落地（§2）；**派生字段在类型检查后重算**（E11-T05 已落地，见 §2.6——来源齐全以计算值为准、来源缺失保留手工值、结果无效的手工值 42200）。
 - 保存带 `baseVersion`：缺失 40001；与当前不一致 **40900**，`data` 附 `{ serverVersion, changedFields[], updatedBy, updatedAt }`（README §错误码 40900、技术方案「版本冲突」；E25 草稿接口复用本口径）。已提交记录 40901（修改走 E15 编辑流程）。
 - 记录读写是**引擎服务**（无独立 HTTP 端点），业务接口（基线 E13、随访记录 E15、报告单映射 E16-T07、草稿 E25）复用同一服务与校验；患者域业务表（`pt_baseline_section` / `fu_record` 等）的 `data` JSON 列同样经 FormService 写入，见 OQ-63 ①。
 - 草稿不逐次写审计（技术方案「服务器自动保存」）；提交、修改已提交与覆盖他人版本的审计随业务接口（E15 / E25）。
@@ -73,7 +73,7 @@ E11-T02 落地（A-NFR-002 / C-NFR-002「JSON 文档存储」）。数据记录�
 
 ## 2. 规则执行（前后端一致，E11-T04 / E11-T03 已落地）
 
-- 校验类型：类型与范围（`hardRange` 不能保存、`softRange` 提示，A-FLD-003、C-FLD-007，已落地）、条件显示与条件必填（A-FLD-004、C-FLD-005，已落地，见 §2.4）、派生字段（A-FLD-005、C-FLD-006，随 E11-T05）、跨字段校验（A-FLD-006，已落地）。
+- 校验类型：类型与范围（`hardRange` 不能保存、`softRange` 提示，A-FLD-003、C-FLD-007，已落地）、条件显示与条件必填（A-FLD-004、C-FLD-005，已落地，见 §2.4）、派生字段（A-FLD-005、C-FLD-006，已落地，见 §2.6）、跨字段校验（A-FLD-006，已落地）。
 - 前端用 `packages/rules` 即时执行；后端在**提交 / 保存修改**时用同一份规则定义再执行一次（Java 端实现同语义，用共享测试用例 JSON 保证一致，见 §2.5 与 components.md §10.5）。
 - 草稿保存只做类型检查与**硬范围拦截**（tech-plan §6 写入闸门含范围），不做必填、条件与跨字段校验（技术方案“草稿语义”；草稿闸门不做条件求值——隐藏字段残留值照常查硬范围，提交时按 §2.4 掩蔽与清空）。
 - 条件变为不显示时，后端提交时清空该字段的值（`FormService.stripHiddenFields`，E11-T03 已落地，提交流程 E15 / E25 调用）；清空动作经 `FieldHistoryService.logClearedHidden` 写 `fe_field_history`（E11-T06 已落地，见 §1.2）。
@@ -102,7 +102,7 @@ E11-T02 落地（A-NFR-002 / C-NFR-002「JSON 文档存储」）。数据记录�
 
 | 时机 | 执行内容 | 结果 |
 |---|---|---|
-| 草稿创建 / 保存（FormService.createRecord / saveRecord） | 类型 + 选项（40001）+ 硬范围（不做条件求值） | 硬范围违反 42200（fieldErrors），不落库 |
+| 草稿创建 / 保存（FormService.createRecord / saveRecord） | 类型 + 选项（40001）+ 派生重算（E11-T05，§2.6：计算值覆盖 / 缺失保留手工值）+ 硬范围（不做条件求值） | 硬范围违反与结果无效的手工派生值 42200（fieldErrors），不落库；计算值合并落库 |
 | 提交 / 保存修改（业务接口 E15 / E25 调 `FormService.validateForSubmit(formCode, templateVersion, data[, context])`） | 全量：类型 + 硬范围 + 软范围 + 条件必填 + 跨字段（按 severity）；隐藏字段值掩蔽（§2.4） | 硬违反与必填缺失 42200；软命中**不拦截**，作为警告列表返回（调用方做确认流） |
 | 提交落库前（提交流程调 `FormService.stripHiddenFields(formCode, templateVersion, data, context)`） | 按当前答案求值 visibleWhen，移除隐藏字段残留值 | 返回清洗后 data 与被清空键（cleared-hidden 口径；清洗前值交 `FieldHistoryService.logClearedHidden` 写 `fe_field_history`，E11-T06 已落地） |
 
@@ -117,7 +117,30 @@ E11-T02 落地（A-NFR-002 / C-NFR-002「JSON 文档存储」）。数据记录�
 
 ### 2.5 共享用例（前后端一致的事实来源）
 
-`backend/crdp-form/src/test/resources/shared-cases/form-validation-cases.json`：后端 `FormRuleEngineTest` 与前端 `packages/rules/src/form-validation.test.ts` 各执行一遍，errors / warnings 逐条（`key`、`categoryKey`、`rule`、`message`）完全一致（E11-T03 起用例可带条件字段与 `context`）。条件求值专用 `shared-cases/form-condition-cases.json`：后端 `FormConditionEngineTest` 与前端 `packages/rules/src/form-condition.test.ts` 各执行一遍，visible / missingRequired 逐条一致。派生（E11-T05）、对比规则（E17）沿用同一目录。
+`backend/crdp-form/src/test/resources/shared-cases/form-validation-cases.json`：后端 `FormRuleEngineTest` 与前端 `packages/rules/src/form-validation.test.ts` 各执行一遍，errors / warnings 逐条（`key`、`categoryKey`、`rule`、`message`）完全一致（E11-T03 起用例可带条件字段与 `context`）。条件求值专用 `shared-cases/form-condition-cases.json`：后端 `FormConditionEngineTest` 与前端 `packages/rules/src/form-condition.test.ts` 各执行一遍，visible / missingRequired 逐条一致。派生专用 `shared-cases/form-derived-cases.json`（E11-T05 已落地）：后端 `FormDerivedEngineTest` 与前端 `packages/rules/src/form-derived.test.ts` 各执行一遍，每个派生字段的 value / status / message 逐条一致（见 §2.6）。对比规则（E17）沿用同一目录。
+
+### 2.6 派生函数库（fe_field.derived_def，E11-T05 已实现；A-FLD-005、C-FLD-006）
+
+- 内置 9 个函数（tech-plan §6「派生字段」；首期只用内置函数加参数，不开放任意脚本），`derived_def = {fn, args}`（args 为字段稳定键，随版本快照下发）：
+
+| fn | 语义 | 使用方 |
+|---|---|---|
+| `DAYS_INCLUSIVE(起, 止)` | 止 − 起 + 1（含当天；止 ≥ 起才计算） | A 术后住院天数 |
+| `MINUTES_BETWEEN(起, 止)` | 分钟差向下取整（秒截断） | A 手术时长 min |
+| `HOURS_BETWEEN_1DP(起, 止)` | 小时差 1 位小数（160 小时 54 分 → 160.9） | A ICU 时间 h |
+| `BMI(体重 kg, 身高 cm)` | kg ÷ (cm ÷ 100)²，1 位小数（175 / 70 → 22.9） | A BMI |
+| `AGE_YEARS(出生, 参考日?)` | 周岁（生日未到减一）；参考日缺省按今天 | A 手术年龄；C 年龄、植入时年龄 |
+| `SUM(...)` | 数值求和（任一来源缺失即留空） | A 桥血管数量（动脉桥 + 静脉桥） |
+| `YEARS_SINCE(起, 止?)` | 整周年数（差一天不满即少一年，不设上限）；止缺省或为空按今天 | A 随访年限（止 = 死亡日期或今天） |
+| `DURATION_YM(起, 止?)` | `X 年 Y 个月`（完整年 + 完整月，日未到减月） | C 植入时长（按当前器械） |
+| `CHANGE_PCT(本次, 上次)` | （本次 − 上次）÷ 上次 × 100，1 位小数；上次为 0 无效 | C 参数变化率（同一电极 / 器械比较由 E17 对比规则取上次值） |
+
+- **留空与提示**（A-FLD-005「输入缺失或结果无效时留空并提示」）：来源缺失（含空值口径与不可解析，与条件 DSL 空值同口径 OQ-65 ①）→ 留空 + `缺少{显示名}`（多个用「、」连接，按参数顺序）；来源无效（止早于起、身高 ≤ 0、上次为 0）→ 留空 + `{止}早于{起}` 等（显示名取来源字段 label，缺省止日提示「今天」）——文案前后端逐字一致，共享用例锁定。
+- **拓扑重算**：派生可依赖派生（依赖图由定义自动生成，按拓扑顺序求值）；被依赖方来源缺失时取其实际生效值（手工值）。前端 `@crdp/rules` 的 `computeDerivedValues` 实时重算（渲染器回写并显示留空原因，来源缺失时放开手工录入并标 `meta.manual`，components.md §10.3）；后端保存时再算一遍并以后端结果为准（tech-plan §6）。
+- **写入闸门**（`FormService.createRecord / saveRecord`）：来源齐全 → 计算值覆盖（含旧手工值，「来源齐全后以计算值为准」）；来源缺失 → 保留手工值（`data_meta.manual` 由录入侧标记）；结果无效且带手工值 → **42200** `fieldErrors` 带 `rule=derived`、message 同留空原因（「结果无效不允许手工录入，应先修正来源字段」）。草稿不写字段历史（§1.2）；「系统重算」历史（source=SYSTEM_RECALC、triggerFields=派生定义 args）由提交流程（E15 / E25）与导入（E18）调 `FormService.recalculateDerived(formCode, templateVersion, data)` diff 后经 `FieldHistoryService.logChange` 写入。
+- 1 位小数舍入：`Math.round(v × 10) ÷ 10`（Java 与 JS 同为「半值向 +∞」，双精度运算逐位一致；不用十进制 HALF_UP，避免两端分叉）。
+- 防御（与条件 / 规则引擎坏配置同口径，OQ-68）：未知函数、参数个数不符、坏 JSON、依赖成环的字段不出结果（不炸保存、不产出误导值）。
+- 演示种子：followup V33（体重 f013、出院日期 f021、BMI f031，并把 V28 已建的术后住院天数 f030 来源补齐）；真实派生配置随 E23-T01 / C 字段字典录入。
 
 ## 3. 字段字典维护（A-FLD-001..009/012/013、C-FLD-001..010；E11-T01 已实现前两行与 publish）
 

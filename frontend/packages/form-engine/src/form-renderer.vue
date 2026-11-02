@@ -12,12 +12,16 @@
  * - 条件显示（E11-T03 的 @crdp/rules 求值）：隐藏字段不渲染、值清空并 `cleared-hidden`；
  *   校验（E11-T04 的 validateFormData）：软范围橙色提示、硬错误随 showErrors 标红，
  *   `validate()` 供页面提交闸门用。
+ * - 派生重算（E11-T05 的 computeDerivedValues，A-FLD-005 / C-FLD-006）：依赖拓扑顺序实时
+ *   重算并回写（来源齐全以计算值为准）；来源缺失留空提示原因并允许手工录入
+ *   （`meta.manual = true`，components.md §10.3）；结果无效不允许手工值（validate 硬错误，
+ *   与后端写入闸门同口径）。
  * - Enter 不提交（本组件只阻止默认行为；Ctrl/⌘+S、Ctrl/⌘+Enter 由页面监听）。
- * 不在本组件（后续任务）：派生重算（E11-T05）、对比标红（E17）、已填 / 应填（E11-T11）、
+ * 不在本组件（后续任务）：对比标红（E17）、已填 / 应填（E11-T11）、
  * 附件条（E16）、自动保存（E25）、平板 / 手机深度响应式（E24-T02）。
  */
 import type { FormSchema } from '@crdp/api';
-import type { FieldIssue } from '@crdp/rules';
+import type { DerivedOutcome, FieldIssue } from '@crdp/rules';
 
 import type { PreviousRecord } from './carry-over';
 import type { ChoiceOption, RendererCategory, RendererField } from './layout';
@@ -27,6 +31,10 @@ import type { RendererValidateResult } from './types';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import {
+  computeDerivedValues,
+  derivedManualKind,
+  isDerivedManualEditable,
+  isEmptyFormValue,
   isFieldVisible,
   isRequiredField,
   stripHiddenFieldValues,
@@ -220,6 +228,11 @@ function fieldControlStyle(field: RendererField): Record<string, string> {
     return { width: 'var(--form-field-date)' };
   if (kind === 'select') return { width: 'var(--form-field-select)' };
   if (kind === 'text') return { width: 'var(--form-field-short-text)' };
+  if (kind === 'derived') {
+    return derivedManualInputKind(field) === 'number'
+      ? { width: 'var(--form-field-number)' }
+      : { width: 'var(--form-field-short-text)' };
+  }
   return {};
 }
 
@@ -284,6 +297,85 @@ watch(
   { immediate: true, deep: true },
 );
 
+// ---------------------------------------------------------------- 派生重算（E11-T05 / A-FLD-005、C-FLD-006）
+
+/** 全部派生字段的求值结果（依赖拓扑顺序，components.md §10.3「实时重算」）。 */
+const derivedOutcomes = computed<Record<string, DerivedOutcome>>(() =>
+  computeDerivedValues(allFields.value, props.modelValue),
+);
+
+function derivedOutcomeOf(field: RendererField): DerivedOutcome | undefined {
+  return derivedOutcomes.value[field.key];
+}
+
+/**
+ * 派生同步（与后端写入闸门同口径，tech-plan §6「前端实时显示，后端保存时再算一遍」）：
+ * ok → 计算值覆盖（「来源齐全后以计算值为准」，来源补齐即取代手工值并清 manual 标记）；
+ * missing → 留空并提示原因，仅手工录入的值（meta.manual）保留，旧计算值清空；
+ * invalid → 不允许手工值（清空，validate 仍兜底报硬错误——应先修正来源字段）。
+ */
+watch(
+  () => [props.modelValue, props.context] as const,
+  () => {
+    if (isReadonly.value) return;
+    syncDerivedValues();
+  },
+  { immediate: true, deep: true },
+);
+
+function syncDerivedValues(): void {
+  const base = props.meta ?? {};
+  const data: Record<string, unknown> = { ...props.modelValue };
+  const meta: Record<string, FieldMetaValue | undefined> = { ...base };
+  let dataChanged = false;
+  let metaChanged = false;
+  for (const [key, outcome] of Object.entries(derivedOutcomes.value)) {
+    const current = data[key];
+    if (outcome.status === 'ok') {
+      if (!Object.is(current, outcome.value)) {
+        data[key] = outcome.value;
+        dataChanged = true;
+      }
+      if (base[key]?.manual) {
+        meta[key] = { ...base[key], manual: undefined };
+        metaChanged = true;
+      }
+    } else if (isDerivedManualEditable(outcome)) {
+      if (!isEmptyFormValue(current) && !base[key]?.manual) {
+        data[key] = null; // 旧计算值清空（留空并提示原因）
+        dataChanged = true;
+      }
+    } else if (!isEmptyFormValue(current)) {
+      delete data[key]; // 结果无效不允许手工值（后端 42200 同口径）
+      dataChanged = true;
+    }
+  }
+  if (dataChanged) emit('update:modelValue', data);
+  if (metaChanged) emit('update:meta', meta);
+}
+
+/** 手工录入控件类型（来源缺失时放开编辑）：DURATION_YM 文本，其余数值。 */
+function derivedManualInputKind(field: RendererField): 'number' | 'text' {
+  return derivedManualKind(field.derived?.fn ?? '');
+}
+
+/** 来源缺失的手工录入：值入 data、标 meta.manual（A-FLD-005「标记手工录入」）。 */
+function setDerivedManual(field: RendererField, value: unknown): void {
+  setField(field.key, value);
+  const base = props.meta ?? {};
+  if (!base[field.key]?.manual) {
+    emit('update:meta', {
+      ...base,
+      [field.key]: { ...base[field.key], manual: true },
+    });
+  }
+}
+
+/** 派生留空原因（缺少身高 / 出院日期早于手术日期……，与后端逐字一致）。 */
+function derivedHintOf(field: RendererField): string {
+  return derivedOutcomeOf(field)?.message ?? '';
+}
+
 // ---------------------------------------------------------------- 校验（E11-T04 + C-FLD-004）
 
 const validation = computed(() => {
@@ -301,9 +393,29 @@ const validation = computed(() => {
       props.meta,
       props.context,
     ),
+    ...derivedManualIssues(),
   ];
   return { hardErrors, warnings: base.warnings };
 });
+
+/** 结果无效的派生字段不允许手工值（与后端写入闸门 42200 rule=derived 同口径；同步已清空则不报）。 */
+function derivedManualIssues(): FieldIssue[] {
+  const issues: FieldIssue[] = [];
+  for (const field of allFields.value) {
+    if (kindOf(field) !== 'derived') continue;
+    const outcome = derivedOutcomeOf(field);
+    if (!outcome || isDerivedManualEditable(outcome)) continue;
+    if (!isEmptyFormValue(props.modelValue[field.key])) {
+      issues.push({
+        key: field.key,
+        categoryKey: field.categoryKey,
+        rule: 'derived',
+        message: outcome.message ?? '',
+      });
+    }
+  }
+  return issues;
+}
 
 const errorByKey = computed(
   () => new Map(validation.value.hardErrors.map((issue) => [issue.key, issue])),
@@ -379,13 +491,15 @@ function fromReportOf(field: RendererField): boolean {
 
 // ---------------------------------------------------------------- 展示文本与 chip
 
-/** 静态展示（只读视图 / 派生 / 敏感）与编辑控件二选一。 */
+/** 静态展示（只读视图 / 派生计算值 / 敏感）与编辑控件二选一；派生在来源缺失时放开手工录入。 */
 function isStaticDisplay(field: RendererField): boolean {
-  return (
-    isReadonly.value ||
-    kindOf(field) === 'derived' ||
-    kindOf(field) === 'sensitive'
-  );
+  const kind = kindOf(field);
+  if (kind === 'sensitive') return true;
+  if (kind === 'derived') {
+    const outcome = derivedOutcomeOf(field);
+    return isReadonly.value || !outcome || !isDerivedManualEditable(outcome);
+  }
+  return isReadonly.value;
 }
 
 /** 只读展示值：敏感显示脱敏符号；空值「未填写」（次要色）。 */
@@ -608,6 +722,32 @@ defineExpose({ focusFirstError, scrollTo, validate });
                 "
                 @update:value="(value) => setField(field.key, value)"
               />
+              <!-- 派生来源缺失时的手工录入（A-FLD-005：多见于历史数据；标 meta.manual） -->
+              <InputNumber
+                v-else-if="
+                  kindOf(field) === 'derived' &&
+                  derivedManualInputKind(field) === 'number'
+                "
+                :controls="false"
+                inputmode="decimal"
+                :style="fieldControlStyle(field)"
+                :value="
+                  typeof valueOf(field) === 'number'
+                    ? valueOf(field)
+                    : undefined
+                "
+                @update:value="(value) => setDerivedManual(field, value)"
+              />
+              <Input
+                v-else-if="kindOf(field) === 'derived'"
+                :style="fieldControlStyle(field)"
+                :value="
+                  typeof valueOf(field) === 'string' ? valueOf(field) : ''
+                "
+                @update:value="
+                  (value) => setDerivedManual(field, String(value))
+                "
+              />
               <Input
                 v-else
                 :style="fieldControlStyle(field)"
@@ -667,6 +807,14 @@ defineExpose({ focusFirstError, scrollTo, validate });
               {{ previousTextOf(field) }}
             </div>
 
+            <!-- 派生留空原因（缺少身高 / 出院日期早于手术日期……，与后端逐字一致） -->
+            <div
+              v-if="kindOf(field) === 'derived' && derivedHintOf(field)"
+              :data-testid="`derived-hint-${field.key}`"
+              class="derived-hint"
+            >
+              {{ derivedHintOf(field) }}
+            </div>
             <!-- 软范围 / SOFT 规则：橙色提示，不拦截 -->
             <div v-if="warningOf(field)" class="field-warning">
               {{ warningOf(field)?.message }}
@@ -812,6 +960,13 @@ defineExpose({ focusFirstError, scrollTo, validate });
 }
 
 .field-warning {
+  flex-basis: 100%;
+  font-size: 12px;
+  color: var(--form-warning);
+}
+
+/* 派生留空原因（E11-T05）：橙色提示，不拦截（与软提示同色系、独立样式便于测试定位） */
+.derived-hint {
   flex-basis: 100%;
   font-size: 12px;
   color: var(--form-warning);

@@ -12,6 +12,7 @@ import com.crdp.form.record.infra.mapper.FormVersionRow;
 import com.crdp.form.record.infra.mapper.VersionFieldRow;
 import com.crdp.form.rule.app.FieldIssue;
 import com.crdp.form.rule.app.FormConditionEngine;
+import com.crdp.form.rule.app.FormDerivedEngine;
 import com.crdp.form.rule.app.FormRuleEngine;
 import com.crdp.form.rule.app.RuleResult;
 import com.crdp.form.rule.infra.mapper.FormRuleMapper;
@@ -51,6 +52,9 @@ import org.springframework.transaction.annotation.Transactional;
  * errors {@code rule=required}）并对<b>隐藏字段的值做掩蔽</b>（不查范围 / 跨字段）；上下文变量（C 的 device.type 等）由调用方随 {@link
  * #validateForSubmit(String, int, Map, Map)} 传入。tech-plan §6「提交时被隐藏字段的值清空」由 {@link
  * #stripHiddenFields(String, int, Map, Map)} 提供（提交流程调用；清空写 fe_field_history 随 E11-T06）。
+ *
+ * <p>E11-T05（A-FLD-005 / C-FLD-006）：写入闸门追加<b>派生重算</b>（tech-plan §6「后端保存时再算一遍并以后端结果为准」）——
+ * 来源齐全以计算值为准、来源缺失保留手工值、结果无效的手工值 42200（{@link FormDerivedEngine}）。
  */
 @Service
 public class FormService {
@@ -61,6 +65,7 @@ public class FormService {
     private final FormRuleMapper ruleMapper;
     private final FormRuleEngine ruleEngine;
     private final FormConditionEngine conditionEngine;
+    private final FormDerivedEngine derivedEngine;
     private final AuditLogger audit;
     private final ObjectMapper json = new ObjectMapper();
 
@@ -71,6 +76,7 @@ public class FormService {
             FormRuleMapper ruleMapper,
             FormRuleEngine ruleEngine,
             FormConditionEngine conditionEngine,
+            FormDerivedEngine derivedEngine,
             AuditLogger audit) {
         this.fieldMapper = fieldMapper;
         this.recordMapper = recordMapper;
@@ -78,6 +84,7 @@ public class FormService {
         this.ruleMapper = ruleMapper;
         this.ruleEngine = ruleEngine;
         this.conditionEngine = conditionEngine;
+        this.derivedEngine = derivedEngine;
         this.audit = audit;
     }
 
@@ -238,7 +245,10 @@ public class FormService {
 
     // ---------------------------------------------------------------- 记录：JSON 读写（版本固化 + 乐观锁）
 
-    /** 新建记录（DRAFT）：template_version 固化为当前发布版；值经 {@link FormDataValidator} 与硬范围闸门检查。 */
+    /**
+     * 新建记录（DRAFT）：template_version 固化为当前发布版；值经 {@link FormDataValidator} 类型检查、派生重算
+     * （E11-T05：来源齐全以计算值为准、缺失保留手工值、结果无效的手工值 42200）与硬范围闸门检查。
+     */
     @Transactional
     public RecordView createRecord(
             String formCode, Map<String, Object> data, Map<String, Object> dataMeta) {
@@ -247,14 +257,15 @@ public class FormService {
         List<VersionFieldRow> fields =
                 recordMapper.findVersionFields(formCode, form.currentVersion());
         validator.validateData(data, fields);
-        enforceHardRange(data, fields);
+        Map<String, Object> persisted = applyDerived(fields, data);
+        enforceHardRange(persisted, fields);
 
         long operator = CurrentSession.requireHospital().userId();
         FormRecordInsert insert =
                 new FormRecordInsert(
                         formCode,
                         snapshot.version(),
-                        writeJson(data),
+                        writeJson(persisted),
                         writeJson(dataMeta),
                         operator);
         recordMapper.insertRecord(insert);
@@ -292,14 +303,15 @@ public class FormService {
             throw new ApiException(404, 40400, "记录的模板版本不存在（formCode=" + row.formCode() + "）");
         }
         validator.validateData(command.data(), fields);
-        enforceHardRange(command.data(), fields);
+        Map<String, Object> persisted = applyDerived(fields, command.data());
+        enforceHardRange(persisted, fields);
 
         long operator = CurrentSession.requireHospital().userId();
         int updated =
                 recordMapper.updateRecord(
                         id,
                         command.baseVersion(),
-                        writeJson(command.data()),
+                        writeJson(persisted),
                         writeJson(command.dataMeta()),
                         operator);
         if (updated != 1) {
@@ -377,6 +389,38 @@ public class FormService {
 
     /** 隐藏字段清洗结果：清洗后的 data 与被清空的稳定键（写 cleared-hidden 与字段历史用，E11-T06）。 */
     public record StrippedData(Map<String, Object> data, List<String> clearedKeys) {}
+
+    // ---------------------------------------------------------------- 派生重算（E11-T05 /
+    // A-FLD-005、C-FLD-006）
+
+    /**
+     * 派生重算（引擎口）：按记录模板版本的字段口径重算全部派生字段，返回每个字段的求值结果（value / status / message）。 业务流程（提交 E15 / E25、导入重算
+     * E18、报告单映射 E16-T07）用它 diff 新旧值并经 {@code
+     * FieldHistoryService.logChange}（source=SYSTEM_RECALC，triggerFields=派生定义 args）写「系统重算」历史。
+     */
+    public Map<String, FormDerivedEngine.DerivedOutcome> recalculateDerived(
+            String formCode, int templateVersion, Map<String, Object> data) {
+        FormVersionRow snapshot = requireVersion(requireForm(formCode), templateVersion);
+        List<VersionFieldRow> fields = recordMapper.findVersionFields(formCode, snapshot.version());
+        if (fields.isEmpty()) {
+            throw new ApiException(404, 40400, "记录的模板版本不存在（formCode=" + formCode + "）");
+        }
+        return derivedEngine.recalculate(fields, data);
+    }
+
+    /**
+     * 写入闸门的派生重算（tech-plan §6「后端保存时再算一遍并以后端结果为准」）：来源齐全 → 计算值覆盖； 来源缺失 → 保留手工值；结果无效且带手工值 →
+     * 42200（fieldErrors 带 {@code rule=derived}，A-FLD-005「结果无效不允许手工录入」）。 草稿不写字段历史 （form.md
+     * §1.2），重算历史的落点在提交流程（E15 / E25）。
+     */
+    private Map<String, Object> applyDerived(
+            List<VersionFieldRow> fields, Map<String, Object> data) {
+        FormDerivedEngine.DerivedWrite write = derivedEngine.applyToWrite(fields, data);
+        if (!write.errors().isEmpty()) {
+            throw new ApiException(422, 42200, "表单校验未通过", Map.of("fieldErrors", write.errors()));
+        }
+        return write.data();
+    }
 
     // ---------------------------------------------------------------- 内部
 

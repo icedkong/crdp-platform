@@ -31,6 +31,16 @@ export {
   stripHiddenFieldValues,
 } from './form-condition';
 export {
+  type ComputeDerivedOptions,
+  computeDerivedValues,
+  type DerivedDef,
+  derivedManualKind,
+  type DerivedOutcome,
+  type DerivedSourceField,
+  type DerivedStatus,
+  isDerivedManualEditable,
+} from './form-derived';
+export {
   compareValues,
   type CrossFieldCompareParams,
   type CrossFieldRule,

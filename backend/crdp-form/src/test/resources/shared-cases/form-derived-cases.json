@@ -1,0 +1,410 @@
+{
+  "comment": "E11-T05 前后端共用派生用例（components.md §10.5）：同一份文件由后端 FormDerivedEngine（FormDerivedEngineTest）与前端 @crdp/rules（form-derived.test）各执行一遍，每个派生字段的 value（null = 留空）、status（ok / missing / invalid）、message（留空原因，前后端逐字一致）完全一致才通过。用例取自需求验收标准：A-FLD-005（身高 175 体重 70 → BMI 22.9；手术 2026-03-01 出院 2026-03-08 → 术后住院天数 8，出院早于手术留空并提示；手术开始 08:00 结束 12:45 → 285 分钟；进出 ICU 相差 160 小时 54 分 → 160.9；桥血管数量 = 动脉桥 + 静脉桥）、C-FLD-006 / Q13（年龄按今天计周岁、植入时长 X 年 Y 个月、参数变化率 =（本次 − 上次）÷ 上次 × 100%）。字段全部虚构（示例），真实派生配置随 E23-T01 / C 字段字典录入。",
+  "shape": {
+    "fields[]": "参与派生的字段：key 稳定键、categoryKey 分类锚点键、label 显示名（提示文案用）、type 为 components.md §10.1 类型、derived 为 {fn, args}（args 为字段稳定键；AGE_YEARS / YEARS_SINCE / DURATION_YM 的第 2 参可省 = 按今天）",
+    "data": "表单数据（键 = 稳定键，值编码口径：日期 YYYY-MM-DD、日期时间 YYYY-MM-DDTHH:mm[:ss]、数值数字）",
+    "today": "参考日（YYYY-MM-DD，可省）：省略派生函数按「今天」取值时用它，测试固定日期（生产为北京时间当天）",
+    "expected[]": "派生结果（按字段列表顺序，只含派生字段）：key、value（null = 留空）、status（ok 已算出 / missing 来源缺失 / invalid 来源无效）、message（留空原因，ok 为 null）；未知函数 / 坏定义 / 依赖成环的字段不出现在结果里（防御跳过）"
+  },
+  "cases": [
+    {
+      "name": "A-FLD-005 验收：身高 175、体重 70 → BMI 22.9（1 位小数）",
+      "fields": [
+        { "key": "f011", "categoryKey": "basic_info", "label": "身高", "type": "number" },
+        { "key": "f013", "categoryKey": "basic_info", "label": "体重", "type": "number" },
+        { "key": "f031", "categoryKey": "basic_info", "label": "BMI", "type": "derived", "derived": { "fn": "BMI", "args": ["f013", "f011"] } }
+      ],
+      "data": { "f011": 175, "f013": 70 },
+      "expected": [
+        { "key": "f031", "value": 22.9, "status": "ok", "message": null }
+      ]
+    },
+    {
+      "name": "A-FLD-005 验收：缺身高 → BMI 留空并提示「缺少身高」",
+      "fields": [
+        { "key": "f011", "categoryKey": "basic_info", "label": "身高", "type": "number" },
+        { "key": "f013", "categoryKey": "basic_info", "label": "体重", "type": "number" },
+        { "key": "f031", "categoryKey": "basic_info", "label": "BMI", "type": "derived", "derived": { "fn": "BMI", "args": ["f013", "f011"] } }
+      ],
+      "data": { "f013": 70 },
+      "expected": [
+        { "key": "f031", "value": null, "status": "missing", "message": "缺少身高" }
+      ]
+    },
+    {
+      "name": "BMI 体重身高都缺 → 提示「缺少体重、身高」（按参数顺序）",
+      "fields": [
+        { "key": "f011", "categoryKey": "basic_info", "label": "身高", "type": "number" },
+        { "key": "f013", "categoryKey": "basic_info", "label": "体重", "type": "number" },
+        { "key": "f031", "categoryKey": "basic_info", "label": "BMI", "type": "derived", "derived": { "fn": "BMI", "args": ["f013", "f011"] } }
+      ],
+      "data": {},
+      "expected": [
+        { "key": "f031", "value": null, "status": "missing", "message": "缺少体重、身高" }
+      ]
+    },
+    {
+      "name": "BMI 身高 0 → 结果无效「身高必须大于 0」（不能除零）",
+      "fields": [
+        { "key": "f011", "categoryKey": "basic_info", "label": "身高", "type": "number" },
+        { "key": "f013", "categoryKey": "basic_info", "label": "体重", "type": "number" },
+        { "key": "f031", "categoryKey": "basic_info", "label": "BMI", "type": "derived", "derived": { "fn": "BMI", "args": ["f013", "f011"] } }
+      ],
+      "data": { "f011": 0, "f013": 70 },
+      "expected": [
+        { "key": "f031", "value": null, "status": "invalid", "message": "身高必须大于 0" }
+      ]
+    },
+    {
+      "name": "A-FLD-005 验收：手术 2026-03-01、出院 2026-03-08 → 术后住院天数 8（含当天）",
+      "fields": [
+        { "key": "f020", "categoryKey": "surgery", "label": "手术日期", "type": "date" },
+        { "key": "f021", "categoryKey": "surgery", "label": "出院日期", "type": "date" },
+        { "key": "f030", "categoryKey": "surgery", "label": "术后住院天数", "type": "derived", "derived": { "fn": "DAYS_INCLUSIVE", "args": ["f020", "f021"] } }
+      ],
+      "data": { "f020": "2026-03-01", "f021": "2026-03-08" },
+      "expected": [
+        { "key": "f030", "value": 8, "status": "ok", "message": null }
+      ]
+    },
+    {
+      "name": "A-FLD-005 验收：出院 2026-02-28 早于手术 → 留空并提示「出院日期早于手术日期」",
+      "fields": [
+        { "key": "f020", "categoryKey": "surgery", "label": "手术日期", "type": "date" },
+        { "key": "f021", "categoryKey": "surgery", "label": "出院日期", "type": "date" },
+        { "key": "f030", "categoryKey": "surgery", "label": "术后住院天数", "type": "derived", "derived": { "fn": "DAYS_INCLUSIVE", "args": ["f020", "f021"] } }
+      ],
+      "data": { "f020": "2026-03-01", "f021": "2026-02-28" },
+      "expected": [
+        { "key": "f030", "value": null, "status": "invalid", "message": "出院日期早于手术日期" }
+      ]
+    },
+    {
+      "name": "术后住院天数：手术与出院同一天 → 1（含当天）",
+      "fields": [
+        { "key": "f020", "categoryKey": "surgery", "label": "手术日期", "type": "date" },
+        { "key": "f021", "categoryKey": "surgery", "label": "出院日期", "type": "date" },
+        { "key": "f030", "categoryKey": "surgery", "label": "术后住院天数", "type": "derived", "derived": { "fn": "DAYS_INCLUSIVE", "args": ["f020", "f021"] } }
+      ],
+      "data": { "f020": "2026-03-01", "f021": "2026-03-01" },
+      "expected": [
+        { "key": "f030", "value": 1, "status": "ok", "message": null }
+      ]
+    },
+    {
+      "name": "术后住院天数：缺出院日期 → 「缺少出院日期」（null 与缺键同口径）",
+      "fields": [
+        { "key": "f020", "categoryKey": "surgery", "label": "手术日期", "type": "date" },
+        { "key": "f021", "categoryKey": "surgery", "label": "出院日期", "type": "date" },
+        { "key": "f030", "categoryKey": "surgery", "label": "术后住院天数", "type": "derived", "derived": { "fn": "DAYS_INCLUSIVE", "args": ["f020", "f021"] } }
+      ],
+      "data": { "f020": "2026-03-01", "f021": null },
+      "expected": [
+        { "key": "f030", "value": null, "status": "missing", "message": "缺少出院日期" }
+      ]
+    },
+    {
+      "name": "A-FLD-005 验收：手术开始 2026-03-01T08:00、结束 12:45 → 手术时长 285 分钟",
+      "fields": [
+        { "key": "f130", "categoryKey": "surgery", "label": "手术开始时间", "type": "datetime" },
+        { "key": "f131", "categoryKey": "surgery", "label": "手术结束时间", "type": "datetime" },
+        { "key": "f132", "categoryKey": "surgery", "label": "手术时长min", "type": "derived", "derived": { "fn": "MINUTES_BETWEEN", "args": ["f130", "f131"] } }
+      ],
+      "data": { "f130": "2026-03-01T08:00", "f131": "2026-03-01T12:45" },
+      "expected": [
+        { "key": "f132", "value": 285, "status": "ok", "message": null }
+      ]
+    },
+    {
+      "name": "手术时长：结束早于开始 → 「手术结束时间早于手术开始时间」",
+      "fields": [
+        { "key": "f130", "categoryKey": "surgery", "label": "手术开始时间", "type": "datetime" },
+        { "key": "f131", "categoryKey": "surgery", "label": "手术结束时间", "type": "datetime" },
+        { "key": "f132", "categoryKey": "surgery", "label": "手术时长min", "type": "derived", "derived": { "fn": "MINUTES_BETWEEN", "args": ["f130", "f131"] } }
+      ],
+      "data": { "f130": "2026-03-01T12:45", "f131": "2026-03-01T08:00" },
+      "expected": [
+        { "key": "f132", "value": null, "status": "invalid", "message": "手术结束时间早于手术开始时间" }
+      ]
+    },
+    {
+      "name": "手术时长：跨秒差 60.5 分钟向下取整 → 60（分钟向下取整）",
+      "fields": [
+        { "key": "f130", "categoryKey": "surgery", "label": "手术开始时间", "type": "datetime" },
+        { "key": "f131", "categoryKey": "surgery", "label": "手术结束时间", "type": "datetime" },
+        { "key": "f132", "categoryKey": "surgery", "label": "手术时长min", "type": "derived", "derived": { "fn": "MINUTES_BETWEEN", "args": ["f130", "f131"] } }
+      ],
+      "data": { "f130": "2026-03-01T08:00:00", "f131": "2026-03-01T09:00:30" },
+      "expected": [
+        { "key": "f132", "value": 60, "status": "ok", "message": null }
+      ]
+    },
+    {
+      "name": "MINUTES_BETWEEN 防御：日期写法按当日 00:00 归一（与跨字段比较同口径）",
+      "fields": [
+        { "key": "f130", "categoryKey": "surgery", "label": "手术开始时间", "type": "datetime" },
+        { "key": "f131", "categoryKey": "surgery", "label": "手术结束时间", "type": "datetime" },
+        { "key": "f132", "categoryKey": "surgery", "label": "手术时长min", "type": "derived", "derived": { "fn": "MINUTES_BETWEEN", "args": ["f130", "f131"] } }
+      ],
+      "data": { "f130": "2026-03-01", "f131": "2026-03-01T00:01" },
+      "expected": [
+        { "key": "f132", "value": 1, "status": "ok", "message": null }
+      ]
+    },
+    {
+      "name": "A-FLD-005 验收：进出 ICU 相差 160 小时 54 分 → ICU时间 160.9（1 位小数）",
+      "fields": [
+        { "key": "f140", "categoryKey": "periop", "label": "进ICU时间", "type": "datetime" },
+        { "key": "f141", "categoryKey": "periop", "label": "出ICU时间", "type": "datetime" },
+        { "key": "f142", "categoryKey": "periop", "label": "ICU时间h", "type": "derived", "derived": { "fn": "HOURS_BETWEEN_1DP", "args": ["f140", "f141"] } }
+      ],
+      "data": { "f140": "2026-03-01T08:00", "f141": "2026-03-08T00:54" },
+      "expected": [
+        { "key": "f142", "value": 160.9, "status": "ok", "message": null }
+      ]
+    },
+    {
+      "name": "ICU时间：出早于进 → 「出ICU时间早于进ICU时间」",
+      "fields": [
+        { "key": "f140", "categoryKey": "periop", "label": "进ICU时间", "type": "datetime" },
+        { "key": "f141", "categoryKey": "periop", "label": "出ICU时间", "type": "datetime" },
+        { "key": "f142", "categoryKey": "periop", "label": "ICU时间h", "type": "derived", "derived": { "fn": "HOURS_BETWEEN_1DP", "args": ["f140", "f141"] } }
+      ],
+      "data": { "f140": "2026-03-02T08:00", "f141": "2026-03-01T08:00" },
+      "expected": [
+        { "key": "f142", "value": null, "status": "invalid", "message": "出ICU时间早于进ICU时间" }
+      ]
+    },
+    {
+      "name": "手术年龄：1980-05-10 出生、2026-03-01 手术 → 45 周岁（生日未到减一）",
+      "fields": [
+        { "key": "f003", "categoryKey": "basic_info", "label": "出生日期", "type": "date" },
+        { "key": "f020", "categoryKey": "surgery", "label": "手术日期", "type": "date" },
+        { "key": "f032", "categoryKey": "surgery", "label": "手术年龄", "type": "derived", "derived": { "fn": "AGE_YEARS", "args": ["f003", "f020"] } }
+      ],
+      "data": { "f003": "1980-05-10", "f020": "2026-03-01" },
+      "expected": [
+        { "key": "f032", "value": 45, "status": "ok", "message": null }
+      ]
+    },
+    {
+      "name": "手术年龄：生日当天即满周岁（1980-03-01 @ 2026-03-01 → 46）",
+      "fields": [
+        { "key": "f003", "categoryKey": "basic_info", "label": "出生日期", "type": "date" },
+        { "key": "f020", "categoryKey": "surgery", "label": "手术日期", "type": "date" },
+        { "key": "f032", "categoryKey": "surgery", "label": "手术年龄", "type": "derived", "derived": { "fn": "AGE_YEARS", "args": ["f003", "f020"] } }
+      ],
+      "data": { "f003": "1980-03-01", "f020": "2026-03-01" },
+      "expected": [
+        { "key": "f032", "value": 46, "status": "ok", "message": null }
+      ]
+    },
+    {
+      "name": "C-FLD-006 / Q13 年龄：无参考字段按今天（today 2026-11-03，1980-11-04 出生 → 45）",
+      "fields": [
+        { "key": "f003", "categoryKey": "basic_info", "label": "出生日期", "type": "date" },
+        { "key": "f103", "categoryKey": "followup", "label": "年龄", "type": "derived", "derived": { "fn": "AGE_YEARS", "args": ["f003"] } }
+      ],
+      "data": { "f003": "1980-11-04" },
+      "today": "2026-11-03",
+      "expected": [
+        { "key": "f103", "value": 45, "status": "ok", "message": null }
+      ]
+    },
+    {
+      "name": "年龄：出生晚于今天 → 无效「今天早于出生日期」",
+      "fields": [
+        { "key": "f003", "categoryKey": "basic_info", "label": "出生日期", "type": "date" },
+        { "key": "f103", "categoryKey": "followup", "label": "年龄", "type": "derived", "derived": { "fn": "AGE_YEARS", "args": ["f003"] } }
+      ],
+      "data": { "f003": "2026-11-05" },
+      "today": "2026-11-03",
+      "expected": [
+        { "key": "f103", "value": null, "status": "invalid", "message": "今天早于出生日期" }
+      ]
+    },
+    {
+      "name": "A-FLD-005 桥血管数量：动脉桥 2 + 静脉桥 3 → 5",
+      "fields": [
+        { "key": "f110", "categoryKey": "surgery", "label": "动脉桥数量", "type": "number" },
+        { "key": "f111", "categoryKey": "surgery", "label": "静脉桥数量", "type": "number" },
+        { "key": "f112", "categoryKey": "surgery", "label": "桥血管数量", "type": "derived", "derived": { "fn": "SUM", "args": ["f110", "f111"] } }
+      ],
+      "data": { "f110": 2, "f111": 3 },
+      "expected": [
+        { "key": "f112", "value": 5, "status": "ok", "message": null }
+      ]
+    },
+    {
+      "name": "桥血管数量：缺静脉桥 → 「缺少静脉桥数量」（任一来源缺失即留空）",
+      "fields": [
+        { "key": "f110", "categoryKey": "surgery", "label": "动脉桥数量", "type": "number" },
+        { "key": "f111", "categoryKey": "surgery", "label": "静脉桥数量", "type": "number" },
+        { "key": "f112", "categoryKey": "surgery", "label": "桥血管数量", "type": "derived", "derived": { "fn": "SUM", "args": ["f110", "f111"] } }
+      ],
+      "data": { "f110": 2 },
+      "expected": [
+        { "key": "f112", "value": null, "status": "missing", "message": "缺少静脉桥数量" }
+      ]
+    },
+    {
+      "name": "SUM 支持小数来源：1.5 + 2 → 3.5",
+      "fields": [
+        { "key": "f110", "categoryKey": "surgery", "label": "动脉桥数量", "type": "number" },
+        { "key": "f111", "categoryKey": "surgery", "label": "静脉桥数量", "type": "number" },
+        { "key": "f112", "categoryKey": "surgery", "label": "桥血管数量", "type": "derived", "derived": { "fn": "SUM", "args": ["f110", "f111"] } }
+      ],
+      "data": { "f110": 1.5, "f111": 2 },
+      "expected": [
+        { "key": "f112", "value": 3.5, "status": "ok", "message": null }
+      ]
+    },
+    {
+      "name": "A-FLD-005 随访年限：出院 2016-05-20、死亡 2026-05-19 → 9（差一天不满 10 年，不设上限）",
+      "fields": [
+        { "key": "f021", "categoryKey": "surgery", "label": "出院日期", "type": "date" },
+        { "key": "f102", "categoryKey": "endpoint", "label": "死亡日期", "type": "date" },
+        { "key": "f113", "categoryKey": "endpoint", "label": "随访年限", "type": "derived", "derived": { "fn": "YEARS_SINCE", "args": ["f021", "f102"] } }
+      ],
+      "data": { "f021": "2016-05-20", "f102": "2026-05-19" },
+      "expected": [
+        { "key": "f113", "value": 9, "status": "ok", "message": null }
+      ]
+    },
+    {
+      "name": "随访年限：止日参数缺省按今天（2016-05-20 出院，today 2026-11-03 → 10）",
+      "fields": [
+        { "key": "f021", "categoryKey": "surgery", "label": "出院日期", "type": "date" },
+        { "key": "f113", "categoryKey": "endpoint", "label": "随访年限", "type": "derived", "derived": { "fn": "YEARS_SINCE", "args": ["f021"] } }
+      ],
+      "data": { "f021": "2016-05-20" },
+      "today": "2026-11-03",
+      "expected": [
+        { "key": "f113", "value": 10, "status": "ok", "message": null }
+      ]
+    },
+    {
+      "name": "随访年限：死亡日期有值但早于出院 → 无效「死亡日期早于出院日期」",
+      "fields": [
+        { "key": "f021", "categoryKey": "surgery", "label": "出院日期", "type": "date" },
+        { "key": "f102", "categoryKey": "endpoint", "label": "死亡日期", "type": "date" },
+        { "key": "f113", "categoryKey": "endpoint", "label": "随访年限", "type": "derived", "derived": { "fn": "YEARS_SINCE", "args": ["f021", "f102"] } }
+      ],
+      "data": { "f021": "2016-05-20", "f102": "2016-05-19" },
+      "expected": [
+        { "key": "f113", "value": null, "status": "invalid", "message": "死亡日期早于出院日期" }
+      ]
+    },
+    {
+      "name": "C-FLD-006 / Q13 植入时长：2023-09-05 植入，today 2026-11-03 → 「3 年 1 个月」（日未到减月）",
+      "fields": [
+        { "key": "f101", "categoryKey": "device", "label": "植入日期", "type": "date" },
+        { "key": "f104", "categoryKey": "device", "label": "植入时长", "type": "derived", "derived": { "fn": "DURATION_YM", "args": ["f101"] } }
+      ],
+      "data": { "f101": "2023-09-05" },
+      "today": "2026-11-03",
+      "expected": [
+        { "key": "f104", "value": "3 年 1 个月", "status": "ok", "message": null }
+      ]
+    },
+    {
+      "name": "植入时长：整日整月边界（2023-11-03 → today 2026-11-03 → 「3 年 0 个月」）",
+      "fields": [
+        { "key": "f101", "categoryKey": "device", "label": "植入日期", "type": "date" },
+        { "key": "f104", "categoryKey": "device", "label": "植入时长", "type": "derived", "derived": { "fn": "DURATION_YM", "args": ["f101"] } }
+      ],
+      "data": { "f101": "2023-11-03" },
+      "today": "2026-11-03",
+      "expected": [
+        { "key": "f104", "value": "3 年 0 个月", "status": "ok", "message": null }
+      ]
+    },
+    {
+      "name": "植入时长：不足一年 → 「0 年 7 个月」（2026-03-10 → today 2026-11-03）",
+      "fields": [
+        { "key": "f101", "categoryKey": "device", "label": "植入日期", "type": "date" },
+        { "key": "f104", "categoryKey": "device", "label": "植入时长", "type": "derived", "derived": { "fn": "DURATION_YM", "args": ["f101"] } }
+      ],
+      "data": { "f101": "2026-03-10" },
+      "today": "2026-11-03",
+      "expected": [
+        { "key": "f104", "value": "0 年 7 个月", "status": "ok", "message": null }
+      ]
+    },
+    {
+      "name": "C-FLD-006 参数变化率：本次 5.0、上次 4.0 → 25.0（（本次−上次）÷上次×100）",
+      "fields": [
+        { "key": "f120", "categoryKey": "program", "label": "本次值", "type": "number" },
+        { "key": "f121", "categoryKey": "program", "label": "上次值", "type": "number" },
+        { "key": "f122", "categoryKey": "program", "label": "变化率", "type": "derived", "derived": { "fn": "CHANGE_PCT", "args": ["f120", "f121"] } }
+      ],
+      "data": { "f120": 5.0, "f121": 4.0 },
+      "expected": [
+        { "key": "f122", "value": 25.0, "status": "ok", "message": null }
+      ]
+    },
+    {
+      "name": "参数变化率：参数下降（本次 3.6、上次 4.0 → -10.0，1 位小数）",
+      "fields": [
+        { "key": "f120", "categoryKey": "program", "label": "本次值", "type": "number" },
+        { "key": "f121", "categoryKey": "program", "label": "上次值", "type": "number" },
+        { "key": "f122", "categoryKey": "program", "label": "变化率", "type": "derived", "derived": { "fn": "CHANGE_PCT", "args": ["f120", "f121"] } }
+      ],
+      "data": { "f120": 3.6, "f121": 4.0 },
+      "expected": [
+        { "key": "f122", "value": -10.0, "status": "ok", "message": null }
+      ]
+    },
+    {
+      "name": "参数变化率：上次为 0 → 无效「上次值为 0，不能计算变化率」",
+      "fields": [
+        { "key": "f120", "categoryKey": "program", "label": "本次值", "type": "number" },
+        { "key": "f121", "categoryKey": "program", "label": "上次值", "type": "number" },
+        { "key": "f122", "categoryKey": "program", "label": "变化率", "type": "derived", "derived": { "fn": "CHANGE_PCT", "args": ["f120", "f121"] } }
+      ],
+      "data": { "f120": 3.6, "f121": 0 },
+      "expected": [
+        { "key": "f122", "value": null, "status": "invalid", "message": "上次值为 0，不能计算变化率" }
+      ]
+    },
+    {
+      "name": "拓扑：派生依赖派生（依赖字段排在后面也先算，依赖图按定义生成）",
+      "fields": [
+        { "key": "f122", "categoryKey": "program", "label": "变化率", "type": "derived", "derived": { "fn": "CHANGE_PCT", "args": ["f120", "f112"] } },
+        { "key": "f120", "categoryKey": "program", "label": "本次值", "type": "number" },
+        { "key": "f110", "categoryKey": "surgery", "label": "动脉桥数量", "type": "number" },
+        { "key": "f111", "categoryKey": "surgery", "label": "静脉桥数量", "type": "number" },
+        { "key": "f112", "categoryKey": "surgery", "label": "桥血管数量", "type": "derived", "derived": { "fn": "SUM", "args": ["f110", "f111"] } }
+      ],
+      "data": { "f120": 10, "f110": 2, "f111": 3 },
+      "expected": [
+        { "key": "f122", "value": 100.0, "status": "ok", "message": null },
+        { "key": "f112", "value": 5, "status": "ok", "message": null }
+      ]
+    },
+    {
+      "name": "防御：未知函数 / 缺参数的坏定义不出结果（不炸、不产出，OQ-68）",
+      "fields": [
+        { "key": "f011", "categoryKey": "basic_info", "label": "身高", "type": "number" },
+        { "key": "f201", "categoryKey": "basic_info", "label": "未知函数字段", "type": "derived", "derived": { "fn": "NOPE", "args": ["f011"] } },
+        { "key": "f202", "categoryKey": "basic_info", "label": "缺参数字段", "type": "derived", "derived": { "fn": "BMI" } },
+        { "key": "f203", "categoryKey": "basic_info", "label": "坏派生定义", "type": "derived", "derived": { "args": ["f011"] } }
+      ],
+      "data": { "f011": 175 },
+      "expected": []
+    },
+    {
+      "name": "防御：派生自引用成环 → 环上字段跳过（不炸、不产出，OQ-68）",
+      "fields": [
+        { "key": "f210", "categoryKey": "basic_info", "label": "环字段甲", "type": "derived", "derived": { "fn": "SUM", "args": ["f211"] } },
+        { "key": "f211", "categoryKey": "basic_info", "label": "环字段乙", "type": "derived", "derived": { "fn": "SUM", "args": ["f210"] } },
+        { "key": "f110", "categoryKey": "surgery", "label": "动脉桥数量", "type": "number" },
+        { "key": "f112", "categoryKey": "surgery", "label": "桥血管数量", "type": "derived", "derived": { "fn": "SUM", "args": ["f110"] } }
+      ],
+      "data": { "f110": 4 },
+      "expected": [
+        { "key": "f112", "value": 4, "status": "ok", "message": null }
+      ]
+    }
+  ]
+}
