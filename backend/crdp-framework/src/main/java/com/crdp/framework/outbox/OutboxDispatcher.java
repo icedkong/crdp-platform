@@ -31,7 +31,8 @@ import org.springframework.stereotype.Component;
  * <ul>
  *   <li>重试台账（失败次数与下次到期时间）只在内存——重启后清零，事件不丢（行仍是 PENDING），只是退避与死信计数从头再来； 需要跨重启的持久台账就得加列 / 加表，属产品拍板；
  *   <li>「必达」是至少一次：标记 SENT 前进程中断会重发，订阅方必须幂等（见 {@link OutboxSubscriber}）；
- *   <li>应用里一个订阅方都没有时不消费（保持 PENDING），避免订阅方落地（E09-T02+）之前把 E06-T03 已写入的事件标记 SENT 而丢失；
+ *   <li>无人感兴趣的事件保持 PENDING 不消费（E09-T04 起与「应用里一个订阅方都没有」同口径）：避免某类事件的订阅方 尚未落地（如组织事件等 E14+
+ *       订阅方）时被别的订阅方连带标记 SENT 而丢失；这些行每轮都会被重新扫到， 订阅方上线即被消费；
  *   <li>M1 单实例、分发线程串行（ADR 0003 第 4 条），不做并发抢占；多实例时按 shedlock 预留补锁。
  * </ul>
  */
@@ -167,6 +168,15 @@ public class OutboxDispatcher {
             }
             List<OutboxSubscriber> interested =
                     registered.stream().filter(s -> s.supports(event.eventType())).toList();
+            if (interested.isEmpty()) {
+                // 无人感兴趣：保持 PENDING（订阅方落地后消费），不算失败也不重试
+                log.debug(
+                        "outbox 事件暂无订阅方感兴趣，保持 PENDING tenant={} id={} type={}",
+                        state.tenantCode(),
+                        event.id(),
+                        event.eventType());
+                continue;
+            }
             try {
                 for (OutboxSubscriber subscriber : interested) {
                     subscriber.onEvent(event);

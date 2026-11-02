@@ -147,15 +147,17 @@ class OutboxDispatcherTest {
     }
 
     @Test
-    void anEventNoSubscriberCaresAboutIsStillConsumedAsSent() {
+    void anEventNoSubscriberCaresAboutStaysPendingUntilItsSubscriberLands() {
         when(directory.enabledTenants()).thenReturn(List.of(new TenantRef(1L, "demoa")));
         subscribersAre(subscriberFor("user.disabled", event -> {}));
         pendingRowsAre(new OutboxEvent(8L, "ward.disabled", "{}", OCCURRED));
 
         DispatchResult result = dispatcher(6).dispatchOnce();
 
-        assertEquals(new DispatchResult(1, 0, 0), result, "无感兴趣订阅方的事件视为已分发");
-        verify(jdbc).update(contains("status = 'SENT'"), eq(8L));
+        // E09-T04 起与「无订阅方不消费」同口径：无人感兴趣的事件保持 PENDING，
+        // 避免被无关订阅方连带标记 SENT 而丢失（组织事件的订阅方随 E14+ 落地）
+        assertEquals(new DispatchResult(0, 0, 0), result, "无人感兴趣的事件不消费");
+        verify(jdbc, never()).update(contains("status = 'SENT'"), eq(8L));
     }
 
     @Test

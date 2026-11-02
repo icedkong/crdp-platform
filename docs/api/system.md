@@ -145,7 +145,7 @@ E06-T02 已实现（院区与科室树；病区字典属 `crdp-followup`，科�
 
 ## 9. 组织与用户变更事件（PLT-ORG-013；E06-T03 落表，E09-T01 落地分发）
 
-用户停用 / 离职、调岗（主科室变化）、角色变化、科室停用、院区停用在**同一事务**内写入租户库 `sys_outbox`（base 迁移 V14：`event_type / payload(JSON) / status='PENDING' / created_at`；框架 `JdbcOutboxPublisher` 替换 M0 占位，只能在租户上下文调用）；分发由框架 `OutboxDispatcher`（E09-T01）完成：每 5 秒（`crdp.outbox.dispatch.interval-ms`）按租户逐个消费 PENDING 行，投给实现了 `OutboxSubscriber` 的进程内订阅方（至少一次、须幂等、在事件所属租户上下文内执行），全部成功标记 `SENT`；失败按指数退避重试（默认 6 次封顶，`retry-base-ms` 起算）后转死信 `FAILED`，表结构不变、重试台账在内存（OQ-52）。随访模块订阅后提示责任人转交、**不自动改派**（OQ-10）。信封统一 `tenantCode / operatorId / occurredAt(ISO-8601 北京时间)`，另带 `reason`（停用 / 离职时如填）：
+用户停用 / 离职、调岗（主科室变化）、角色变化、科室停用、院区停用在**同一事务**内写入租户库 `sys_outbox`（base 迁移 V14：`event_type / payload(JSON) / status='PENDING' / created_at`；框架 `JdbcOutboxPublisher` 替换 M0 占位，只能在租户上下文调用）；分发由框架 `OutboxDispatcher`（E09-T01）完成：每 5 秒（`crdp.outbox.dispatch.interval-ms`）按租户逐个消费 PENDING 行，投给实现了 `OutboxSubscriber` 的进程内订阅方（至少一次、须幂等、在事件所属租户上下文内执行），全部成功标记 `SENT`，无人感兴趣的事件保持 `PENDING`（订阅方落地后消费，E09-T04 起与「无订阅方不消费」同口径）；失败按指数退避重试（默认 6 次封顶，`retry-base-ms` 起算）后转死信 `FAILED`，表结构不变、重试台账在内存（OQ-52）。随访模块订阅后提示责任人转交、**不自动改派**（OQ-10）。信封统一 `tenantCode / operatorId / occurredAt(ISO-8601 北京时间)`，另带 `reason`（停用 / 离职时如填）：
 
 | 事件类型 | 触发 | 专有负载 |
 |---|---|---|
