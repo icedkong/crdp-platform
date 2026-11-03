@@ -7,7 +7,9 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -53,9 +55,12 @@ class PatientRegistrationServiceTest {
     private final PatientRegistrationGateway gateway = mock(PatientRegistrationGateway.class);
     private final CryptoService crypto = mock(CryptoService.class);
     private final AuditLogger audit = mock(AuditLogger.class);
+    private final PatientStatusHistoryService statusHistory =
+            mock(PatientStatusHistoryService.class);
+    private final PatientSummaryService summary = mock(PatientSummaryService.class);
 
     private final PatientRegistrationService service =
-            new PatientRegistrationService(mapper, gateway, crypto, audit);
+            new PatientRegistrationService(mapper, gateway, crypto, audit, statusHistory, summary);
 
     @BeforeEach
     void login() {
@@ -210,6 +215,10 @@ class PatientRegistrationServiceTest {
         assertFalse(entry.afterJson().contains(MRN), "审计摘要不得出现病案号明文");
         assertFalse(entry.description().contains(NAME), "审计描述不得出现姓名明文");
         assertTrue(entry.afterJson().contains("mrnMasked"), "审计摘要存脱敏值");
+
+        // E13-T03：同一登记补写状态时间线初始行（登记即 ACTIVE，OQ-71②）与当前状态摘要建行
+        verify(statusHistory).recordRegistration(eq(101L), eq(LocalDate.now()), eq(OPERATOR_ID));
+        verify(summary).recompute(101L, OPERATOR_ID);
     }
 
     @Test
@@ -226,6 +235,8 @@ class PatientRegistrationServiceTest {
         assertEquals(40902, error.code());
         assertEquals(409, error.httpStatus());
         verify(mapper, never()).insertPatient(any());
+        verify(statusHistory, never()).recordRegistration(anyLong(), any(), any());
+        verify(summary, never()).recompute(anyLong(), any());
 
         PatientRegistrationService.DuplicateCheckView data =
                 (PatientRegistrationService.DuplicateCheckView) error.data();

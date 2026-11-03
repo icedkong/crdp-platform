@@ -48,8 +48,8 @@ interface PatientRow {
 
 | 方法 | 路径 | 权限 | 说明 | 需求 |
 |---|---|---|---|---|
-| POST | `/api/hospital/followup/patients/{id}/status` | A：`followup:plan:enroll`；C：`followup:patient:edit`（推断，见 OQ-15） | `{ action: PAUSE|RESUME|REMOVE|TERMINATE|LOST|DEAD, reason, effectiveDate, deathDate? }`；写 `pt_status_history`；死亡 / 停止关闭未完成任务（A-FU-007、C-FU-021）；返回受影响任务数 | A-PAT-011、A-FU-008、C-FU-021 |
-| GET | `/api/hospital/followup/patients/{id}/status-history` | `followup:patient:view` | 状态变更历史 | — |
+| POST | `/api/hospital/followup/patients/{id}/status` | A：`followup:plan:enroll`；C：`followup:patient:edit`（推断，见 OQ-15） | **随 E14-T06**。`{ action: PAUSE|RESUME|REMOVE|TERMINATE|LOST|DEAD, reason, effectiveDate, deathDate? }`；写 `pt_status_history`（经 `PatientStatusHistoryService.record`，E13-T03 已落地）；死亡 / 停止关闭未完成任务（A-FU-007、C-FU-021）；返回受影响任务数 | A-PAT-011、A-FU-008、C-FU-021 |
+| GET | `/api/hospital/followup/patients/{id}/status-history` | `followup:patient:view` | **E13-T03 已实现**。状态变更历史（生效日期新在前）：`items: [{ id, status, effectiveDate, reason, source, createdBy, createdAt }]`；登记即写初始行 `ACTIVE / REGISTRATION`（OQ-71②）；表只追加 | — |
 
 ## 4. 基线（A-PAT-004/005/006/020/021、C-PAT-010/011/017/018）
 
@@ -84,14 +84,19 @@ interface PatientRow {
 - 列表页不提供逐行明文（design-system 表格规则）。
 - 频控：同一用户每分钟 ≤ 30 次（文档建议值，暂按此实现，产品定论后只改 `PlaintextRateLimiter` 常量），超出 **42900** 并写 `DENIED(reason=RATE_LIMITED)` 审计，触发安全告警 `PLAINTEXT_ABUSE`（PLT-AUD-012，接收人为启用的平台管理员）。
 - 默认脱敏（序列化）：DTO 敏感字符串字段标 framework `@MaskedByPolicy(resource, field)`（`FieldPolicyJacksonModule`）——`MASKED` 掩码、`HIDDEN` 整字段不出现、`VISIBLE` 明文；动态结构（导出行、站内信参数）用 `SensitiveFieldSanitizer.apply`，同一套口径。掩码规则（`SensitiveValueMasker`）：姓名「张*明」（两字「张*」）、手机号前 3 后 4「138****5678」、证件号前 6 后 4、病案号前 2 后 2、住址前 6 字 + 固定 4 星，其余通用（首尾保留、中间按位数补星）。
-- 实现备注：患者表已随 E13-T01 建表（`pt_patient`，followup V37），明文取数经端口 `PatientPlaintextSource`（真实实现 `PatientPlaintextSourceImpl`：`@DataScope` 查询 + `CryptoService` 解密；电话随 E13-T03 落 `pt_contact` 后并入）。
+- 实现备注：患者表已随 E13-T01 建表（`pt_patient`，followup V37），明文取数经端口 `PatientPlaintextSource`（真实实现 `PatientPlaintextSourceImpl`：`@DataScope` 查询 + `CryptoService` 解密；电话已随 E13-T03 并入——`phone` 取 `pt_contact` 当前电话1版本明文，患者无联系方式版本时不返回该字段）。
 
 ## 6. 联系方式（pt_contact，按版本保存）
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| GET | `/api/hospital/followup/patients/{id}/contact-info` | `followup:patient:view` | 当前与历史版本（脱敏） |
-| POST | `/api/hospital/followup/patients/{id}/contact-info` | `followup:patient:edit` | 新增版本（不覆盖旧值） |
+| GET | `/api/hospital/followup/patients/{id}/contact-info` | `followup:patient:view` | **E13-T03 已实现**。当前与历史版本（脱敏）：`items: [{ id, slot, phoneMasked, wechatAdded, effectiveDate, source, sourceRefId, version, remark, current }]`，电话1（PHONE_1）在前、版本新在前 |
+| POST | `/api/hospital/followup/patients/{id}/contact-info` | `followup:patient:edit` | **E13-T03 已实现**。新增版本（不覆盖旧值）：body `{ slot: PHONE_1\|PHONE_2, phone, effectiveDate?, source?, sourceRefId?, wechatAdded?, remark? }`（effectiveDate 缺省今天、不得晚于今天也不得早于当前版本生效日期；source 缺省 MANUAL，取值 REGISTRATION / FOLLOWUP / IMPORT / MANUAL）；与当前版本号码与微信标志都相同 40001；并发同槽位 40900；写 `PATIENT_CONTACT_ADD` 审计（脱敏摘要） |
+
+- 版本模型（tech-plan §7「每个号码一个版本」）：`slot` 为号码槽位，槽位内 `version` 递增、旧行永久保留，「当前版本」= 槽位内最大 version；`pt_contact` 行 id 供沟通记录引用（E15 `fu_contact_log`），换号不改历史。
+- 电话加密列 + 盲索引（purpose `pt-contact-phone`，重加密作业已登记）；归一化口径：去空格 / 连字符 / 括号后须为 5–20 位数字（可带 `+`），归一化值同时用于「同号判断」。
+- 明文：默认输出脱敏（`SensitiveValueMasker` phone 规则）；明文走 §5 专用接口，`phone` 字段 = 当前电话1（PHONE_1 最大 version）的明文，无版本时不返回该字段。
+- `wechat_added`（A 规格字段 213「是否已加微信」）作为版本快照随行保存；仅该标志变化（号码不变）同样开新版本。
 
 > 注意区分：`/contact-info` 是联系方式；`/contacts` 是**沟通记录**（见 `followup.md` §6）。
 
@@ -109,4 +114,5 @@ interface PatientRow {
 - 草稿：`baseVersion` 一致 → 200 且 version+1；不一致 → 409 且 `diffFields` 正确；已提交 / 锁定 → 40901。
 - 明文：每次调用审计 +1；响应头 `Cache-Control: no-store`；越范围患者 40400。
 - 查重：范围外同号只返回 `exists: true`，不泄露摘要。
+- 联系方式（E13-T03）：换号后旧版本行保留、当前版本 = 最大 version；与当前版本完全相同 40001；明文取当前电话1；审计只存脱敏摘要；越范围 40400、无 edit 40300、模块关闭 40301。
 - 列表与导出、首页数字使用同一范围（A-WARD-004）。

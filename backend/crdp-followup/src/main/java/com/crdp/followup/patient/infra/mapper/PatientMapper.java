@@ -51,6 +51,16 @@ public interface PatientMapper {
             """)
     DuplicateRow findLiveByMrnBlind(@Param("mrnBlind") String mrnBlind);
 
+    /** 范围内在册患者 id（E13-T03 联系方式 / 状态历史入口的 40400 可见性校验；越范围 null）。 */
+    @DataScope(resource = "patient")
+    @Select(
+            """
+            SELECT id FROM pt_patient
+            WHERE id = #{id} AND deleted = 0
+            LIMIT 1
+            """)
+    Long findLiveIdById(@Param("id") long id);
+
     /** 「姓名 + 出生日期相同」的可能重复（C-PAT-002；范围内最多 {@code limit} 条，排除病案号已相同者）。 */
     @DataScope(resource = "patient")
     @Select(

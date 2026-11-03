@@ -6,8 +6,8 @@ import java.util.List;
 import org.springframework.stereotype.Component;
 
 /**
- * pt_patient 加密列登记（E13-T01，E03-T05 重加密作业扩展点）：密文列与盲索引成对，密钥轮换后作业按本清单 逐列重加密并重算盲索引（NFR-CRY-002）。电话列随
- * E13-T03 落 pt_contact 时另行登记。
+ * 患者域加密列登记（E13-T01 建表、E13-T03 增补 pt_contact 电话列；E03-T05 重加密作业扩展点）：密文列与盲索引成对，密钥轮换后作业按本清单
+ * 逐列重加密并重算盲索引（NFR-CRY-002）。
  */
 @Component
 public class PatientEncryptedColumns implements EncryptedColumnProvider {
@@ -32,6 +32,13 @@ public class PatientEncryptedColumns implements EncryptedColumnProvider {
                 new EncryptedColumn(
                         "pt_patient", "id", "id_card_cipher", "pt-patient-idcard", null, null),
                 new EncryptedColumn(
-                        "pt_patient", "id", "address_cipher", "pt-patient-address", null, null));
+                        "pt_patient", "id", "address_cipher", "pt-patient-address", null, null),
+                new EncryptedColumn(
+                        "pt_contact",
+                        "id",
+                        "phone_cipher",
+                        "pt-contact-phone",
+                        "phone_blind",
+                        "pt-contact-phone"));
     }
 }

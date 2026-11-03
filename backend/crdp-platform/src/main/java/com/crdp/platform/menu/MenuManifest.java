@@ -164,7 +164,22 @@ public class MenuManifest {
                             "followup/patient/new",
                             "followup:patient:create",
                             null,
-                            30));
+                            30),
+                    // E13-T03 / docs/api/patient.md §6：患者档案下的「编辑患者资料」按钮
+                    // （followup:patient:edit，A/C 规格权限表；平台库 V38 同构）
+                    new MenuManifestItem(
+                            "followup",
+                            "HOSPITAL",
+                            "BUTTON",
+                            "followup:patient:edit",
+                            "FollowupPatient",
+                            "编辑患者资料",
+                            null,
+                            null,
+                            null,
+                            "followup:patient:edit",
+                            null,
+                            40));
 
     public List<MenuManifestItem> items() {
         return ITEMS;
