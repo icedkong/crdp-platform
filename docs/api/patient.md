@@ -10,26 +10,28 @@
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| POST | `/api/hospital/followup/patients/search` | `followup:patient:view` | body 见 README §2.4；`filters`：`wardIds, deptIds, status[], doctorId, dischargeFrom/To, nextVisitFrom/To, deviceType`(C)、`baselineCompleteness`；`condition` 为高级检索条件树 |
-| GET | `/api/hospital/followup/saved-filters` | `followup:patient:view` | 个人筛选（只属于本人） |
-| POST | `/api/hospital/followup/saved-filters` | `followup:patient:view` | `{ name, payload }`（payload = search body 去掉分页） |
-| DELETE | `/api/hospital/followup/saved-filters/{id}` | `followup:patient:view` | — |
-| GET | `/api/hospital/followup/patients/search-fields` | `followup:patient:view` | 高级检索可用字段（由表单模板 + 字段策略生成，隐藏字段不出现） |
+| POST | `/api/hospital/followup/patients/search` | `followup:patient:view` | **E13-T04 已实现**（简单检索与筛选）。body 见 README §2.4；`keyword` 按姓名 / 病案号**盲索引精确匹配**（一个检索词 OR 命中两个字段，不做模糊，A-PAT-002「病案号、姓名精确查找」）；`filters`：`wardIds[], deptIds[], status[], doctorId, dischargeStatus, patientType, surgeryFrom/To, dischargeFrom/To, nextVisitFrom/To`（术者 / 手术方式随 E13-T02 表单数据、是否有逾期任务随 E15、C 器械类筛选随 E21）；`sort` 白名单 `nextVisitDate / dischargeDate`，默认下次随访日期升序；越范围（病区 / 科室 / 本人范围外）行不可见（@DataScope patient，验收「按病区隔离」）；行内 `name` / `patientNo` 只返回脱敏值；每次检索写 `BATCH_QUERY` 数据访问审计（queryDigest 只记筛选面，不含检索词明文） |
+| GET | `/api/hospital/followup/patients/filter-options` | `followup:patient:view` | **E13-T04 已实现**。筛选候选：`{ wards: [{id,name}] }`（启用病区；随访状态等枚举文案由前端 enums 维护） |
+| GET | `/api/hospital/followup/saved-filters` | `followup:patient:view` | 个人筛选（只属于本人）；随 E13-T06 |
+| POST | `/api/hospital/followup/saved-filters` | `followup:patient:view` | `{ name, payload }`（payload = search body 去掉分页）；随 E13-T06 |
+| DELETE | `/api/hospital/followup/saved-filters/{id}` | `followup:patient:view` | 随 E13-T06 |
+| GET | `/api/hospital/followup/patients/search-fields` | `followup:patient:view` | 高级检索可用字段（由表单模板 + 字段策略生成，隐藏字段不出现）；随 E13-T06 |
 
-列表行（A，C 同构另加器械列）：
+列表行（A；C 器械列随 E21 植入数据另加）：
 
 ```ts
 interface PatientRow {
-  id: string; name: string /* 已脱敏 */; patientNo: string /* 本系统编号 */; legacyNo?: string;
-  gender: 'M'|'F'|'U'; age?: number; wardName?: string; doctorName?: string;
-  dischargeDate?: string; nextVisitDate?: string; status: PatientStatus; // components.md §2
-  baselineCompleteness: number /* 0–100 */; followupCompleteness: number | null /* 无已完成记录为 null，前端显示— */;
-  device?: { type: string; model?: string }; // C
+  id: string; name: string /* 已脱敏（张*明） */; patientNo: string /* 本系统编号 = 病案号脱敏（前 2 后 2） */;
+  legacyNo?: string; gender: 'M'|'F'; age?: number /* 手术年龄：手术日期 − 出生日期（周岁） */;
+  wardName?: string; doctorName?: string; surgeryDate?: string; dischargeDate?: string;
+  nextVisitDate?: string /* pt_patient_summary.next_plan_date，E14 写入 */;
+  status: PatientStatus; // components.md §2 patient 域（ACTIVE/PAUSED/DEAD/TERMINATED/LOST/FINISHED）
+  baselineCompleteness?: number; followupCompleteness?: number | null /* 无已完成记录为 null，前端显示— */;
 }
 ```
 
-- 列表排序默认：下次随访日期升序（推断，待确认）。
-- 完整度只统计已填写的资料（A-PAT-019、C-DASH-009），来源 `pt_patient_summary`，异步刷新。
+- 列表排序默认：下次随访日期升序（E13-T04 实现口径：`next_plan_date` 空值靠后，`p.id` 稳定次序）。
+- 完整度只统计已填写的资料（A-PAT-019、C-DASH-009），来源 `pt_patient_summary`，异步刷新；列在 E13-T02 / E15 写入前为 null，前端显示「—」。
 
 ## 2. 新建、查重、编辑、删除
 
@@ -115,4 +117,5 @@ interface PatientRow {
 - 明文：每次调用审计 +1；响应头 `Cache-Control: no-store`；越范围患者 40400。
 - 查重：范围外同号只返回 `exists: true`，不泄露摘要。
 - 联系方式（E13-T03）：换号后旧版本行保留、当前版本 = 最大 version；与当前版本完全相同 40001；明文取当前电话1；审计只存脱敏摘要；越范围 40400、无 edit 40300、模块关闭 40301。
+- 列表检索（E13-T04）：病区医生看不到其他病区患者（数据范围改写）；`keyword` 姓名精确只命中同名患者（部分姓名不命中）、病案号同样精确；行内姓名 / 病案号脱敏；非法状态 / 排序白名单外 / 日期区间颠倒 40001；无 view 40300、模块关闭 40301；双租户互不可见；批量查询写 `BATCH_QUERY` 审计（aud_data_access_log）。
 - 列表与导出、首页数字使用同一范围（A-WARD-004）。

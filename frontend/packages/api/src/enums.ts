@@ -30,6 +30,16 @@ export const EXPIRE_TYPE_TEXT: Record<string, string> = {
   LONG_TERM: '长期有效',
 };
 
+/** 患者随访状态（components.md §2 patient 域；pt_patient.followup_status）。 */
+export const PATIENT_STATUS_TEXT: Record<string, string> = {
+  ACTIVE: '随访中',
+  PAUSED: '已暂停',
+  DEAD: '死亡',
+  TERMINATED: '停止',
+  LOST: '失访',
+  FINISHED: '随访结束',
+};
+
 /** 模块上架状态（PLT-MOD-001）：下架后不能再被新开通。 */
 export const MODULE_SHELF_TEXT: Record<string, string> = {
   ON: '上架',
