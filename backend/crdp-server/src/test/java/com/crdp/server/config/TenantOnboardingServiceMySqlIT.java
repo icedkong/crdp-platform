@@ -220,11 +220,15 @@ class TenantOnboardingServiceMySqlIT {
                 // （字段字典变更记录 fe_field_dict_log，followup 目录）。
                 // E11-T09 增加 V36（手术年龄派生演示字段，followup 目录）。
                 // E13-T01 增加 V37（患者表 pt_patient + 新建患者菜单授权，followup 目录）。
+                // E23-T01 增加 V38（医院 A 字段字典，followup 目录）。
+                // E13-T03 增加 V39（pt_contact / pt_status_history / pt_patient_summary +
+                // 编辑患者资料按钮授权，followup 目录）。
                 // 此处随迁移清单维护
                 List.of(
                         "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14",
                         "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26",
-                        "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38"),
+                        "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38",
+                        "39"),
                 root.queryForList(
                         "SELECT version FROM "
                                 + DB

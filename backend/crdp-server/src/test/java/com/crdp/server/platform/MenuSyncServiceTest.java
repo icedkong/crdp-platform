@@ -146,6 +146,18 @@ class MenuSyncServiceTest {
                         "followup:patient:create",
                         30,
                         "ENABLED"),
+                // E13-T03 编辑患者资料按钮（平台库 V38 同构）：患者档案菜单下的 followup 按钮
+                manifestRow(
+                        214L,
+                        21L,
+                        "BUTTON",
+                        "编辑患者资料",
+                        null,
+                        null,
+                        null,
+                        "followup:patient:edit",
+                        40,
+                        "ENABLED"),
                 // E09-T04 通知设置：followup 菜单挂在 base 的系统设置目录（30）下，
                 // 父项经 findMenuIdByRouteName 跨模块解析（MenuSyncService.resolveParentLater 回落）
                 manifestRow(

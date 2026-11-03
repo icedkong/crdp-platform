@@ -18,6 +18,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 出院登记 / 患者登记用例（E13-T01 / A-PAT-003、A-PAT-007、C-PAT-001、C-PAT-002；接口 docs/api/patient.md §2）。登记只落
@@ -54,16 +55,22 @@ public class PatientRegistrationService {
     private final PatientRegistrationGateway gateway;
     private final CryptoService crypto;
     private final AuditLogger audit;
+    private final PatientStatusHistoryService statusHistory;
+    private final PatientSummaryService summary;
 
     public PatientRegistrationService(
             PatientMapper mapper,
             PatientRegistrationGateway gateway,
             CryptoService crypto,
-            AuditLogger audit) {
+            AuditLogger audit,
+            PatientStatusHistoryService statusHistory,
+            PatientSummaryService summary) {
         this.mapper = mapper;
         this.gateway = gateway;
         this.crypto = crypto;
         this.audit = audit;
+        this.statusHistory = statusHistory;
+        this.summary = summary;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -142,7 +149,10 @@ public class PatientRegistrationService {
     /**
      * 出院登记：先全院查重（40902 阻止），再校验与写入；成功写 PATIENT_CREATE 操作审计（摘要不含明文）， 重复拒绝写 DENIED 审计（AGENTS.md
      * §5.4「被拒绝的操作」）。
+     *
+     * <p>E13-T03 起同一事务补写两行派生数据（tech-plan §7）：状态时间线初始行（登记即 ACTIVE，OQ-71②）与 当前状态摘要建行（后续提交重算的锚点）。
      */
+    @Transactional
     public CreatedView create(CreateRequest request) {
         String mrn = requireText(request.medicalRecordNo(), "请填写病案号");
         String name = requireText(request.name(), "请填写姓名");
@@ -194,6 +204,11 @@ public class PatientRegistrationService {
             log.warn("病案号并发登记冲突，按重复处理（E13-T01）");
             throw duplicateBlocked(mrn, mrnBlind);
         }
+
+        // E13-T03：状态时间线初始行（登记即随访中，OQ-71②）与当前状态摘要建行（同一事务）
+        statusHistory.recordRegistration(
+                row.getId(), LocalDate.now(), CurrentSession.requireHospital().userId());
+        summary.recompute(row.getId(), CurrentSession.requireHospital().userId());
 
         audit.append(
                 AuditEntry.operation("followup", "PATIENT_CREATE")
