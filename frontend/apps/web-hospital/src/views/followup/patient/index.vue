@@ -24,10 +24,14 @@ import {
 import MaskedField from '#/components/followup/masked-field.vue';
 import { patientsOf } from '#/reference/fixtures';
 import { useBreakpoint } from '#/reference/use-breakpoint';
+import { usePermission } from '#/reference/use-permission';
 
 defineOptions({ name: 'FollowupPatient' });
 
 const router = useRouter();
+// E13-T01：新建患者入口按权限显隐（followup:patient:create，后端仍校验）
+const { hasPermission } = usePermission();
+const canCreate = computed(() => hasPermission('followup:patient:create'));
 const { isMobile, isTablet } = useBreakpoint();
 const variant = ref<'a' | 'c'>('a');
 const keyword = ref('');
@@ -114,14 +118,24 @@ function open(row: ReferencePatient) {
     <Card :bordered="false" class="crdp-card">
       <div class="title-row">
         <h1 class="crdp-page-title">患者管理</h1>
-        <Segmented
-          v-model:value="variant"
-          data-testid="variant-switch"
-          :options="[
-            { label: '医院 A 样板', value: 'a' },
-            { label: '医院 C 样板', value: 'c' },
-          ]"
-        />
+        <Space>
+          <Segmented
+            v-model:value="variant"
+            data-testid="variant-switch"
+            :options="[
+              { label: '医院 A 样板', value: 'a' },
+              { label: '医院 C 样板', value: 'c' },
+            ]"
+          />
+          <Button
+            v-if="canCreate"
+            data-testid="create-patient"
+            type="primary"
+            @click="router.push('/followup/patient/new')"
+          >
+            + 新建患者
+          </Button>
+        </Space>
       </div>
       <Form layout="inline">
         <FormItem label="姓名/编号">

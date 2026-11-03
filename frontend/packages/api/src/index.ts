@@ -287,6 +287,27 @@ export type {
   PatientPlaintextResult,
   PatientPlaintextScene,
 } from './patient';
+export {
+  buildDuplicateCheckPayload,
+  buildRegistrationPayload,
+  canCheckDuplicate,
+  DISCHARGE_STATUS_TEXT,
+  dischargeStatusText,
+  duplicateNoticeOf,
+  validateRegistration,
+} from './patient-registration';
+export type {
+  DuplicateNotice,
+  DuplicatePatientSummary,
+  PatientCreatedResult,
+  PatientDuplicateCheckResult,
+  PatientRegistrationForm,
+  PatientRegistrationOptions,
+  PatientRegistrationPayload,
+  RegistrationErrors,
+  RegistrationOptionItem,
+  RegistrationWardOption,
+} from './patient-registration';
 
 export {
   API_ACTION_TYPE_TEXT,
