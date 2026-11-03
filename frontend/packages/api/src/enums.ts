@@ -40,6 +40,18 @@ export const PATIENT_STATUS_TEXT: Record<string, string> = {
   FINISHED: '随访结束',
 };
 
+/** 生存状态（pt_patient_summary.survival_status，最近已提交记录；E15 写入）。 */
+export const SURVIVAL_STATUS_TEXT: Record<string, string> = {
+  ALIVE: '存活',
+  DEAD: '死亡',
+  UNKNOWN: '不详',
+};
+
+export function survivalStatusText(status: null | string | undefined): string {
+  if (status === null || status === undefined || status === '') return '—';
+  return SURVIVAL_STATUS_TEXT[status] ?? status;
+}
+
 /** 模块上架状态（PLT-MOD-001）：下架后不能再被新开通。 */
 export const MODULE_SHELF_TEXT: Record<string, string> = {
   ON: '上架',

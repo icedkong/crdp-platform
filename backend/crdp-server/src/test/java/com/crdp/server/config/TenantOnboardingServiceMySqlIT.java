@@ -224,12 +224,13 @@ class TenantOnboardingServiceMySqlIT {
                 // E13-T03 增加 V39（pt_contact / pt_status_history / pt_patient_summary +
                 // 编辑患者资料按钮授权，followup 目录）。
                 // E13-T04 增加 V40（pt_patient_summary 存量补齐，followup 目录）。
+                // E13-T05 增加 V41（患者详情菜单授权，followup 目录）。
                 // 此处随迁移清单维护
                 List.of(
                         "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14",
                         "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26",
                         "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38",
-                        "39", "40"),
+                        "39", "40", "41"),
                 root.queryForList(
                         "SELECT version FROM "
                                 + DB

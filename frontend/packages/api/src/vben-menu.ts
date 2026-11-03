@@ -27,13 +27,19 @@ export function toIconifyIcon(icon?: null | string) {
   return `ant-design:${kebab}`;
 }
 
-export function menuNodeToRoute(node: MenuNode): VbenMenuRoute {
-  const children = (node.children ?? []).map((child) => menuNodeToRoute(child));
+export function menuNodeToRoute(
+  node: MenuNode,
+  parentPath?: string,
+): VbenMenuRoute {
+  const children = (node.children ?? []).map((child) =>
+    menuNodeToRoute(child, node.path),
+  );
+  const hideInMenu = Boolean(node.meta?.hideInMenu);
   const route: VbenMenuRoute = {
     component: node.component === 'LAYOUT' ? 'BasicLayout' : node.component,
     meta: {
       affixTab: node.path === '/dashboard',
-      hideInMenu: Boolean(node.meta?.hideInMenu),
+      hideInMenu,
       icon: toIconifyIcon(node.meta?.icon ?? undefined),
       order: node.meta?.order ?? 0,
       title: node.meta?.title || node.name,
@@ -41,6 +47,10 @@ export function menuNodeToRoute(node: MenuNode): VbenMenuRoute {
     name: node.name,
     path: node.path,
   };
+  // 隐藏路由（如患者详情 /followup/patient/:id）由页面动作打开：高亮落到父菜单
+  if (hideInMenu && parentPath && parentPath !== '/') {
+    route.meta.activePath = parentPath;
+  }
   if (children.length > 0) {
     route.children = children;
   }

@@ -163,6 +163,8 @@ export {
   moduleShelfText,
   moduleSyncActionText,
   PATIENT_STATUS_TEXT,
+  SURVIVAL_STATUS_TEXT,
+  survivalStatusText,
   TENANT_MODULE_NOT_OPENED_TEXT,
   TENANT_MODULE_STATUS_TEXT,
   TENANT_STATUS_OPTIONS,
@@ -288,6 +290,28 @@ export type {
   PatientPlaintextResult,
   PatientPlaintextScene,
 } from './patient';
+// E13-T05 档案概览与患者时间轴（A-PAT-004、A-PAT-013、C-PAT-010）
+export {
+  completenessText,
+  contactSlotText,
+  contactSourceText,
+  genderText,
+  latestFollowupText,
+  nextVisitText,
+  statusSourceText,
+  timelineEntryLabel,
+} from './patient-overview';
+export type {
+  PatientContactInfo,
+  PatientContactVersion,
+  PatientLatestFollowup,
+  PatientNextVisit,
+  PatientOverview,
+  PatientStatusHistoryRow,
+  PatientTimeline,
+  PatientTimelineEntry,
+  PatientTimelineKind,
+} from './patient-overview';
 export {
   buildDuplicateCheckPayload,
   buildRegistrationPayload,
