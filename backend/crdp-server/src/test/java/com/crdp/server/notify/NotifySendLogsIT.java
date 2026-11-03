@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.crdp.framework.outbox.OutboxDispatcher;
 import com.crdp.framework.tenant.TenantContext;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
@@ -99,8 +100,8 @@ class NotifySendLogsIT {
     /** 验收主链路：每条发送结果可查——条件过滤、分页、接收人展示名、批量查询审计。 */
     @Test
     void searchReturnsEachSendResultWithFilters() {
-        // 种子行的 created_at 是数据库 now()（V22 默认值），日期过滤窗口必须动态取当天
-        // （曾硬编码 2026-11-02，次日起任何分支都 0 命中）；取种前 / 查询前各取一次，
+        // 种子行的 created_at 显式取 JVM 时钟（与下方过滤窗口同一时钟源，见 seedSendLog）；
+        // 窗口动态取当天（曾硬编码 2026-11-02，次日起任何分支都 0 命中），取种前 / 查询前各取一次，
         // 跨零点执行时窗口 [种下日, 查询日] 仍覆盖种子行（无条件查询已断言总共只有 3 条）。
         LocalDate seededOn = LocalDate.now();
         long user = seedUser("itr.log.owner");
@@ -379,14 +380,17 @@ class NotifySendLogsIT {
                 () -> {
                     jdbc.update(
                             "INSERT INTO ntf_send_log (event_type, recipient_id, channel,"
-                                    + " send_status, title, detail, dedup_key) VALUES (?, ?, ?, ?,"
-                                    + " '已逾期：第 5 年随访', ?, ?)",
+                                    + " send_status, title, detail, dedup_key, created_at)"
+                                    + " VALUES (?, ?, ?, ?, '已逾期：第 5 年随访', ?, ?, ?)",
                             eventType,
                             userId,
                             channel,
                             status,
                             detail,
-                            "itr." + System.nanoTime() + "." + userId + "." + channel);
+                            "itr." + System.nanoTime() + "." + userId + "." + channel,
+                            // created_at 显式取 JVM 时钟：与过滤窗口同一时钟源，避免
+                            // 本地 MySQL 容器（UTC）与 JVM（Asia/Shanghai）跨日错位时 0 命中
+                            LocalDateTime.now());
                     return jdbc.queryForObject(
                             "SELECT MAX(id) FROM ntf_send_log WHERE recipient_id = " + userId,
                             Long.class);
