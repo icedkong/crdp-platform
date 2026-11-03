@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.crdp.framework.outbox.OutboxDispatcher;
 import com.crdp.framework.tenant.TenantContext;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
@@ -98,10 +99,15 @@ class NotifySendLogsIT {
     /** 验收主链路：每条发送结果可查——条件过滤、分页、接收人展示名、批量查询审计。 */
     @Test
     void searchReturnsEachSendResultWithFilters() {
+        // 种子行的 created_at 是数据库 now()（V22 默认值），日期过滤窗口必须动态取当天
+        // （曾硬编码 2026-11-02，次日起任何分支都 0 命中）；取种前 / 查询前各取一次，
+        // 跨零点执行时窗口 [种下日, 查询日] 仍覆盖种子行（无条件查询已断言总共只有 3 条）。
+        LocalDate seededOn = LocalDate.now();
         long user = seedUser("itr.log.owner");
         seedSendLog(user, "TASK_OVERDUE", "SMS", "FAILED", "通道未配置");
         seedSendLog(user, "TASK_OVERDUE", "INBOX", "SENT", null);
         seedSendLog(user, "DAILY_DIGEST", "SMS", "QUEUED", null);
+        LocalDate queriedOn = LocalDate.now();
 
         String adminToken = login(ADMIN);
         // 无条件：3 条
@@ -127,12 +133,16 @@ class NotifySendLogsIT {
         assertEquals("通道未配置", row.get("detail"));
         assertEquals("已逾期：第 5 年随访", row.get("title"), "标题与站内信一致，不含患者信息");
 
-        // 日期过滤（闭区间按日）
+        // 日期过滤（闭区间按日，动态取当天——种子行 created_at = 数据库 now()）
         Map<?, ?> byDate =
                 post(
                                 "/api/hospital/notify/send-logs/search",
                                 adminToken,
-                                "{\"dateFrom\":\"2026-11-02\",\"dateTo\":\"2026-11-02\"}")
+                                "{\"dateFrom\":\""
+                                        + seededOn
+                                        + "\",\"dateTo\":\""
+                                        + queriedOn
+                                        + "\"}")
                         .getBody();
         assertEquals(0, code(byDate));
         assertEquals(3, ((Number) data(byDate).get("total")).intValue(), "按当日过滤");
