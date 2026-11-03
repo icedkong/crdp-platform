@@ -27,6 +27,7 @@ import com.crdp.form.record.infra.mapper.VersionFieldRow;
 import com.crdp.form.rule.app.FieldIssue;
 import com.crdp.form.rule.app.FormConditionEngine;
 import com.crdp.form.rule.app.FormDerivedEngine;
+import com.crdp.form.rule.app.FormProgressEngine;
 import com.crdp.form.rule.app.FormRuleEngine;
 import com.crdp.form.rule.infra.mapper.FormRuleMapper;
 import com.crdp.form.rule.infra.mapper.RuleRow;
@@ -76,6 +77,7 @@ class FormServiceTest {
                     new FormRuleEngine(new FormConditionEngine()),
                     new FormConditionEngine(),
                     new FormDerivedEngine(),
+                    new FormProgressEngine(new FormConditionEngine()),
                     audit);
 
     @BeforeEach
@@ -835,6 +837,147 @@ class FormServiceTest {
                                 () ->
                                         service.stripHiddenFields(
                                                 "C_PROGRAM_FU", 9, Map.of(), Map.of()))
+                        .code(),
+                "版本不存在 40400");
+    }
+
+    // ---------------------------------------------------------------- E11-T11：已填 / 应填进度（A-PAT-021
+    // / C-PAT-018，口径 A-PAT-019）
+
+    /**
+     * 进度引擎口（业务接口 E13-T11 / E15「随记录返回」与 HTTP 端点共用）：不传 version 取当前发布版； 条件不显示的必填不计入分母；分类按 sortNo
+     * 升序、未声明分类兜底追加（label=key）；版本不存在 40400。
+     */
+    @Test
+    void computesCategoryProgressWithPat019Standard() {
+        when(fieldMapper.findForm("A_ANNUAL_FU"))
+                .thenReturn(
+                        new FormRow(
+                                1L,
+                                "A_ANNUAL_FU",
+                                "年度随访（示例）",
+                                "FOLLOWUP",
+                                2,
+                                "[{\"key\":\"overview\",\"label\":\"随访概况\",\"sortNo\":10},"
+                                        + "{\"key\":\"endpoint\",\"label\":\"随访结局\",\"sortNo\":20}]",
+                                "ENABLED"));
+        when(recordMapper.findVersion("A_ANNUAL_FU", 2))
+                .thenReturn(
+                        new FormVersionRow(
+                                20L,
+                                "A_ANNUAL_FU",
+                                2,
+                                "[{\"key\":\"overview\",\"label\":\"随访概况\",\"sortNo\":10},"
+                                        + "{\"key\":\"endpoint\",\"label\":\"随访结局\",\"sortNo\":20}]",
+                                3,
+                                null,
+                                null));
+        String death = "{\"all\":[{\"field\":\"f610\",\"op\":\"eq\",\"value\":1}]}";
+        when(recordMapper.findVersionFields("A_ANNUAL_FU", 2))
+                .thenReturn(
+                        List.of(
+                                new VersionFieldRow(
+                                        1L,
+                                        2L,
+                                        "A_ANNUAL_FU",
+                                        2,
+                                        "f601",
+                                        "fu_date",
+                                        "随访日期",
+                                        "overview",
+                                        "date",
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        true,
+                                        null,
+                                        null,
+                                        null,
+                                        false,
+                                        "json",
+                                        null,
+                                        10),
+                                new VersionFieldRow(
+                                        2L,
+                                        2L,
+                                        "A_ANNUAL_FU",
+                                        2,
+                                        "f602",
+                                        "fu_way",
+                                        "随访方式",
+                                        "overview",
+                                        "radio",
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        "yesno",
+                                        true,
+                                        null,
+                                        null,
+                                        null,
+                                        false,
+                                        "json",
+                                        null,
+                                        20),
+                                new VersionFieldRow(
+                                        3L,
+                                        2L,
+                                        "A_ANNUAL_FU",
+                                        2,
+                                        "f611",
+                                        "death_date",
+                                        "死亡日期",
+                                        "endpoint",
+                                        "date",
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        false,
+                                        death,
+                                        death,
+                                        null,
+                                        false,
+                                        "json",
+                                        null,
+                                        30)));
+
+        // 结局=死亡：死亡日期条件必填计入（未填）；指定旧版本 v1 不存在 → 40400
+        FormService.ProgressView view =
+                service.progress(
+                        "A_ANNUAL_FU",
+                        null,
+                        Map.of("f601", "2026-11-02", "f602", 1, "f610", 1),
+                        Map.of());
+        assertEquals("A_ANNUAL_FU", view.formCode());
+        assertEquals(2, view.templateVersion(), "不传 version 取当前发布版");
+        assertEquals(
+                List.of(
+                        new FormProgressEngine.CategoryProgress("overview", "随访概况", 2, 2),
+                        new FormProgressEngine.CategoryProgress("endpoint", "随访结局", 0, 1)),
+                view.categories());
+
+        // 结局=正常随访：死亡日期不显示不计入（残留值不算已填）→ endpoint 0/0
+        FormService.ProgressView normal =
+                service.progress(
+                        "A_ANNUAL_FU",
+                        2,
+                        Map.of("f601", "2026-11-02", "f602", 1, "f610", 0, "f611", "2026-10-30"),
+                        Map.of());
+        assertEquals(
+                new FormProgressEngine.CategoryProgress("endpoint", "随访结局", 0, 0),
+                normal.categories().get(1));
+
+        when(recordMapper.findVersion("A_ANNUAL_FU", 1)).thenReturn(null);
+        assertEquals(
+                40400,
+                assertThrows(
+                                ApiException.class,
+                                () -> service.progress("A_ANNUAL_FU", 1, Map.of(), Map.of()))
                         .code(),
                 "版本不存在 40400");
     }

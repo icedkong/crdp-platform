@@ -585,3 +585,131 @@ describe('e11-t05 FormRenderer：派生重算（A-FLD-005 / C-FLD-006）', () =>
     ).toBe(true);
   });
 });
+
+/* ----------------------------------------------------------------------
+ * E11-T11：表单锚点与填写进度（A-PAT-021、C-PAT-018；口径 A-PAT-019）——
+ * 渲染器为每个分类 / 分节输出稳定锚点键与模板版本（anchors()，报告单位置随 E16-T13 用），
+ * 并实时上抛「已填 / 应填」（progress 事件，给 CategoryBar / E13-T11）；
+ * 条件不显示的字段不计入（前后端同口径，共享用例 form-progress-cases.json）。
+ */
+const progressSchema: FormSchema = {
+  categories: [
+    {
+      key: 'overview',
+      label: '随访概况',
+      order: 10,
+      fields: [
+        f({ key: 'f601', label: '随访日期', type: 'date', required: true }),
+        f({
+          key: 'f602',
+          label: '随访方式',
+          type: 'radio',
+          required: true,
+          optionSet: [
+            { code: 1, label: '电话' },
+            { code: 2, label: '门诊' },
+          ],
+        }),
+      ],
+    },
+    {
+      key: 'endpoint',
+      label: '随访结局',
+      order: 20,
+      fields: [
+        f({
+          key: 'f610',
+          label: '本次结局',
+          type: 'select',
+          optionSet: [
+            { code: 0, label: '正常随访' },
+            { code: 1, label: '死亡' },
+          ],
+        }),
+        f({
+          key: 'f611',
+          label: '死亡日期',
+          type: 'date',
+          visibleWhen: { all: [{ field: 'f610', op: 'eq', value: 1 }] },
+          requiredWhen: { all: [{ field: 'f610', op: 'eq', value: 1 }] },
+        }),
+        f({
+          key: 'f612',
+          label: '联系电话（示例）',
+          type: 'text',
+          storage: 'encrypted',
+          required: true,
+        }),
+      ],
+    },
+  ],
+  code: 'A_ANNUAL_FU',
+  name: '年度随访（示例）',
+  rules: [],
+  usage: 'FOLLOWUP',
+  version: 5,
+};
+
+describe('e11-t11 FormRenderer：锚点（稳定键 + 模板版本）与已填 / 应填进度', () => {
+  it('anchors()：每个分类输出稳定锚点键、显示名与模板版本（报告单位置按版本校验）', () => {
+    const wrapper = mountRenderer({ schema: progressSchema });
+    const vm = wrapper.vm as unknown as {
+      anchors: () => Array<{
+        key: string;
+        label: string;
+        order: number;
+        templateVersion: number;
+      }>;
+    };
+    expect(vm.anchors()).toEqual([
+      { key: 'overview', label: '随访概况', order: 10, templateVersion: 5 },
+      { key: 'endpoint', label: '随访结局', order: 20, templateVersion: 5 },
+    ]);
+  });
+
+  it('progress 事件：按分类上抛已填 / 应填（必填口径 A-PAT-019），值变化实时更新', async () => {
+    const wrapper = mountRenderer({ schema: progressSchema });
+    // overview 两个必填未填；endpoint：加密列不计入、f611 条件未成立不计入 → 0/0
+    expect(wrapper.emitted('progress')?.at(-1)?.[0]).toEqual([
+      { key: 'overview', label: '随访概况', filled: 0, total: 2 },
+      { key: 'endpoint', label: '随访结局', filled: 0, total: 0 },
+    ]);
+
+    // 补齐 overview 两个必填 → 2/2；结局=死亡 → 死亡日期条件必填计入应填（未填）
+    await wrapper.setProps({
+      modelValue: { f601: '2026-11-02', f602: 1, f610: 1 },
+    });
+    expect(wrapper.emitted('progress')?.at(-1)?.[0]).toEqual([
+      { key: 'overview', label: '随访概况', filled: 2, total: 2 },
+      { key: 'endpoint', label: '随访结局', filled: 0, total: 1 },
+    ]);
+
+    // 死亡日期已填 → 1/1（filled = total 时分类条不再显示橙色，E13-T11）
+    await wrapper.setProps({
+      modelValue: { f601: '2026-11-02', f602: 1, f610: 1, f611: '2026-10-30' },
+    });
+    expect(wrapper.emitted('progress')?.at(-1)?.[0]).toEqual([
+      { key: 'overview', label: '随访概况', filled: 2, total: 2 },
+      { key: 'endpoint', label: '随访结局', filled: 1, total: 1 },
+    ]);
+  });
+
+  it('条件转隐藏的字段不计入：结局改回正常随访后，死亡日期移出应填', async () => {
+    const wrapper = mountRenderer({
+      schema: progressSchema,
+      modelValue: { f601: '2026-11-02', f602: 1, f610: 1, f611: '2026-10-30' },
+    });
+    expect(wrapper.emitted('progress')?.at(-1)?.[0]).toEqual([
+      { key: 'overview', label: '随访概况', filled: 2, total: 2 },
+      { key: 'endpoint', label: '随访结局', filled: 1, total: 1 },
+    ]);
+
+    await wrapper.setProps({
+      modelValue: { f601: '2026-11-02', f602: 1, f610: 0, f611: '2026-10-30' },
+    });
+    expect(wrapper.emitted('progress')?.at(-1)?.[0]).toEqual([
+      { key: 'overview', label: '随访概况', filled: 2, total: 2 },
+      { key: 'endpoint', label: '随访结局', filled: 0, total: 0 },
+    ]);
+  });
+});

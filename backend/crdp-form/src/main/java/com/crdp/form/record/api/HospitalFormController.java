@@ -10,10 +10,12 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Size;
+import java.util.Map;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -60,5 +62,32 @@ public class HospitalFormController {
     public ApiResponse<FormService.PublishView> publish(
             @PathVariable("code") @Size(max = 64) String code) {
         return ApiResponse.ok(service.publish(code));
+    }
+
+    /**
+     * 已填 / 应填进度请求体：data 为记录值（键 = 稳定键，值按 tech-plan §6 值编码），context 为条件上下文 （C 的 device.type
+     * 等，可省）；两者均可为空（空表单 → 全部分类只算无条件必填）。
+     */
+    public record ProgressCommand(Map<String, Object> data, Map<String, Object> context) {}
+
+    @Operation(
+            summary =
+                    "已填 / 应填进度（E11-T11 / form.md §1.3，口径 A-PAT-019）：按 version 快照的分类与字段"
+                            + "口径计算每个分类 / 分节的 filled / total（条件不显示的字段不计入）；不传 version 取当前"
+                            + "发布版；模板版本随响应返回（锚点与版本配对，报告单位置 E16-T13）；版本不存在 40400")
+    @PublicApi
+    @PostMapping("/forms/{code}/progress")
+    @RequireModule("followup")
+    public ApiResponse<FormService.ProgressView> progress(
+            @PathVariable("code") @Size(max = 64) String code,
+            @RequestParam(value = "version", required = false) @Min(1) @Max(1_000_000)
+                    Integer version,
+            @RequestBody(required = false) ProgressCommand command) {
+        return ApiResponse.ok(
+                service.progress(
+                        code,
+                        version,
+                        command == null ? null : command.data(),
+                        command == null ? null : command.context()));
     }
 }

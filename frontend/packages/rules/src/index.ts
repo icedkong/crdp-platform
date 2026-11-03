@@ -41,6 +41,11 @@ export {
   isDerivedManualEditable,
 } from './form-derived';
 export {
+  type CategoryProgress,
+  computeCategoryProgress,
+  type ProgressCategoryDecl,
+} from './form-progress';
+export {
   compareValues,
   type CrossFieldCompareParams,
   type CrossFieldRule,

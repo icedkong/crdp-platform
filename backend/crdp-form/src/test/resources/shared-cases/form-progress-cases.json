@@ -1,0 +1,210 @@
+{
+  "comment": "E11-T11 前后端共用「已填 / 应填」进度用例（components.md §10.5；A-PAT-021、C-PAT-018 / A-PAT-019 口径）：同一份文件由后端 FormProgressCaseTest 与前端 @crdp/rules（form-progress.test）各执行一遍，每个分类的 key、label、filled、total 及输出顺序完全一致才通过。口径（form.md §1.3）：应填 total = 显示中（visibleWhen 求值）且有效必填（required || requiredWhen 成立）且 storage=json 且非派生的字段；已填 filled = 其中值非空的字段（空值口径与条件 DSL 同：null / 缺键 / 空串 / 空数组 / 分量全缺的 pair_number 对象为空，0 与 false 是已答）；条件不显示的字段不计入分母（A-PAT-019「因条件不满足而不显示的字段不计入分母」）。字段全部虚构（示例），真实字段随 E23-T01 / C 字段字典录入。",
+  "shape": {
+    "fields[]": "参与计算的字段：key 稳定键、categoryKey 分类锚点键、type（可省默认 text）、storage（可省默认 json）、required（可省默认 false）、visibleWhen / requiredWhen 条件树（可省 = 无条件）",
+    "categories[]": "分类声明（fe_form_version.categories 同构 [{key,label,sortNo}]；可省 = 无声明分类）：输出按 sortNo 升序（稳定排序），label 空 / 缺回落 key",
+    "data": "表单值（键 = 稳定键，值按 tech-plan §6 值编码）",
+    "context": "条件上下文（可省）：ctx 按点路径取值（如 device.type），来源 C 器械上下文（E21-T03）等业务侧",
+    "expected[]": "CategoryProgress：key、label、filled、total，按 sortNo 升序输出；字段引用了未声明分类时按字段首现序兜底追加（label=key），与 FormService.buildSchema 的防御口径一致"
+  },
+  "cases": [
+    {
+      "name": "A-PAT-019 基线口径：必填已填 / 未填分别计数，非必填字段不计入",
+      "categories": [
+        { "key": "basic_info", "label": "病例基本信息", "sortNo": 10 },
+        { "key": "lab", "label": "实验室检查", "sortNo": 20 }
+      ],
+      "fields": [
+        { "key": "f010", "categoryKey": "basic_info", "type": "radio", "required": true },
+        { "key": "f011", "categoryKey": "basic_info", "type": "number", "required": true },
+        { "key": "f012", "categoryKey": "basic_info", "type": "number", "required": false },
+        { "key": "f020", "categoryKey": "lab", "type": "number", "required": true },
+        { "key": "f021", "categoryKey": "lab", "type": "number", "required": true }
+      ],
+      "data": { "f010": 0, "f011": 175, "f012": 70, "f021": "" },
+      "expected": [
+        { "key": "basic_info", "label": "病例基本信息", "filled": 2, "total": 2 },
+        { "key": "lab", "label": "实验室检查", "filled": 0, "total": 2 }
+      ]
+    },
+    {
+      "name": "A-FLD-004 结局=死亡：死亡日期与死亡原因显示并计入应填（条件必填）",
+      "categories": [
+        { "key": "overview", "label": "随访概况", "sortNo": 10 },
+        { "key": "endpoint", "label": "随访结局", "sortNo": 20 }
+      ],
+      "fields": [
+        { "key": "f510", "categoryKey": "overview", "type": "select", "required": true },
+        {
+          "key": "f511",
+          "categoryKey": "endpoint",
+          "type": "date",
+          "visibleWhen": { "all": [{ "field": "f510", "op": "eq", "value": 1 }] },
+          "requiredWhen": { "all": [{ "field": "f510", "op": "eq", "value": 1 }] }
+        },
+        {
+          "key": "f512",
+          "categoryKey": "endpoint",
+          "type": "text",
+          "visibleWhen": { "all": [{ "field": "f510", "op": "eq", "value": 1 }] },
+          "requiredWhen": { "all": [{ "field": "f510", "op": "eq", "value": 1 }] }
+        },
+        {
+          "key": "f513",
+          "categoryKey": "endpoint",
+          "type": "text",
+          "visibleWhen": { "all": [{ "field": "f510", "op": "eq", "value": 2 }] }
+        }
+      ],
+      "data": { "f510": 1, "f512": "急性心肌梗死（示例）" },
+      "expected": [
+        { "key": "overview", "label": "随访概况", "filled": 1, "total": 1 },
+        { "key": "endpoint", "label": "随访结局", "filled": 1, "total": 2 }
+      ]
+    },
+    {
+      "name": "A-FLD-004 结局=非死亡：死亡字段不显示不计入（残留值也不算已填）",
+      "categories": [
+        { "key": "overview", "label": "随访概况", "sortNo": 10 },
+        { "key": "endpoint", "label": "随访结局", "sortNo": 20 }
+      ],
+      "fields": [
+        { "key": "f510", "categoryKey": "overview", "type": "select", "required": true },
+        {
+          "key": "f511",
+          "categoryKey": "endpoint",
+          "type": "date",
+          "visibleWhen": { "all": [{ "field": "f510", "op": "eq", "value": 1 }] },
+          "requiredWhen": { "all": [{ "field": "f510", "op": "eq", "value": 1 }] }
+        },
+        {
+          "key": "f512",
+          "categoryKey": "endpoint",
+          "type": "text",
+          "visibleWhen": { "all": [{ "field": "f510", "op": "eq", "value": 1 }] },
+          "requiredWhen": { "all": [{ "field": "f510", "op": "eq", "value": 1 }] }
+        }
+      ],
+      "data": { "f510": 0, "f511": "2026-10-01" },
+      "expected": [
+        { "key": "overview", "label": "随访概况", "filled": 1, "total": 1 },
+        { "key": "endpoint", "label": "随访结局", "filled": 0, "total": 0 }
+      ]
+    },
+    {
+      "name": "A-FLD-004 结局未答（未答 ≠ 否）：死亡字段不显示、本次结局必填未填",
+      "categories": [
+        { "key": "overview", "label": "随访概况", "sortNo": 10 },
+        { "key": "endpoint", "label": "随访结局", "sortNo": 20 }
+      ],
+      "fields": [
+        { "key": "f510", "categoryKey": "overview", "type": "select", "required": true },
+        {
+          "key": "f511",
+          "categoryKey": "endpoint",
+          "type": "date",
+          "visibleWhen": { "all": [{ "field": "f510", "op": "eq", "value": 1 }] },
+          "requiredWhen": { "all": [{ "field": "f510", "op": "eq", "value": 1 }] }
+        }
+      ],
+      "data": {},
+      "expected": [
+        { "key": "overview", "label": "随访概况", "filled": 0, "total": 1 },
+        { "key": "endpoint", "label": "随访结局", "filled": 0, "total": 0 }
+      ]
+    },
+    {
+      "name": "空值口径与混合存储：0 / false / 单分量 pair_number 已答；派生与加密列不计入应填",
+      "categories": [
+        { "key": "basic_info", "label": "病例基本信息", "sortNo": 5 },
+        { "key": "echo", "label": "超声检查", "sortNo": 10 }
+      ],
+      "fields": [
+        { "key": "f040", "categoryKey": "basic_info", "type": "multiselect", "required": true },
+        { "key": "f041", "categoryKey": "basic_info", "type": "textarea", "required": false },
+        { "key": "f042", "categoryKey": "basic_info", "type": "boolean", "required": true },
+        { "key": "f530", "categoryKey": "echo", "type": "derived", "required": true },
+        { "key": "f531", "categoryKey": "echo", "type": "pair_number", "required": true },
+        { "key": "f532", "categoryKey": "echo", "type": "pair_number", "required": true },
+        { "key": "f533", "categoryKey": "echo", "type": "multiselect", "required": true },
+        { "key": "f534", "categoryKey": "echo", "type": "text", "storage": "encrypted", "required": true }
+      ],
+      "data": {
+        "f040": [],
+        "f041": "无特殊（示例）",
+        "f042": false,
+        "f531": { "length": 3, "width": null },
+        "f532": { "length": null, "width": null },
+        "f533": [1, 9]
+      },
+      "expected": [
+        { "key": "basic_info", "label": "病例基本信息", "filled": 1, "total": 2 },
+        { "key": "echo", "label": "超声检查", "filled": 2, "total": 3 }
+      ]
+    },
+    {
+      "name": "无必填字段的分类 0/0；字段引用未声明分类按首现序兜底追加（label=key）",
+      "categories": [{ "key": "surgery", "label": "手术信息", "sortNo": 10 }],
+      "fields": [
+        { "key": "f600", "categoryKey": "surgery", "type": "text", "required": false },
+        { "key": "f610", "categoryKey": "periop", "type": "number", "required": true },
+        { "key": "f611", "categoryKey": "periop", "type": "number", "required": true },
+        { "key": "f620", "categoryKey": "other", "type": "text", "required": true }
+      ],
+      "data": { "f600": "术式（示例）", "f610": 3, "f620": "补充（示例）" },
+      "expected": [
+        { "key": "surgery", "label": "手术信息", "filled": 0, "total": 0 },
+        { "key": "periop", "label": "periop", "filled": 1, "total": 2 },
+        { "key": "other", "label": "other", "filled": 1, "total": 1 }
+      ]
+    },
+    {
+      "name": "C-FLD-005 ctx：device.type=ICD 时 ICD 放电次数显示并计入应填",
+      "categories": [
+        { "key": "battery", "label": "电池", "sortNo": 10 },
+        { "key": "icd", "label": "ICD 项目", "sortNo": 20 }
+      ],
+      "fields": [
+        { "key": "f700", "categoryKey": "battery", "type": "number", "required": true },
+        {
+          "key": "f710",
+          "categoryKey": "icd",
+          "type": "number",
+          "required": false,
+          "visibleWhen": { "all": [{ "ctx": "device.type", "op": "in", "value": ["ICD", "CRT-D"] }] },
+          "requiredWhen": { "all": [{ "ctx": "device.type", "op": "in", "value": ["ICD", "CRT-D"] }] }
+        }
+      ],
+      "data": { "f700": 2.8 },
+      "context": { "device": { "type": "ICD" } },
+      "expected": [
+        { "key": "battery", "label": "电池", "filled": 1, "total": 1 },
+        { "key": "icd", "label": "ICD 项目", "filled": 0, "total": 1 }
+      ]
+    },
+    {
+      "name": "C-FLD-005 ctx：device.type=VVIR 时 ICD 分组隐藏不计入（残留值不算已填）",
+      "categories": [
+        { "key": "battery", "label": "电池", "sortNo": 10 },
+        { "key": "icd", "label": "ICD 项目", "sortNo": 20 }
+      ],
+      "fields": [
+        { "key": "f700", "categoryKey": "battery", "type": "number", "required": true },
+        {
+          "key": "f710",
+          "categoryKey": "icd",
+          "type": "number",
+          "required": false,
+          "visibleWhen": { "all": [{ "ctx": "device.type", "op": "in", "value": ["ICD", "CRT-D"] }] },
+          "requiredWhen": { "all": [{ "ctx": "device.type", "op": "in", "value": ["ICD", "CRT-D"] }] }
+        }
+      ],
+      "data": { "f700": 2.8, "f710": 3 },
+      "context": { "device": { "type": "VVIR" } },
+      "expected": [
+        { "key": "battery", "label": "电池", "filled": 1, "total": 1 },
+        { "key": "icd", "label": "ICD 项目", "filled": 0, "total": 0 }
+      ]
+    }
+  ]
+}

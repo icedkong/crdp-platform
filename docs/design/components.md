@@ -338,7 +338,7 @@ interface ReportLocation {
 
 ```ts
 interface CategoryBarProps {
-  items: CategoryProgress[];   // 来自表单引擎：GET .../forms/{code}/progress 或随记录返回（推断，待确认）
+  items: CategoryProgress[];   // 来自表单引擎（E11-T11 已落地，口径见 form.md §1.3）：FormRenderer 的 progress 事件实时上抛；或服务端 POST /api/hospital/form/forms/{code}/progress（「随记录返回」由 E13 / E15 业务接口附加）
   activeKey?: string;          // v-model:activeKey，滚动时由 scroll-spy 更新
   mode?: 'auto' | 'bar' | 'select'; // auto：桌面/平板 bar，手机 select
   showHighlightCount?: boolean;     // 随访分组条显示标红数
@@ -347,11 +347,11 @@ interface CategoryBarProps {
 interface CategoryProgress {
   key: string;        // 模板稳定 anchorKey
   label: string;      // 如 '病例基本信息'
-  filled: number;     // 已填必填（只计实际显示的字段）
-  total: number;      // 应填必填
-  highlightCount?: number; // 标红数（随访）
-  attachmentCount?: number; // 📎 数
-  missingRequired?: number; // 提交校验后未填必填数
+  filled: number;     // 已填必填（只计实际显示的字段；A-PAT-019 口径，条件不显示不计入——E11-T11 已随 FormRenderer progress 事件落地）
+  total: number;      // 应填必填（有效必填 = required || requiredWhen；storage=json 且非派生）
+  highlightCount?: number; // 标红数（随访，随 E17 接入）
+  attachmentCount?: number; // 📎 数（随 E16 接入）
+  missingRequired?: number; // 提交校验后未填必填数（= total − filled，随 E13-T11 接入）
 }
 // emits: jump(key), update:activeKey(key)
 ```
@@ -585,17 +585,18 @@ interface FormRendererProps {
 //   fieldBlur(key)                  — useAutoSave 本地草稿（E11-T07 落地 camelCase；模板监听 @field-blur 等价）
 //   carryOver(keys)                 — 「带入上次值」按钮带入的字段键（E11-T07）
 //   clearedHidden(keys)             — 条件变为不显示时被清空的字段（同上 camelCase；后端提交时也会清空并写字段历史）
-//   progress(items: CategoryProgress[]) — 给 CategoryBar
+//   progress(items: CategoryProgress[]) — 给 CategoryBar（E11-T11 已落地：已填 / 应填按 A-PAT-019 口径实时计算，条件不显示的字段不计入，与后端 FormProgressEngine 共享用例一致）
 //   validate(result: { ok: boolean; missingRequired: Array<{ key: string; categoryKey: string }>; hardErrors: [...] })
 //   highlight(result: Array<{ key: string; categoryKey: string; ruleId: string; message: string }>)
-// expose: validate(): Promise<ValidateResult>; scrollTo(categoryKey): void; focusFirstError(): void
+// expose: validate(): Promise<ValidateResult>; scrollTo(categoryKey): void; focusFirstError(): void; anchors(): CategoryAnchor[]（E11-T11：每个分类 / 分节的稳定锚点键 + 模板版本，报告单位置 E16-T13 用）
 ```
 
 ### 10.3 行为
 
 | 主题 | 规则 |
 |---|---|
-| 锚点 | 每个分类 / 分组输出 `id="crdp-anchor-<key>"`；分类标题 14/600，旁边「📎 n」 |
+| 锚点 | 每个分类 / 分组输出 `id="crdp-anchor-<key>"`；分类标题 14/600，旁边「📎 n」；`anchors()` 暴露每个分类的稳定锚点键与所属模板版本（E11-T11，报告单位置按版本校验） |
+| 已填 / 应填 | `progress` 事件按分类实时上抛 `filled / total`（A-PAT-019 口径：有效必填 = required \|\| requiredWhen、按条件实际显示的才计入、storage=json 且非派生；`0` 与 `false` 是已答；与后端 FormProgressEngine 共享用例一致，form.md §1.3）——给 CategoryBar / E13-T11 |
 | 布局 | 编辑：标签右对齐 140px + 冒号（平板 120，手机标签在上）；只读：右对齐 120px；字段按类型定宽（`tokens.sizes.fieldWidth`），**不随屏幕拉伸**；长文本占满一行 |
 | 数值 | `a-input-number`（`controls=false`），单位放框外；`inputmode="decimal"`；超出 hardRange 阻止保存，超出 softRange 显示橙色提示文字 |
 | 选项 | 单选：选项 ≤ 4 用 `a-radio-group`（按钮样式），否则 `a-select`（120–180px）；多选：`a-checkbox-group` 或 `a-select mode="multiple"`；互斥选项（“无”）选中时清除其他；“其他”需补充说明时出短文本 |
@@ -619,7 +620,7 @@ interface FormRendererProps {
 
 ### 10.5 共享用例
 
-条件求值、派生函数、对比规则在 `packages/rules` 与后端 Java 各一份，**同一份用例文件**（JSON，放 `backend/crdp-form/src/test/resources/shared-cases/`，前端测试按相对路径读取——已定稿），取自需求验收标准（例如：出院 − 手术 + 1；160 小时 54 分 → 160.9；EF 56 → 45 下降 11 → 标红）。范围与跨字段校验用例已随 E11-T04 落地：`shared-cases/form-validation-cases.json` 由后端 `FormRuleEngineTest` 与前端 `packages/rules/src/form-validation.test.ts` 各执行一遍，errors / warnings 逐条（key、categoryKey、rule、message）一致；条件求值已随 E11-T03 落地：`shared-cases/form-condition-cases.json` 由后端 `FormConditionEngineTest` 与前端 `packages/rules/src/form-condition.test.ts` 各执行一遍，visible / missingRequired 逐条一致（求值语义见 docs/api/form.md §2.4）；派生已随 E11-T05 落地：`shared-cases/form-derived-cases.json` 由后端 `FormDerivedEngineTest` 与前端 `packages/rules/src/form-derived.test.ts` 各执行一遍，每个派生字段的 value / status / message 逐条一致（函数库与写入闸门见 docs/api/form.md §2.6）；**三引擎组合的标准用例已随 E11-T10 落地**：`shared-cases/form-standard-cases.json` 由后端 `FormStandardCaseTest` 与前端 `packages/rules/src/form-standard.test.ts` 各执行一遍，按提交流程的标准管线（① 条件求值 visible → ② 隐藏残留值清空 clearedHidden → ③ 派生拓扑重算（清空后的数据）→ ④ 校验在「清空 + ok 计算值回写」的数据上执行、结果无效的手工派生值追加 errors rule=derived 在最后）五个结果块逐条一致——组合顺序本身是被测语义（清空先于派生、派生先于校验、掩蔽先于跨字段），见 docs/api/form.md §2.5；对比（E17）沿用同一目录。
+条件求值、派生函数、对比规则在 `packages/rules` 与后端 Java 各一份，**同一份用例文件**（JSON，放 `backend/crdp-form/src/test/resources/shared-cases/`，前端测试按相对路径读取——已定稿），取自需求验收标准（例如：出院 − 手术 + 1；160 小时 54 分 → 160.9；EF 56 → 45 下降 11 → 标红）。范围与跨字段校验用例已随 E11-T04 落地：`shared-cases/form-validation-cases.json` 由后端 `FormRuleEngineTest` 与前端 `packages/rules/src/form-validation.test.ts` 各执行一遍，errors / warnings 逐条（key、categoryKey、rule、message）一致；条件求值已随 E11-T03 落地：`shared-cases/form-condition-cases.json` 由后端 `FormConditionEngineTest` 与前端 `packages/rules/src/form-condition.test.ts` 各执行一遍，visible / missingRequired 逐条一致（求值语义见 docs/api/form.md §2.4）；派生已随 E11-T05 落地：`shared-cases/form-derived-cases.json` 由后端 `FormDerivedEngineTest` 与前端 `packages/rules/src/form-derived.test.ts` 各执行一遍，每个派生字段的 value / status / message 逐条一致（函数库与写入闸门见 docs/api/form.md §2.6）；**三引擎组合的标准用例已随 E11-T10 落地**：`shared-cases/form-standard-cases.json` 由后端 `FormStandardCaseTest` 与前端 `packages/rules/src/form-standard.test.ts` 各执行一遍，按提交流程的标准管线（① 条件求值 visible → ② 隐藏残留值清空 clearedHidden → ③ 派生拓扑重算（清空后的数据）→ ④ 校验在「清空 + ok 计算值回写」的数据上执行、结果无效的手工派生值追加 errors rule=derived 在最后）五个结果块逐条一致——组合顺序本身是被测语义（清空先于派生、派生先于校验、掩蔽先于跨字段），见 docs/api/form.md §2.5；对比（E17）沿用同一目录；**已填 / 应填进度用例已随 E11-T11 落地**：`shared-cases/form-progress-cases.json` 由后端 `FormProgressCaseTest` 与前端 `packages/rules/src/form-progress.test.ts` 各执行一遍，每个分类的 key / label / filled / total 与输出顺序逐条一致（A-PAT-019 口径见 docs/api/form.md §1.3）。
 
 ---
 

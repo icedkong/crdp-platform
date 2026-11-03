@@ -33,7 +33,7 @@
 
 ## 和规格的已知缺口
 
-- `FormRenderer` 编辑引擎已随 E11-T07 落地（`packages/form-engine`：分类布局、多选互斥、带入上次值、条件显示与校验显示）；派生重算（E11-T05）、对比标红（E17）、已填 / 应填（E11-T11）还没做。样板页暂未接入，仍用 `readonly-categories.vue` 按虚构分类连续只读展示，锚点 id 为 `crdp-anchor-<key>`。
+- `FormRenderer` 编辑引擎已随 E11-T07 落地（`packages/form-engine`：分类布局、多选互斥、带入上次值、条件显示与校验显示）；派生重算（E11-T05）、已填 / 应填与分类锚点（E11-T11：`progress` 事件 + `anchors()` 暴露）已落地；对比标红（E17）还没做。样板页暂未接入，仍用 `readonly-categories.vue` 按虚构分类连续只读展示，锚点 id 为 `crdp-anchor-<key>`。
 - 高级检索弹窗只展示规格里的逻辑表达式预览，没有条件树提交。
 - 报告单、参数趋势页签是占位说明。水印预览会画水印并监听节点被删，但没有 pdf.js。
 - 功能开关接口见 OQ-03，样板先用 fixture 上的 `features`。
