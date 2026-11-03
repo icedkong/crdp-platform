@@ -872,3 +872,34 @@ export type {
 } from './user-import';
 export { menuNodesToRoutes, menuNodeToRoute, toIconifyIcon } from './vben-menu';
 export type { VbenMenuRoute } from './vben-menu';
+export {
+  buildTransferPayload,
+  buildWardPayload,
+  emptyTransferForm,
+  emptyWardForm,
+  parseAliasInput,
+  transferTargetOptions,
+  validateTransferForm,
+  validateWardForm,
+  WARD_STATUS_TEXT,
+  WARD_TYPE_TEXT,
+  wardDisableBlockedText,
+  wardFormOf,
+  wardTypeText,
+} from './ward';
+export type {
+  PatientTransferPayload,
+  PatientTransferredResult,
+  PatientWardHistory,
+  PatientWardHistoryItem,
+  TransferWardFormState,
+  WardCreateRequest,
+  WardFormErrors,
+  WardFormState,
+  WardMembersView,
+  WardMemberView,
+  WardStatusRequest,
+  WardType,
+  WardUpdateRequest,
+  WardView,
+} from './ward';

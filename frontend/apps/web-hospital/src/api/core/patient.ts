@@ -36,6 +36,9 @@ import type {
   PatientSearchPayload,
   PatientStatusHistoryRow,
   PatientTimeline,
+  PatientTransferPayload,
+  PatientTransferredResult,
+  PatientWardHistory,
   SavedFilter,
   SavedFilterPayload,
 } from '@crdp/api';
@@ -165,4 +168,28 @@ export function updateSavedFilter(
 /** 删除个人筛选（不存在 / 他人的一律 40400）。 */
 export function deleteSavedFilter(id: string) {
   return requestClient.delete(apiPath(`/followup/saved-filters/${id}`));
+}
+
+// ---------------------------------------------------------------- 转病区与历史（E13-T08 / A-WARD-005）
+
+/**
+ * 转病区（权限 followup:patient:transfer）：只改患者归属列并追加 pt_ward_history；
+ * 原病区医生立即失去访问权（后端数据范围承担）——列表入口成功后刷新列表即可感知，
+ * 详情入口成功后返回列表（操作者本人可能已无该患者可见范围）。
+ */
+export function transferPatientWard(
+  patientId: number | string,
+  payload: PatientTransferPayload,
+) {
+  return requestClient.post<PatientTransferredResult>(
+    apiPath(`/followup/patients/${patientId}/transfer`),
+    payload,
+  );
+}
+
+/** 转病区历史（A-WARD-005「保留转病区历史」；越范围 40400）。 */
+export function fetchPatientWardHistory(patientId: number | string) {
+  return requestClient.get<PatientWardHistory>(
+    apiPath(`/followup/patients/${patientId}/ward-history`),
+  );
 }

@@ -120,6 +120,21 @@ public class MenuManifest {
                             "followup:field:edit",
                             null,
                             50),
+                    // E13-T08 / A-WARD-001、A-WARD-008：病区管理（挂 base 的系统设置目录下，平台库 V40 同构；
+                    // A-WARD-001「租户管理员维护」，内置角色只授 TENANT_ADMIN）
+                    new MenuManifestItem(
+                            "followup",
+                            "HOSPITAL",
+                            "MENU",
+                            "HospitalWard",
+                            "HospitalSystem",
+                            "病区管理",
+                            "HospitalWard",
+                            "/system/ward",
+                            "system/ward/index",
+                            "followup:ward:edit",
+                            null,
+                            33),
                     // E10-T01 / A-ATT-008、PLT-CFG-010：报告单页签下的上传按钮（平台库 V33 同构，OQ-12 权限码）
                     new MenuManifestItem(
                             "followup",
@@ -163,6 +178,21 @@ public class MenuManifest {
                             "/followup/patient/new",
                             "followup/patient/new",
                             "followup:patient:create",
+                            null,
+                            30),
+                    // E13-T08 / A-WARD-005：患者档案下的「转病区」按钮
+                    // （followup:patient:transfer，A/C 规格权限表；平台库 V40 同构）
+                    new MenuManifestItem(
+                            "followup",
+                            "HOSPITAL",
+                            "BUTTON",
+                            "followup:patient:transfer",
+                            "FollowupPatient",
+                            "转病区",
+                            null,
+                            null,
+                            null,
+                            "followup:patient:transfer",
                             null,
                             30),
                     // E13-T03 / docs/api/patient.md §6：患者档案下的「编辑患者资料」按钮

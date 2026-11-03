@@ -31,7 +31,11 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   contacts: [];
+  transfer: [];
 }>();
+
+/** E13-T08 / A-WARD-005：转病区按钮按 summary.actions（后端按权限计算）显示。 */
+const canTransfer = computed(() => props.overview.actions.includes('transfer'));
 
 const { isMobile } = useBreakpoint();
 const detailsOpen = ref(false);
@@ -107,6 +111,16 @@ const metrics = computed(() => [
         @click="emit('contacts')"
       >
         联系方式与变更记录
+      </Button>
+      <!-- A-WARD-005「患者详情 · 转病区」（pages.md §6）：actions 由后端按
+           followup:patient:transfer 计算下发 -->
+      <Button
+        v-if="canTransfer"
+        data-testid="open-transfer"
+        size="small"
+        @click="emit('transfer')"
+      >
+        转病区
       </Button>
     </div>
   </header>

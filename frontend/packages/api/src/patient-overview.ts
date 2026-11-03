@@ -48,6 +48,7 @@ export interface PatientOverview {
   surgeryDate?: null | string;
   terminated: boolean;
   visitNo?: null | string;
+  wardId?: null | number;
   wardName?: null | string;
 }
 

@@ -50,6 +50,9 @@ public class PatientOverviewService {
 
     private static final String PERM_PATIENT_EDIT = "followup:patient:edit";
 
+    /** 转病区（A-WARD-005，E13-T08）：管理动作，不受随访状态限制（终止患者的病区归属仍可调整）。 */
+    private static final String PERM_PATIENT_TRANSFER = "followup:patient:transfer";
+
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private final PatientOverviewGateway gateway;
@@ -96,6 +99,7 @@ public class PatientOverviewService {
             Integer age,
             String status,
             boolean terminated,
+            Long wardId,
             String wardName,
             String deptName,
             String responsibleName,
@@ -196,6 +200,7 @@ public class PatientOverviewService {
                 row.age(),
                 row.status(),
                 terminated,
+                row.wardId(),
                 row.wardName(),
                 row.deptName(),
                 row.responsibleName(),
@@ -271,6 +276,10 @@ public class PatientOverviewService {
         if (!terminated
                 && (codes.contains(PERM_PLAN_ENROLL) || codes.contains(PERM_PATIENT_EDIT))) {
             actions.add("stop");
+        }
+        // 转病区（E13-T08 / A-WARD-005）：管理动作，已终止患者也可调整病区归属（统计与历史回看要用）
+        if (codes.contains(PERM_PATIENT_TRANSFER)) {
+            actions.add("transfer");
         }
         return List.copyOf(actions);
     }

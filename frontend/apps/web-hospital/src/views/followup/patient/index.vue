@@ -53,6 +53,7 @@ import {
   updateSavedFilter,
 } from '#/api/core/patient';
 import AdvancedSearch from '#/components/followup/advanced-search.vue';
+import TransferWardModal from '#/components/followup/transfer-ward-modal.vue';
 import { useBreakpoint } from '#/reference/use-breakpoint';
 import { usePermission } from '#/reference/use-permission';
 
@@ -78,6 +79,7 @@ defineOptions({ name: 'FollowupPatient' });
 const router = useRouter();
 const { hasPermission } = usePermission();
 const canCreate = computed(() => hasPermission('followup:patient:create'));
+const canTransfer = computed(() => hasPermission('followup:patient:transfer'));
 const { isMobile, isTablet } = useBreakpoint();
 
 const RangePicker = DatePicker.RangePicker;
@@ -105,6 +107,20 @@ const appliedCondition = ref<ConditionGroup | null>(null);
 const savedFilters = ref<SavedFilter[]>([]);
 const renamingId = ref('');
 const renamingName = ref('');
+
+// E13-T08 / A-WARD-005：行操作「⋮ 更多 → 转病区」（pages.md §3；暂停 / 删除随 E14-T06 / E13-T09）
+const transferOpen = ref(false);
+const transferTarget = ref<null | PatientSearchRow>(null);
+
+function openTransfer(row: PatientSearchRow) {
+  transferTarget.value = row;
+  transferOpen.value = true;
+}
+
+/** 转病区成功：刷新列表——原病区医生立即失去访问权，行随之消失或病区列变化。 */
+function handleTransferred() {
+  void load();
+}
 
 const appliedConditionCount = computed(() =>
   conditionRowCount(
@@ -525,6 +541,18 @@ function handleEmptyAction() {
         @save-as="handleSaveAs"
       />
 
+      <TransferWardModal
+        v-model:open="transferOpen"
+        :current-ward-id="null"
+        :label="
+          transferTarget
+            ? `${transferTarget.name} · ${transferTarget.patientNo}`
+            : null
+        "
+        :patient-id="transferTarget?.id ?? ''"
+        @success="handleTransferred"
+      />
+
       <!-- 手机：卡片列表（姓名、状态、下次随访、病区；pages.md §3） -->
       <div v-if="isMobile" class="cards">
         <Card
@@ -625,15 +653,32 @@ function handleEmptyAction() {
                 : `${record.followupCompleteness}%`
             }}
           </span>
-          <Button
-            v-else-if="column.dataIndex === 'action'"
-            :data-testid="`open-${record.id}`"
-            size="small"
-            type="link"
-            @click="openDetail(record)"
-          >
-            详情
-          </Button>
+          <Space v-else-if="column.dataIndex === 'action'">
+            <Button
+              :data-testid="`open-${record.id}`"
+              size="small"
+              type="link"
+              @click="openDetail(record)"
+            >
+              详情
+            </Button>
+            <Dropdown v-if="canTransfer">
+              <Button data-testid="row-more" size="small" type="link">
+                ⋮
+              </Button>
+              <template #overlay>
+                <Menu>
+                  <MenuItem
+                    key="transfer"
+                    :data-testid="`transfer-${record.id}`"
+                    @click="openTransfer(record)"
+                  >
+                    转病区
+                  </MenuItem>
+                </Menu>
+              </template>
+            </Dropdown>
+          </Space>
         </template>
         <template v-if="isTablet" #expandedRowRender="{ record }">
           <div>
