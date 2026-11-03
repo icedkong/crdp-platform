@@ -135,6 +135,58 @@ public interface PatientMapper {
     /** 在册患者 id 与当前病区行。 */
     record WardRef(Long id, Long wardId) {}
 
+    // ---------------------------------------------------------------- 软删除与恢复（E13-T09 /
+    // A-PAT-012、A-NFR-008）
+
+    /** 已软删患者行（恢复入口定位用；只取存在性 / 病案号盲索引 / 删除原因，不输出患者数据）。 */
+    record DeletedRow(Long id, String mrnBlind, String deleteReason) {}
+
+    /**
+     * 按 id 取已软删行（E13-T09 恢复入口）。@IgnoreScope 理由：软删后行已不可见（全部在册查询都带 deleted =
+     * 0），恢复入口必须能定位不可见行（A-PAT-012「可由租户管理员恢复」）；本查询不输出任何患者 明文或脱敏数据，病案号盲索引只用于恢复前的占位冲突检查。
+     */
+    @IgnoreScope(
+            reason =
+                    "恢复软删患者（A-PAT-012）必须能定位不可见行；只取 id / 病案号盲索引 / 删除原因，"
+                            + "不输出患者数据，冲突检查口径与登记查重（findLiveIdByMrnBlind）一致")
+    @Select(
+            """
+            SELECT id, mrn_blind AS mrnBlind, delete_reason AS deleteReason
+            FROM pt_patient
+            WHERE id = #{id} AND deleted = 1
+            LIMIT 1
+            """)
+    DeletedRow findDeletedById(@Param("id") long id);
+
+    /**
+     * 软删除（A-PAT-012、A-NFR-008 只软删）：置删除标记并令 delete_token = id 释放病案号 （uk_pt_patient_mrn
+     * 允许软删后病案号复用），全部数据保留；乐观锁版本随变更递增。 返回 0 表示已不在册（并发删除 / 已删）。
+     */
+    @Update(
+            """
+            UPDATE pt_patient
+            SET deleted = 1, delete_token = id, delete_reason = #{reason},
+                updated_by = #{updatedBy}, version = version + 1
+            WHERE id = #{id} AND deleted = 0
+            """)
+    int softDelete(
+            @Param("id") long id,
+            @Param("reason") String reason,
+            @Param("updatedBy") long updatedBy);
+
+    /**
+     * 恢复（A-PAT-012）：清删除标记与 token、清删除原因；病案号被新在册患者占用时由 uk_pt_patient_mrn 兜底 （服务层先行冲突检查给 40902）。返回 0
+     * 表示已被恢复。
+     */
+    @Update(
+            """
+            UPDATE pt_patient
+            SET deleted = 0, delete_token = 0, delete_reason = NULL,
+                updated_by = #{updatedBy}, version = version + 1
+            WHERE id = #{id} AND deleted = 1
+            """)
+    int restore(@Param("id") long id, @Param("updatedBy") long updatedBy);
+
     /** 转病区（A-WARD-005）：只改归属列并递增乐观锁版本；任务 / 附件经 patient_id 关联患者自动随迁。 */
     @Update(
             """

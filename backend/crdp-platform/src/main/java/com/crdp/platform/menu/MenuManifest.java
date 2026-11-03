@@ -210,6 +210,36 @@ public class MenuManifest {
                             "followup:patient:edit",
                             null,
                             40),
+                    // E13-T09 / A-PAT-009：患者档案下的「审批患者导出」按钮（租户普通用户导出由
+                    // 租户管理员审批，platform-spec §9；平台库 V41 同构）
+                    new MenuManifestItem(
+                            "followup",
+                            "HOSPITAL",
+                            "BUTTON",
+                            "followup:patient:export:approve",
+                            "FollowupPatient",
+                            "审批患者导出",
+                            null,
+                            null,
+                            null,
+                            "followup:patient:export:approve",
+                            null,
+                            25),
+                    // E13-T09 / A-PAT-012、C-PAT-015：患者档案下的「删除患者」按钮（软删除，
+                    // 敏感权限；C 规格权限表原有码，A 按 OQ-17 同名新增；平台库 V41 同构）
+                    new MenuManifestItem(
+                            "followup",
+                            "HOSPITAL",
+                            "BUTTON",
+                            "followup:patient:delete",
+                            "FollowupPatient",
+                            "删除患者",
+                            null,
+                            null,
+                            null,
+                            "followup:patient:delete",
+                            null,
+                            50),
                     // E13-T05 / A-PAT-004、A-PAT-013、C-PAT-010：患者详情隐藏路由（患者档案下，
                     // 平台库 V39 同构；perm_code 为 NULL——followup:patient:view 已由患者档案菜单
                     // 持有（uk_plt_menu_perm 全库唯一），接口校验在 @RequiresPermission）

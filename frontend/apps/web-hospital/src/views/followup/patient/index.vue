@@ -53,6 +53,8 @@ import {
   updateSavedFilter,
 } from '#/api/core/patient';
 import AdvancedSearch from '#/components/followup/advanced-search.vue';
+import DeletePatientModal from '#/components/followup/delete-patient-modal.vue';
+import PatientExportModal from '#/components/followup/patient-export-modal.vue';
 import TransferWardModal from '#/components/followup/transfer-ward-modal.vue';
 import { useBreakpoint } from '#/reference/use-breakpoint';
 import { usePermission } from '#/reference/use-permission';
@@ -75,11 +77,21 @@ defineOptions({ name: 'FollowupPatient' });
  * 条件树为结构化 JSON，字段只能选 search-fields 目录（字段字典生成）中的字段，
  * 后端编译为参数化查询并自动追加病区条件（不允许原始 SQL）；个人筛选仅本人可见。
  * C 的器械列随 E21 植入数据开放；手机高级检索抽屉随 E24-T03。
+ *
+ * E13-T09 / A-PAT-009、A-PAT-012 · 导出与删除：顶部「导出」提交导出作业
+ * （租户管理员免审批、普通用户待审批，文件含水印与水印码、姓名/病案号脱敏）；
+ * 行操作「⋮ 更多 → 删除」软删除（原因必填 + 二次认证，数据保留可恢复）。
  */
 const router = useRouter();
 const { hasPermission } = usePermission();
 const canCreate = computed(() => hasPermission('followup:patient:create'));
 const canTransfer = computed(() => hasPermission('followup:patient:transfer'));
+// E13-T09 / A-PAT-009、A-PAT-012：导出（敏感权限，走审批作业）与删除患者（软删除，敏感）
+const canExport = computed(() => hasPermission('followup:patient:export'));
+const canDelete = computed(() => hasPermission('followup:patient:delete'));
+const canApproveExport = computed(() =>
+  hasPermission('followup:patient:export:approve'),
+);
 const { isMobile, isTablet } = useBreakpoint();
 
 const RangePicker = DatePicker.RangePicker;
@@ -108,13 +120,33 @@ const savedFilters = ref<SavedFilter[]>([]);
 const renamingId = ref('');
 const renamingName = ref('');
 
-// E13-T08 / A-WARD-005：行操作「⋮ 更多 → 转病区」（pages.md §3；暂停 / 删除随 E14-T06 / E13-T09）
+// E13-T08 / A-WARD-005：行操作「⋮ 更多 → 转病区」（pages.md §3；暂停随 E14-T06）
 const transferOpen = ref(false);
 const transferTarget = ref<null | PatientSearchRow>(null);
+
+// E13-T09 / A-PAT-009：列表「导出」走导出作业与审批（PLT-AUD-007，pages.md §3）
+const exportOpen = ref(false);
+
+// E13-T09 / A-PAT-012：行操作「⋮ 更多 → 删除」（pages.md §3：红色 + 确认 + 原因，软删除）
+const deleteOpen = ref(false);
+const deleteTarget = ref<null | PatientSearchRow>(null);
 
 function openTransfer(row: PatientSearchRow) {
   transferTarget.value = row;
   transferOpen.value = true;
+}
+
+function openDelete(row: PatientSearchRow) {
+  deleteTarget.value = row;
+  deleteOpen.value = true;
+}
+
+/** 删除成功：行已不可见（软删除），刷新列表。 */
+function handleDeleted(patientId: string) {
+  if (deleteTarget.value?.id === patientId) {
+    deleteTarget.value = null;
+  }
+  void load();
 }
 
 /** 转病区成功：刷新列表——原病区医生立即失去访问权，行随之消失或病区列变化。 */
@@ -372,14 +404,23 @@ function handleEmptyAction() {
     <Card :bordered="false" class="crdp-card">
       <div class="title-row">
         <h1 class="crdp-page-title">患者管理</h1>
-        <Button
-          v-if="canCreate"
-          data-testid="create-patient"
-          type="primary"
-          @click="router.push('/followup/patient/new')"
-        >
-          + 新建患者
-        </Button>
+        <Space>
+          <Button
+            v-if="canExport"
+            data-testid="patient-export"
+            @click="exportOpen = true"
+          >
+            导出
+          </Button>
+          <Button
+            v-if="canCreate"
+            data-testid="create-patient"
+            type="primary"
+            @click="router.push('/followup/patient/new')"
+          >
+            + 新建患者
+          </Button>
+        </Space>
       </div>
 
       <Form class="search-bar" layout="inline" @submit.prevent>
@@ -553,6 +594,26 @@ function handleEmptyAction() {
         @success="handleTransferred"
       />
 
+      <!-- 导出（A-PAT-009）：按当前筛选 + 高级检索提交导出作业；租户管理员免审批，普通用户待审批 -->
+      <PatientExportModal
+        v-model:open="exportOpen"
+        :advanced-condition="appliedCondition"
+        :can-approve="canApproveExport"
+        :filters="appliedFilters"
+      />
+
+      <!-- 删除（A-PAT-012）：软删除 + 原因必填 + 二次认证；成功后刷新列表 -->
+      <DeletePatientModal
+        v-model:open="deleteOpen"
+        :label="
+          deleteTarget
+            ? `${deleteTarget.name} · ${deleteTarget.patientNo}`
+            : null
+        "
+        :patient-id="deleteTarget?.id ?? ''"
+        @success="handleDeleted"
+      />
+
       <!-- 手机：卡片列表（姓名、状态、下次随访、病区；pages.md §3） -->
       <div v-if="isMobile" class="cards">
         <Card
@@ -662,18 +723,28 @@ function handleEmptyAction() {
             >
               详情
             </Button>
-            <Dropdown v-if="canTransfer">
+            <Dropdown v-if="canTransfer || canDelete">
               <Button data-testid="row-more" size="small" type="link">
                 ⋮
               </Button>
               <template #overlay>
                 <Menu>
                   <MenuItem
+                    v-if="canTransfer"
                     key="transfer"
                     :data-testid="`transfer-${record.id}`"
                     @click="openTransfer(record)"
                   >
                     转病区
+                  </MenuItem>
+                  <MenuItem
+                    v-if="canDelete"
+                    key="delete"
+                    :data-testid="`delete-${record.id}`"
+                    class="danger-item"
+                    @click="openDelete(record)"
+                  >
+                    删除
                   </MenuItem>
                 </Menu>
               </template>
@@ -760,5 +831,10 @@ function handleEmptyAction() {
 
 .person-name {
   font-weight: 600;
+}
+
+/* 行操作「删除」红色（pages.md §3） */
+.danger-item {
+  color: #ff4d4f;
 }
 </style>

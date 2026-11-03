@@ -142,8 +142,73 @@ public class PatientSearchService {
             throw invalid("pageSize（1–" + PAGE_SIZE_MAX + "）");
         }
         Filters filters = safe.filters() == null ? emptyFilters() : safe.filters();
-        String keyword = normalizeKeyword(safe.keyword());
-        String orderClause = orderClauseOf(safe.sort());
+        SearchCriteriaBuilt built = criteriaOf(safe);
+
+        int offset = (pageNo - 1) * pageSize;
+        List<PatientRowView> items = new ArrayList<>();
+        for (PatientSearchMapper.PatientRowRaw row :
+                gateway.search(built.criteria(), offset, pageSize)) {
+            items.add(toView(row));
+        }
+        long total = gateway.count(built.criteria());
+
+        audit.append(
+                AuditEntry.dataAccess("followup", "BATCH_QUERY")
+                        .objectType("PATIENT")
+                        .description("检索患者列表")
+                        .recordCount(total)
+                        .queryDigest(digest(built.keyword(), filters, built.advanced()))
+                        .build());
+        return new PatientPage(items, total, pageNo, pageSize);
+    }
+
+    // ---------------------------------------------------------------- 导出行（E13-T09 / A-PAT-009）
+
+    /**
+     * 导出查询：与列表同一筛选面与高级检索条件树（A-PAT-009「按当前筛选导出」）。 不含检索词
+     * keyword——检索词可能是患者姓名，与保存的筛选（fu_saved_filter）同口径不落库、不进导出条件。
+     */
+    public record ExportQuery(Filters filters, JsonNode condition) {}
+
+    /** 提交导出时只校验不取数（非法筛选 / 目录外字段 / 越限条件树 40001），条件固化后审批重放。 */
+    public void validateForExport(ExportQuery query) {
+        criteriaOf(exportRequest(query));
+    }
+
+    /**
+     * 导出行（生成时调用）：申请人数据范围内（调用线程会话承担数据范围改写）， 最多 {@code limit} 行，姓名 / 病案号脱敏输出（OQ-20：MASKED 字段导出脱敏值）。
+     * 不写 BATCH_QUERY 审计——导出提交与下载已有 DATA_ACCESS 审计（EXPORT / DOWNLOAD）。
+     */
+    public List<PatientRowView> exportRows(ExportQuery query, int limit) {
+        if (limit < 1) {
+            throw invalid("limit");
+        }
+        SearchCriteriaBuilt built = criteriaOf(exportRequest(query));
+        List<PatientRowView> items = new ArrayList<>();
+        for (PatientSearchMapper.PatientRowRaw row : gateway.search(built.criteria(), 0, limit)) {
+            items.add(toView(row));
+        }
+        return items;
+    }
+
+    private static SearchRequest exportRequest(ExportQuery query) {
+        ExportQuery safe = query == null ? new ExportQuery(null, null) : query;
+        return new SearchRequest(null, null, null, null, safe.filters(), safe.condition());
+    }
+
+    /** 条件装配产物：检索条件 + 摘要要素（审计摘要用 keyword 布尔与条件行数，不落明文）。 */
+    private record SearchCriteriaBuilt(
+            PatientSearchMapper.SearchCriteria criteria,
+            String keyword,
+            AdvancedConditionCompiler.Compiled advanced) {}
+
+    /** 列表与导出共用的条件装配与校验（检索词盲索引、筛选校验、高级条件树编译、排序白名单）。 */
+    private SearchCriteriaBuilt criteriaOf(SearchRequest safe) {
+        SearchRequest request =
+                safe == null ? new SearchRequest(null, null, null, null, null, null) : safe;
+        Filters filters = request.filters() == null ? emptyFilters() : request.filters();
+        String keyword = normalizeKeyword(request.keyword());
+        String orderClause = orderClauseOf(request.sort());
 
         String nameBlind = null;
         String mrnBlind = null;
@@ -161,7 +226,7 @@ public class PatientSearchService {
 
         // 高级检索条件树：目录（字典生成）编译为参数化片段；无条件时 where=null 不追加
         AdvancedConditionCompiler.Compiled advanced =
-                AdvancedConditionCompiler.compile(safe.condition(), searchFields.specs());
+                AdvancedConditionCompiler.compile(request.condition(), searchFields.specs());
 
         PatientSearchMapper.SearchCriteria criteria =
                 new PatientSearchMapper.SearchCriteria(
@@ -182,22 +247,7 @@ public class PatientSearchService {
                         orderClause,
                         advanced.where(),
                         advanced.binds());
-
-        int offset = (pageNo - 1) * pageSize;
-        List<PatientRowView> items = new ArrayList<>();
-        for (PatientSearchMapper.PatientRowRaw row : gateway.search(criteria, offset, pageSize)) {
-            items.add(toView(row));
-        }
-        long total = gateway.count(criteria);
-
-        audit.append(
-                AuditEntry.dataAccess("followup", "BATCH_QUERY")
-                        .objectType("PATIENT")
-                        .description("检索患者列表")
-                        .recordCount(total)
-                        .queryDigest(digest(keyword, filters, advanced))
-                        .build());
-        return new PatientPage(items, total, pageNo, pageSize);
+        return new SearchCriteriaBuilt(criteria, keyword, advanced);
     }
 
     /** 筛选候选（列表页病区下拉；随访状态等枚举文案由前端 enums 维护）。 */
