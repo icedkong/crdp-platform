@@ -39,5 +39,8 @@
     "pinia": "catalog:",
     "vue": "catalog:",
     "vue-router": "catalog:"
+  },
+  "devDependencies": {
+    "@vue/test-utils": "catalog:"
   }
 }

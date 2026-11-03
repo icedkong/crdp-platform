@@ -10,12 +10,13 @@
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| POST | `/api/hospital/followup/patients/search` | `followup:patient:view` | **E13-T04 已实现**（简单检索与筛选）。body 见 README §2.4；`keyword` 按姓名 / 病案号**盲索引精确匹配**（一个检索词 OR 命中两个字段，不做模糊，A-PAT-002「病案号、姓名精确查找」）；`filters`：`wardIds[], deptIds[], status[], doctorId, dischargeStatus, patientType, surgeryFrom/To, dischargeFrom/To, nextVisitFrom/To`（术者 / 手术方式随 E13-T02 表单数据、是否有逾期任务随 E15、C 器械类筛选随 E21）；`sort` 白名单 `nextVisitDate / dischargeDate`，默认下次随访日期升序；越范围（病区 / 科室 / 本人范围外）行不可见（@DataScope patient，验收「按病区隔离」）；行内 `name` / `patientNo` 只返回脱敏值；每次检索写 `BATCH_QUERY` 数据访问审计（queryDigest 只记筛选面，不含检索词明文） |
+| POST | `/api/hospital/followup/patients/search` | `followup:patient:view` | **E13-T04 已实现**（简单检索与筛选）；**E13-T06 已并入高级检索条件树**（body 增加 `condition`，结构与 components.md §11.2 一致；字段必须出现在 search-fields 目录，后端编译为参数化查询——取值全部预编译参数位、列名只来自白名单绑定，条件树不含病区条件，由数据范围拦截器自动追加，A-NFR-009；嵌套 ≤ 3 层、条件 ≤ 30 行）。body 见 README §2.4；`keyword` 按姓名 / 病案号**盲索引精确匹配**（一个检索词 OR 命中两个字段，不做模糊，A-PAT-002「病案号、姓名精确查找」）；`filters`：`wardIds[], deptIds[], status[], doctorId, dischargeStatus, patientType, surgeryFrom/To, dischargeFrom/To, nextVisitFrom/To`（术者 / 手术方式随 E13-T02 表单数据、是否有逾期任务随 E15、C 器械类筛选随 E21）；`sort` 白名单 `nextVisitDate / dischargeDate`，默认下次随访日期升序；越范围（病区 / 科室 / 本人范围外）行不可见（@DataScope patient，验收「按病区隔离」）；行内 `name` / `patientNo` 只返回脱敏值；每次检索写 `BATCH_QUERY` 数据访问审计（queryDigest 只记筛选面，不含检索词明文） |
 | GET | `/api/hospital/followup/patients/filter-options` | `followup:patient:view` | **E13-T04 已实现**。筛选候选：`{ wards: [{id,name}] }`（启用病区；随访状态等枚举文案由前端 enums 维护） |
-| GET | `/api/hospital/followup/saved-filters` | `followup:patient:view` | 个人筛选（只属于本人）；随 E13-T06 |
-| POST | `/api/hospital/followup/saved-filters` | `followup:patient:view` | `{ name, payload }`（payload = search body 去掉分页）；随 E13-T06 |
-| DELETE | `/api/hospital/followup/saved-filters/{id}` | `followup:patient:view` | 随 E13-T06 |
-| GET | `/api/hospital/followup/patients/search-fields` | `followup:patient:view` | 高级检索可用字段（由表单模板 + 字段策略生成，隐藏字段不出现）；随 E13-T06 |
+| GET | `/api/hospital/followup/saved-filters` | `followup:patient:view` | **E13-T06 已实现**。本人筛选清单（新在前）：`{ items: [{ id, name, payload, updatedAt }] }`，仅本人可见（fu_saved_filter，V42；每用户 ≤ 20 条） |
+| POST | `/api/hospital/followup/saved-filters` | `followup:patient:view` | **E13-T06 已实现**。`{ name, payload }`；payload = `{ filters?, condition? }`（**不含检索词 keyword**——检索词可能是患者姓名，与「检索词不写 URL / 审计不存明文」同口径不落库）；condition 保存时即按字段目录编译校验，未知键 / 目录外字段 40001；写 `SAVED_FILTER_CREATE` OPERATION 审计 |
+| PUT | `/api/hospital/followup/saved-filters/{id}` | `followup:patient:view` | **E13-T06 已实现**。修改（A-PAT-015「可命名、修改」）：`{ name?, payload? }` 至少一项（重命名 / 覆盖条件，校验同 POST）；写 `SAVED_FILTER_UPDATE` 审计 |
+| DELETE | `/api/hospital/followup/saved-filters/{id}` | `followup:patient:view` | **E13-T06 已实现**。删除本人筛选；不存在 / 他人的一律 40400；写 `SAVED_FILTER_DELETE` 审计 |
+| GET | `/api/hospital/followup/patients/search-fields` | `followup:patient:view` | **E13-T06 已实现**。高级检索字段目录 `{ fields: [{ field, label, type, categoryKey, categoryLabel, unit, ops, options, common }] }`：由字段字典（fe_field，BASELINE 表单、ENABLED、非敏感、storage=column）∩ 代码内列绑定白名单生成——**只有字典字段且存储已落地（pt_patient 实体列）的字段出现**（JSON 分节字段随 E13-T02、植入字段随 E21 扩绑定）；性别按存储口径 M=男 / F=女，病区选项 = 启用病区（值为 ward.id），出院状态 = 选项集启用项（1–3）；敏感加密字段（姓名 / 病案号 / 电话）不进目录，检索走 keyword 盲索引 |
 
 列表行（A；C 器械列随 E21 植入数据另加）：
 
@@ -119,4 +120,5 @@ interface PatientRow {
 - 联系方式（E13-T03）：换号后旧版本行保留、当前版本 = 最大 version；与当前版本完全相同 40001；明文取当前电话1；审计只存脱敏摘要；越范围 40400、无 edit 40300、模块关闭 40301。
 - 列表检索（E13-T04）：病区医生看不到其他病区患者（数据范围改写）；`keyword` 姓名精确只命中同名患者（部分姓名不命中）、病案号同样精确；行内姓名 / 病案号脱敏；非法状态 / 排序白名单外 / 日期区间颠倒 40001；无 view 40300、模块关闭 40301；双租户互不可见；批量查询写 `BATCH_QUERY` 审计（aud_data_access_log）。
 - 概览与时间轴（E13-T05）：概览姓名 / 病案号只含脱敏值；派生列（完整度 / nextVisit / latestFollowup）在写入方（E13-T02 / E14 / E15）落地前为 null，前端显示占位；已终止患者 `terminated=true` 且 actions 无 `unplanned` / `contact` / `stop`；时间轴出院节点与状态事件按时间排序、登记初始行不重复展示；越范围 / 不存在 40400（summary 与 timeline 同口径）；无 view 40300、模块关闭 40301；双租户互不可见；纯概览读取不写审计（与查重 / 状态历史同口径，批量查询与明文查看才有 DATA_ACCESS 审计）。
+- 高级检索与保存的筛选（E13-T06）：search-fields 目录只含字典 + 列绑定双命中的字段（敏感 / JSON 存储字段不出现）；条件树检索命中预期患者且**注入样例作为取值只做参数比较**（不生效，A-NFR-009 参数化）；目录外字段 / 白名单外运算符 / 选项外取值 / 超层超行 40001；病区隔离对条件树同样生效（另一病区患者不可见，即使条件放行）；保存的筛选仅本人可见（第二用户清单为空、删他人 40400）、检索词 keyword 被拒、增改删写 OPERATION 审计；无 view 40300、模块关闭 40301（目录与个人筛选同口径）。
 - 列表与导出、首页数字使用同一范围（A-WARD-004）。
