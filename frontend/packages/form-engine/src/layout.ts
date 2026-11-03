@@ -30,6 +30,32 @@ export function anchorId(key: string): string {
 }
 
 /**
+ * 分类 / 分节锚点（E11-T11 / A-PAT-021、C-PAT-018）：每个分类输出稳定锚点键与
+ * 所属模板版本——报告单位置（A-ATT-002：锚点、锚点所属模板版本；E16-T13 按版本校验）
+ * 与分类条点击定位（E13-T11）都用它；改显示名不影响跳转与报告单位置（A-PAT-021）。
+ */
+export interface CategoryAnchor {
+  /** 模板稳定锚点键（`crdp-anchor-<key>` 的 key 部分）。 */
+  key: string;
+  label: string;
+  order: number;
+  /** 锚点所属模板版本（FormSchema.version；报告单位置校验锚点须在当前模板版本内）。 */
+  templateVersion: number;
+}
+
+/** 全部分类锚点（按模板 order 升序）；模板版本取 schema.version，整表单一致。 */
+export function categoryAnchors(
+  schema: Pick<FormSchema, 'categories' | 'version'>,
+): CategoryAnchor[] {
+  return layoutCategories(schema).map(({ key, label, order }) => ({
+    key,
+    label,
+    order,
+    templateVersion: schema.version,
+  }));
+}
+
+/**
  * 分类布局：按 order 升序（稳定），字段按模板顺序平铺挂上 categoryKey。
  * 分类 key 或字段缺失时防御跳过（坏模板不炸渲染）。
  */

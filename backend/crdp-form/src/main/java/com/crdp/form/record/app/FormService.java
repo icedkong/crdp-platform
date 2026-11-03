@@ -13,6 +13,7 @@ import com.crdp.form.record.infra.mapper.VersionFieldRow;
 import com.crdp.form.rule.app.FieldIssue;
 import com.crdp.form.rule.app.FormConditionEngine;
 import com.crdp.form.rule.app.FormDerivedEngine;
+import com.crdp.form.rule.app.FormProgressEngine;
 import com.crdp.form.rule.app.FormRuleEngine;
 import com.crdp.form.rule.app.RuleResult;
 import com.crdp.form.rule.infra.mapper.FormRuleMapper;
@@ -55,6 +56,9 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>E11-T05（A-FLD-005 / C-FLD-006）：写入闸门追加<b>派生重算</b>（tech-plan §6「后端保存时再算一遍并以后端结果为准」）——
  * 来源齐全以计算值为准、来源缺失保留手工值、结果无效的手工值 42200（{@link FormDerivedEngine}）。
+ *
+ * <p>E11-T11（A-PAT-021 / C-PAT-018，口径 A-PAT-019）：{@link #progress(String, Integer, Map, Map)} 按分类 /
+ * 分节汇总 <b>已填 / 应填</b>（{@link FormProgressEngine}，与前端渲染器 progress 事件同一口径、共享用例锁定）。
  */
 @Service
 public class FormService {
@@ -66,6 +70,7 @@ public class FormService {
     private final FormRuleEngine ruleEngine;
     private final FormConditionEngine conditionEngine;
     private final FormDerivedEngine derivedEngine;
+    private final FormProgressEngine progressEngine;
     private final AuditLogger audit;
     private final ObjectMapper json = new ObjectMapper();
 
@@ -77,6 +82,7 @@ public class FormService {
             FormRuleEngine ruleEngine,
             FormConditionEngine conditionEngine,
             FormDerivedEngine derivedEngine,
+            FormProgressEngine progressEngine,
             AuditLogger audit) {
         this.fieldMapper = fieldMapper;
         this.recordMapper = recordMapper;
@@ -85,6 +91,7 @@ public class FormService {
         this.ruleEngine = ruleEngine;
         this.conditionEngine = conditionEngine;
         this.derivedEngine = derivedEngine;
+        this.progressEngine = progressEngine;
         this.audit = audit;
     }
 
@@ -179,6 +186,49 @@ public class FormService {
         int resolved = version == null ? form.currentVersion() : version;
         FormVersionRow snapshot = requireVersion(form, resolved);
         return buildSchema(form, snapshot, recordMapper.findVersionFields(formCode, resolved));
+    }
+
+    // ---------------------------------------------------------------- 已填 / 应填进度（E11-T11 /
+    // A-PAT-021、C-PAT-018）
+
+    /**
+     * 已填 / 应填进度（口径 A-PAT-019，见 {@link FormProgressEngine}）：HTTP 端点 POST /forms/{code}/progress 与
+     * 业务接口（E13-T11 / E15「随记录返回」、完整度统计）共用本口。 version 省略取当前发布版；按该版本快照的分类与字段口径 计算（旧版本可读）；data 为记录值（键 =
+     * 稳定键）、context 为条件上下文（C 的 device.* 等），均可为空。
+     */
+    public ProgressView progress(
+            String formCode,
+            Integer version,
+            Map<String, Object> data,
+            Map<String, Object> context) {
+        FormRow form = requireForm(formCode);
+        int resolved = version == null ? form.currentVersion() : version;
+        FormVersionRow snapshot = requireVersion(form, resolved);
+        List<VersionFieldRow> fields = recordMapper.findVersionFields(formCode, resolved);
+        List<FormProgressEngine.Category> categories = progressCategories(snapshot.categories());
+        return new ProgressView(
+                formCode,
+                snapshot.version(),
+                progressEngine.progress(fields, categories, data, context));
+    }
+
+    /** 分类进度视图（formCode + templateVersion 供调用方把锚点与模板版本配对，E16-T13 报告单位置校验）。 */
+    public record ProgressView(
+            String formCode,
+            int templateVersion,
+            List<FormProgressEngine.CategoryProgress> categories) {}
+
+    /** 快照 categories JSON → 分类声明（sortNo 升序、label 空 / 缺回落 key；复用 buildSchema 同一防御口径）。 */
+    private List<FormProgressEngine.Category> progressCategories(String categoriesJson) {
+        List<FormProgressEngine.Category> categories = new ArrayList<>();
+        for (Map.Entry<String, Integer> entry : declaredCategories(categoriesJson)) {
+            categories.add(
+                    new FormProgressEngine.Category(
+                            entry.getKey(),
+                            categoryLabelOf(categoriesJson, entry.getKey()),
+                            entry.getValue()));
+        }
+        return categories;
     }
 
     // ---------------------------------------------------------------- 模板：发布新版本

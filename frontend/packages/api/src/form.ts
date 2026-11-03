@@ -291,6 +291,39 @@ export interface FormPublishResult {
   version: number;
 }
 
+/* ----------------------------------------------------------------------
+ * E11-T11 / A-PAT-021、C-PAT-018（口径 A-PAT-019）：已填 / 应填进度
+ * （POST /api/hospital/form/forms/{code}/progress?version=，登录即可；渲染器
+ * FormRenderer 的 progress 事件与 @crdp/rules computeCategoryProgress 同口径，
+ * 共享用例 form-progress-cases.json 双端锁定一致）。
+ */
+
+/** 进度请求体：data 为记录值（键 = 稳定键），context 为条件上下文（C 的 device.* 等）；两者可省。 */
+export interface FormProgressQuery {
+  context?: Record<string, unknown>;
+  data?: Record<string, unknown>;
+}
+
+/** 已填 / 应填进度响应（templateVersion 供调用方把锚点与模板版本配对，E16-T13）。 */
+export interface FormProgress {
+  categories: FormCategoryProgress[];
+  formCode: string;
+  /** 计算所用模板版本（version 省略时为当前发布版）。 */
+  templateVersion: number;
+}
+
+/** 一个分类 / 分节的进度（列表有序：分类 order 升序；条件不显示的字段不计入）。 */
+export interface FormCategoryProgress {
+  /** 已填必填（只计实际显示的字段）。 */
+  filled: number;
+  /** 模板稳定锚点键（crdp-anchor-<key> 的 key 部分）。 */
+  key: string;
+  /** 分类显示名（基线「分类」/ 随访「分组」）。 */
+  label: string;
+  /** 应填必填。 */
+  total: number;
+}
+
 /** 全表单字段索引：稳定键 → 字段（渲染器按记录 data 的键取定义）。 */
 export function indexSchemaFields(
   schema: Pick<FormSchema, 'categories'>,

@@ -16,21 +16,31 @@
  *   重算并回写（来源齐全以计算值为准）；来源缺失留空提示原因并允许手工录入
  *   （`meta.manual = true`，components.md §10.3）；结果无效不允许手工值（validate 硬错误，
  *   与后端写入闸门同口径）。
+ * - 已填 / 应填（E11-T11 的 computeCategoryProgress，A-PAT-021 / C-PAT-018，口径
+ *   A-PAT-019）：按分类实时上抛 `progress` 事件（给 CategoryBar / E13-T11）；条件不显示
+ *   的字段不计入、派生与加密列不计入（与后端 FormProgressEngine 同口径，共享用例锁定）；
+ *   `anchors()` 输出每个分类的稳定锚点键与模板版本（报告单位置 E16-T13 用）。
  * - Enter 不提交（本组件只阻止默认行为；Ctrl/⌘+S、Ctrl/⌘+Enter 由页面监听）。
- * 不在本组件（后续任务）：对比标红（E17）、已填 / 应填（E11-T11）、
- * 附件条（E16）、自动保存（E25）、平板 / 手机深度响应式（E24-T02）。
+ * 不在本组件（后续任务）：对比标红（E17）、附件条（E16）、自动保存（E25）、
+ * 平板 / 手机深度响应式（E24-T02）。
  */
 import type { FormSchema } from '@crdp/api';
-import type { DerivedOutcome, FieldIssue } from '@crdp/rules';
+import type { CategoryProgress, DerivedOutcome, FieldIssue } from '@crdp/rules';
 
 import type { PreviousRecord } from './carry-over';
-import type { ChoiceOption, RendererCategory, RendererField } from './layout';
+import type {
+  CategoryAnchor,
+  ChoiceOption,
+  RendererCategory,
+  RendererField,
+} from './layout';
 import type { FieldMetaValue } from './multiselect';
 import type { RendererValidateResult } from './types';
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import {
+  computeCategoryProgress,
   computeDerivedValues,
   derivedManualKind,
   isDerivedManualEditable,
@@ -61,6 +71,7 @@ import {
 import { previousValueText, readonlyFieldValue } from './format-value';
 import {
   anchorId,
+  categoryAnchors,
   choiceOptions,
   controlKind,
   flattenRendererFields,
@@ -106,6 +117,7 @@ const emit = defineEmits<{
   carryOver: [keys: string[]];
   clearedHidden: [keys: string[]];
   fieldBlur: [key: string];
+  progress: [items: CategoryProgress[]];
   'update:meta': [meta: Record<string, FieldMetaValue | undefined>];
   'update:modelValue': [data: Record<string, unknown>];
   validate: [result: RendererValidateResult];
@@ -533,7 +545,37 @@ function needsDetailInput(field: RendererField): boolean {
   );
 }
 
+// ---------------------------------------------------------------- 已填 / 应填（E11-T11 / A-PAT-021、C-PAT-018，口径 A-PAT-019）
+
+/** 分类进度（A-PAT-019 口径：必填字段、按条件实际显示的才计入；与后端 FormProgressEngine 同口径）。 */
+const categoryProgress = computed<CategoryProgress[]>(() =>
+  computeCategoryProgress(
+    allFields.value,
+    categories.value.map(({ key, label, order }) => ({ key, label, order })),
+    props.modelValue,
+    props.context,
+  ),
+);
+
+/** 上抛给 CategoryBar（E13-T11）；数值未变化不重复上抛（逐键输入时 filled 不变则不打扰）。 */
+let lastProgressJson = '';
+watch(
+  categoryProgress,
+  (items) => {
+    const next = JSON.stringify(items);
+    if (next === lastProgressJson) return;
+    lastProgressJson = next;
+    emit('progress', items);
+  },
+  { immediate: true },
+);
+
 // ---------------------------------------------------------------- 暴露
+
+/** 每个分类 / 分节的稳定锚点键与模板版本（components.md §10.3 锚点；报告单位置 E16-T13 用）。 */
+function anchors(): CategoryAnchor[] {
+  return categoryAnchors(props.schema);
+}
 
 function scrollTo(categoryKey: string): void {
   root.value?.ownerDocument
@@ -551,7 +593,7 @@ function focusFirstError(): void {
   target?.focus();
 }
 
-defineExpose({ focusFirstError, scrollTo, validate });
+defineExpose({ anchors, focusFirstError, scrollTo, validate });
 </script>
 
 <template>

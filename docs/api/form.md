@@ -3,7 +3,7 @@
 > 后端：`crdp-form`（字段字典、表单模板、规则）；前端：`frontend/packages/form-engine`（`FormRenderer`）与 `frontend/packages/rules`（前后端共用的校验 / 派生规则，见技术方案 §15 前端结构）。
 > 契约基准：`docs/design/components.md` §10.1 的 `FormSchema` 类型 —— **本文件与之保持一致，有变化两处同改**。
 > 原则：**字段由表单模板驱动**，页面不得硬编码业务字段；新增 / 改字段 = 改模板 + 新 Flyway 迁移（种子）或字典维护页，不改页面代码。
-> §1 模板按版本读取与发布、§3 字段字典维护已随 E11-T01 / E11-T02 落地、§2 规则执行已随 E11-T04 落地、§2.4 条件显示与条件必填已随 E11-T03 落地、§1.2 字段级变更历史已随 E11-T06 落地、§2.6 派生函数库已随 E11-T05 落地、§3 变更记录已随 E11-T08 落地、§3 Excel 批量导入已随 E11-T09 落地、§2.5 三引擎组合标准用例已随 E11-T10 落地（实现即定义）；其余路径 **推断，待确认**。
+> §1 模板按版本读取与发布、§3 字段字典维护已随 E11-T01 / E11-T02 落地、§2 规则执行已随 E11-T04 落地、§2.4 条件显示与条件必填已随 E11-T03 落地、§1.2 字段级变更历史已随 E11-T06 落地、§2.6 派生函数库已随 E11-T05 落地、§3 变更记录已随 E11-T08 落地、§3 Excel 批量导入已随 E11-T09 落地、§2.5 三引擎组合标准用例已随 E11-T10 落地、§1.3 已填 / 应填进度已随 E11-T11 落地（实现即定义）；其余路径 **推断，待确认**。
 
 ## 1. 读取表单模板（E11-T02 已实现）
 
@@ -12,6 +12,7 @@
 | GET | `/api/hospital/form/forms` | 登录 | 当前租户可用表单列表 `{ code, name, currentVersion, usage: BASELINE|FOLLOWUP|IMPLANT|REPORT, status }[]`（E11-T01 已实现，`@PublicApi` + `@RequireModule("followup")`） |
 | GET | `/api/hospital/form/forms/{code}?version=` | 登录 | 返回 `FormSchema`（components.md §10.1 + `name` / `usage`）；不传 `version` 取当前发布版；**已有记录按记录保存时的版本取**（E11-T02 已实现）；版本不存在 40400 |
 | POST | `/api/hospital/form/forms/{code}/publish` | `followup:field:edit` | 发布新模板版本（E11-T02 已实现，见 §3 末行） |
+| POST | `/api/hospital/form/forms/{code}/progress?version=` | 登录 | **E11-T11 已实现**。已填 / 应填进度（口径 A-PAT-019，见 §1.3）：请求体 `{ data, context }`（均可省），响应 `{ formCode, templateVersion, categories: [{ key, label, filled, total }] }`；条件不显示的字段不计入；不传 `version` 取当前发布版，版本不存在 40400；纯计算不写审计 |
 
 示例 `code`：`A_BASELINE`、`A_ANNUAL_FU`、`C_PROGRAM_FU`、`C_IMPLANT`（命名推断，待确认）。
 
@@ -71,6 +72,31 @@ E11-T02 落地（A-NFR-002 / C-NFR-002「JSON 文档存储」）。数据记录�
 - 入参校验 40001：`recordType` 必填 ≤32、`fieldKey` 必填 ≤32、`reason` ≤500、`triggerFields` 拼接 ≤255；`formCode + templateVersion` 版本快照不存在 40400。
 - 留痕行不另写平台审计——审计由业务操作（提交、导入等）记一条操作摘要（tech-plan §14「审计中另记一条操作摘要」）。
 
+## 1.3 已填 / 应填进度（FormProgressEngine，E11-T11 已实现；A-PAT-021、C-PAT-018，口径 A-PAT-019）
+
+分类条 / 分组条（components.md §6 CategoryBar，页面随 E13-T11）与完整度统计（A-DASH-010 / A-DASH-011）共用的**同一进度口径**，
+由表单引擎按分类 / 分节计算（`com.crdp.form.rule.app.FormProgressEngine`）；前端渲染器（`FormRenderer` 的 `progress`
+事件，计算在 `@crdp/rules computeCategoryProgress`）与后端（`FormService.progress` 引擎口 + HTTP 端点）**共享用例锁定一致**：
+`shared-cases/form-progress-cases.json`（components.md §10.5，后端 `FormProgressCaseTest` 与前端
+`packages/rules/src/form-progress.test.ts` 各执行一遍，key / label / filled / total 与输出顺序逐条一致）。
+
+- **应填 total**：显示中（visibleWhen 按当前 data / context 求值）且有效必填（required || requiredWhen 成立）且
+  `storage=json` 且非派生的字段——与提交校验的必填集合同一过滤（§2.4 / FormRuleEngine.checkRequired），
+  「应填 − 已填」恰为 missingRequired；派生字段由 §2.6 重算、实体 / 加密列的值不经表单 JSON（必填随业务接口 E13），
+  都不计入。
+- **已填 filled**：应填字段中值非空的字段。空值口径与条件 DSL 同（§2.4）：null / 缺键 / 空串 / 空数组 / 分量全缺的
+  pair_number 对象为空；`0` 与 `false` 是已答。
+- **条件不显示的字段不计入分母**（A-PAT-019「因条件不满足而不显示的字段不计入分母」）——隐藏字段的残留值也不算已填。
+- 分类按版本快照 categories 的 sortNo 升序（稳定排序）输出；字段引用未声明分类时按字段首现序兜底追加（label=key，
+  与 FormService.buildSchema 防御口径一致）；无应填字段的分类输出 0/0（分组仍显示，`filled < total` 才显示橙色）。
+- 读取口径：HTTP 端点与引擎口都按 `version`（缺省 = 当前发布版）的**版本快照**分类与字段口径计算（旧版本可读）；
+  响应带 `templateVersion`，调用方把分类锚点（`categories[].key` → `crdp-anchor-<key>`）与模板版本配对
+  （报告单位置按版本校验，E16-T13）。业务接口（基线 E13-T11、随访记录 E15）复用 `FormService.progress`
+  「随记录返回」，不另算一套。
+- 前端渲染器同口径实时上抛：`FormRenderer` 的 `progress(items: CategoryProgress[])` 事件（components.md §10.2）
+  与 `anchors()` 暴露（每个分类 / 分节的稳定锚点键 + `templateVersion`，取自 FormSchema.version）；
+  标红数（E17）、📎 附件数（E16）、未填必填数（E13-T11）随后续任务在 CategoryProgress 上扩展。
+
 ## 2. 规则执行（前后端一致，E11-T04 / E11-T03 已落地）
 
 - 校验类型：类型与范围（`hardRange` 不能保存、`softRange` 提示，A-FLD-003、C-FLD-007，已落地）、条件显示与条件必填（A-FLD-004、C-FLD-005，已落地，见 §2.4）、派生字段（A-FLD-005、C-FLD-006，已落地，见 §2.6）、跨字段校验（A-FLD-006，已落地）。
@@ -111,7 +137,7 @@ E11-T02 落地（A-NFR-002 / C-NFR-002「JSON 文档存储」）。数据记录�
 - 条件树与高级检索同构（tech-plan §6）：节点 `{all: [...]}`（全部成立，空数组恒真）/ `{any: [...]}`（任一成立，空数组恒假）可嵌套；叶子 `{field | ctx, op, value}`——`field` 取本表单字段稳定键的值，`ctx` 取上下文变量（如医院 C 的 `device.type` / `device.hasRaLead`，按点路径 `a.b` 在嵌套对象取值；上下文由业务侧随 `validateForSubmit` / `stripHiddenFields` 的 `context` 参数与页面 `FormRenderer` 的 `context` prop 传入，器械匹配随 E21-T03）。操作符 `eq | ne | in | nin | gt | gte | lt | lte | empty | notEmpty`（components.md §10.1 ConditionTree）。
 - 求值语义（实现即定义，暂行口径见 OQ-65）：eq / in 按值编码口径**严格同型**比较（数值与数值、布尔与布尔、字符串与字符串；`1` 与 `"1"` 不等——条件值必须按值编码写：选项编码整数、日期字符串）；gt / gte / lt / lte 只比数值与日期 / 日期时间（日期归一当日 00:00，与 §2.2 COMPARE 同口径），普通文本不可比 → 不成立；**操作数缺失（未答 / null）除 `empty` / `notEmpty` 外一律不成立**（未答 ≠ 否：「是否死亡」未答 → 死亡日期不显示、不加必填）；空值口径 = null / 空串 / 空数组 / 分量全缺的 pair_number 对象（`0` 与 `false` 是已答）；条件为空或解析失败 / 残缺（无 op、field 与 ctx 并存或全无、op 不认识）**恒真**——坏配置不隐藏字段、不加必填、不炸保存。
 - **条件必填**：有效必填 = 字段显示 &&（`required` || `requiredWhen` 成立）；缺失 → 42200 `fieldErrors` 带 `rule=required`、`message="必填"`（与渲染器 §10.3 同词，前后端逐字一致）。只查 `storage=json` 且非派生的字段（引擎只校验记录 JSON；实体 / 加密列必填随业务接口 E13，派生随 E11-T05）；`requiredWhen` 为空不追加必填（无条件必填就是 `required` 列）。
-- **隐藏字段**：visibleWhen 不成立的字段不参与必填、其值不参与范围与跨字段校验（掩蔽，按「提交时已清空」口径）；提交落库前由 `stripHiddenFields` 移除残留值并返回被清空键（渲染器同语义 `hiddenFieldKeys` / `stripHiddenFieldValues`，`cleared-hidden` 事件）。完整度只把显示中的必填字段计入分母（A-PAT-019，渲染器随 E11-T07 / E11-T11）。
+- **隐藏字段**：visibleWhen 不成立的字段不参与必填、其值不参与范围与跨字段校验（掩蔽，按「提交时已清空」口径）；提交落库前由 `stripHiddenFields` 移除残留值并返回被清空键（渲染器同语义 `hiddenFieldKeys` / `stripHiddenFieldValues`，`cleared-hidden` 事件）。完整度只把显示中的必填字段计入分母（A-PAT-019；进度口径已随 E11-T11 落地，见 §1.3）。
 - 实现位置：后端 `FormConditionEngine`（求值）+ `FormRuleEngine.validate(data, fields, rules, context)`（必填与掩蔽进提交校验）；前端 `@crdp/rules` 的 `evaluateCondition` / `isFieldVisible` / `missingRequiredFields` / `stripHiddenFieldValues` 与 `validateFormData` 的第 4 参 `context`。演示种子：followup V31（吸烟史=是 → 每日吸烟支数显示并必填）；真实条件配置随 E23-T01 / C 字段字典录入。
 - 条件列维护：`visible_when` / `required_when` 由实施经迁移配置（字典维护页 PUT 不改条件，form.md §3）。
 
