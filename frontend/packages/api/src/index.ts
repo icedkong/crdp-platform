@@ -317,6 +317,23 @@ export type {
   PatientPlaintextResult,
   PatientPlaintextScene,
 } from './patient';
+export {
+  buildPatientExportPayload,
+  PATIENT_DELETE_REASON_MAX,
+  PATIENT_EXPORT_REASON_MAX,
+  PATIENT_EXPORT_VALUE_MODE_OPTIONS,
+  validatePatientDeleteReason,
+  validatePatientExportForm,
+} from './patient-export';
+export type {
+  PatientExportCondition,
+  PatientExportJob,
+  PatientExportJobPage,
+  PatientExportRequest,
+  PatientExportScope,
+  PatientExportSubmitted,
+  PatientExportValueMode,
+} from './patient-export';
 // E13-T05 档案概览与患者时间轴（A-PAT-004、A-PAT-013、C-PAT-010）
 export {
   completenessText,

@@ -7,6 +7,7 @@ export * from './form';
 export * from './menu';
 export * from './notify';
 export * from './patient';
+export * from './patient-export';
 export * from './profile';
 export * from './user';
 export * from './ward';

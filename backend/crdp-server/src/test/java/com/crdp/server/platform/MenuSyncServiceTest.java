@@ -244,6 +244,30 @@ class MenuSyncServiceTest {
                         "system/ward/index",
                         "followup:ward:edit",
                         33,
+                        "ENABLED"),
+                // E13-T09 审批患者导出按钮（平台库 V41 同构）：租户普通用户导出由租户管理员审批
+                manifestRow(
+                        218L,
+                        21L,
+                        "BUTTON",
+                        "审批患者导出",
+                        null,
+                        null,
+                        null,
+                        "followup:patient:export:approve",
+                        25,
+                        "ENABLED"),
+                // E13-T09 删除患者按钮（平台库 V41 同构，敏感权限）：软删除（C 规格权限表原有码，A 按 OQ-17 同名新增）
+                manifestRow(
+                        217L,
+                        21L,
+                        "BUTTON",
+                        "删除患者",
+                        null,
+                        null,
+                        null,
+                        "followup:patient:delete",
+                        50,
                         "ENABLED"));
     }
 
