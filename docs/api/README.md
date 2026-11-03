@@ -80,10 +80,10 @@
 - 带高级检索条件树的列表用 `POST .../search`，body：
 ```json
 { "pageNo": 1, "pageSize": 20, "sort": [{"field": "dischargeDate", "order": "desc"}],
-  "keyword": "...", "filters": {"wardIds": [1]}, "condition": { "op": "AND", "children": [] } }
+  "keyword": "...", "filters": {"wardIds": [1]}, "condition": { "logic": "AND", "items": [] } }
 ```
 - 分页响应：`{ "items": [], "total": 123, "pageNo": 1, "pageSize": 20 }`（对齐 Vben 表格习惯）。
-- 条件树结构与 `components.md` §11 `AdvancedSearch` 一致；后端把字段码映射为白名单列，**禁止拼接任意列名**。
+- 条件树结构与 `components.md` §11 `AdvancedSearch` 一致（`{logic: AND|OR, items: [行 | 组]}`，行 = `{field, op, value?}`，`op` ∈ EQ/NE/GT/LT/BETWEEN/CONTAINS/IS_NULL/NOT_NULL）；后端把字段码映射为白名单列，**禁止拼接任意列名**，取值全部走预编译参数位（E13-T06 患者列表已落地，A-NFR-009）。
 
 ### 2.5 数据范围（必须遵守）
 

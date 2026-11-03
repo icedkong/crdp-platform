@@ -16,8 +16,14 @@
  * §2 / §7，权限 followup:patient:view）。姓名 / 编号只含脱敏值；越范围患者 40400，
  * 页面按「患者不存在或无权查看」处理；联系方式与变更记录（A-PAT-004「从概览进入」）
  * 走 E13-T03 的 contact-info / status-history。
+ *
+ * E13-T06 / A-PAT-014、A-PAT-015、A-NFR-009、C-PAT-013：高级检索字段目录与保存的个人筛选
+ * （docs/api/patient.md §1，权限 followup:patient:view）。字段目录由字段字典生成——条件只能
+ * 引用目录中的字段，后端编译为参数化查询并自动追加病区条件（不允许原始 SQL）；个人筛选仅本人
+ * 可见，payload 不含检索词（可能是患者姓名，与「检索词不写 URL」同口径不落库）。
  */
 import type {
+  AdvancedSearchField,
   PatientContactInfo,
   PatientCreatedResult,
   PatientDuplicateCheckResult,
@@ -30,6 +36,8 @@ import type {
   PatientSearchPayload,
   PatientStatusHistoryRow,
   PatientTimeline,
+  SavedFilter,
+  SavedFilterPayload,
 } from '@crdp/api';
 
 import { apiPath, requestClient } from '#/api/request';
@@ -114,4 +122,47 @@ export function fetchPatientStatusHistory(patientId: number | string) {
   return requestClient.get<PatientStatusHistoryRow[]>(
     apiPath(`/followup/patients/${patientId}/status-history`),
   );
+}
+
+// ---------------------------------------------------------------- 高级检索与保存的筛选（E13-T06）
+
+/** 高级检索字段目录（A-PAT-014：由字段字典生成，条件只能引用目录中的字段）。 */
+export function fetchPatientSearchFields() {
+  return requestClient.get<{ fields: AdvancedSearchField[] }>(
+    apiPath('/followup/patients/search-fields'),
+  );
+}
+
+/** 本人保存的筛选（A-PAT-015：仅本人可见，新在前）。 */
+export function fetchSavedFilters() {
+  return requestClient.get<{ items: SavedFilter[] }>(
+    apiPath('/followup/saved-filters'),
+  );
+}
+
+/** 保存为个人筛选（payload = {filters?, condition?}，不含检索词）。 */
+export function createSavedFilter(payload: {
+  name: string;
+  payload: SavedFilterPayload;
+}) {
+  return requestClient.post<SavedFilter>(
+    apiPath('/followup/saved-filters'),
+    payload,
+  );
+}
+
+/** 修改个人筛选（重命名 / 覆盖条件，至少一项）。 */
+export function updateSavedFilter(
+  id: string,
+  payload: { name?: string; payload?: SavedFilterPayload },
+) {
+  return requestClient.put<SavedFilter>(
+    apiPath(`/followup/saved-filters/${id}`),
+    payload,
+  );
+}
+
+/** 删除个人筛选（不存在 / 他人的一律 40400）。 */
+export function deleteSavedFilter(id: string) {
+  return requestClient.delete(apiPath(`/followup/saved-filters/${id}`));
 }

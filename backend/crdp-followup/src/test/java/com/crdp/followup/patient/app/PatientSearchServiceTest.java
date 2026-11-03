@@ -51,9 +51,10 @@ class PatientSearchServiceTest {
     private final PatientMapper patientMapper = mock(PatientMapper.class);
     private final CryptoService crypto = mock(CryptoService.class);
     private final AuditLogger audit = mock(AuditLogger.class);
+    private final PatientSearchFieldService searchFields = mock(PatientSearchFieldService.class);
 
     private final PatientSearchService service =
-            new PatientSearchService(gateway, patientMapper, crypto, audit);
+            new PatientSearchService(gateway, patientMapper, crypto, audit, searchFields);
 
     @BeforeEach
     void login() {
@@ -223,6 +224,90 @@ class PatientSearchServiceTest {
         assertInvalid(requestWithSort("dischargeDate", "random"), "sort.order");
     }
 
+    // ---------------------------------------------------------------- 高级检索（E13-T06 /
+    // A-PAT-014、A-NFR-009）
+
+    private static final com.fasterxml.jackson.databind.ObjectMapper ADV_JSON =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+
+    /** 条件树经字段目录编译后以参数化片段进入检索条件（取值全部在参数位）。 */
+    @Test
+    void searchCompilesAdvancedConditionIntoParameterizedCriteria() throws Exception {
+        when(gateway.count(any())).thenReturn(0L);
+        when(gateway.search(any(), anyInt(), anyInt())).thenReturn(List.of());
+        when(searchFields.specs())
+                .thenReturn(
+                        java.util.Map.of(
+                                "discharge_date",
+                                new com.crdp.followup.patient.domain.AdvancedSearchCatalog
+                                        .SearchFieldSpec(
+                                        "discharge_date",
+                                        "出院日期",
+                                        com.crdp.followup.patient.domain.AdvancedSearchCatalog
+                                                .ValueType.DATE,
+                                        "p.discharge_date",
+                                        List.of())));
+
+        service.search(
+                new PatientSearchService.SearchRequest(
+                        null,
+                        null,
+                        null,
+                        null,
+                        emptyFilters(),
+                        ADV_JSON.readTree(
+                                """
+                                {"logic":"OR","items":[
+                                  {"field":"discharge_date","op":"BETWEEN","value":["2026-01-01","2026-06-30"]},
+                                  {"field":"discharge_date","op":"IS_NULL"}]}
+                                """)));
+
+        ArgumentCaptor<PatientSearchMapper.SearchCriteria> captor =
+                ArgumentCaptor.forClass(PatientSearchMapper.SearchCriteria.class);
+        verify(gateway).search(captor.capture(), anyInt(), anyInt());
+        verify(gateway).count(captor.capture());
+        PatientSearchMapper.SearchCriteria criteria = captor.getAllValues().get(0);
+        PatientSearchMapper.SearchCriteria countCriteria = captor.getAllValues().get(1);
+        assertEquals(
+                "(p.discharge_date BETWEEN #{c.advancedBinds[0]} AND #{c.advancedBinds[1]}"
+                        + " OR p.discharge_date IS NULL)",
+                criteria.advancedWhere(),
+                "条件树编译为白名单列 + 参数位的 SQL 片段");
+        assertEquals(
+                List.of(LocalDate.of(2026, 1, 1), LocalDate.of(2026, 6, 30)),
+                criteria.advancedBinds());
+        assertEquals(
+                criteria.advancedWhere(), countCriteria.advancedWhere(), "count 与 search 同一条件");
+
+        ArgumentCaptor<AuditEntry> auditCaptor = ArgumentCaptor.forClass(AuditEntry.class);
+        verify(audit).append(auditCaptor.capture());
+        assertTrue(
+                auditCaptor.getValue().queryDigest().contains("\"advancedRows\":2"),
+                "批量查询审计摘要记录高级检索条件行数（不含取值明文）：" + auditCaptor.getValue().queryDigest());
+    }
+
+    @Test
+    void searchRejectsConditionFieldOutsideCatalog() throws Exception {
+        when(searchFields.specs()).thenReturn(java.util.Map.of());
+        ApiException error =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.search(
+                                        new PatientSearchService.SearchRequest(
+                                                null,
+                                                null,
+                                                null,
+                                                null,
+                                                emptyFilters(),
+                                                ADV_JSON.readTree(
+                                                        """
+                                                        {"items":[{"field":"no_such_field","op":"EQ","value":"x"}]}
+                                                        """))));
+        assertEquals(40001, error.code(), "目录外字段（字典字段才可引用）40001");
+        verify(gateway, never()).search(any(), anyInt(), anyInt());
+    }
+
     // ---------------------------------------------------------------- 筛选（A-PAT-002）
 
     @Test
@@ -269,7 +354,8 @@ class PatientSearchServiceTest {
                                 LocalDate.of(2026, 2, 1),
                                 LocalDate.of(2026, 3, 1),
                                 LocalDate.of(2026, 11, 1),
-                                LocalDate.of(2026, 12, 1)));
+                                LocalDate.of(2026, 12, 1)),
+                        null);
         service.search(request);
 
         ArgumentCaptor<PatientSearchMapper.SearchCriteria> captor =
@@ -333,11 +419,13 @@ class PatientSearchServiceTest {
     }
 
     private static PatientSearchService.SearchRequest request(String keyword, Object ignored) {
-        return new PatientSearchService.SearchRequest(null, null, null, keyword, emptyFilters());
+        return new PatientSearchService.SearchRequest(
+                null, null, null, keyword, emptyFilters(), null);
     }
 
     private static PatientSearchService.SearchRequest requestWithPaging(int pageNo, int pageSize) {
-        return new PatientSearchService.SearchRequest(pageNo, pageSize, null, null, emptyFilters());
+        return new PatientSearchService.SearchRequest(
+                pageNo, pageSize, null, null, emptyFilters(), null);
     }
 
     private static PatientSearchService.SearchRequest requestWithSort(String field, String order) {
@@ -346,27 +434,33 @@ class PatientSearchServiceTest {
                 null,
                 List.of(new PatientSearchService.SortSpec(field, order)),
                 null,
-                emptyFilters());
+                emptyFilters(),
+                null);
     }
 
     private static PatientSearchService.SearchRequest requestWithStatus(List<String> status) {
         return new PatientSearchService.SearchRequest(
-                null, null, null, null, filtersWith(filters -> filters.status = status));
+                null, null, null, null, filtersWith(filters -> filters.status = status), null);
     }
 
     private static PatientSearchService.SearchRequest requestWithWard(List<Long> wardIds) {
         return new PatientSearchService.SearchRequest(
-                null, null, null, null, filtersWith(filters -> filters.wardIds = wardIds));
+                null, null, null, null, filtersWith(filters -> filters.wardIds = wardIds), null);
     }
 
     private static PatientSearchService.SearchRequest requestWithDoctor(long doctorId) {
         return new PatientSearchService.SearchRequest(
-                null, null, null, null, filtersWith(filters -> filters.doctorId = doctorId));
+                null, null, null, null, filtersWith(filters -> filters.doctorId = doctorId), null);
     }
 
     private static PatientSearchService.SearchRequest requestWithDischargeStatus(int status) {
         return new PatientSearchService.SearchRequest(
-                null, null, null, null, filtersWith(filters -> filters.dischargeStatus = status));
+                null,
+                null,
+                null,
+                null,
+                filtersWith(filters -> filters.dischargeStatus = status),
+                null);
     }
 
     private static PatientSearchService.SearchRequest requestWithDischarge(
@@ -380,7 +474,8 @@ class PatientSearchServiceTest {
                         filters -> {
                             filters.dischargeFrom = from;
                             filters.dischargeTo = to;
-                        }));
+                        }),
+                null);
     }
 
     private static PatientSearchService.SearchRequest requestWithSurgery(
@@ -394,7 +489,8 @@ class PatientSearchServiceTest {
                         filters -> {
                             filters.surgeryFrom = from;
                             filters.surgeryTo = to;
-                        }));
+                        }),
+                null);
     }
 
     private static PatientSearchService.SearchRequest requestWithNextVisit(
@@ -408,7 +504,8 @@ class PatientSearchServiceTest {
                         filters -> {
                             filters.nextVisitFrom = from;
                             filters.nextVisitTo = to;
-                        }));
+                        }),
+                null);
     }
 
     private static PatientSearchService.Filters emptyFilters() {

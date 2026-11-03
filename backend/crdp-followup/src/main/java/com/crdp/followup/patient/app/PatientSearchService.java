@@ -1,5 +1,6 @@
 package com.crdp.followup.patient.app;
 
+import com.crdp.followup.patient.domain.AdvancedConditionCompiler;
 import com.crdp.followup.patient.infra.mapper.PatientMapper;
 import com.crdp.followup.patient.infra.mapper.PatientSearchMapper;
 import com.crdp.framework.audit.AuditEntry;
@@ -8,6 +9,7 @@ import com.crdp.framework.crypto.CryptoService;
 import com.crdp.framework.fieldpolicy.SensitiveValueMasker;
 import com.crdp.framework.web.ApiException;
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.databind.JsonNode;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -16,15 +18,19 @@ import java.util.Set;
 import org.springframework.stereotype.Service;
 
 /**
- * 患者列表、检索与筛选用例（E13-T04 / A-PAT-001、A-PAT-002、C-PAT-009；接口 docs/api/patient.md §1）。
+ * 患者列表、检索与筛选用例（E13-T04 / A-PAT-001、A-PAT-002、C-PAT-009；E13-T06 高级检索 A-PAT-014、
+ * A-NFR-009、C-PAT-013；接口 docs/api/patient.md §1）。
  *
  * <p>验收口径：
  *
  * <ul>
- *   <li>按病区隔离——查询经 {@link PatientSearchGateway}（@DataScope patient），E07-T02 拦截器按登录快照改写， 服务层不拼范围条件；
+ *   <li>按病区隔离——查询经 {@link PatientSearchGateway}（@DataScope patient），E07-T02 拦截器按登录快照改写，
+ *       服务层不拼范围条件（高级检索的条件树同样不含病区条件， 拦截器对整条语句自动追加，A-NFR-009「自动追加病区条件」）；
  *   <li>按姓名精确检索——姓名 / 病案号列只存密文 + 盲索引（followup V37），检索词先算姓名与病案号两个盲索引， SQL 按盲索引相等匹配（A-PAT-002
  *       「病案号、姓名精确查找」），不做模糊匹配；
- *   <li>列表只输出脱敏值——姓名 / 病案号在应用层解密后经 {@link SensitiveValueMasker} 掩码（AGENTS.md §5.3 列表不提供逐行明文）。
+ *   <li>列表只输出脱敏值——姓名 / 病案号在应用层解密后经 {@link SensitiveValueMasker} 掩码（AGENTS.md §5.3 列表不提供逐行明文）；
+ *   <li>高级检索——条件树只引用字段字典目录（{@link PatientSearchFieldService}，字典生成 + 列绑定白名单）， 经 {@link
+ *       AdvancedConditionCompiler} 编译为参数化 SQL（取值全部参数位，无原始 SQL）。
  * </ul>
  *
  * <p>排序字段白名单（README §2.4：字段码映射白名单列，禁止拼接任意列名），默认下次随访日期升序（patient.md §1， 推断待确认）。C-PAT-009 沿用本口径，起搏器 /
@@ -51,27 +57,31 @@ public class PatientSearchService {
     private final PatientMapper patientMapper;
     private final CryptoService crypto;
     private final AuditLogger audit;
+    private final PatientSearchFieldService searchFields;
 
     public PatientSearchService(
             PatientSearchGateway gateway,
             PatientMapper patientMapper,
             CryptoService crypto,
-            AuditLogger audit) {
+            AuditLogger audit,
+            PatientSearchFieldService searchFields) {
         this.gateway = gateway;
         this.patientMapper = patientMapper;
         this.crypto = crypto;
         this.audit = audit;
+        this.searchFields = searchFields;
     }
 
     // ---------------------------------------------------------------- DTO
 
-    /** 检索请求（body 见 docs/api/README.md §2.4；filters 全部可空）。 */
+    /** 检索请求（body 见 docs/api/README.md §2.4；filters / condition 全部可空）。 */
     public record SearchRequest(
             Integer pageNo,
             Integer pageSize,
             List<SortSpec> sort,
             String keyword,
-            Filters filters) {}
+            Filters filters,
+            JsonNode condition) {}
 
     /** 排序项：field 为白名单字段码，order 为 asc / desc。 */
     public record SortSpec(String field, String order) {}
@@ -119,10 +129,10 @@ public class PatientSearchService {
 
     // ---------------------------------------------------------------- 检索（A-PAT-001、A-PAT-002）
 
-    /** 条件检索一页（校验 → 盲索引 → 范围内查询 → 脱敏 → 批量查询审计）。 */
+    /** 条件检索一页（校验 → 盲索引 → 高级条件编译 → 范围内查询 → 脱敏 → 批量查询审计）。 */
     public PatientPage search(SearchRequest request) {
         SearchRequest safe =
-                request == null ? new SearchRequest(null, null, null, null, null) : request;
+                request == null ? new SearchRequest(null, null, null, null, null, null) : request;
         int pageNo = safe.pageNo() == null ? 1 : safe.pageNo();
         int pageSize = safe.pageSize() == null ? PAGE_SIZE_DEFAULT : safe.pageSize();
         if (pageNo < 1) {
@@ -149,6 +159,10 @@ public class PatientSearchService {
         validateRange(
                 filters.nextVisitFrom(), filters.nextVisitTo(), "nextVisitFrom / nextVisitTo");
 
+        // 高级检索条件树：目录（字典生成）编译为参数化片段；无条件时 where=null 不追加
+        AdvancedConditionCompiler.Compiled advanced =
+                AdvancedConditionCompiler.compile(safe.condition(), searchFields.specs());
+
         PatientSearchMapper.SearchCriteria criteria =
                 new PatientSearchMapper.SearchCriteria(
                         nameBlind,
@@ -165,7 +179,9 @@ public class PatientSearchService {
                         filters.dischargeTo(),
                         filters.nextVisitFrom(),
                         filters.nextVisitTo(),
-                        orderClause);
+                        orderClause,
+                        advanced.where(),
+                        advanced.binds());
 
         int offset = (pageNo - 1) * pageSize;
         List<PatientRowView> items = new ArrayList<>();
@@ -179,7 +195,7 @@ public class PatientSearchService {
                         .objectType("PATIENT")
                         .description("检索患者列表")
                         .recordCount(total)
-                        .queryDigest(digest(keyword, filters))
+                        .queryDigest(digest(keyword, filters, advanced))
                         .build());
         return new PatientPage(items, total, pageNo, pageSize);
     }
@@ -337,8 +353,9 @@ public class PatientSearchService {
         return new Filters(null, null, null, null, null, null, null, null, null, null, null, null);
     }
 
-    /** 批量查询审计摘要：记录用了哪些筛选面（不含检索词明文——检索词可能是患者姓名， AGENTS.md §5.4 敏感值只存摘要）。 */
-    private static String digest(String keyword, Filters filters) {
+    /** 批量查询审计摘要：记录用了哪些筛选面与高级检索条件行数（不含检索词与条件取值明文—— 检索词可能是患者姓名，AGENTS.md §5.4 敏感值只存摘要）。 */
+    private static String digest(
+            String keyword, Filters filters, AdvancedConditionCompiler.Compiled advanced) {
         return "{\"keyword\":"
                 + (keyword != null)
                 + ",\"wardIds\":"
@@ -359,6 +376,8 @@ public class PatientSearchService {
                 + (filters.dischargeFrom() != null || filters.dischargeTo() != null)
                 + ",\"nextVisitRange\":"
                 + (filters.nextVisitFrom() != null || filters.nextVisitTo() != null)
+                + ",\"advancedRows\":"
+                + advanced.rows()
                 + "}";
     }
 

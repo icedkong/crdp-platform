@@ -1,11 +1,15 @@
 /**
- * E13-T04 / A-PAT-001、A-PAT-002、C-PAT-009：患者列表、检索与筛选的类型与纯逻辑
+ * E13-T04 / A-PAT-001、A-PAT-002、C-PAT-009：患者列表、检索与筛选的类型与纯逻辑；
+ * E13-T06 / A-PAT-014、A-NFR-009、C-PAT-013：高级检索条件树并入检索请求体
  * （接口契约 docs/api/patient.md §1，后端 `com.crdp.followup.patient.api.PatientSearchController`）。
  *
- * 病区隔离由后端数据范围承担（行级，越范围不可见）；姓名 / 病案号检索为盲索引
- * 精确匹配（keyword 一个输入同时命中两个字段）。检索词只放组件状态，不写 URL
- * （components.md §11.1）。
+ * 病区隔离由后端数据范围承担（行级，越范围不可见，高级检索条件树同样被改写——自动追加
+ * 病区条件）；姓名 / 病案号检索为盲索引精确匹配（keyword 一个输入同时命中两个字段）。
+ * 检索词只放组件状态，不写 URL（components.md §11.1）；条件树为结构化 JSON，
+ * 后端按字段字典目录编译为参数化查询（不允许原始 SQL）。
  */
+import type { ConditionGroup } from './advanced-search';
+
 import { PATIENT_STATUS_TEXT } from './enums';
 
 /** 列表行（patient.md §1 PatientRow）：name / patientNo（本系统编号 = 病案号）只含后端脱敏值。 */
@@ -76,8 +80,9 @@ export function isKeywordValid(keyword: string): boolean {
   return trimmed.length > 0 && trimmed.length <= KEYWORD_MAX_LENGTH;
 }
 
-/** 组装后的检索请求体（docs/api/README.md §2.4 结构）。 */
+/** 组装后的检索请求体（docs/api/README.md §2.4 结构；condition 为高级检索条件树）。 */
 export interface PatientSearchPayload {
+  condition?: ConditionGroup;
   filters: Record<string, unknown>;
   keyword?: string;
   pageNo: number;
@@ -91,6 +96,7 @@ export function buildPatientSearchPayload(
   pageNo: number,
   pageSize: number,
   sort?: PatientSortSpec,
+  condition?: ConditionGroup,
 ): PatientSearchPayload {
   const payload: PatientSearchPayload = { pageNo, pageSize, filters: {} };
 
@@ -115,17 +121,24 @@ export function buildPatientSearchPayload(
   if (sort) {
     payload.sort = [sort];
   }
+  if (condition && condition.items.length > 0) {
+    payload.condition = condition;
+  }
   return payload;
 }
 
 /** 是否存在生效的筛选（空态文案分流：无患者 vs 没有符合条件的患者，pages.md §3）。 */
-export function hasActiveFilters(state: PatientFilterState): boolean {
+export function hasActiveFilters(
+  state: PatientFilterState,
+  hasAdvancedCondition = false,
+): boolean {
   return (
     state.keyword.trim().length > 0 ||
     wardSelected(state) ||
     Boolean(state.status) ||
     Boolean(state.dischargeRange?.[0] && state.dischargeRange?.[1]) ||
-    Boolean(state.nextVisitRange?.[0] && state.nextVisitRange?.[1])
+    Boolean(state.nextVisitRange?.[0] && state.nextVisitRange?.[1]) ||
+    hasAdvancedCondition
   );
 }
 

@@ -1,11 +1,18 @@
 <script lang="ts" setup>
-import type { PatientFilterState, PatientSearchRow } from '@crdp/api';
+import type {
+  AdvancedSearchField,
+  ConditionGroup,
+  PatientFilterState,
+  PatientSearchRow,
+  SavedFilter,
+} from '@crdp/api';
 
 import { computed, onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
 
 import {
   buildPatientSearchPayload,
+  conditionRowCount,
   emptyPatientFilters,
   hasActiveFilters,
   isKeywordValid,
@@ -20,20 +27,40 @@ import {
   Button,
   Card,
   DatePicker,
+  Dropdown,
   Empty,
   Form,
   FormItem,
   Input,
+  Menu,
+  MenuItem,
   message,
+  Popconfirm,
   Progress,
   Select,
   Space,
   Table,
+  Tag,
 } from 'ant-design-vue';
 
-import { fetchPatientFilterOptions, searchPatients } from '#/api/core/patient';
+import {
+  createSavedFilter,
+  deleteSavedFilter,
+  fetchPatientFilterOptions,
+  fetchPatientSearchFields,
+  fetchSavedFilters,
+  searchPatients,
+  updateSavedFilter,
+} from '#/api/core/patient';
+import AdvancedSearch from '#/components/followup/advanced-search.vue';
 import { useBreakpoint } from '#/reference/use-breakpoint';
 import { usePermission } from '#/reference/use-permission';
+
+import {
+  applySavedFilter,
+  savedFilterPayloadIsEmpty,
+  savedFilterPayloadOf,
+} from './advanced-logic';
 
 defineOptions({ name: 'FollowupPatient' });
 
@@ -42,7 +69,11 @@ defineOptions({ name: 'FollowupPatient' });
  * 病区隔离由后端数据范围承担（行级，越范围不可见）；「姓名/编号」为精确检索
  * （盲索引相等，非模糊）。姓名与编号列只显示后端脱敏值，列表不提供逐行明文
  * （AGENTS.md §5.3）；检索词只放组件状态，不写 URL（components.md §11.1）。
- * 高级检索与个人筛选随 E13-T06；C 的器械列随 E21 植入数据开放。
+ *
+ * E13-T06 / A-PAT-014、A-PAT-015、A-NFR-009、C-PAT-013 · 高级检索与「我的筛选」：
+ * 条件树为结构化 JSON，字段只能选 search-fields 目录（字段字典生成）中的字段，
+ * 后端编译为参数化查询并自动追加病区条件（不允许原始 SQL）；个人筛选仅本人可见。
+ * C 的器械列随 E21 植入数据开放；手机高级检索抽屉随 E24-T03。
  */
 const router = useRouter();
 const { hasPermission } = usePermission();
@@ -65,13 +96,125 @@ const total = ref(0);
 const wardOptions = ref<Array<{ label: string; value: number }>>([]);
 const statusOptions = patientStatusOptions();
 
+// ---------------------------------------------------------------- 高级检索与我的筛选（E13-T06）
+
+const advancedOpen = ref(false);
+const fieldCatalog = ref<AdvancedSearchField[]>([]);
+/** 最近一次查询实际生效的条件树（弹窗续编用 appliedCondition，不跟草稿实时联动）。 */
+const appliedCondition = ref<ConditionGroup | null>(null);
+const savedFilters = ref<SavedFilter[]>([]);
+const renamingId = ref('');
+const renamingName = ref('');
+
+const appliedConditionCount = computed(() =>
+  conditionRowCount(
+    appliedCondition.value ?? { logic: 'and', items: [] },
+    fieldCatalog.value,
+  ),
+);
+
+const hasAdvancedActive = computed(() => appliedConditionCount.value > 0);
+
+function handleApplyAdvanced(group: ConditionGroup) {
+  appliedCondition.value = group;
+  pageNo.value = 1;
+  void load();
+}
+
+function clearAdvanced() {
+  appliedCondition.value = null;
+  pageNo.value = 1;
+  void load();
+}
+
+async function handleSaveAs(name: string, group: ConditionGroup) {
+  const payload = savedFilterPayloadOf({ ...filters }, group);
+  if (savedFilterPayloadIsEmpty(payload)) {
+    message.warning('筛选条件为空，无法保存');
+    return;
+  }
+  try {
+    await createSavedFilter({ name, payload });
+    message.success(`已保存个人筛选「${name}」`);
+    await loadSavedFilters();
+  } catch {
+    message.error('保存筛选失败，请稍后重试');
+  }
+}
+
+async function loadSavedFilters() {
+  try {
+    const result = await fetchSavedFilters();
+    savedFilters.value = result.items;
+  } catch {
+    savedFilters.value = [];
+  }
+}
+
+function handleApplySavedFilter(item: SavedFilter) {
+  const applied = applySavedFilter(item.payload);
+  Object.assign(filters, applied.state);
+  appliedCondition.value = applied.condition;
+  pageNo.value = 1;
+  void load();
+}
+
+/** 用当前检索条件覆盖该筛选（A-PAT-015「修改」；检索词不进保存的筛选）。 */
+async function handleUpdateSavedFilter(item: SavedFilter) {
+  const payload = savedFilterPayloadOf({ ...filters }, appliedCondition.value);
+  if (savedFilterPayloadIsEmpty(payload)) {
+    message.warning('当前没有可保存的筛选条件');
+    return;
+  }
+  try {
+    await updateSavedFilter(item.id, { payload });
+    message.success(`已更新「${item.name}」`);
+    await loadSavedFilters();
+  } catch {
+    message.error('更新筛选失败，请稍后重试');
+  }
+}
+
+function startRename(item: SavedFilter) {
+  renamingId.value = item.id;
+  renamingName.value = item.name;
+}
+
+async function confirmRename(item: SavedFilter) {
+  const name = renamingName.value.trim();
+  renamingId.value = '';
+  if (!name || name === item.name) return;
+  try {
+    await updateSavedFilter(item.id, { name });
+    await loadSavedFilters();
+  } catch {
+    message.error('重命名失败，请稍后重试');
+  }
+}
+
+async function handleDeleteSavedFilter(item: SavedFilter) {
+  try {
+    await deleteSavedFilter(item.id);
+    message.success(`已删除「${item.name}」`);
+    await loadSavedFilters();
+  } catch {
+    message.error('删除筛选失败，请稍后重试');
+  }
+}
+
 // ---------------------------------------------------------------- 加载
 
 async function load() {
   loading.value = true;
   try {
     const page = await searchPatients(
-      buildPatientSearchPayload({ ...filters }, pageNo.value, pageSize.value),
+      buildPatientSearchPayload(
+        { ...filters },
+        pageNo.value,
+        pageSize.value,
+        undefined,
+        appliedCondition.value ?? undefined,
+      ),
     );
     rows.value = page.items;
     total.value = page.total;
@@ -94,6 +237,13 @@ async function loadOptions() {
     // 候选加载失败不阻断列表；病区下拉显示为空，仍可按其余条件检索
     wardOptions.value = [];
   }
+  try {
+    const catalog = await fetchPatientSearchFields();
+    fieldCatalog.value = catalog.fields;
+  } catch {
+    fieldCatalog.value = [];
+  }
+  await loadSavedFilters();
 }
 
 onMounted(() => {
@@ -113,6 +263,7 @@ function handleSearch() {
 
 function handleReset() {
   Object.assign(filters, emptyPatientFilters());
+  appliedCondition.value = null;
   pageNo.value = 1;
   void load();
 }
@@ -183,7 +334,10 @@ const dataSource = computed(() =>
 // ---------------------------------------------------------------- 空态（pages.md §3）
 
 const emptyInfo = computed(() =>
-  patientEmptyText(hasActiveFilters(appliedFilters.value), canCreate.value),
+  patientEmptyText(
+    hasActiveFilters(appliedFilters.value, hasAdvancedActive.value),
+    canCreate.value,
+  ),
 );
 
 function handleEmptyAction() {
@@ -268,9 +422,108 @@ function handleEmptyAction() {
             <Button data-testid="patient-reset" @click="handleReset">
               重置
             </Button>
+            <Button
+              data-testid="patient-advanced-open"
+              ghost
+              type="primary"
+              @click="advancedOpen = true"
+            >
+              高级检索
+            </Button>
+            <!-- 我的筛选（A-PAT-015：仅本人可见；点击应用，行内更新 / 重命名 / 删除） -->
+            <Dropdown>
+              <Button data-testid="patient-saved-filters">我的筛选 ▾</Button>
+              <template #overlay>
+                <Menu data-testid="saved-filter-menu">
+                  <MenuItem v-if="savedFilters.length === 0" disabled>
+                    暂无保存的筛选，用「高级检索」保存
+                  </MenuItem>
+                  <MenuItem
+                    v-for="item in savedFilters"
+                    :key="item.id"
+                    :title="item.name"
+                  >
+                    <div class="saved-filter-row">
+                      <template v-if="renamingId === item.id">
+                        <Input
+                          v-model:value="renamingName"
+                          :maxlength="32"
+                          size="small"
+                          :style="{ width: '140px' }"
+                          @keyup.enter="confirmRename(item)"
+                        />
+                        <Button
+                          size="small"
+                          type="link"
+                          @click.stop="confirmRename(item)"
+                        >
+                          确定
+                        </Button>
+                      </template>
+                      <template v-else>
+                        <span
+                          class="saved-filter-name"
+                          @click.stop="handleApplySavedFilter(item)"
+                        >
+                          {{ item.name }}
+                        </span>
+                        <span @click.stop>
+                          <Button
+                            size="small"
+                            type="link"
+                            title="用当前检索条件覆盖该筛选"
+                            @click="handleUpdateSavedFilter(item)"
+                          >
+                            更新
+                          </Button>
+                          <Button
+                            size="small"
+                            type="link"
+                            @click="startRename(item)"
+                          >
+                            重命名
+                          </Button>
+                          <Popconfirm
+                            title="删除该筛选？"
+                            ok-text="删除"
+                            cancel-text="取消"
+                            @confirm="handleDeleteSavedFilter(item)"
+                          >
+                            <Button danger size="small" type="link">
+                              删除
+                            </Button>
+                          </Popconfirm>
+                        </span>
+                      </template>
+                    </div>
+                  </MenuItem>
+                </Menu>
+              </template>
+            </Dropdown>
           </Space>
         </FormItem>
       </Form>
+
+      <!-- 生效的高级检索提示条（点击 ✕ 清除；pages.md §3 高级检索入口） -->
+      <div v-if="hasAdvancedActive" class="advanced-chip">
+        <Tag
+          closable
+          color="blue"
+          data-testid="advanced-condition-chip"
+          @close.prevent="clearAdvanced"
+        >
+          高级检索（{{ appliedConditionCount }} 项）
+        </Tag>
+      </div>
+
+      <AdvancedSearch
+        v-model:open="advancedOpen"
+        :field-catalog="fieldCatalog"
+        :mobile-common-only="isMobile"
+        :value="appliedCondition ?? undefined"
+        @apply="handleApplyAdvanced"
+        @save-as="handleSaveAs"
+      />
 
       <!-- 手机：卡片列表（姓名、状态、下次随访、病区；pages.md §3） -->
       <div v-if="isMobile" class="cards">
@@ -426,6 +679,26 @@ function handleEmptyAction() {
 .search-bar {
   row-gap: 8px;
   margin-bottom: 8px;
+}
+
+.advanced-chip {
+  margin-bottom: 8px;
+}
+
+.saved-filter-row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 280px;
+}
+
+.saved-filter-name {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
 }
 
 .person {

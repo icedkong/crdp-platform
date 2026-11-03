@@ -76,6 +76,33 @@ export function authBase(mode: SessionMode) {
   return mode === 'hospital' ? '/api/hospital' : '/api/platform';
 }
 
+// E13-T06 高级检索条件构造器与保存的个人筛选（A-PAT-014、A-PAT-015、A-NFR-009、C-PAT-013）
+export {
+  conditionPreview,
+  conditionRowCount,
+  conditionRowText,
+  emptyConditionGroup,
+  emptyConditionRow,
+  isConditionGroup,
+  isConditionGroupComplete,
+  isRowComplete,
+  OPERATOR_LABELS,
+  pruneConditionGroup,
+  withGroupAdded,
+  withItemMoved,
+  withItemRemoved,
+  withItemReplaced,
+  withRowAdded,
+} from './advanced-search';
+
+export type {
+  AdvancedOptionValue,
+  AdvancedSearchField,
+  ConditionGroup,
+  ConditionRow,
+  SavedFilter,
+  SavedFilterPayload,
+} from './advanced-search';
 // E08-T04 审计中心（PLT-AUD-005~007）
 export * from './audit';
 
