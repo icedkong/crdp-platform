@@ -111,6 +111,7 @@ class PatientOverviewServiceTest {
                         "F",
                         null,
                         "ACTIVE",
+                        3L,
                         "示例一病区",
                         null,
                         null,
@@ -150,7 +151,8 @@ class PatientOverviewServiceTest {
                                         List.of(
                                                 "followup:record:edit",
                                                 "followup:scan:upload",
-                                                "followup:plan:enroll")),
+                                                "followup:plan:enroll",
+                                                "followup:patient:transfer")),
                                 null,
                                 List.of()));
 
@@ -161,6 +163,7 @@ class PatientOverviewServiceTest {
         assertFalse(view.actions().contains("contact"), "已终止不能记录沟通");
         assertFalse(view.actions().contains("stop"), "已终止不能再停止");
         assertTrue(view.actions().contains("upload"), "上传报告单不受随访状态限制");
+        assertTrue(view.actions().contains("transfer"), "转病区是管理动作（A-WARD-005），已终止患者仍可调整病区归属");
     }
 
     @Test
@@ -236,6 +239,7 @@ class PatientOverviewServiceTest {
                         row.gender(),
                         row.age(),
                         row.status(),
+                        row.wardId(),
                         row.wardName(),
                         row.deptName(),
                         row.responsibleName(),
@@ -280,6 +284,7 @@ class PatientOverviewServiceTest {
                 "M",
                 71,
                 status,
+                4L,
                 "示例二病区",
                 null,
                 "王医生（示例）",

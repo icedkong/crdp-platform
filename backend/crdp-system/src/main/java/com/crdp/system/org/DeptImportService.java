@@ -302,7 +302,9 @@ public class DeptImportService {
             return "排序号过大（最多 " + SORT_MAX + "）";
         }
         DeptRow existing = existingByCode.get(row.code());
-        if (existing != null && existing.getOrgId() != org.getId()) {
+        // Long 拆箱陷阱：两侧都是包装类型时 != 是引用比较，org 自增超过 127（Long 缓存）后
+        // 同一 org 也会误判跨院区；用 equals 按值比较（E13-T08 验证时发现）
+        if (existing != null && !java.util.Objects.equals(existing.getOrgId(), org.getId())) {
             return "科室「" + row.code() + "」已属于其他院区，导入不能跨院区移动（请在科室编辑中移动）";
         }
         if (!row.leaderUsername().isBlank()) {

@@ -21,13 +21,21 @@ E06-T02 已实现（院区与科室树；病区字典属 `crdp-followup`，科�
 | GET | `/api/hospital/system/orgs/import-template` | `tenant:org:edit` | **已实现（E06-T03 / PLT-ORG-003）**。科室导入模板下载：xlsx 单工作表，表头 `院区编码、科室编码、上级科室编码、科室名称、科室类型、HIS科室编码、负责人账号、排序` + 两行示例（全部虚构数据） |
 | POST | `/api/hospital/system/orgs/import` | `tenant:org:edit` | **已实现（E06-T03 / PLT-ORG-003）**。科室批量导入（multipart `file`，≤1000 行）：同步一次性模型（OQ-52）——上传即逐行校验并落库，**单行失败不影响其他行**，返回 `{ total, created, updated, failed, rows[{ rowNo, code, action(CREATED\|UPDATED\|FAILED), message }] }`；表头不符 / 无数据行 / 超 1000 行 / 非 xlsx → 40001。规则：院区须已存在；科室编码存在即更新，不存在即新增；上级科室编码可引用库内或**同文件任意位置**的编码（空 = 院区顶层），自引用与循环引用报错；不能借导入跨院区移动；负责人账号须为本院启用用户；写 `ORG_IMPORT` 作业级审计。HIS 同步接口待医院确认（规格原文），首期只做 Excel |
 
+病区字典（A-WARD-001、008；C-WARD-001、008）**已实现（E13-T08，页面 `/system/ward`，菜单 plt_menu 38、按钮 216 平台库 V40）**：
+
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| GET | `/api/hospital/followup/wards` | `followup:ward:edit` | 病区列表（含停用，`sort_no`、`id` 升序）：`{ items: [{ id, code, name, wardType, aliases[], defaultOwnerId, defaultOwnerName, sortNo, status, patientCount, memberCount }] }`（patientCount = 在册患者数——管理口径全院计数、不输出患者行；memberCount = 负责本病区的启用用户数） |
+| POST | `/api/hospital/followup/wards` | `followup:ward:edit` | 新建：`{ code, name, wardType, aliases?, defaultOwnerId?, sortNo? }`；编码字符集 `[A-Za-z0-9_-]`、本院唯一（重复 40902，含并发唯一键兜底）、创建后不可改；`wardType ∈ WARD/CENTER`；别名多值清单（或含 `;`／`；` 的原始串）去空白去重后以 `;` 存储（单项 ≤64、总长 ≤255）；默认负责人须为启用用户；写 `WARD_CREATE` 审计（重复写 DENIED） |
+| PUT | `/api/hospital/followup/wards/{id}` | `followup:ward:edit` | 编辑：同新建字段（`code` 可省略，携带且不同 40001）；写 `WARD_UPDATE` 审计（前后值快照） |
+| PUT | `/api/hospital/followup/wards/{id}/status` | `followup:ward:edit` | 停用 / 启用：`{ status: ENABLED\|DISABLED }`；**病区下仍有在册（deleted=0）患者时不能停用（40901 + DENIED 审计，提示须先转出，A-WARD-008）**；停用后不再进登记 / 转病区候选；不自动改派成员（OQ-10）；写 `WARD_DISABLE` / `WARD_ENABLE` 审计 |
+| GET | `/api/hospital/followup/wards/{id}/members` | `followup:ward:edit` | 成员与患者数：`{ wardId, patientCount, members: [{ id, username, displayName }] }`（负责本病区的启用用户）；成员分配在用户管理「负责病区」（A-WARD-002） |
+
 未实现（后续任务）：
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| GET / POST / PUT | `/api/hospital/followup/wards[/{id}]` | `followup:ward:edit` | 病区字典：名称、编码、默认随访负责人、停用（A-WARD-001、008；C-WARD-001） |
-| GET / PUT | `/api/hospital/followup/wards/aliases` | `followup:ward:edit` | 病区值映射（导入时原值 → 病区，`ward_alias`，A-WARD-006） |
-| GET | `/api/hospital/followup/wards/{id}/members` | `followup:ward:edit` | 成员与患者数 |
+| GET / PUT | `/api/hospital/followup/wards/aliases` | `followup:ward:edit` | 病区值映射（导入时原值 → 病区，A-WARD-006；别名字段本身已随 E13-T08 落在 `ward.alias` 并可维护） |
 
 ## 2. 用户（PLT-ORG-006..012、A-WARD-002、C-WARD-003；E06-T07 列表 / 详情 / 新建 / 编辑 / 状态 / 重置 / 解锁，E06-T08 批量导入，E06-T09 权限预览与用户选择器）
 

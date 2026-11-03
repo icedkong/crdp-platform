@@ -220,6 +220,30 @@ class MenuSyncServiceTest {
                         null,
                         "followup:scan:download",
                         20,
+                        "ENABLED"),
+                // E13-T08 转病区按钮（平台库 V40 同构）：患者档案菜单下的 followup 按钮
+                manifestRow(
+                        216L,
+                        21L,
+                        "BUTTON",
+                        "转病区",
+                        null,
+                        null,
+                        null,
+                        "followup:patient:transfer",
+                        30,
+                        "ENABLED"),
+                // E13-T08 病区管理（平台库 V40 同构）：followup 菜单挂在 base 的系统设置目录（30）下
+                manifestRow(
+                        38L,
+                        30L,
+                        "MENU",
+                        "病区管理",
+                        "HospitalWard",
+                        "/system/ward",
+                        "system/ward/index",
+                        "followup:ward:edit",
+                        33,
                         "ENABLED"));
     }
 

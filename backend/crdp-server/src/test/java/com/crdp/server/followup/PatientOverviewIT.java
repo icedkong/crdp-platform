@@ -125,7 +125,10 @@ class PatientOverviewIT {
         assertNull(data.get("latestFollowup"), "最近随访关键指标随 E15 写入");
         assertNull(data.get("device"), "C 当前器械随 E21 开放");
         // 演示随访医生只有 followup:patient:edit（菜单 214）：可停止、无计划外 / 上传 / 沟通入口
-        assertEquals(List.of("stop"), data.get("actions"), "actions 按权限 + 状态计算");
+        assertEquals(
+                List.of("stop", "transfer"),
+                data.get("actions"),
+                "actions 按权限 + 状态计算（transfer 随 E13-T08 授予演示角色）");
     }
 
     @Test
@@ -140,7 +143,10 @@ class PatientOverviewIT {
         assertEquals(0, codeOf(summary));
         Map<?, ?> data = data(summary);
         assertTrue((Boolean) data.get("terminated"), "死亡 / 停止 / 失访视为已终止（pages.md §4.10）");
-        assertEquals(List.of(), data.get("actions"), "已终止患者无 stop 操作（upload 演示角色无权限）");
+        assertEquals(
+                List.of("transfer"),
+                data.get("actions"),
+                "已终止患者无 stop 操作（upload 演示角色无权限；转病区是管理动作不受状态限制，E13-T08）");
     }
 
     @Test

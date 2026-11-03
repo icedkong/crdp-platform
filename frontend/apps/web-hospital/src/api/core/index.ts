@@ -9,3 +9,4 @@ export * from './notify';
 export * from './patient';
 export * from './profile';
 export * from './user';
+export * from './ward';

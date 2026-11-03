@@ -4,6 +4,7 @@ import type {
   PatientOverview,
   PatientStatusHistoryRow,
   PatientTimelineEntry,
+  PatientWardHistoryItem,
 } from '@crdp/api';
 
 import { computed, onMounted, ref } from 'vue';
@@ -27,6 +28,7 @@ import {
   Descriptions,
   DescriptionsItem,
   Drawer,
+  message,
   Result,
   Spin,
   Table,
@@ -39,9 +41,11 @@ import {
   fetchPatientStatusHistory,
   fetchPatientSummary,
   fetchPatientTimeline,
+  fetchPatientWardHistory,
 } from '#/api/core/patient';
 import FollowupTimeline from '#/components/followup/followup-timeline.vue';
 import PatientHeader from '#/components/followup/patient-header.vue';
+import TransferWardModal from '#/components/followup/transfer-ward-modal.vue';
 
 defineOptions({ name: 'FollowupPatientDetail' });
 
@@ -67,8 +71,17 @@ const contactsOpen = ref(false);
 const contactsLoading = ref(false);
 const contactVersions = ref<PatientContactVersion[]>([]);
 const statusHistory = ref<PatientStatusHistoryRow[]>([]);
+const wardHistory = ref<PatientWardHistoryItem[]>([]);
+
+// E13-T08 / A-WARD-005：转病区（详情页入口，pages.md §6 页面 4）
+const transferOpen = ref(false);
 
 const patientId = computed(() => String(route.params.id ?? ''));
+
+/** 当前病区 id（E13-T08 随概览下发；转病区弹窗用它排除当前病区）。 */
+const currentWardId = computed<null | number>(
+  () => overview.value?.wardId ?? null,
+);
 
 onMounted(async () => {
   try {
@@ -95,23 +108,36 @@ const dischargeStatusLabel = computed(() =>
 
 async function openContacts() {
   contactsOpen.value = true;
-  if (contactVersions.value.length > 0 || statusHistory.value.length > 0)
+  if (
+    contactVersions.value.length > 0 ||
+    statusHistory.value.length > 0 ||
+    wardHistory.value.length > 0
+  )
     return;
   contactsLoading.value = true;
   try {
-    const [contactInfo, history] = await Promise.all([
+    const [contactInfo, history, wardHist] = await Promise.all([
       fetchPatientContactInfo(patientId.value),
       fetchPatientStatusHistory(patientId.value),
+      fetchPatientWardHistory(patientId.value),
     ]);
     contactVersions.value = contactInfo.items;
     statusHistory.value = history;
+    wardHistory.value = wardHist.items;
   } catch {
     // 抽屉内失败保留空态；概览本体不受影响
     contactVersions.value = [];
     statusHistory.value = [];
+    wardHistory.value = [];
   } finally {
     contactsLoading.value = false;
   }
+}
+
+/** 转病区成功（A-WARD-005）：原病区医生立即失去访问权——操作者本人可能已不可见该患者，统一返回列表。 */
+function handleTransferred() {
+  message.success('已转病区，正在返回患者列表');
+  void router.replace('/followup/patient');
 }
 
 const contactColumns = [
@@ -139,6 +165,25 @@ const historyColumns = [
   { dataIndex: 'source', title: '来源' },
   { dataIndex: 'reason', title: '原因' },
 ];
+
+// E13-T08 / A-WARD-005「转病区历史可查」
+const wardHistoryColumns = [
+  { dataIndex: 'transferredAt', title: '时间' },
+  { dataIndex: 'fromWardName', title: '原病区' },
+  { dataIndex: 'toWardName', title: '新病区' },
+  { dataIndex: 'reason', title: '原因' },
+  { dataIndex: 'operatorName', title: '操作人' },
+];
+
+const wardHistoryRows = computed(() =>
+  wardHistory.value.map((item) => ({
+    ...item,
+    fromWardName: item.fromWardName ?? '—',
+    key: item.id,
+    operatorName: item.operatorName ?? '—',
+    toWardName: item.toWardName ?? '—',
+  })),
+);
 
 const historyRows = computed(() =>
   statusHistory.value.map((item) => ({
@@ -172,7 +217,11 @@ const timelineLegendNote =
   </Result>
 
   <div v-else data-testid="patient-detail">
-    <PatientHeader :overview="overview" @contacts="openContacts" />
+    <PatientHeader
+      :overview="overview"
+      @contacts="openContacts"
+      @transfer="transferOpen = true"
+    />
     <Tabs v-model:active-key="tab" class="tabs">
       <TabPane key="baseline" tab="基线资料" />
       <TabPane key="followup" tab="随访记录" />
@@ -290,11 +339,28 @@ const timelineLegendNote =
         >
           <template #emptyText> 暂无状态变更 </template>
         </Table>
+        <h3 class="drawer-title">转病区历史</h3>
+        <Table
+          :columns="wardHistoryColumns"
+          :data-source="wardHistoryRows"
+          :pagination="false"
+          size="small"
+        >
+          <template #emptyText> 暂无转病区记录 </template>
+        </Table>
       </Spin>
       <p class="hint">
         电话明文需持有「查看明文」权限，经患者头部的「显示明文」查看并写审计。
       </p>
     </Drawer>
+
+    <TransferWardModal
+      v-model:open="transferOpen"
+      :current-ward-id="currentWardId"
+      :label="`${overview.name} · ${overview.patientNo}`"
+      :patient-id="overview.id"
+      @success="handleTransferred"
+    />
   </div>
 </template>
 

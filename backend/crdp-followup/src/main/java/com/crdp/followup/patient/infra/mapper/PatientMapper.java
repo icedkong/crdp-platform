@@ -9,6 +9,7 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Options;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
 /**
  * 患者主表 pt_patient（E13-T01 / A-PAT-003、A-PAT-007、C-PAT-001、C-PAT-002；表 followup V37）。
@@ -120,6 +121,29 @@ public interface PatientMapper {
             WHERE id = #{id} AND status = 'ENABLED'
             """)
     int countEnabledDept(@Param("id") long id);
+
+    /** 在册患者 id 与当前病区（E13-T08 转病区入口的范围内校验；越范围 null）。 */
+    @DataScope(resource = "patient")
+    @Select(
+            """
+            SELECT id, ward_id AS wardId FROM pt_patient
+            WHERE id = #{id} AND deleted = 0
+            LIMIT 1
+            """)
+    WardRef findLiveWardById(@Param("id") long id);
+
+    /** 在册患者 id 与当前病区行。 */
+    record WardRef(Long id, Long wardId) {}
+
+    /** 转病区（A-WARD-005）：只改归属列并递增乐观锁版本；任务 / 附件经 patient_id 关联患者自动随迁。 */
+    @Update(
+            """
+            UPDATE pt_patient
+            SET ward_id = #{wardId}, updated_by = #{updatedBy}, version = version + 1
+            WHERE id = #{id} AND deleted = 0
+            """)
+    int updateWard(
+            @Param("id") long id, @Param("wardId") long wardId, @Param("updatedBy") long updatedBy);
 
     /** 出院登记写入；并发同号由 uk_pt_patient_mrn 兜底（DuplicateKeyException → 40902）。 */
     @Insert(
