@@ -122,7 +122,7 @@ E11-T02 落地（A-NFR-002 / C-NFR-002「JSON 文档存储」）。数据记录�
 - 值按 tech-plan §6 值编码口径比较：数值比大小；日期 `YYYY-MM-DD` / 日期时间 `YYYY-MM-DDTHH:mm` 比先后（日期按当日 00:00 归一，分钟与带秒写法等价）；一侧为空或不可比（数值 × 日期、普通文本）不触发。
 - `severity`：`HARD` 违反拦截（提交 / 保存修改 42200）；`SOFT` 黄色提示并要求确认、不阻止保存（A-FLD-003 软范围、C-FLD-007 程控参数建议范围同一语义）。
 - 命中挂靠：`target_field` / `category_key`（`rules[].key / categoryKey` 与 `fieldErrors[].key / categoryKey` 同源），`rule` = `rule_id`（范围命中用固定码 `hardRange` / `softRange`）。
-- 维护：规则由实施经迁移配置（A-FLD-006 完整规则链随 E23-T01 字段录入、C 程控规则随 C 字段字典落地；V30 带演示规则）；`status=DISABLED` 停用即不生效、不删除。
+- 维护：规则由实施经迁移配置。E23-T01 已配医院 A 的规则链（followup V38：`surgery_start_lt_end` 手术开始 < 结束、`icu_in_lt_out` 进ICU < 出ICU，HARD）；入院 ≤ 手术 ≤ 出院、出生 ≤ 手术、死亡 ≥ 出院、随访事件在出院与随访日期之间的端点为患者主档实体列 / 跨表单（引擎只校验记录 JSON 的字段，FormDataValidator 拒绝实体列键），随 E13-T02 / E15 患者域编辑校验落地，不进 fe_rule（OQ-64①）。C 程控规则随 C 字段字典落地。`status=DISABLED` 停用即不生效、不删除。
 
 ### 2.3 执行时机
 
@@ -138,7 +138,7 @@ E11-T02 落地（A-NFR-002 / C-NFR-002「JSON 文档存储」）。数据记录�
 - 求值语义（实现即定义，暂行口径见 OQ-65）：eq / in 按值编码口径**严格同型**比较（数值与数值、布尔与布尔、字符串与字符串；`1` 与 `"1"` 不等——条件值必须按值编码写：选项编码整数、日期字符串）；gt / gte / lt / lte 只比数值与日期 / 日期时间（日期归一当日 00:00，与 §2.2 COMPARE 同口径），普通文本不可比 → 不成立；**操作数缺失（未答 / null）除 `empty` / `notEmpty` 外一律不成立**（未答 ≠ 否：「是否死亡」未答 → 死亡日期不显示、不加必填）；空值口径 = null / 空串 / 空数组 / 分量全缺的 pair_number 对象（`0` 与 `false` 是已答）；条件为空或解析失败 / 残缺（无 op、field 与 ctx 并存或全无、op 不认识）**恒真**——坏配置不隐藏字段、不加必填、不炸保存。
 - **条件必填**：有效必填 = 字段显示 &&（`required` || `requiredWhen` 成立）；缺失 → 42200 `fieldErrors` 带 `rule=required`、`message="必填"`（与渲染器 §10.3 同词，前后端逐字一致）。只查 `storage=json` 且非派生的字段（引擎只校验记录 JSON；实体 / 加密列必填随业务接口 E13，派生随 E11-T05）；`requiredWhen` 为空不追加必填（无条件必填就是 `required` 列）。
 - **隐藏字段**：visibleWhen 不成立的字段不参与必填、其值不参与范围与跨字段校验（掩蔽，按「提交时已清空」口径）；提交落库前由 `stripHiddenFields` 移除残留值并返回被清空键（渲染器同语义 `hiddenFieldKeys` / `stripHiddenFieldValues`，`cleared-hidden` 事件）。完整度只把显示中的必填字段计入分母（A-PAT-019；进度口径已随 E11-T11 落地，见 §1.3）。
-- 实现位置：后端 `FormConditionEngine`（求值）+ `FormRuleEngine.validate(data, fields, rules, context)`（必填与掩蔽进提交校验）；前端 `@crdp/rules` 的 `evaluateCondition` / `isFieldVisible` / `missingRequiredFields` / `stripHiddenFieldValues` 与 `validateFormData` 的第 4 参 `context`。演示种子：followup V31（吸烟史=是 → 每日吸烟支数显示并必填）；真实条件配置随 E23-T01 / C 字段字典录入。
+- 实现位置：后端 `FormConditionEngine`（求值）+ `FormRuleEngine.validate(data, fields, rules, context)`（必填与掩蔽进提交校验）；前端 `@crdp/rules` 的 `evaluateCondition` / `isFieldVisible` / `missingRequiredFields` / `stripHiddenFieldValues` 与 `validateFormData` 的第 4 参 `context`。E23-T01 已录入医院 A 的真实条件配置（followup V38：是否死亡=是 → 死亡日期 / 死亡原因显示并必填；复查超声=是 → 超声指标；体外循环=有 → 体外循环时间 / 主动脉阻断时间；选了再住院类型 → 再住院日期；「前项为是时必填」各字段 requiredWhen）；C 字段字典随 E21 录入。
 - 条件列维护：`visible_when` / `required_when` 由实施经迁移配置（字典维护页 PUT 不改条件，form.md §3）。
 
 ### 2.5 共享用例（前后端一致的事实来源）
@@ -168,7 +168,7 @@ E11-T02 落地（A-NFR-002 / C-NFR-002「JSON 文档存储」）。数据记录�
 - **写入闸门**（`FormService.createRecord / saveRecord`）：来源齐全 → 计算值覆盖（含旧手工值，「来源齐全后以计算值为准」）；来源缺失 → 保留手工值（`data_meta.manual` 由录入侧标记）；结果无效且带手工值 → **42200** `fieldErrors` 带 `rule=derived`、message 同留空原因（「结果无效不允许手工录入，应先修正来源字段」）。草稿不写字段历史（§1.2）；「系统重算」历史（source=SYSTEM_RECALC、triggerFields=派生定义 args）由提交流程（E15 / E25）与导入（E18）调 `FormService.recalculateDerived(formCode, templateVersion, data)` diff 后经 `FieldHistoryService.logChange` 写入。
 - 1 位小数舍入：`Math.round(v × 10) ÷ 10`（Java 与 JS 同为「半值向 +∞」，双精度运算逐位一致；不用十进制 HALF_UP，避免两端分叉）。
 - 防御（与条件 / 规则引擎坏配置同口径，OQ-68）：未知函数、参数个数不符、坏 JSON、依赖成环的字段不出结果（不炸保存、不产出误导值）。
-- 演示种子：followup V33（体重 f013、出院日期 f021、BMI f031，并把 V28 已建的术后住院天数 f030 来源补齐）；真实派生配置随 E23-T01 / C 字段字典录入。
+- 派生配置：E23-T01 已录入医院 A 的六个派生字段（followup V38：手术年龄 `f005 = AGE_YEARS(f267 出生日期, f001 手术日期)`、BMI `f015 = BMI(f014 体重, f013 身高)`、术后住院天数 `f018 = DAYS_INCLUSIVE(f001, f017)`、手术时长 `f140 = MINUTES_BETWEEN(f138, f139)`、桥血管数量 `f149 = SUM(f150, f151)`、ICU 时间 `f189 = HOURS_BETWEEN_1DP(f187, f188)`）；C 字段字典随 E21 录入。
 
 ## 3. 字段字典维护（A-FLD-001..009/012/013、C-FLD-001..010；E11-T01 已实现前两行与 publish，E11-T08 变更记录，E11-T09 Excel 批量导入）
 
@@ -186,9 +186,9 @@ ENABLED/DISABLED，停用不删除；**模板下发与校验只取启用字段**
 | POST | `/api/hospital/form/fields/import` | `followup:field:edit` | **E11-T09 已实现**（验收「产品可用 Excel 批量导入字段定义」，E23-T01 / C 字段字典录入工具；multipart `file`，≤500 行）。同步一次性模型（OQ-52）：逐行校验并落库，**单行失败不影响其他行**，返回 `{ total, created, updated, failed, rows[{ rowNo, formCode, fieldKey, action(CREATED\|UPDATED\|FAILED), message }] }`。语义：按「表单编码 + 稳定键」命中——已有为**更新**（行是字段完整定义，可维护与实施列全量覆盖：显示名、分类、单位、小数位、硬 / 软范围、必填、条件、派生、帮助、排序、状态、选项），没有为**新增**；`字段编码`、类型、存储方式、敏感标记不可改（更新行留空保留原值，填写须与库内一致，否则该行失败，A-FLD-008）；选项集不存在自动建集（名称先取编码），选项 `编码=显示名` 新编码插入（带序数 / 互斥 / 需补充说明 / 别名四列实施标记）、已有编码更新显示名与实施列、不删除；派生公式列写 `AGE_YEARS(f003,f020)`（9 内置函数、arity 配置期校验、参数可前向引用同文件字段），条件列写 `f010=1`（多条件逗号分隔=全部成立，比较符 `= != > >= < <=`，值数字按数字 / 其余按字符串）→ 解析为 §2.4 条件树；表单 / 分类键 / 类型 / 选项集 / 公式与条件引用不合法 → 该行失败。文件级 40001：非 xlsx / 表头不符 / 无数据行 / 超 500 行；无医院会话 40100。写 `FIELD_DICT_IMPORT` 作业级审计 + 每字段一条 `fe_field_dict_log`（A-FLD-009） |
 | POST | `/api/hospital/form/forms/{code}/publish` | `followup:field:edit` | **E11-T02 已实现**：无请求体；把当前分类与启用字段固化成新版本快照并前移 `currentVersion`，响应 `{ code, name, version, fieldCount, publishedAt }`。没有字典修改也允许发布（版本是显式动作）；并发发布后到者 40900。写审计 `FORM_PUBLISH`（前后版本与字段数）。停用表单发布 40001；表单不存在 40400 |
 
-不做：医院自助新增字段（A-FLD-010）、通用表单设计器（A-FLD-011）——延后（见 `docs/tasks/tasks.md`）。C-FLD-008 “新增字段”由实施经迁移或 §3 的 Excel 批量导入（E11-T09）录入，不提供页面。页面 `/system/field`（菜单 `FollowupField`，平台库迁移 V35）；导入是实施 / 产品工具（E23-T01 录医院 A 的 266 字段、C 字段字典随 E21 录入），经 Swagger / 接口调用，无专门页面。
+不做：医院自助新增字段（A-FLD-010）、通用表单设计器（A-FLD-011）——延后（见 `docs/tasks/tasks.md`）。C-FLD-008 “新增字段”由实施经迁移或 §3 的 Excel 批量导入（E11-T09）录入，不提供页面。页面 `/system/field`（菜单 `FollowupField`，平台库迁移 V35）；导入是实施 / 产品工具（经 Swagger / 接口调用，无专门页面）。医院 A 的 266 个字段（E23-T01）已由 `scripts/gen_a_field_dict.py` 从附录 A 生成迁移录入（followup V38，可重跑生成、`AFieldDictSqlTest` / `AFieldDictVerifyIT` 逐项核对），后续微调走迁移或导入工具；C 字段字典随 E21 录入。
 
-A-FLD-013（E11-T09，followup V36）：示例基线补「手术年龄」派生字段 `f032 = AGE_YEARS(f003 出生日期, f020 手术日期)`（手术日期 − 出生日期取周岁）；出生日期 `f003` 由 V28 预置（date、basic_info），不采集身份证号。
+A-FLD-013（E23-T01，followup V38）：真实字典中「出生日期」为 `f267`（基本信息分类、date、storage=column，对应 pt_patient.birth_date），手术年龄 `f005 = AGE_YEARS(f267, f001 手术日期)`（手术日期 − 出生日期取周岁）；不采集身份证号。
 
 ## 4. 业务字典（A-FLD-012、C-FLD-002/003）
 
