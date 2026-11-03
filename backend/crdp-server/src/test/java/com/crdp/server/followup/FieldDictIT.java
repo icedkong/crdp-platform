@@ -41,7 +41,7 @@ import org.springframework.util.MultiValueMap;
  * / 改显示名 / 停用，编码不可改不删除）； 字段停用 / 启用（状态 + 审计）；键、编码、类型、硬范围、敏感标记不可改（请求不携带）； 无权限 40300、 模块关闭 40301、校验失败
  * 40001、字段 / 表单不存在 40400、双租户字典隔离。E11-T08 / A-FLD-009、C-FLD-009：每次维护写 fe_field_dict_log
  * 变更记录（前后值、操作人、时间），GET /fields/{key}/logs 可查。E11-T09 /
- * A-FLD-013、C-FLD-008：手术年龄派生（AGE_YEARS(f003,f020)）与 Excel 批量导入（模板、新增 / 更新 / 单行失败、条件 DSL、权限 / 模块开关 /
+ * A-FLD-013、C-FLD-008：手术年龄派生（AGE_YEARS(f267,f001)）与 Excel 批量导入（模板、新增 / 更新 / 单行失败、条件 DSL、权限 / 模块开关 /
  * 双租户隔离）。全部虚构数据，门控 CRDP_IT_MYSQL_PORT。
  */
 @ActiveProfiles("local")
@@ -67,23 +67,26 @@ class FieldDictIT {
             runInTenant(
                     tenant,
                     () -> {
-                        // 恢复被用例动过的字段与选项（种子形态，V28 / V36）
+                        // 恢复被用例动过的字段与选项（真实字典形态，E23-T01 / V38）
                         jdbc.update(
-                                "UPDATE fe_field SET label = '吸烟史', help_text ="
-                                        + " '示例（A-FLD-002）：原表列名「吸烟史(否=0，是=1)」——显示名与编码分离，"
-                                        + "页面显示「否 / 是」，数据库存 0 / 1',"
-                                        + " required = 1, status = 'ENABLED', updated_by = NULL"
-                                        + " WHERE form_code = 'A_BASELINE' AND field_key = 'f010'");
+                                "UPDATE fe_field SET label = '吸烟史',"
+                                        + " help_text = '原表列名「吸烟史_否_0_是_1」',"
+                                        + " required = 0, status = 'ENABLED', updated_by = NULL"
+                                        + " WHERE form_code = 'A_BASELINE' AND field_key = 'f019'");
                         jdbc.update(
-                                "UPDATE fe_field SET soft_range = NULL, updated_by = NULL"
-                                        + " WHERE form_code = 'A_BASELINE' AND field_key = 'f011'");
+                                "UPDATE fe_field SET label = '身高cm',"
+                                        + " help_text = '原表列名「身高_cm」',"
+                                        + " soft_range = '{\"min\":130,\"max\":210}',"
+                                        + " updated_by = NULL"
+                                        + " WHERE form_code = 'A_BASELINE' AND field_key = 'f013'");
                         jdbc.update(
-                                "DELETE FROM fe_option WHERE set_code = 'yesno' AND option_code > 1");
+                                "DELETE FROM fe_option WHERE set_code = 'a_yesno'"
+                                        + " AND option_code > 1");
                         jdbc.update(
                                 "UPDATE fe_option SET label = CASE option_code WHEN 0 THEN '否'"
                                         + " WHEN 1 THEN '是' END, sort_no = option_code * 10 + 10,"
                                         + " status = 'ENABLED', updated_by = NULL"
-                                        + " WHERE set_code = 'yesno'");
+                                        + " WHERE set_code = 'a_yesno'");
                         // E11-T09 导入用例的痕迹：导入的字段 / 选项集 / 选项 / 变更记录 / 审计
                         jdbc.update(
                                 "DELETE FROM fe_field WHERE form_code = 'A_BASELINE'"
@@ -106,26 +109,29 @@ class FieldDictIT {
     void listsFieldsWithKeyCodeAndLabelSeparated() {
         String token = hospitalToken("demoa");
 
-        // 表单清单（登录即可）：示例基线就位
+        // 表单清单（登录即可）：基线与年度随访就位（E23-T01 录入）
         List<Map<?, ?>> forms = itemsOf(get(FORMS, token));
         assertEquals(0, code(get(FORMS, token)));
         assertTrue(
                 forms.stream().anyMatch(form -> "A_BASELINE".equals(form.get("code"))),
-                "表单清单含示例基线：" + forms);
+                "表单清单含基线档案：" + forms);
+        assertTrue(
+                forms.stream().anyMatch(form -> "A_ANNUAL_FU".equals(form.get("code"))),
+                "表单清单含年度随访：" + forms);
 
         Map<?, ?> list = get(FIELDS + "?formCode=A_BASELINE", token);
         assertEquals(0, code(list));
         List<Map<?, ?>> fields = itemsOf(list);
-        assertTrue(fields.size() >= 7, "示例基线字段齐全：" + fields.size());
+        assertTrue(fields.size() >= 200, "基线字段齐全（附录 A 分类 1–8 + 出生日期 = 213）：" + fields.size());
 
         Map<?, ?> smoking =
                 fields.stream()
-                        .filter(field -> "f010".equals(field.get("key")))
+                        .filter(field -> "f019".equals(field.get("key")))
                         .findFirst()
                         .orElseThrow();
-        assertEquals("smoking_history", smoking.get("code"), "字段编码（导入导出名）");
+        assertEquals("smoking_history", smoking.get("code"), "字段编码（ASCII，导入导出名；原表列名在帮助说明）");
         assertEquals("吸烟史", smoking.get("label"), "显示名（不带“(否=0，是=1)”编码说明）");
-        assertEquals("basic_info", smoking.get("categoryKey"));
+        assertEquals("case", smoking.get("categoryKey"));
         assertEquals("病例基本信息", smoking.get("categoryLabel"));
         List<Map<?, ?>> options = (List<Map<?, ?>>) smoking.get("options");
         assertEquals(2, options.size());
@@ -151,7 +157,7 @@ class FieldDictIT {
 
         Map<?, ?> updated =
                 put(
-                        FIELDS + "/f010?formCode=A_BASELINE",
+                        FIELDS + "/f019?formCode=A_BASELINE",
                         token,
                         Map.of(
                                 "label", "吸烟史（既往）",
@@ -161,7 +167,7 @@ class FieldDictIT {
         assertEquals(0, code(updated));
         assertEquals("吸烟史（既往）", data(updated).get("label"));
         assertEquals("smoking_history", data(updated).get("code"), "编码不可改也不被请求携带");
-        assertEquals("f010", data(updated).get("key"));
+        assertEquals("f019", data(updated).get("key"));
 
         runInTenant(
                 "demoa",
@@ -170,13 +176,13 @@ class FieldDictIT {
                             "吸烟史（既往）",
                             jdbc.queryForObject(
                                     "SELECT label FROM fe_field WHERE form_code = 'A_BASELINE'"
-                                            + " AND field_key = 'f010'",
+                                            + " AND field_key = 'f019'",
                                     String.class));
                     assertTrue(
                             jdbc.queryForObject(
                                             "SELECT COUNT(*) FROM aud_log WHERE action ="
                                                     + " 'FIELD_DICT_UPDATE' AND object_id ="
-                                                    + " 'A_BASELINE.f010'",
+                                                    + " 'A_BASELINE.f019'",
                                             Integer.class)
                                     >= 1,
                             "字段维护写审计");
@@ -190,7 +196,7 @@ class FieldDictIT {
 
         Map<?, ?> disabled =
                 put(
-                        FIELDS + "/f010?formCode=A_BASELINE",
+                        FIELDS + "/f019?formCode=A_BASELINE",
                         token,
                         Map.of("label", "吸烟史", "status", "DISABLED"));
         assertEquals(0, code(disabled));
@@ -203,12 +209,12 @@ class FieldDictIT {
                                 "DISABLED",
                                 jdbc.queryForObject(
                                         "SELECT status FROM fe_field WHERE form_code ="
-                                                + " 'A_BASELINE' AND field_key = 'f010'",
+                                                + " 'A_BASELINE' AND field_key = 'f019'",
                                         String.class)));
 
         Map<?, ?> enabled =
                 put(
-                        FIELDS + "/f010?formCode=A_BASELINE",
+                        FIELDS + "/f019?formCode=A_BASELINE",
                         token,
                         Map.of("label", "吸烟史", "status", "ENABLED"));
         assertEquals("ENABLED", data(enabled).get("status"));
@@ -221,7 +227,7 @@ class FieldDictIT {
 
         Map<?, ?> updated =
                 put(
-                        FIELDS + "/f010?formCode=A_BASELINE",
+                        FIELDS + "/f019?formCode=A_BASELINE",
                         token,
                         Map.of(
                                 "label", "吸烟史",
@@ -247,23 +253,23 @@ class FieldDictIT {
                     assertEquals(
                             "是（目前吸烟）",
                             jdbc.queryForObject(
-                                    "SELECT label FROM fe_option WHERE set_code = 'yesno'"
+                                    "SELECT label FROM fe_option WHERE set_code = 'a_yesno'"
                                             + " AND option_code = 1",
                                     String.class));
                     assertEquals(
                             "DISABLED",
                             jdbc.queryForObject(
-                                    "SELECT status FROM fe_option WHERE set_code = 'yesno'"
+                                    "SELECT status FROM fe_option WHERE set_code = 'a_yesno'"
                                             + " AND option_code = 0",
                                     String.class));
                 });
 
-        // 重复编码 40001；非选项型字段（身高 f011）拒绝维护选项
+        // 重复编码 40001；非选项型字段（身高 f013）拒绝维护选项
         assertEquals(
                 40001,
                 code(
                         put(
-                                FIELDS + "/f010?formCode=A_BASELINE",
+                                FIELDS + "/f019?formCode=A_BASELINE",
                                 token,
                                 Map.of(
                                         "label", "吸烟史",
@@ -276,7 +282,7 @@ class FieldDictIT {
                 40001,
                 code(
                         put(
-                                FIELDS + "/f011?formCode=A_BASELINE",
+                                FIELDS + "/f013?formCode=A_BASELINE",
                                 token,
                                 Map.of(
                                         "label", "身高",
@@ -295,18 +301,18 @@ class FieldDictIT {
                 0,
                 code(
                         put(
-                                FIELDS + "/f010?formCode=A_BASELINE",
+                                FIELDS + "/f019?formCode=A_BASELINE",
                                 token,
                                 Map.of("label", "吸烟史（修订）", "status", "ENABLED"))));
         assertEquals(
                 0,
                 code(
                         put(
-                                FIELDS + "/f010?formCode=A_BASELINE",
+                                FIELDS + "/f019?formCode=A_BASELINE",
                                 token,
                                 Map.of("label", "吸烟史（修订）", "status", "DISABLED"))));
 
-        Map<?, ?> logsResponse = get(FIELDS + "/f010/logs?formCode=A_BASELINE", token);
+        Map<?, ?> logsResponse = get(FIELDS + "/f019/logs?formCode=A_BASELINE", token);
         assertEquals(0, code(logsResponse));
         List<Map<?, ?>> logs = itemsOf(logsResponse);
         assertEquals(2, logs.size(), "两次维护各留一条：" + logs.size());
@@ -325,7 +331,7 @@ class FieldDictIT {
         // 未知字段 40400；无权限 40300（前端隐藏不能代替后端校验）
         assertEquals(40400, code(get(FIELDS + "/f999/logs?formCode=A_BASELINE", token)));
         String doctor = hospitalToken("demoa", "doctor.demo");
-        assertEquals(40300, code(get(FIELDS + "/f010/logs?formCode=A_BASELINE", doctor)));
+        assertEquals(40300, code(get(FIELDS + "/f019/logs?formCode=A_BASELINE", doctor)));
     }
 
     // ---------------------------------------------------------------- 校验、权限、模块开关、隔离
@@ -339,14 +345,14 @@ class FieldDictIT {
                 40001,
                 code(
                         put(
-                                FIELDS + "/f010?formCode=A_BASELINE",
+                                FIELDS + "/f019?formCode=A_BASELINE",
                                 token,
                                 Map.of("label", " ", "status", "ENABLED"))));
         assertEquals(
                 40001,
                 code(
                         put(
-                                FIELDS + "/f011?formCode=A_BASELINE",
+                                FIELDS + "/f013?formCode=A_BASELINE",
                                 token,
                                 Map.of(
                                         "label", "身高",
@@ -356,7 +362,7 @@ class FieldDictIT {
                 40001,
                 code(
                         put(
-                                FIELDS + "/f010?formCode=A_BASELINE",
+                                FIELDS + "/f019?formCode=A_BASELINE",
                                 token,
                                 Map.of("label", "吸烟史", "status", "PAUSED"))));
         assertEquals(
@@ -377,7 +383,7 @@ class FieldDictIT {
                 40300,
                 code(
                         put(
-                                FIELDS + "/f010?formCode=A_BASELINE",
+                                FIELDS + "/f019?formCode=A_BASELINE",
                                 doctor,
                                 Map.of("label", "吸烟史", "status", "ENABLED"))));
     }
@@ -404,14 +410,14 @@ class FieldDictIT {
                 0,
                 code(
                         put(
-                                FIELDS + "/f010?formCode=A_BASELINE",
+                                FIELDS + "/f019?formCode=A_BASELINE",
                                 tenantA,
                                 Map.of("label", "吸烟史（A 院）", "status", "ENABLED"))));
 
         String tenantB = hospitalToken("demob");
         Map<?, ?> tenantBField =
                 itemsOf(get(FIELDS + "?formCode=A_BASELINE", tenantB)).stream()
-                        .filter(field -> "f010".equals(field.get("key")))
+                        .filter(field -> "f019".equals(field.get("key")))
                         .findFirst()
                         .orElseThrow();
         assertEquals("吸烟史", tenantBField.get("label"), "B 院字典不受 A 院修改影响");
@@ -420,21 +426,21 @@ class FieldDictIT {
 
     // ---------------------------------------------------------------- E11-T09：Excel 批量导入
 
-    /** A-FLD-013 端到端：V36 种子的手术年龄（f032）带 AGE_YEARS(f003,f020)，出生日期与手术日期就位。 */
+    /** A-FLD-013 端到端：E23-T01 录入的手术年龄（f005，基本信息分类）带 AGE_YEARS(f267,f001)，出生日期与手术日期就位。 */
     @Test
     void surgeryAgeDerivedFieldWiredToBirthDate() {
         String token = hospitalToken("demoa");
 
         Map<?, ?> surgeryAge =
-                itemsOf(get(FIELDS + "?formCode=A_BASELINE&categoryKey=surgery", token)).stream()
-                        .filter(field -> "f032".equals(field.get("key")))
+                itemsOf(get(FIELDS + "?formCode=A_BASELINE&categoryKey=basic", token)).stream()
+                        .filter(field -> "f005".equals(field.get("key")))
                         .findFirst()
-                        .orElseThrow(() -> new AssertionError("手术年龄 f032 应在手术信息分类"));
-        assertEquals("surgery_age", surgeryAge.get("code"));
+                        .orElseThrow(() -> new AssertionError("手术年龄 f005 应在基本信息分类"));
+        assertEquals("surgery_age", surgeryAge.get("code"), "字段编码（ASCII；原表列名「年龄」在帮助说明）");
         assertEquals("手术年龄", surgeryAge.get("label"));
         Map<?, ?> derivedDef = (Map<?, ?>) surgeryAge.get("derivedDef");
         assertEquals("AGE_YEARS", derivedDef.get("fn"));
-        assertEquals(List.of("f003", "f020"), derivedDef.get("args"), "手术日期 − 出生日期取周岁");
+        assertEquals(List.of("f267", "f001"), derivedDef.get("args"), "手术日期 − 出生日期取周岁");
     }
 
     /** 模板下载（xlsx、表头与导入逐列一致、示例行带「示例」标记）。 */
@@ -478,11 +484,11 @@ class FieldDictIT {
                                                 "稳定键", "f801",
                                                 "字段编码", "it_death_cause",
                                                 "显示名", "死亡原因（示例）",
-                                                "分类键", "basic_info",
+                                                "分类键", "case",
                                                 "类型", "textarea",
                                                 "必填", "是",
                                                 "帮助说明", "示例帮助",
-                                                "排序", "100"),
+                                                "排序", "1200"),
                                         // C-FLD-008 囊袋检查形态：新选项集 + 需补充说明 + 别名
                                         FieldImportHeaders.row(
                                                 "表单编码", "A_BASELINE",
@@ -496,32 +502,32 @@ class FieldDictIT {
                                                 "需补充说明选项编码", "6",
                                                 "选项别名", "0=愈合;切口愈合",
                                                 "排序", "110"),
-                                        // 更新：命中种子 f010（类型 radio、选项集 yesno），改显示名并补选项
+                                        // 更新：命中真实字典 f019 吸烟史（类型 radio、选项集 a_yesno），改显示名并补选项
                                         FieldImportHeaders.row(
                                                 "表单编码", "A_BASELINE",
-                                                "稳定键", "f010",
+                                                "稳定键", "f019",
                                                 "字段编码", "smoking_history",
                                                 "显示名", "吸烟史（导入修订）",
-                                                "分类键", "basic_info",
+                                                "分类键", "case",
                                                 "类型", "radio",
                                                 "必填", "是",
-                                                "选项集编码", "yesno",
+                                                "选项集编码", "a_yesno",
                                                 "选项", "0=否,1=是,2=已戒烟（示例）",
-                                                "排序", "40"),
-                                        // 失败行：类型不可改（f011 身高，库内 number → select）
+                                                "排序", "190"),
+                                        // 失败行：类型不可改（f013 身高，库内 number → select）
                                         FieldImportHeaders.row(
                                                 "表单编码", "A_BASELINE",
-                                                "稳定键", "f011",
+                                                "稳定键", "f013",
                                                 "字段编码", "height_cm",
-                                                "显示名", "身高",
-                                                "分类键", "basic_info",
+                                                "显示名", "身高cm",
+                                                "分类键", "case",
                                                 "类型", "select",
-                                                "选项集编码", "yesno",
-                                                "排序", "50"))));
+                                                "选项集编码", "a_yesno",
+                                                "排序", "130"))));
 
         assertEquals(4, ((Number) report.get("total")).intValue(), "总行数：" + report);
         assertEquals(2, ((Number) report.get("created")).intValue(), "新增两行：" + report);
-        assertEquals(1, ((Number) report.get("updated")).intValue(), "更新 f010：" + report);
+        assertEquals(1, ((Number) report.get("updated")).intValue(), "更新 f019：" + report);
         assertEquals(1, ((Number) report.get("failed")).intValue(), "失败一行：" + report);
         List<Map<?, ?>> rows = (List<Map<?, ?>>) report.get("rows");
         assertTrue(
@@ -570,26 +576,26 @@ class FieldDictIT {
                                             + " AND option_code = 0",
                                     String.class),
                             "别名 CSV（数据导入表头匹配用）");
-                    // 更新：f010 显示名改、补选项 2，原有选项不动
+                    // 更新：f019 显示名改、补选项 2，原有选项不动
                     assertEquals(
                             "吸烟史（导入修订）",
                             jdbc.queryForObject(
                                     "SELECT label FROM fe_field WHERE form_code = 'A_BASELINE'"
-                                            + " AND field_key = 'f010'",
+                                            + " AND field_key = 'f019'",
                                     String.class));
                     assertEquals(
                             3,
                             jdbc.queryForObject(
-                                            "SELECT COUNT(*) FROM fe_option WHERE set_code = 'yesno'",
+                                            "SELECT COUNT(*) FROM fe_option WHERE set_code = 'a_yesno'",
                                             Integer.class)
                                     .intValue(),
                             "补选项不删旧选项");
-                    // 失败行不落库：f010 的类型没变（radio）
+                    // 失败行不落库：f019 的类型没变（radio）
                     assertEquals(
                             "radio",
                             jdbc.queryForObject(
                                     "SELECT type FROM fe_field WHERE form_code = 'A_BASELINE'"
-                                            + " AND field_key = 'f010'",
+                                            + " AND field_key = 'f019'",
                                     String.class));
                     // 审计（作业级）与变更记录（A-FLD-009）
                     assertTrue(
@@ -609,7 +615,7 @@ class FieldDictIT {
                     assertTrue(
                             jdbc.queryForObject(
                                             "SELECT COUNT(*) FROM fe_field_dict_log WHERE field_key"
-                                                    + " = 'f010' AND action = 'FIELD_UPDATE'",
+                                                    + " = 'f019' AND action = 'FIELD_UPDATE'",
                                             Integer.class)
                                     >= 1,
                             "更新字段写变更记录");
@@ -679,7 +685,7 @@ class FieldDictIT {
                                         "稳定键", "f805",
                                         "字段编码", "it_x",
                                         "显示名", "示例（示例）",
-                                        "分类键", "basic_info",
+                                        "分类键", "case",
                                         "类型", "text")));
         assertEquals(
                 40300,
@@ -709,7 +715,7 @@ class FieldDictIT {
                                         "稳定键", "f805",
                                         "字段编码", "it_x",
                                         "显示名", "示例（示例）",
-                                        "分类键", "basic_info",
+                                        "分类键", "case",
                                         "类型", "text")));
         try {
             moduleService.close(
@@ -735,7 +741,7 @@ class FieldDictIT {
                                                 "稳定键", "f806",
                                                 "字段编码", "it_only_a",
                                                 "显示名", "A 院专属字段（示例）",
-                                                "分类键", "basic_info",
+                                                "分类键", "case",
                                                 "类型", "text"))));
         assertEquals(1, ((Number) report.get("created")).intValue());
 
