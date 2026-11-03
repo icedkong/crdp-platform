@@ -1,317 +1,338 @@
 <script lang="ts" setup>
-import type { ReportLocation } from '#/reference/types';
+import type {
+  PatientContactVersion,
+  PatientOverview,
+  PatientStatusHistoryRow,
+  PatientTimelineEntry,
+} from '@crdp/api';
 
-import { computed, nextTick, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
-import { timings } from '@crdp/tokens';
-import { Alert, Button, Result, Table, TabPane, Tabs } from 'ant-design-vue';
+import {
+  completenessText,
+  contactSlotText,
+  contactSourceText,
+  dischargeStatusText,
+  genderText,
+  latestFollowupText,
+  nextVisitText,
+  PATIENT_STATUS_TEXT,
+  statusSourceText,
+  survivalStatusText,
+} from '@crdp/api';
+import {
+  Alert,
+  Button,
+  Descriptions,
+  DescriptionsItem,
+  Drawer,
+  Result,
+  Spin,
+  Table,
+  TabPane,
+  Tabs,
+} from 'ant-design-vue';
 
-import AttachmentNav from '#/components/followup/attachment-nav.vue';
-import CategoryBar from '#/components/followup/category-bar.vue';
+import {
+  fetchPatientContactInfo,
+  fetchPatientStatusHistory,
+  fetchPatientSummary,
+  fetchPatientTimeline,
+} from '#/api/core/patient';
 import FollowupTimeline from '#/components/followup/followup-timeline.vue';
 import PatientHeader from '#/components/followup/patient-header.vue';
-import ReadonlyCategories from '#/components/followup/readonly-categories.vue';
-import UploadReportDialog from '#/components/followup/upload-report-dialog.vue';
-import WatermarkPreview from '#/components/followup/watermark-preview.vue';
-import {
-  attachments,
-  contactRows,
-  deviceEventsC,
-  findPatient,
-  locationTree,
-  logRows,
-  timelineA,
-} from '#/reference/fixtures';
 
 defineOptions({ name: 'FollowupPatientDetail' });
 
+/**
+ * E13-T05 / A-PAT-004、A-PAT-013、C-PAT-010：患者档案（pages.md §4）。
+ * 概览 = 顶部 PatientHeader（OQ-21：规格「概览」页并入头部），显示基线（完整度 +
+ * 登记实体列）、计划（下次随访窗口）、最近随访（关键指标）；「随访记录」页签为
+ * 患者时间轴（出院 + 状态变更，随访记录节点随 E15）。
+ * 姓名与编号只显示后端脱敏值；越范围 / 不存在的患者 40400 → 「患者不存在或无权
+ * 查看」。基线分节（E13-T02）、报告单（E16）、沟通记录与操作日志（E15）等页签
+ * 随对应任务开放。
+ */
 const route = useRoute();
 const router = useRouter();
 
-const patient = computed(() => findPatient(String(route.params.id)));
+const loading = ref(true);
+const loadFailed = ref(false);
+const overview = ref<null | PatientOverview>(null);
+const timeline = ref<PatientTimelineEntry[]>([]);
 const tab = ref('baseline');
-const activeKey = ref('');
-const uploadOpen = ref(false);
-const previewOpen = ref(false);
-const previewId = ref('');
-// 样板页恒用虚构数据演示（referenceMode）；真实明文查看由 MaskedField 走
-// POST /followup/patients/{id}/plaintext（followup:patient:plain + 审计），随 E13 患者域页面接入
-const referenceMode = true;
 
-const tree = computed(() => (patient.value ? locationTree(patient.value) : []));
-const previewItem = computed(() =>
-  attachments.find((item) => item.reportId === previewId.value),
-);
+const contactsOpen = ref(false);
+const contactsLoading = ref(false);
+const contactVersions = ref<PatientContactVersion[]>([]);
+const statusHistory = ref<PatientStatusHistoryRow[]>([]);
 
-const tabs = computed(() => {
-  const features = patient.value?.features;
-  const list = [
-    { key: 'baseline', label: '基线资料' },
-    { key: 'followup', label: '随访记录' },
-  ];
-  if (features?.report) list.push({ key: 'report', label: '报告单' });
-  if (features?.paramTrend) list.push({ key: 'trend', label: '参数趋势' });
-  list.push(
-    { key: 'contact', label: '沟通记录' },
-    { key: 'log', label: '操作日志' },
-  );
-  return list;
+const patientId = computed(() => String(route.params.id ?? ''));
+
+onMounted(async () => {
+  try {
+    const [summary, timelineResult] = await Promise.all([
+      fetchPatientSummary(patientId.value),
+      fetchPatientTimeline(patientId.value),
+    ]);
+    overview.value = summary;
+    timeline.value = timelineResult.items;
+  } catch {
+    // 越范围 / 不存在统一 40400（AGENTS.md §5.2，不暴露对象存在）
+    loadFailed.value = true;
+  } finally {
+    loading.value = false;
+  }
 });
 
-function flash(id: string) {
-  const node = document.querySelector(id);
-  if (!node) return;
-  node.classList.add('crdp-anchor-flash');
-  node.scrollIntoView({ block: 'start' });
-  window.setTimeout(
-    () => node.classList.remove('crdp-anchor-flash'),
-    timings.anchorHighlightMs,
-  );
-}
+const dischargeStatusLabel = computed(() =>
+  overview.value?.dischargeStatus === null ||
+  overview.value?.dischargeStatus === undefined
+    ? '—'
+    : dischargeStatusText(overview.value.dischargeStatus),
+);
 
-async function jumpCategory(key: string) {
-  activeKey.value = key;
-  tab.value = 'baseline';
-  await nextTick();
-  flash(`#crdp-anchor-${key}`);
-  await router.replace({ hash: `#tab=baseline&cat=${key}` });
-}
-
-async function locate(location: ReportLocation) {
-  if (location.linkType === 'followup_record' && location.linkRecordId) {
-    tab.value = 'followup';
-    await nextTick();
-    flash(`#rec-${location.linkRecordId}`);
-    if (location.anchorKey) {
-      await nextTick();
-      flash(`#crdp-anchor-${location.anchorKey}`);
-    }
-    const sec = location.anchorKey ?? '';
-    await router.replace({
-      hash: `#tab=followup&rec=${location.linkRecordId}&sec=${sec}`,
-    });
+async function openContacts() {
+  contactsOpen.value = true;
+  if (contactVersions.value.length > 0 || statusHistory.value.length > 0)
     return;
+  contactsLoading.value = true;
+  try {
+    const [contactInfo, history] = await Promise.all([
+      fetchPatientContactInfo(patientId.value),
+      fetchPatientStatusHistory(patientId.value),
+    ]);
+    contactVersions.value = contactInfo.items;
+    statusHistory.value = history;
+  } catch {
+    // 抽屉内失败保留空态；概览本体不受影响
+    contactVersions.value = [];
+    statusHistory.value = [];
+  } finally {
+    contactsLoading.value = false;
   }
-  if (location.anchorKey) await jumpCategory(location.anchorKey);
 }
 
-function onHeader(type: 'contact' | 'stop' | 'unplanned' | 'upload') {
-  if (type === 'upload') uploadOpen.value = true;
-}
+const contactColumns = [
+  { dataIndex: 'slot', title: '槽位' },
+  { dataIndex: 'phoneMasked', title: '电话（脱敏）' },
+  { dataIndex: 'version', title: '版本' },
+  { dataIndex: 'effectiveDate', title: '生效日期' },
+  { dataIndex: 'source', title: '来源' },
+  { dataIndex: 'current', title: '当前' },
+];
 
-function openReport(reportId: string) {
-  previewId.value = reportId;
-  previewOpen.value = true;
-}
+const contactRows = computed(() =>
+  contactVersions.value.map((item) => ({
+    ...item,
+    current: item.current ? '是' : '—',
+    key: item.id,
+    slot: contactSlotText(item.slot),
+    source: contactSourceText(item.source),
+  })),
+);
 
-if (!activeKey.value && patient.value) {
-  activeKey.value = patient.value.progress[0]?.key ?? '';
-}
+const historyColumns = [
+  { dataIndex: 'effectiveDate', title: '生效日期' },
+  { dataIndex: 'status', title: '状态' },
+  { dataIndex: 'source', title: '来源' },
+  { dataIndex: 'reason', title: '原因' },
+];
+
+const historyRows = computed(() =>
+  statusHistory.value.map((item) => ({
+    ...item,
+    key: item.id,
+    reason: item.reason ?? '—',
+    source: statusSourceText(item.source),
+    status: PATIENT_STATUS_TEXT[item.status] ?? item.status,
+  })),
+);
+
+const timelineLegendNote =
+  '随访记录节点（每年随访、计划外随访、终点事件）随随访业务（E15）接入；医院 C 的器械事件随植入模块（E21）。';
 </script>
 
 <template>
-  <Result v-if="!patient" status="404" title="患者不存在或无权查看">
+  <div v-if="loading" class="loading">
+    <Spin tip="正在加载患者档案…" />
+  </div>
+
+  <Result
+    v-else-if="loadFailed || !overview"
+    status="404"
+    title="患者不存在或无权查看"
+  >
     <template #extra>
       <Button type="primary" @click="router.push('/followup/patient')">
         返回患者列表
       </Button>
     </template>
   </Result>
+
   <div v-else data-testid="patient-detail">
-    <Alert
-      banner
-      message="虚构样板数据，不是真实患者。示例：测试患者01，电话 138****0001。"
-      type="info"
-    />
-    <PatientHeader
-      can-contact
-      can-stop
-      can-unplanned
-      can-upload
-      :patient="patient"
-      :reference-mode="referenceMode"
-      @action="onHeader"
-    />
+    <PatientHeader :overview="overview" @contacts="openContacts" />
     <Tabs v-model:active-key="tab" class="tabs">
-      <TabPane v-for="item in tabs" :key="item.key" :tab="item.label" />
+      <TabPane key="baseline" tab="基线资料" />
+      <TabPane key="followup" tab="随访记录" />
     </Tabs>
 
-    <div v-if="tab === 'baseline'" class="split" data-testid="baseline-panel">
-      <AttachmentNav
-        can-upload
-        :items="attachments"
-        :patient-id="patient.id"
-        scope="baseline"
-        @locate="locate"
-        @open="openReport"
-        @upload="uploadOpen = true"
+    <div v-if="tab === 'baseline'" class="main" data-testid="baseline-panel">
+      <Alert
+        class="notice"
+        message="基线按分类分节补录与报告单导航随后续任务开放（E13-T02 / E16）；此处先展示出院登记的最小必填集。"
+        type="info"
+        show-icon
       />
-      <div class="main">
-        <CategoryBar
-          :active-key="activeKey"
-          :items="patient.progress"
-          @jump="jumpCategory"
-          @update:active-key="activeKey = $event"
-        />
-        <ReadonlyCategories
-          :attachments="attachments"
-          can-upload
-          :categories="patient.categories"
-          @open="openReport"
-          @upload="uploadOpen = true"
-        />
-        <section
-          v-if="patient.features.implant"
-          id="crdp-anchor-implants"
-          class="implants"
-        >
-          <h3>植入记录（当前器械置顶）</h3>
-          <Table
-            :columns="[
-              { dataIndex: 'date', title: '日期' },
-              { dataIndex: 'kind', title: '植入类型' },
-              { dataIndex: 'device', title: '器械' },
-              { dataIndex: 'trigger', title: '触发' },
-            ]"
-            :data-source="patient.implants"
-            :pagination="false"
-            row-key="id"
-            size="middle"
-          />
-          <h3>电极</h3>
-          <Table
-            :columns="[
-              { dataIndex: 'site', title: '部位' },
-              { dataIndex: 'date', title: '植入日期' },
-              { dataIndex: 'status', title: '状态' },
-            ]"
-            :data-source="patient.leads"
-            :pagination="false"
-            row-key="site"
-            size="middle"
-          />
-        </section>
-      </div>
-    </div>
-
-    <div
-      v-else-if="tab === 'followup'"
-      class="split"
-      data-testid="followup-panel"
-    >
-      <AttachmentNav
-        can-upload
-        :items="attachments"
-        :patient-id="patient.id"
-        scope="followup"
-        @locate="locate"
-        @open="openReport"
-        @upload="uploadOpen = true"
-      />
-      <div class="main">
-        <FollowupTimeline
-          :events="patient.features.implant ? deviceEventsC : []"
-          :nodes="timelineA"
-          :patient-id="patient.id"
-          @jump="(_id, key) => flash(`#crdp-anchor-${key}`)"
-        >
-          <template #default="{ node }">
-            <ReadonlyCategories
-              :attachments="attachments"
-              :categories="node.categories"
-              @open="openReport"
-            />
-          </template>
-        </FollowupTimeline>
-      </div>
-    </div>
-
-    <div v-else-if="tab === 'contact'" class="main">
-      <Table
-        :columns="[
-          { dataIndex: 'at', title: '时间' },
-          { dataIndex: 'method', title: '方式' },
-          { dataIndex: 'result', title: '结果' },
-          { dataIndex: 'note', title: '备注' },
-          { dataIndex: 'by', title: '操作人' },
-        ]"
-        :data-source="contactRows"
-        :pagination="{
-          pageSize: 20,
-          showTotal: (total: number) => `共 ${total} 条`,
-        }"
-        row-key="at"
+      <Descriptions
+        bordered
+        :column="{ xs: 1, sm: 1, md: 2, xl: 3 }"
         size="middle"
-      />
-    </div>
-    <div v-else-if="tab === 'log'" class="main">
-      <Table
-        :columns="[
-          { dataIndex: 'at', title: '时间' },
-          { dataIndex: 'by', title: '操作人' },
-          { dataIndex: 'action', title: '操作' },
-          { dataIndex: 'detail', title: '详情' },
-        ]"
-        :data-source="logRows"
-        :pagination="{ pageSize: 20 }"
-        row-key="at"
+        title="基线信息（出院登记）"
+      >
+        <DescriptionsItem label="姓名（脱敏）">
+          {{ overview.name }}
+        </DescriptionsItem>
+        <DescriptionsItem label="编号（脱敏）">
+          {{ overview.patientNo }}
+        </DescriptionsItem>
+        <DescriptionsItem label="原系统编号">
+          {{ overview.legacyNo ?? '—' }}
+        </DescriptionsItem>
+        <DescriptionsItem label="随访编号">
+          {{ overview.visitNo ?? '—' }}
+        </DescriptionsItem>
+        <DescriptionsItem label="性别">
+          {{ genderText(overview.gender) }}
+        </DescriptionsItem>
+        <DescriptionsItem label="年龄（手术时）">
+          {{ overview.age ?? '—' }}
+        </DescriptionsItem>
+        <DescriptionsItem label="病区">
+          {{ overview.deptName ? `${overview.deptName} · ` : ''
+          }}{{ overview.wardName ?? '—' }}
+        </DescriptionsItem>
+        <DescriptionsItem label="负责医生">
+          {{ overview.responsibleName ?? '—' }}
+        </DescriptionsItem>
+        <DescriptionsItem label="患者类型">
+          {{ overview.patientType ?? '—' }}
+        </DescriptionsItem>
+        <DescriptionsItem label="手术日期">
+          {{ overview.surgeryDate ?? '—' }}
+        </DescriptionsItem>
+        <DescriptionsItem label="入院日期">
+          {{ overview.admissionDate ?? '—' }}
+        </DescriptionsItem>
+        <DescriptionsItem label="出院日期">
+          {{ overview.dischargeDate ?? '—' }}
+        </DescriptionsItem>
+        <DescriptionsItem label="出院状态">
+          {{ dischargeStatusLabel }}
+        </DescriptionsItem>
+        <DescriptionsItem label="基线资料完整度">
+          {{ completenessText(overview.baselineCompleteness) }}
+        </DescriptionsItem>
+        <DescriptionsItem label="随访资料完整度">
+          {{ completenessText(overview.followupCompleteness) }}
+        </DescriptionsItem>
+      </Descriptions>
+
+      <Descriptions
+        bordered
+        :column="{ xs: 1, sm: 1, md: 2, xl: 3 }"
         size="middle"
-      />
-    </div>
-    <div v-else class="main">
-      <p>此页签的完整内容不在本次样板范围。数据仍是虚构示例。</p>
+        title="计划与随访（随入组与随访记录写入更新）"
+      >
+        <DescriptionsItem label="下次随访">
+          {{ nextVisitText(overview) }}
+        </DescriptionsItem>
+        <DescriptionsItem label="最近随访">
+          {{ latestFollowupText(overview) }}
+        </DescriptionsItem>
+        <DescriptionsItem v-if="overview.latestFollowup" label="生存状态">
+          {{ survivalStatusText(overview.latestFollowup.survivalStatus) }}
+        </DescriptionsItem>
+      </Descriptions>
+      <p class="hint">
+        完整度列在基线分节（E13-T02）与随访记录（E15）写入前显示「—」；计划与随访块在入组调度（E14）与首次随访提交（E15）前显示占位。
+      </p>
     </div>
 
-    <UploadReportDialog
-      :open="uploadOpen"
-      :options="tree"
-      :patient-id="patient.id"
-      @update:open="uploadOpen = $event"
-    />
-    <WatermarkPreview
-      account="nurse.demo"
-      name="演示护士（示例）"
-      :open="previewOpen"
-      :report-name="previewItem?.name"
-      tenant-name="虚构示例医院甲"
-      :thumbnail-url="previewItem?.thumbnailUrl"
-      @update:open="previewOpen = $event"
-    />
+    <div v-else class="main" data-testid="followup-panel">
+      <Alert
+        class="notice"
+        :message="timelineLegendNote"
+        type="info"
+        show-icon
+      />
+      <FollowupTimeline :entries="timeline" :patient-id="overview.id" />
+    </div>
+
+    <Drawer v-model:open="contactsOpen" :width="640" title="联系方式与变更记录">
+      <Spin :spinning="contactsLoading">
+        <h3 class="drawer-title">联系方式版本（换号保留历史）</h3>
+        <Table
+          :columns="contactColumns"
+          :data-source="contactRows"
+          :pagination="false"
+          size="small"
+        >
+          <template #emptyText> 暂无联系方式版本 </template>
+        </Table>
+        <h3 class="drawer-title">状态变更记录</h3>
+        <Table
+          :columns="historyColumns"
+          :data-source="historyRows"
+          :pagination="false"
+          size="small"
+        >
+          <template #emptyText> 暂无状态变更 </template>
+        </Table>
+      </Spin>
+      <p class="hint">
+        电话明文需持有「查看明文」权限，经患者头部的「显示明文」查看并写审计。
+      </p>
+    </Drawer>
   </div>
 </template>
 
 <style scoped>
+.loading {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: center;
+  min-height: 320px;
+}
+
 .tabs {
   padding: 0 16px;
   background: #fff;
 }
 
-.split {
-  display: flex;
-  gap: 16px;
-  align-items: flex-start;
-  padding: 0 16px 16px;
-}
-
 .main {
-  flex: 1;
-  min-width: 0;
-  padding: 8px 0 24px;
+  padding: 16px;
 }
 
-.implants {
+.notice {
+  margin-bottom: 12px;
+}
+
+.hint {
   margin-top: 8px;
+  font-size: 12px;
+  color: #8c8c8c;
 }
 
-h3 {
+.drawer-title {
+  margin: 12px 0 8px;
   font-size: 14px;
   font-weight: 600;
 }
 
-@media (max-width: 1279px) {
-  .split {
-    flex-direction: column;
-  }
+.drawer-title:first-of-type {
+  margin-top: 0;
 }
 </style>

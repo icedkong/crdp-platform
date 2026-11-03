@@ -1,36 +1,68 @@
 <script lang="ts" setup>
-import type { ReferencePatient } from '#/reference/types';
+import type { PatientOverview } from '@crdp/api';
 
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 
+import {
+  completenessText,
+  genderText,
+  latestFollowupText,
+  nextVisitText,
+  PATIENT_STATUS_TEXT,
+} from '@crdp/api';
 import { StatusTag } from '@crdp/status-tag';
-import { Button, Drawer, Space } from 'ant-design-vue';
+import { Button } from 'ant-design-vue';
 
 import { useBreakpoint } from '#/reference/use-breakpoint';
 
 import MaskedField from './masked-field.vue';
 
-defineProps<{
-  canContact?: boolean;
-  canStop?: boolean;
-  canUnplanned?: boolean;
-  canUpload?: boolean;
-  patient: ReferencePatient;
-  referenceMode?: boolean;
+/**
+ * E13-T05 / A-PAT-004、C-PAT-010（components.md §4）：患者详情顶部吸顶信息条。
+ * 概览三块（验收「概览显示基线、计划、最近随访」）：完整度（基线块）、下次随访
+ * （计划块，E14 写入前「未安排」）、最近随访（E15 写入前「暂无随访记录」）。
+ * 姓名 MaskedField revealable：明文走 plaintext 专用接口并写审计，60 秒恢复脱敏。
+ * C 当前器械行随 E21 植入数据开放；四个操作按钮随 E14（停止）/ E15（计划外、
+ * 沟通）/ E16（上传）的接口落地后按 summary.actions 渲染。
+ */
+const props = defineProps<{
+  overview: PatientOverview;
 }>();
 
 const emit = defineEmits<{
-  action: [type: 'contact' | 'stop' | 'unplanned' | 'upload'];
+  contacts: [];
 }>();
 
 const { isMobile } = useBreakpoint();
 const detailsOpen = ref(false);
-const actionsOpen = ref(false);
 
-function run(type: 'contact' | 'stop' | 'unplanned' | 'upload') {
-  actionsOpen.value = false;
-  emit('action', type);
-}
+const ageText = computed(() =>
+  props.overview.age === null || props.overview.age === undefined
+    ? '—'
+    : `${props.overview.age} 岁`,
+);
+
+const idText = computed(() => {
+  const parts = [`编号 ${props.overview.patientNo}`];
+  if (props.overview.legacyNo)
+    parts.push(`原系统编号 ${props.overview.legacyNo}`);
+  if (props.overview.visitNo) parts.push(`随访编号 ${props.overview.visitNo}`);
+  return parts;
+});
+
+const wardText = computed(() => {
+  const ward = props.overview.wardName ?? '—';
+  return props.overview.deptName
+    ? `${props.overview.deptName} · ${ward}`
+    : ward;
+});
+
+/** 第三行元信息：基线块 / 随访块 / 最近随访块（验收「概览显示基线、计划、最近随访」）。 */
+const metrics = computed(() => [
+  `基线资料完整度 ${completenessText(props.overview.baselineCompleteness)}`,
+  `随访资料完整度 ${completenessText(props.overview.followupCompleteness)}`,
+  `最近随访 ${latestFollowupText(props.overview)}`,
+]);
 </script>
 
 <template>
@@ -39,17 +71,16 @@ function run(type: 'contact' | 'stop' | 'unplanned' | 'upload') {
       <strong class="name">
         <MaskedField
           field="name"
-          :patient-id="patient.id"
-          :reference-mode="referenceMode"
+          :patient-id="overview.id"
           revealable
-          :value="patient.nameMasked"
+          :value="overview.name"
         />
       </strong>
-      <StatusTag :status="patient.status" variant="tag" />
-      <span v-if="patient.nextVisit" class="meta">
-        下次随访 {{ patient.nextVisit.label }} · 计划
-        {{ patient.nextVisit.planDate }}
-      </span>
+      <StatusTag
+        :status="PATIENT_STATUS_TEXT[overview.status] ?? overview.status"
+        variant="tag"
+      />
+      <span class="meta">下次随访 {{ nextVisitText(overview) }}</span>
       <Button
         v-if="isMobile"
         size="small"
@@ -60,78 +91,24 @@ function run(type: 'contact' | 'stop' | 'unplanned' | 'upload') {
       </Button>
     </div>
     <div v-if="!isMobile || detailsOpen" class="line">
-      <span>{{ patient.gender }} · {{ patient.age }} 岁</span>
-      <span>编号 {{ patient.patientNo }}</span>
-      <span v-if="patient.legacyNo">原系统编号 {{ patient.legacyNo }}</span>
-      <span>病区 {{ patient.wardName }}</span>
-      <span>负责医生 {{ patient.responsibleName }}</span>
-      <span>
-        电话
-        <MaskedField
-          field="phone"
-          :patient-id="patient.id"
-          :reference-mode="referenceMode"
-          revealable
-          :value="patient.phoneMasked"
-        />
-      </span>
+      <span>{{ genderText(overview.gender) }} · {{ ageText }}</span>
+      <span v-for="item in idText" :key="item">{{ item }}</span>
+      <span>病区 {{ wardText }}</span>
+      <span>负责医生 {{ overview.responsibleName ?? '—' }}</span>
     </div>
     <div v-if="!isMobile || detailsOpen" class="line">
-      <span>基线资料完整度 {{ patient.baselineCompleteness }}%</span>
-      <span>随访资料完整度 {{ patient.followupCompleteness }}%</span>
-      <span v-if="patient.features.implant && patient.device">
-        当前器械 {{ patient.device.typeLabel }} · 植入
-        {{ patient.device.implantDuration }}
-      </span>
-      <span v-if="patient.features.eriCycle && patient.device">
-        ERI：{{ patient.device.eri }}
-      </span>
+      <span v-for="item in metrics" :key="item">{{ item }}</span>
     </div>
-    <Space v-if="!isMobile" wrap>
-      <Button v-if="canUnplanned" @click="run('unplanned')">
-        新建计划外随访
-      </Button>
+    <div class="line actions">
+      <!-- A-PAT-004「联系方式与变更记录从概览进入」：抽屉内容走 E13-T03 接口 -->
       <Button
-        v-if="canUpload"
-        data-testid="upload-open"
-        ghost
-        type="primary"
-        @click="run('upload')"
+        data-testid="open-contacts"
+        size="small"
+        @click="emit('contacts')"
       >
-        上传报告单
+        联系方式与变更记录
       </Button>
-      <Button v-if="canContact" @click="run('contact')">记录沟通</Button>
-      <Button v-if="canStop" @click="run('stop')">停止随访 / 标记失访</Button>
-    </Space>
-    <Button
-      v-else
-      data-testid="upload-open"
-      type="primary"
-      @click="actionsOpen = true"
-    >
-      操作
-    </Button>
-    <Drawer
-      v-model:open="actionsOpen"
-      height="40vh"
-      placement="bottom"
-      title="操作"
-    >
-      <Space direction="vertical">
-        <Button v-if="canUnplanned" block @click="run('unplanned')">
-          新建计划外随访
-        </Button>
-        <Button v-if="canUpload" block type="primary" @click="run('upload')">
-          上传报告单
-        </Button>
-        <Button v-if="canContact" block @click="run('contact')">
-          记录沟通
-        </Button>
-        <Button v-if="canStop" block @click="run('stop')">
-          停止随访 / 标记失访
-        </Button>
-      </Space>
-    </Drawer>
+    </div>
   </header>
 </template>
 
@@ -151,6 +128,10 @@ function run(type: 'contact' | 'stop' | 'unplanned' | 'upload') {
   gap: 8px 16px;
   align-items: center;
   margin-bottom: 8px;
+}
+
+.line.actions {
+  margin-bottom: 0;
 }
 
 .name {

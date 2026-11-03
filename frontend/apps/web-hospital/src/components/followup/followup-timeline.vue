@@ -1,40 +1,37 @@
 <script lang="ts" setup>
-import type { DeviceEvent, TimelineNode } from '#/reference/types';
+import type { PatientTimelineEntry } from '@crdp/api';
 
 import { computed, onMounted, ref } from 'vue';
 
+import { PATIENT_STATUS_TEXT, timelineEntryLabel } from '@crdp/api';
 import { StatusTag } from '@crdp/status-tag';
 import { colors } from '@crdp/tokens';
 import {
-  Button,
   Card,
+  Empty,
   Segmented,
   Select,
   Table,
   Timeline,
   TimelineItem,
-  Tooltip,
 } from 'ant-design-vue';
 
 import { useBreakpoint } from '#/reference/use-breakpoint';
 
-import CategoryBar from './category-bar.vue';
-
+/**
+ * E13-T05 / A-PAT-013（components.md §9）：患者详情「随访记录」页签右侧内容。
+ * 当前节点：出院（DISCHARGE）与状态变更事件（STATUS，含死亡），按时间顺序
+ * （旧 → 新）；每年随访 / 计划外随访 / 终点事件节点随 E15 随访记录接入
+ * （届时补计划日期 / 窗口 / 完成日期 / 标红列与展开查看），C 器械事件随 E21。
+ * 视图切换记住用户上次选择（localStorage crdp:fu-view，只存视图名，不含患者信息）。
+ */
 const props = defineProps<{
-  events?: DeviceEvent[];
-  nodes: TimelineNode[];
+  entries: PatientTimelineEntry[];
   patientId: string;
-}>();
-
-const emit = defineEmits<{
-  jump: [recordId: string | undefined, key: string];
-  'update:expandedRecordId': [id: string | undefined];
-  'update:view': [view: 'table' | 'timeline'];
 }>();
 
 const VIEW_KEY = 'crdp:fu-view';
 const view = ref<'table' | 'timeline'>('timeline');
-const expanded = ref<string>();
 const { isMobile } = useBreakpoint();
 
 onMounted(() => {
@@ -45,52 +42,52 @@ onMounted(() => {
 function setView(next: 'table' | 'timeline') {
   view.value = next;
   localStorage.setItem(VIEW_KEY, next);
-  emit('update:view', next);
-}
-
-function toggle(node: TimelineNode) {
-  if (!node.recordId) return;
-  expanded.value = expanded.value === node.recordId ? undefined : node.recordId;
-  emit('update:expandedRecordId', expanded.value);
-}
-
-function jumpTo(recordId: string) {
-  setView('timeline');
-  expanded.value = recordId;
-  emit('update:expandedRecordId', recordId);
-  document
-    .querySelector(`#rec-${recordId}`)
-    ?.scrollIntoView({ block: 'start' });
 }
 
 const jumpOptions = computed(() =>
-  props.nodes
-    .filter((node) => node.recordId)
-    .map((node) => ({ label: node.label, value: node.recordId as string })),
+  props.entries.map((entry, index) => ({
+    label: `${timelineEntryLabel(entry)}（${entry.date}）`,
+    value: index,
+  })),
 );
 
-const columns = [
+function jumpTo(index: number) {
+  setView('timeline');
+  document
+    .querySelector(`#timeline-item-${index}`)
+    ?.scrollIntoView({ block: 'start' });
+}
+
+/** 图例只列时间轴上实际出现的状态（当前为患者随访状态；任务状态随 E15）。 */
+const legendStatuses = computed(() => {
+  const seen: string[] = [];
+  for (const entry of props.entries) {
+    const text = entry.status ? PATIENT_STATUS_TEXT[entry.status] : undefined;
+    if (entry.kind === 'STATUS' && text && !seen.includes(text)) {
+      seen.push(text);
+    }
+  }
+  return seen;
+});
+
+const tableColumns = [
   { dataIndex: 'label', title: '节点' },
   { dataIndex: 'status', title: '状态' },
-  { dataIndex: 'planDate', title: '计划日期' },
-  { dataIndex: 'window', title: '窗口' },
-  { dataIndex: 'doneDate', title: '完成日期' },
-  { dataIndex: 'highlightCount', title: '标红' },
+  { dataIndex: 'date', title: '日期' },
   { dataIndex: 'note', title: '备注' },
 ];
 
 const tableRows = computed(() =>
-  props.nodes.map((node) => ({
-    ...node,
-    key: node.recordId ?? node.label,
-    window:
-      node.windowStart && node.windowEnd
-        ? `${node.windowStart} ~ ${node.windowEnd}`
-        : '—',
+  props.entries.map((entry, index) => ({
+    date: entry.date,
+    key: `${entry.kind}-${entry.date}-${index}`,
+    label: timelineEntryLabel(entry),
+    note: entry.note ?? '—',
+    status: entry.status
+      ? (PATIENT_STATUS_TEXT[entry.status] ?? entry.status)
+      : '',
   })),
 );
-
-defineExpose({ jumpTo, setView });
 </script>
 
 <template>
@@ -105,99 +102,70 @@ defineExpose({ jumpTo, setView });
         @update:value="setView($event as 'table' | 'timeline')"
       />
       <Select
+        v-if="entries.length > 0"
         allow-clear
         placeholder="跳到节点"
         :options="jumpOptions"
-        style="width: 180px"
-        @update:value="jumpTo(String($event))"
+        style="width: 220px"
+        @update:value="($event) => jumpTo(Number($event))"
       />
-      <span class="legend">
+      <span v-if="legendStatuses.length > 0" class="legend">
         状态：
-        <StatusTag status="待随访" />
-        <StatusTag status="进行中" />
-        <StatusTag status="已完成" />
-        <StatusTag status="逾期" />
-        <StatusTag status="补录" />
-        <StatusTag status="窗口外" />
+        <StatusTag
+          v-for="status in legendStatuses"
+          :key="status"
+          :status="status"
+        />
       </span>
     </div>
 
-    <div v-if="view === 'table' && !isMobile">
+    <Empty
+      v-if="entries.length === 0"
+      description="暂无时间轴节点：出院登记与状态变更会显示在这里，随访记录随随访业务开放"
+    />
+
+    <div v-else-if="view === 'table' && !isMobile" class="table">
       <Table
-        :columns="columns"
+        :columns="tableColumns"
         :data-source="tableRows"
         :pagination="false"
         size="middle"
       >
         <template #bodyCell="{ column, record }">
           <StatusTag
-            v-if="column.dataIndex === 'status'"
+            v-if="column.dataIndex === 'status' && record.status"
             :status="record.status"
             variant="dot"
           />
-          <span v-else-if="column.dataIndex === 'highlightCount'">
-            {{ record.highlightCount ? `标红 ${record.highlightCount}` : '—' }}
-          </span>
+
+          <span v-else-if="column.dataIndex === 'status'">—</span>
         </template>
       </Table>
     </div>
 
     <div v-else class="cards">
-      <div
-        v-for="event in events ?? []"
-        :key="event.date + event.title"
-        class="event"
-      >
-        <i class="diamond" :style="{ background: colors.primary }"></i>
-        <div>
-          <strong>{{ event.date }} {{ event.title }}</strong>
-          <div class="note">{{ event.detail }}</div>
-        </div>
-      </div>
       <Timeline>
-        <TimelineItem v-for="node in nodes" :key="node.label">
-          <Card
-            :id="node.recordId ? `rec-${node.recordId}` : undefined"
-            size="small"
-          >
+        <TimelineItem
+          v-for="(entry, index) in entries"
+          :key="index"
+          color="primary"
+        >
+          <Card :id="`timeline-item-${index}`" size="small">
             <div class="node-head">
-              <strong>{{ node.label }}</strong>
-              <StatusTag :status="node.status" />
-              <span v-if="node.highlightCount" class="flag">
-                标红 {{ node.highlightCount }}
-              </span>
-              <Tooltip
-                v-if="!node.canOpen"
-                title="计划中的节点尚未创建任务，任务开启日才可录入"
-              >
-                <Button disabled size="small">展开</Button>
-              </Tooltip>
-              <Button
-                v-else-if="node.recordId"
-                size="small"
-                @click="toggle(node)"
-              >
-                {{ expanded === node.recordId ? '收起' : '展开' }}
-              </Button>
-            </div>
-            <p class="note">
-              <span v-if="node.planDate">计划 {{ node.planDate }}</span>
-              <span v-else>无计划日期</span>
-              <span v-if="node.windowStart">
-                · 窗口 {{ node.windowStart }} ~ {{ node.windowEnd }}
-              </span>
-              <span v-if="node.doneDate"> · 完成 {{ node.doneDate }}</span>
-              <span v-if="node.note"> · {{ node.note }}</span>
-            </p>
-            <div v-if="expanded === node.recordId" class="expanded">
-              <CategoryBar
-                :active-key="node.sections[0]?.key"
-                :items="node.sections"
-                show-highlight-count
-                @jump="(key: string) => emit('jump', node.recordId, key)"
+              <strong>{{ timelineEntryLabel(entry) }}</strong>
+              <StatusTag
+                v-if="entry.kind === 'STATUS'"
+                :status="
+                  PATIENT_STATUS_TEXT[entry.status ?? ''] ?? entry.status ?? ''
+                "
+                variant="tag"
               />
-              <slot :node="node" />
+              <span v-else class="kind" :style="{ color: colors.primary }">
+                出院节点
+              </span>
+              <span class="date">{{ entry.date }}</span>
             </div>
+            <p v-if="entry.note" class="note">{{ entry.note }}</p>
           </Card>
         </TimelineItem>
       </Timeline>
@@ -229,10 +197,6 @@ defineExpose({ jumpTo, setView });
   color: #8c8c8c;
 }
 
-.flag {
-  color: #ff4d4f;
-}
-
 .node-head {
   display: flex;
   flex-wrap: wrap;
@@ -240,16 +204,12 @@ defineExpose({ jumpTo, setView });
   align-items: center;
 }
 
-.event {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 8px;
+.date {
+  font-size: 12px;
+  color: #8c8c8c;
 }
 
-.diamond {
-  width: 8px;
-  height: 8px;
-  margin-top: 6px;
-  transform: rotate(45deg);
+.kind {
+  font-size: 12px;
 }
 </style>

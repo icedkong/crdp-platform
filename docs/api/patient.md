@@ -40,7 +40,7 @@ interface PatientRow {
 | POST | `/api/hospital/followup/patients/check-duplicate` | `followup:patient:create` | **E13-T01 已实现**。body `{ medicalRecordNo, name?, birthDate? }` → `{ exists, patient?: { id, nameMasked, wardName, dischargeDate }, possibleMatches?: [...] }`；`exists` 按全院（A-PAT-007 本院唯一），范围外的同号患者只返回 `exists: true` 不带摘要；`patient` 只在已有患者位于当前用户数据范围内时下发（前端跳转已有患者）；`possibleMatches` 为姓名 + 出生日期相同的范围内患者（C-PAT-002 可能重复提示，不阻止） | A-PAT-007、C-PAT-002 |
 | POST | `/api/hospital/followup/patients` | `followup:patient:create` | **E13-T01 已实现**（出院登记，A-PAT-003 最小必填集：病案号、姓名、性别、病区、手术 / 入院 / 出院日期、出院状态，实体列落 `pt_patient`；C 的差异口径见 OQ-71）。重复返回 40902，`data` 为上面的查重结果结构（范围内带已有患者脱敏摘要）；写 `PATIENT_CREATE` 操作审计（SUCCESS / DENIED，敏感值只存摘要）。首个基线分节与暂存草稿随 E13-T02；立即入组随 E14；C 随访编号与首条植入记录随 E21 | A-PAT-003、C-PAT-001 |
 | GET | `/api/hospital/followup/patients/registration-options` | `followup:patient:create` | **E13-T01 已实现**。登记候选：`{ wards: [{id,name}], depts: [{id,name}], genders: [{code,label}], dischargeStatuses: [{code,label}] }`；出院状态编码 1=存活 / 2=病重自动出院 / 3=死亡（A 规格字段 191） | A-PAT-003、C-PAT-001 |
-| GET | `/api/hospital/followup/patients/{id}/summary` | `followup:patient:view` | PatientHeader 数据：脱敏基本信息、状态、病区、责任医生、当前计划、下次随访、完整度、C 当前器械；**附带 `actions` 可用操作列表**（后端按权限 + 状态计算，前端仍做按钮级权限） | A-PAT-004、C-PAT-010 |
+| GET | `/api/hospital/followup/patients/{id}/summary` | `followup:patient:view` | **E13-T05 已实现**。PatientHeader 数据（OQ-21：规格「概览」页 = 顶部 PatientHeader）：脱敏基本信息（姓名 / 病案号 = 编号解密后脱敏）、状态（`terminated` = 死亡 / 停止 / 失访，pages.md §4.10）、病区（`deptName` C 科室病区）、责任医生、基线块（登记实体列 + `baselineCompleteness`，E13-T02 写入前 null）、计划块（`nextVisit{planDate,windowStart,windowEnd}`，E14 写入前 null）、最近随访块（`latestFollowup{date,survivalStatus,keyIndicators,endpointEvents}`，E15 写入前 null）、C `device`（E21 前恒 null）；**附带 `actions` 可用操作列表**（`unplanned`/`contact` 需 ACTIVE + `followup:record:edit`；`upload` 需 `followup:scan:upload`；`stop` 需未终止 + `followup:plan:enroll` 或 `followup:patient:edit`〔OQ-15 A/C 差异，其一即可〕；操作入口随 E14/E15/E16 开放，前端仍做按钮级权限）；越范围 / 不存在 40400 | A-PAT-004、C-PAT-010 |
 | PUT | `/api/hospital/followup/patients/{id}` | `followup:patient:edit` | 基础信息（非表单字段）；写字段级历史 | A-PAT-005、C-PAT-011 |
 | DELETE | `/api/hospital/followup/patients/{id}` | C：`followup:patient:delete`；A 权限表无删除码（建议同名新增，见 OQ-17）；敏感操作需二次认证 | 软删除，`{ reason }` 必填，租户管理员可恢复（`POST .../patients/{id}/restore`） | A-PAT-012、C-PAT-015 |
 | POST | `/api/hospital/followup/patients/batch-assign` | `followup:task:assign`（推断，待确认） | `{ patientIds[], doctorId }`，单次 ≤ 500；A 只能选该病区的医生 | A-PAT-017、C-PAT-016 |
@@ -106,7 +106,7 @@ interface PatientRow {
 
 | 方法 | 路径 | 权限 | 说明 | 需求 |
 |---|---|---|---|---|
-| GET | `/api/hospital/followup/patients/{id}/followup-timeline` | `followup:patient:view` | 随访时间轴：任务（含计算出的“计划中”节点）+ 记录 + 计划外随访，按时间排序 | A-PAT-013、A-FU-023、C-FU-023 |
+| GET | `/api/hospital/followup/patients/{id}/followup-timeline` | `followup:patient:view` | **E13-T05 已实现**（出院 + 状态变更事件；随访节点随 E15）。患者时间轴按时间顺序（旧 → 新，components.md §9 线框）：`items: [{kind, date, label, status, note, recordId}]`；`kind=DISCHARGE` 出院（`label`「出院」，C 无出院日期不出该节点）、`kind=STATUS` 状态变更含死亡（`status` 为患者状态码，文案由前端 `PATIENT_STATUS_TEXT` 映射，`note` 为原因；登记初始行 source=REGISTRATION 不重复展示）；`FOLLOWUP` 每年随访 / `UNPLANNED` 计划外随访 / `EVENT` 终点事件节点随 E15 记录数据在同一入口并入，C 器械事件随 E21；越范围 / 不存在 40400 | A-PAT-013、A-FU-023、C-FU-023 |
 | GET | `/api/hospital/followup/patients/{id}/reports?scope=baseline|followup|all&anchorKey=` | `followup:patient:view`（报告单内容另需 `followup:report:view` 或 `followup:scan:upload`，见 OQ-12） | 报告单导航数据（AttachmentNav，components.md §5） | A-PAT-020、C-PAT-017 |
 | GET | `/api/hospital/followup/patients/{id}/logs` | `followup:patient:view`（只读用户是否可见见 OQ-19） | 本患者操作日志 | PLT-AUD-001 |
 | GET | `/api/hospital/followup/patients/{id}/param-trend?params=&from=&to=` | `followup:patient:view` + 开关 `param_trend`（推断） | C 程控参数趋势 `{ series: [{ param, unit, points: [{ date, value, recordId, abnormal }] }] }` | C-FU-012 |
@@ -118,4 +118,5 @@ interface PatientRow {
 - 查重：范围外同号只返回 `exists: true`，不泄露摘要。
 - 联系方式（E13-T03）：换号后旧版本行保留、当前版本 = 最大 version；与当前版本完全相同 40001；明文取当前电话1；审计只存脱敏摘要；越范围 40400、无 edit 40300、模块关闭 40301。
 - 列表检索（E13-T04）：病区医生看不到其他病区患者（数据范围改写）；`keyword` 姓名精确只命中同名患者（部分姓名不命中）、病案号同样精确；行内姓名 / 病案号脱敏；非法状态 / 排序白名单外 / 日期区间颠倒 40001；无 view 40300、模块关闭 40301；双租户互不可见；批量查询写 `BATCH_QUERY` 审计（aud_data_access_log）。
+- 概览与时间轴（E13-T05）：概览姓名 / 病案号只含脱敏值；派生列（完整度 / nextVisit / latestFollowup）在写入方（E13-T02 / E14 / E15）落地前为 null，前端显示占位；已终止患者 `terminated=true` 且 actions 无 `unplanned` / `contact` / `stop`；时间轴出院节点与状态事件按时间排序、登记初始行不重复展示；越范围 / 不存在 40400（summary 与 timeline 同口径）；无 view 40300、模块关闭 40301；双租户互不可见；纯概览读取不写审计（与查重 / 状态历史同口径，批量查询与明文查看才有 DATA_ACCESS 审计）。
 - 列表与导出、首页数字使用同一范围（A-WARD-004）。

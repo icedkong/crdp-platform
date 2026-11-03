@@ -179,7 +179,23 @@ public class MenuManifest {
                             null,
                             "followup:patient:edit",
                             null,
-                            40));
+                            40),
+                    // E13-T05 / A-PAT-004、A-PAT-013、C-PAT-010：患者详情隐藏路由（患者档案下，
+                    // 平台库 V39 同构；perm_code 为 NULL——followup:patient:view 已由患者档案菜单
+                    // 持有（uk_plt_menu_perm 全库唯一），接口校验在 @RequiresPermission）
+                    new MenuManifestItem(
+                            "followup",
+                            "HOSPITAL",
+                            "MENU",
+                            "FollowupPatientDetail",
+                            "FollowupPatient",
+                            "患者详情",
+                            "FollowupPatientDetail",
+                            "/followup/patient/:id",
+                            "followup/patient/detail",
+                            null,
+                            null,
+                            20));
 
     public List<MenuManifestItem> items() {
         return ITEMS;

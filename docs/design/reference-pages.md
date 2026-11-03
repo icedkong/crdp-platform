@@ -9,7 +9,7 @@
 | 用途 | 路径 |
 |---|---|
 | 患者列表 | `apps/web-hospital/src/views/followup/patient/index.vue` |
-| 患者详情（基线 / 随访 / 其他页签） | `apps/web-hospital/src/views/followup/patient/detail.vue` |
+| 患者详情（基线 / 随访 / 其他页签） | `apps/web-hospital/src/views/followup/patient/detail.vue`（E13-T05 起概览 / 时间轴 / 联系方式与变更记录已接真实接口；基线分节、报告单、沟通记录页签仍随 E13-T02 / E16 / E15 开放） |
 | 虚构数据 | `apps/web-hospital/src/reference/fixtures.ts` |
 | 附件分组 | `apps/web-hospital/src/reference/group.ts` |
 | 断点 | `apps/web-hospital/src/reference/use-breakpoint.ts` |

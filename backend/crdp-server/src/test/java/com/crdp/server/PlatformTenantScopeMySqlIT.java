@@ -67,12 +67,13 @@ class PlatformTenantScopeMySqlIT {
     /**
      * 期望可分配全集（base 全部 + followup 模板默认 20/21/23/36/37/231，收回 22 随访任务）。 36 通知设置为 E09-T04 新增的非敏感
      * followup 菜单（V32 进授权范围模板，与 V102 同口径）；231 上传按钮为 E10-T01 新增的非敏感 followup 项（V33 同口径）； 37 字段字典为
-     * E11-T01 新增的非敏感 followup 菜单（V35 同口径）；214 编辑患者资料按钮为 E13-T03 新增（平台库 V38 同口径）。
+     * E11-T01 新增的非敏感 followup 菜单（V35 同口径）；214 编辑患者资料按钮为 E13-T03 新增（平台库 V38 同口径）； 215 患者详情隐藏菜单为
+     * E13-T05 新增（平台库 V39 同口径）。
      */
     private static final List<Object> WITHOUT_TASK =
             java.util.stream.Stream.concat(
                             BASE_ALL.stream(),
-                            List.of(20L, 21L, 23L, 36L, 37L, 213L, 214L, 231L).stream())
+                            List.of(20L, 21L, 23L, 36L, 37L, 213L, 214L, 215L, 231L).stream())
                     .toList();
 
     private static JdbcTemplate platform;
@@ -152,6 +153,11 @@ class PlatformTenantScopeMySqlIT {
         root.update(
                 "INSERT IGNORE INTO t_demoa.sys_role_menu (role_id, menu_id)"
                         + " SELECT r.id, 214 FROM t_demoa.sys_role r"
+                        + " WHERE r.code IN ('TENANT_ADMIN', 'FOLLOWUP_DOCTOR')");
+        // E13-T05：患者详情隐藏菜单（215）同上（followup V41 / 种子 V114 的默认授权）
+        root.update(
+                "INSERT IGNORE INTO t_demoa.sys_role_menu (role_id, menu_id)"
+                        + " SELECT r.id, 215 FROM t_demoa.sys_role r"
                         + " WHERE r.code IN ('TENANT_ADMIN', 'FOLLOWUP_DOCTOR')");
         // E06-T05 模板角色的默认菜单授权恢复（种子 V106 的下发态，收回测试会清掉 sys_role_menu 行）
         root.update(

@@ -158,6 +158,19 @@ class MenuSyncServiceTest {
                         "followup:patient:edit",
                         40,
                         "ENABLED"),
+                // E13-T05 患者详情隐藏路由（平台库 V39 同构）：perm_code 为 NULL
+                // （followup:patient:view 已由菜单 21 持有，uk_plt_menu_perm 全库唯一）
+                manifestRow(
+                        215L,
+                        21L,
+                        "MENU",
+                        "患者详情",
+                        "FollowupPatientDetail",
+                        "/followup/patient/:id",
+                        "followup/patient/detail",
+                        null,
+                        20,
+                        "ENABLED"),
                 // E09-T04 通知设置：followup 菜单挂在 base 的系统设置目录（30）下，
                 // 父项经 findMenuIdByRouteName 跨模块解析（MenuSyncService.resolveParentLater 回落）
                 manifestRow(
