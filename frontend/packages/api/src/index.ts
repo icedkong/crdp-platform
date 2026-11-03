@@ -162,6 +162,7 @@ export {
   moduleLogActionText,
   moduleShelfText,
   moduleSyncActionText,
+  PATIENT_STATUS_TEXT,
   TENANT_MODULE_NOT_OPENED_TEXT,
   TENANT_MODULE_STATUS_TEXT,
   TENANT_STATUS_OPTIONS,
@@ -308,6 +309,24 @@ export type {
   RegistrationOptionItem,
   RegistrationWardOption,
 } from './patient-registration';
+export {
+  buildPatientSearchPayload,
+  emptyPatientFilters,
+  hasActiveFilters,
+  isKeywordValid,
+  KEYWORD_MAX_LENGTH,
+  patientEmptyText,
+  patientStatusOptions,
+} from './patient-search';
+export type {
+  PatientFilterOptions,
+  PatientFilterState,
+  PatientSearchPage,
+  PatientSearchPayload,
+  PatientSearchRow,
+  PatientSortSpec,
+  PatientWardOption,
+} from './patient-search';
 
 export {
   API_ACTION_TYPE_TEXT,

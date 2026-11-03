@@ -7,16 +7,38 @@
  * E13-T01 / A-PAT-003、A-PAT-007、C-PAT-001、C-PAT-002：出院登记与病案号查重
  * （docs/api/patient.md §2，权限 followup:patient:create）。查重纯查询、登记写
  * PATIENT_CREATE 审计；重复返回 40902，页面按 duplicateNoticeOf 组装提示并阻止提交。
+ *
+ * E13-T04 / A-PAT-001、A-PAT-002、C-PAT-009：患者列表检索与筛选（docs/api/patient.md §1，
+ * 权限 followup:patient:view）。病区隔离由后端数据范围承担；姓名 / 病案号为盲索引精确匹配；
+ * 检索词只放页面状态，不写 URL（components.md §11.1）；批量查询由后端写数据访问审计。
  */
 import type {
   PatientCreatedResult,
   PatientDuplicateCheckResult,
+  PatientFilterOptions,
   PatientPlaintextResult,
   PatientRegistrationOptions,
   PatientRegistrationPayload,
+  PatientSearchPage,
+  PatientSearchPayload,
 } from '@crdp/api';
 
 import { apiPath, requestClient } from '#/api/request';
+
+/** 检索请求体（body 由 buildPatientSearchPayload 组装：分页 + 检索词 + 简单筛选）。 */
+export function searchPatients(payload: PatientSearchPayload) {
+  return requestClient.post<PatientSearchPage>(
+    apiPath('/followup/patients/search'),
+    payload,
+  );
+}
+
+/** 筛选候选（病区下拉，启用项）。 */
+export function fetchPatientFilterOptions() {
+  return requestClient.get<PatientFilterOptions>(
+    apiPath('/followup/patients/filter-options'),
+  );
+}
 
 /** 查看一名患者的敏感字段明文（body 由 buildPlaintextRevealRequest 组装）。 */
 export function revealPatientPlaintext(
