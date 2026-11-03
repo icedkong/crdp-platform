@@ -134,6 +134,18 @@ class MenuSyncServiceTest {
                         "followup:patient:export",
                         20,
                         "ENABLED"),
+                // E13-T01 新建患者（隐藏路由，平台库 V37 同构）：患者档案菜单下的 followup 菜单项
+                manifestRow(
+                        213L,
+                        21L,
+                        "MENU",
+                        "新建患者",
+                        "FollowupPatientNew",
+                        "/followup/patient/new",
+                        "followup/patient/new",
+                        "followup:patient:create",
+                        30,
+                        "ENABLED"),
                 // E09-T04 通知设置：followup 菜单挂在 base 的系统设置目录（30）下，
                 // 父项经 findMenuIdByRouteName 跨模块解析（MenuSyncService.resolveParentLater 回落）
                 manifestRow(

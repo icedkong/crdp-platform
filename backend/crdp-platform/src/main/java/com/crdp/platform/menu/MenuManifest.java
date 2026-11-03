@@ -149,7 +149,22 @@ public class MenuManifest {
                             null,
                             "followup:scan:download",
                             null,
-                            20));
+                            20),
+                    // E13-T01 / A-PAT-003、C-PAT-001：新建患者隐藏路由（患者档案下，平台库 V37 同构；
+                    // hidden 是平台端维护值，不在清单结构字段里）
+                    new MenuManifestItem(
+                            "followup",
+                            "HOSPITAL",
+                            "MENU",
+                            "FollowupPatientNew",
+                            "FollowupPatient",
+                            "新建患者",
+                            "FollowupPatientNew",
+                            "/followup/patient/new",
+                            "followup/patient/new",
+                            "followup:patient:create",
+                            null,
+                            30));
 
     public List<MenuManifestItem> items() {
         return ITEMS;

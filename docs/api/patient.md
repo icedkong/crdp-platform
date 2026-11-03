@@ -35,8 +35,9 @@ interface PatientRow {
 
 | 方法 | 路径 | 权限 | 说明 | 需求 |
 |---|---|---|---|---|
-| POST | `/api/hospital/followup/patients/check-duplicate` | `followup:patient:create` | `{ medicalRecordNo }` → `{ exists, patient?: { id, nameMasked, wardName, dischargeDate } }`（只返回脱敏摘要；范围外的同号患者只返回 `exists: true`） | A-PAT-007、C-PAT-002 |
-| POST | `/api/hospital/followup/patients` | `followup:patient:create` | 出院登记 / 患者登记：基础信息 + 首个基线分节；A 可选择是否立即入组；C 自动生成随访编号（C-PAT-003）且根据植入记录自动入组（`implant.md`）；重复返回 40902 | A-PAT-003、C-PAT-001 |
+| POST | `/api/hospital/followup/patients/check-duplicate` | `followup:patient:create` | **E13-T01 已实现**。body `{ medicalRecordNo, name?, birthDate? }` → `{ exists, patient?: { id, nameMasked, wardName, dischargeDate }, possibleMatches?: [...] }`；`exists` 按全院（A-PAT-007 本院唯一），范围外的同号患者只返回 `exists: true` 不带摘要；`patient` 只在已有患者位于当前用户数据范围内时下发（前端跳转已有患者）；`possibleMatches` 为姓名 + 出生日期相同的范围内患者（C-PAT-002 可能重复提示，不阻止） | A-PAT-007、C-PAT-002 |
+| POST | `/api/hospital/followup/patients` | `followup:patient:create` | **E13-T01 已实现**（出院登记，A-PAT-003 最小必填集：病案号、姓名、性别、病区、手术 / 入院 / 出院日期、出院状态，实体列落 `pt_patient`；C 的差异口径见 OQ-71）。重复返回 40902，`data` 为上面的查重结果结构（范围内带已有患者脱敏摘要）；写 `PATIENT_CREATE` 操作审计（SUCCESS / DENIED，敏感值只存摘要）。首个基线分节与暂存草稿随 E13-T02；立即入组随 E14；C 随访编号与首条植入记录随 E21 | A-PAT-003、C-PAT-001 |
+| GET | `/api/hospital/followup/patients/registration-options` | `followup:patient:create` | **E13-T01 已实现**。登记候选：`{ wards: [{id,name}], depts: [{id,name}], genders: [{code,label}], dischargeStatuses: [{code,label}] }`；出院状态编码 1=存活 / 2=病重自动出院 / 3=死亡（A 规格字段 191） | A-PAT-003、C-PAT-001 |
 | GET | `/api/hospital/followup/patients/{id}/summary` | `followup:patient:view` | PatientHeader 数据：脱敏基本信息、状态、病区、责任医生、当前计划、下次随访、完整度、C 当前器械；**附带 `actions` 可用操作列表**（后端按权限 + 状态计算，前端仍做按钮级权限） | A-PAT-004、C-PAT-010 |
 | PUT | `/api/hospital/followup/patients/{id}` | `followup:patient:edit` | 基础信息（非表单字段）；写字段级历史 | A-PAT-005、C-PAT-011 |
 | DELETE | `/api/hospital/followup/patients/{id}` | C：`followup:patient:delete`；A 权限表无删除码（建议同名新增，见 OQ-17）；敏感操作需二次认证 | 软删除，`{ reason }` 必填，租户管理员可恢复（`POST .../patients/{id}/restore`） | A-PAT-012、C-PAT-015 |
@@ -83,7 +84,7 @@ interface PatientRow {
 - 列表页不提供逐行明文（design-system 表格规则）。
 - 频控：同一用户每分钟 ≤ 30 次（文档建议值，暂按此实现，产品定论后只改 `PlaintextRateLimiter` 常量），超出 **42900** 并写 `DENIED(reason=RATE_LIMITED)` 审计，触发安全告警 `PLAINTEXT_ABUSE`（PLT-AUD-012，接收人为启用的平台管理员）。
 - 默认脱敏（序列化）：DTO 敏感字符串字段标 framework `@MaskedByPolicy(resource, field)`（`FieldPolicyJacksonModule`）——`MASKED` 掩码、`HIDDEN` 整字段不出现、`VISIBLE` 明文；动态结构（导出行、站内信参数）用 `SensitiveFieldSanitizer.apply`，同一套口径。掩码规则（`SensitiveValueMasker`）：姓名「张*明」（两字「张*」）、手机号前 3 后 4「138****5678」、证件号前 6 后 4、病案号前 2 后 2、住址前 6 字 + 固定 4 星，其余通用（首尾保留、中间按位数补星）。
-- 实现备注：患者表随 E13-T01 建表，明文取数经端口 `PatientPlaintextSource`（当前占位实现恒 40400，不伪造数据）；E13 的真实实现必须走 `@DataScope` 查询、解密只经 `CryptoService`。
+- 实现备注：患者表已随 E13-T01 建表（`pt_patient`，followup V37），明文取数经端口 `PatientPlaintextSource`（真实实现 `PatientPlaintextSourceImpl`：`@DataScope` 查询 + `CryptoService` 解密；电话随 E13-T03 落 `pt_contact` 后并入）。
 
 ## 6. 联系方式（pt_contact，按版本保存）
 

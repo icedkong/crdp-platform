@@ -71,7 +71,8 @@ class PlatformTenantScopeMySqlIT {
      */
     private static final List<Object> WITHOUT_TASK =
             java.util.stream.Stream.concat(
-                            BASE_ALL.stream(), List.of(20L, 21L, 23L, 36L, 37L, 231L).stream())
+                            BASE_ALL.stream(),
+                            List.of(20L, 21L, 23L, 36L, 37L, 213L, 231L).stream())
                     .toList();
 
     private static JdbcTemplate platform;
@@ -141,6 +142,11 @@ class PlatformTenantScopeMySqlIT {
         root.update(
                 "INSERT IGNORE INTO t_demoa.sys_role_menu (role_id, menu_id)"
                         + " SELECT r.id, 22 FROM t_demoa.sys_role r"
+                        + " WHERE r.code IN ('TENANT_ADMIN', 'FOLLOWUP_DOCTOR')");
+        // E13-T01：新建患者（213）与 22 同为角色默认授权，收回测试同样会清掉
+        root.update(
+                "INSERT IGNORE INTO t_demoa.sys_role_menu (role_id, menu_id)"
+                        + " SELECT r.id, 213 FROM t_demoa.sys_role r"
                         + " WHERE r.code IN ('TENANT_ADMIN', 'FOLLOWUP_DOCTOR')");
         // E06-T05 模板角色的默认菜单授权恢复（种子 V106 的下发态，收回测试会清掉 sys_role_menu 行）
         root.update(

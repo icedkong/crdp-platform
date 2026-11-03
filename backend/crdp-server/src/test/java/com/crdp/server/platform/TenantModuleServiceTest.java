@@ -475,7 +475,7 @@ class TenantModuleServiceTest {
         verify(platform)
                 .update(
                         contains("UPDATE plt_tenant_module SET migration_version"),
-                        eq("36"),
+                        eq("37"),
                         any(),
                         eq(TENANT_ID),
                         eq("followup"));
@@ -487,7 +487,7 @@ class TenantModuleServiceTest {
                         eq("followup"),
                         eq("OPEN"),
                         eq("合同签订（示例）"),
-                        contains("迁移版本 36"),
+                        contains("迁移版本 37"),
                         any());
         ArgumentCaptor<AuditEvent> event = ArgumentCaptor.forClass(AuditEvent.class);
         verify(audit).record(event.capture());
@@ -751,7 +751,7 @@ class TenantModuleServiceTest {
         verify(platform)
                 .update(
                         contains("UPDATE plt_tenant_module SET migration_version"),
-                        eq("36"),
+                        eq("37"),
                         eq(TENANT_ID),
                         eq("followup"));
         // 新建租户同样下发业务角色模板（E06-T05；base 未登记模板，seeder 返回 0）
@@ -800,7 +800,7 @@ class TenantModuleServiceTest {
         row.put("base_module", baseModule);
         row.put("status", status);
         row.put("feature_version", baseModule == 1 ? "" : "0.1.0");
-        row.put("migration_version", baseModule == 1 ? "" : "36");
+        row.put("migration_version", baseModule == 1 ? "" : "37");
         row.put("depends_on", baseModule == 1 ? "" : "base");
         return row;
     }
@@ -817,7 +817,7 @@ class TenantModuleServiceTest {
         Map<String, Object> row = new HashMap<>();
         row.put("module_code", code);
         row.put("status", status);
-        row.put("migration_version", "36");
+        row.put("migration_version", "37");
         row.put("opened_at", null);
         row.put("closed_at", null);
         row.put("reason", TenantModuleService.STATUS_CLOSED.equals(status) ? "合同到期（示例）" : null);
