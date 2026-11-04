@@ -414,12 +414,30 @@ class PlatformTenantScopeMySqlIT {
     @Order(2)
     void revokeShrinksTenantRolesAndSessions() {
         connect();
+        // 前置归一（本机持久库重跑用；CI 全新库天然满足）：补齐种子授予——22 六角色、
+        // 223 隐藏路由（管理员与随访医生，followup V55 / 平台库种子 V106，E15-T02）。
+        // 上一次运行到 Order(3) 会把 22/223 一并收回，重跑前先还原。
+        root.update(
+                """
+                INSERT INTO t_demoa.sys_role_menu (role_id, menu_id)
+                SELECT r.id, m.menu_id FROM t_demoa.sys_role r
+                JOIN (SELECT 'TENANT_ADMIN' AS code, 223 AS menu_id
+                      UNION ALL SELECT 'FOLLOWUP_DOCTOR', 223
+                      UNION ALL SELECT 'TENANT_ADMIN', 22
+                      UNION ALL SELECT 'FOLLOWUP_DOCTOR', 22
+                      UNION ALL SELECT 'FOLLOWUP_NURSE', 22
+                      UNION ALL SELECT 'FOLLOWUP_DUTY_DOCTOR', 22
+                      UNION ALL SELECT 'FOLLOWUP_RESEARCHER', 22
+                      UNION ALL SELECT 'FOLLOWUP_CRC', 22) m ON m.code = r.code
+                WHERE NOT EXISTS (SELECT 1 FROM t_demoa.sys_role_menu rm
+                                  WHERE rm.role_id = r.id AND rm.menu_id = m.menu_id)
+                """);
         String platformToken = loginPlatform("platform.admin");
         String doctorToken = loginHospital("demoa", "doctor.demo");
         // 收回前：随访医生（种子角色授权 10/20/21/22）能看到随访任务，模块接口放行
         assertTrue(
                 menuTitles(request(HttpMethod.GET, "/api/hospital/menus", doctorToken, null))
-                        .contains("随访任务"));
+                        .contains("我的任务")); // E15-T02：菜单 22 改标题「我的任务」
         assertEquals(
                 0, code(request(HttpMethod.GET, "/api/hospital/followup/ping", doctorToken, null)));
 
@@ -431,9 +449,20 @@ class PlatformTenantScopeMySqlIT {
                                 "/api/platform/tenants/" + TENANT_A + "/scope/preview",
                                 platformToken));
         List<Map<String, Object>> removed = (List<Map<String, Object>>) preview.get("removed");
-        assertEquals(1, removed.size());
-        assertEquals(22L, ((Number) removed.get(0).get("menuId")).longValue());
-        assertEquals("followup:task:view", removed.get(0).get("permCode"));
+        // E15-T02 起 22 下有隐藏路由 223（随访录入），收回父菜单连带收回
+        assertEquals(2, removed.size(), "收回 22 连带其下隐藏路由 223（E15-T02 随访录入）");
+        List<Long> removedIds =
+                removed.stream()
+                        .map(item -> ((Number) item.get("menuId")).longValue())
+                        .sorted()
+                        .toList();
+        assertEquals(List.of(22L, 223L), removedIds);
+        Map<?, ?> taskRemoved =
+                removed.stream()
+                        .filter(item -> ((Number) item.get("menuId")).longValue() == 22L)
+                        .findFirst()
+                        .orElseThrow();
+        assertEquals("followup:task:view", taskRemoved.get("permCode"));
         List<Map<String, Object>> roles = (List<Map<String, Object>>) preview.get("affectedRoles");
         // E06-T05 起，随访模板（随访员 / 责任医生 / 研究者 / CRC）默认也持有 22，共 6 个角色受影响
         assertEquals(6, roles.size(), "TENANT_ADMIN、FOLLOWUP_DOCTOR 与 4 个随访模板都持有 22");
@@ -449,11 +478,14 @@ class PlatformTenantScopeMySqlIT {
                                 platformToken,
                                 scopeBody(WITHOUT_TASK, Map.of(), "按合同收回随访任务（示例）")));
         assertEquals(
-                List.of(22),
+                List.of(22, 223),
                 ((List<?>) change.get("removedMenuIds"))
-                        .stream().map(n -> ((Number) n).intValue()).toList());
+                        .stream().map(n -> ((Number) n).intValue()).sorted().toList(),
+                "收回 22 连带其下隐藏路由 223（E15-T02 随访录入）");
         assertEquals(
-                6, ((Number) change.get("revokedGrants")).intValue(), "6 个角色（含 4 个模板）的 22 授权同步收回");
+                8,
+                ((Number) change.get("revokedGrants")).intValue(),
+                "6 个角色（含 4 个模板）的 22 授权同步收回；E15-T02 起 TENANT_ADMIN / FOLLOWUP_DOCTOR 另持 223");
         assertEquals(6, ((Number) change.get("revokedRoles")).intValue());
         assertEquals(2, ((Number) change.get("refreshedUsers")).intValue(), "模板无成员，权限版本只递增 2 名用户");
         assertEquals(
@@ -466,7 +498,7 @@ class PlatformTenantScopeMySqlIT {
         // 同一在线会话：下一次请求即重算（权限版本递增），菜单与权限码消失，但 base 能力不受影响
         List<String> after =
                 menuTitles(request(HttpMethod.GET, "/api/hospital/menus", doctorToken, null));
-        assertFalse(after.contains("随访任务"), "收回后菜单应消失：" + after);
+        assertFalse(after.contains("我的任务"), "收回后菜单应消失：" + after);
         assertTrue(after.contains("工作台"), "base 固定能力不受影响：" + after);
         assertEquals(
                 40300,
@@ -506,7 +538,10 @@ class PlatformTenantScopeMySqlIT {
                                 "/api/platform/tenants/" + TENANT_A + "/scope/logs",
                                 platformToken,
                                 null));
-        assertTrue(logs.get(0).get("detail").toString().contains("随访任务"), "变更记录含前后差异");
+        String detail = logs.get(0).get("detail").toString();
+        assertTrue(
+                detail.contains("随访任务") || detail.contains("我的任务"),
+                "变更记录含前后差异（E15-T02 起菜单 22 标题为「我的任务」）：" + detail);
     }
 
     @Test

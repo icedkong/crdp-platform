@@ -616,6 +616,9 @@ importers:
       '@crdp/api':
         specifier: workspace:*
         version: link:../../packages/api
+      '@crdp/form-engine':
+        specifier: workspace:*
+        version: link:../../packages/form-engine
       '@crdp/rules':
         specifier: workspace:*
         version: link:../../packages/rules

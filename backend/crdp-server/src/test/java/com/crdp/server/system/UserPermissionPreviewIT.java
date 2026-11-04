@@ -141,7 +141,7 @@ class UserPermissionPreviewIT {
         collectTitles((List<?>) view.get("menus"), menuTitles);
         assertTrue(menuTitles.contains("随访"), "预览应包含「随访」目录：" + menuTitles);
         assertTrue(menuTitles.contains("患者档案"), "预览应包含「患者档案」菜单：" + menuTitles);
-        assertTrue(menuTitles.contains("随访任务"), "预览应包含「随访任务」菜单：" + menuTitles);
+        assertTrue(menuTitles.contains("我的任务"), "预览应包含「我的任务」菜单（E15-T02 改标题）：" + menuTitles);
         assertFalse(menuTitles.contains("用户管理"), "随访医生不应看到「用户管理」：" + menuTitles);
         Map<?, ?> patientMenu = findNodeByTitle((List<?>) view.get("menus"), "患者档案");
         assertNotNull(patientMenu, "患者档案节点存在");

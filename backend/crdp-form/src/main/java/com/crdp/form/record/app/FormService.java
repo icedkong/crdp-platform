@@ -506,6 +506,62 @@ public class FormService {
         return result.warnings();
     }
 
+    // ---------------------------------------------------------------- 提交（E15-T02 /
+    // A-FU-005「可暂存草稿，提交后任务完成」）
+
+    /**
+     * 提交结果：提交后的记录视图（status = SUBMITTED、version + 1）+ 提交前 data 与隐藏字段清洗掉的键（调用方写字段历史 diff 用，E11-T06）+
+     * 软校验警告（不拦截，调用方可走确认流记 data_meta）。
+     */
+    public record SubmitOutcome(
+            RecordView view,
+            Map<String, Object> before,
+            List<String> clearedKeys,
+            List<FieldIssue> warnings) {}
+
+    /**
+     * 提交（DRAFT → SUBMITTED，一次事务内完成全部写入闸门；任务完成联动由业务调用方在同一事务内接线，E15-T02 RecordEntryService）：完整校验（必填 /
+     * 条件必填 / 跨字段 / 派生 / 硬范围，违反 42200）→ 隐藏字段值清空（tech-plan §6）→ 派生重算 → 落库（乐观锁：baseVersion 过期
+     * 40900，已提交 40901）。字段历史与审计不写在本层（提交属业务动作，E15-T02 记 RECORD_SUBMIT 与 DRAFT→SUBMITTED diff）。
+     */
+    @Transactional
+    public SubmitOutcome submitRecord(
+            long id, Integer baseVersion, Map<String, Object> data, Map<String, Object> dataMeta) {
+        if (baseVersion == null) {
+            throw new ApiException(400, 40001, "提交必须携带 baseVersion（乐观锁）");
+        }
+        FormRecordRow row = requireRecord(id);
+        if ("SUBMITTED".equals(row.status())) {
+            throw new ApiException(409, 40901, "记录已提交，不能重复提交（修改走已提交记录修改流程）");
+        }
+        if (row.version() != baseVersion) {
+            throw draftConflict(requireRecord(id), data);
+        }
+        List<VersionFieldRow> fields =
+                recordMapper.findVersionFields(row.formCode(), row.templateVersion());
+        if (fields.isEmpty()) {
+            throw new ApiException(404, 40400, "记录的模板版本不存在（formCode=" + row.formCode() + "）");
+        }
+        Map<String, Object> values = data == null ? new LinkedHashMap<>() : data;
+        validator.validateData(values, fields);
+        List<FieldIssue> warnings =
+                validateForSubmit(row.formCode(), row.templateVersion(), values);
+        StrippedData stripped =
+                stripHiddenFields(row.formCode(), row.templateVersion(), values, Map.of());
+        Map<String, Object> persisted = applyDerived(fields, stripped.data());
+        enforceHardRange(persisted, fields);
+        Map<String, Object> meta =
+                dataMeta == null ? readMap(row.dataMeta()) : new LinkedHashMap<>(dataMeta);
+        long operator = CurrentSession.requireHospital().userId();
+        int updated =
+                recordMapper.submitRecord(
+                        id, baseVersion, writeJson(persisted), writeJson(meta), operator);
+        if (updated != 1) {
+            throw draftConflict(requireRecord(id), data);
+        }
+        return new SubmitOutcome(record(id), readMap(row.data()), stripped.clearedKeys(), warnings);
+    }
+
     /**
      * tech-plan §6「被隐藏字段的值清空」：按当前答案与上下文求值 visibleWhen，移除隐藏字段残留的值（E11-T03）。 提交流程（E15 / E25）在 {@link
      * #validateForSubmit} 通过后、落库前调用；清空动作写 fe_field_history 随 E11-T06。 只移除有值的键（已空 / 缺键无需清空），返回清洗后的

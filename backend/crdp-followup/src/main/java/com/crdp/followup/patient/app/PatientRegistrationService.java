@@ -42,10 +42,10 @@ public class PatientRegistrationService {
 
     private static final Logger log = LoggerFactory.getLogger(PatientRegistrationService.class);
 
-    /** 加密用途（重加密作业登记见 PatientEncryptedColumns）。 */
-    static final String PURPOSE_MRN = "pt-patient-mrn";
+    /** 加密用途（重加密作业登记见 PatientEncryptedColumns；任务列表检索词盲索引复用，E15-T02）。 */
+    public static final String PURPOSE_MRN = "pt-patient-mrn";
 
-    static final String PURPOSE_NAME = "pt-patient-name";
+    public static final String PURPOSE_NAME = "pt-patient-name";
 
     /** C-PAT-002 可能重复提示的上限（提示即可，不整页拉人）。 */
     static final int IDENTITY_MATCH_LIMIT = 5;

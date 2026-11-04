@@ -11,6 +11,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.crdp.followup.task.app.FollowupTaskStatusService;
+import com.crdp.followup.task.infra.mapper.FollowupTaskMapper;
 import com.crdp.form.record.app.FormService;
 import com.crdp.framework.audit.AuditEntry;
 import com.crdp.framework.audit.AuditLogger;
@@ -27,14 +29,20 @@ import org.mockito.junit.jupiter.MockitoExtension;
  *
  * <p>锁定：自动保存不逐次写审计（tech-plan「范围与审计」）；「保留我的并覆盖」（overwrite=true， patient.md §4.1）由后端写
  * RECORD_DRAFT_OVERWRITE 审计且只记字段键不记值（敏感值只存摘要）； baseVersion 缺失 / changes 为空 40001；引擎的 409
- * 冲突原样透传给前端（ConflictBanner 暂停自动保存）。 全部虚构数据。
+ * 冲突原样透传给前端（ConflictBanner 暂停自动保存）。
+ *
+ * <p>E15-T02 追加（OQ-77② 接入点）：保存成功后关联任务（fu_task.record_id）仍在待随访时进入进行中（「第一次暂存草稿 →
+ * 进行中」）；无关联任务不联动。全部虚构数据。
  */
 @ExtendWith(MockitoExtension.class)
 class RecordDraftServiceTest {
 
     private final FormService formService = mock(FormService.class);
+    private final FollowupTaskMapper taskMapper = mock(FollowupTaskMapper.class);
+    private final FollowupTaskStatusService statusService = mock(FollowupTaskStatusService.class);
     private final AuditLogger audit = mock(AuditLogger.class);
-    private final RecordDraftService service = new RecordDraftService(formService, audit);
+    private final RecordDraftService service =
+            new RecordDraftService(formService, taskMapper, statusService, audit);
 
     @Test
     void savesDraftWithoutAuditByDefault() {
@@ -152,5 +160,51 @@ class RecordDraftServiceTest {
 
         assertSame(conflict, thrown, "409 冲突详情原样透传（前端暂停自动保存并弹 ConflictBanner）");
         verify(audit, never()).append(any());
+    }
+
+    @Test
+    void linkedPendingTaskMovesToInProgressOnFirstDraftSave() {
+        when(formService.saveDraft(101L, 2, Map.of("f214", "2026-03-10")))
+                .thenReturn(
+                        new FormService.RecordView(
+                                101L,
+                                "A_ANNUAL_FU",
+                                1,
+                                "DRAFT",
+                                3,
+                                Map.of("f214", "2026-03-10"),
+                                Map.of(),
+                                null,
+                                "2026-03-10T10:15:00+08:00"));
+        when(taskMapper.findTaskByRecordId(101L))
+                .thenReturn(new FollowupTaskMapper.RecordLinkedTaskRow(9001L, "PENDING"));
+
+        service.saveDraft(
+                101L, new RecordDraftService.DraftCommand(2, Map.of("f214", "2026-03-10"), null));
+
+        // OQ-77②：第一次暂存草稿 → 进行中（markInProgress 幂等守卫由状态服务承担，本层恒调）
+        verify(statusService).markInProgress(9001L, null, "暂存草稿");
+    }
+
+    @Test
+    void unlinkedRecordDoesNotTouchTasks() {
+        when(formService.saveDraft(101L, 2, Map.of("f214", "2026-03-10")))
+                .thenReturn(
+                        new FormService.RecordView(
+                                101L,
+                                "A_ANNUAL_FU",
+                                1,
+                                "DRAFT",
+                                3,
+                                Map.of("f214", "2026-03-10"),
+                                Map.of(),
+                                null,
+                                "2026-03-10T10:15:00+08:00"));
+        when(taskMapper.findTaskByRecordId(101L)).thenReturn(null);
+
+        service.saveDraft(
+                101L, new RecordDraftService.DraftCommand(2, Map.of("f214", "2026-03-10"), null));
+
+        verify(statusService, never()).markInProgress(anyLong(), any(), any());
     }
 }
