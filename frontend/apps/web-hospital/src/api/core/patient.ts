@@ -24,6 +24,8 @@
  */
 import type {
   AdvancedSearchField,
+  BatchResult,
+  DoctorOptions,
   PatientContactInfo,
   PatientCreatedResult,
   PatientDuplicateCheckResult,
@@ -191,5 +193,36 @@ export function transferPatientWard(
 export function fetchPatientWardHistory(patientId: number | string) {
   return requestClient.get<PatientWardHistory>(
     apiPath(`/followup/patients/${patientId}/ward-history`),
+  );
+}
+
+// ---------------------------------------------------------------- 批量指定责任医生（E13-T07 / A-PAT-017、C-PAT-016）
+
+/**
+ * 批量指定责任医生（权限 followup:task:assign，OQ-18；单次 ≤ 500）：只能选该病区的
+ * 医生——后端逐条校验医生须负责患者当前病区（sys_user_ward），跨病区患者按条跳过；
+ * 越范围 / 不存在患者逐条 NOT_FOUND 且不带摘要；结果逐条可查（tasks.csv 验收）。
+ */
+export function batchAssignDoctor(payload: {
+  doctorId: number | string;
+  patientIds: Array<number | string>;
+}) {
+  return requestClient.post<BatchResult>(
+    apiPath('/followup/patients/batch-assign'),
+    payload,
+  );
+}
+
+/**
+ * 责任医生候选（A-PAT-017「只能选该病区的医生」的数据面）：启用病区的启用用户，
+ * wardIds 可选过滤（传所选患者病区并集做前端预筛；逐条强校验在后端）。
+ */
+export function fetchDoctorOptions(wardIds?: Array<number | string>) {
+  const query =
+    wardIds && wardIds.length > 0
+      ? `?wardIds=${wardIds.map(String).join(',')}`
+      : '';
+  return requestClient.get<DoctorOptions>(
+    apiPath(`/followup/patients/doctor-options${query}`),
   );
 }

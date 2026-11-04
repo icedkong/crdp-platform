@@ -145,10 +145,10 @@
 | 项 | 内容 |
 |---|---|
 | 路由 | `/followup/patient` |
-| 权限 | 页面 `followup:patient:view`；新建 `followup:patient:create`；导入 `followup:patient:import`；导出 `followup:patient:export`；批量指定责任医生 `followup:task:assign`（推断，待确认）；批量入组 `followup:plan:enroll` |
+| 权限 | 页面 `followup:patient:view`；新建 `followup:patient:create`；导入 `followup:patient:import`；导出 `followup:patient:export`；批量指定责任医生 `followup:task:assign`（OQ-18，按钮 224）；批量入组 `followup:plan:enroll`（按钮 221） |
 | 需求 | A-PAT-001、002、014、015、016、017、019、009、008；C-PAT-009、013、014、016；A-WARD-004；C-WARD-005 |
 | 组件 | `SearchBar`、`AdvancedSearch`、`a-table`、`StatusTag`、`MaskedField`（只读）、`a-progress`（完整度小条） |
-| 接口 | `POST /api/hospital/followup/patients/search`（body：分页 + 简单筛选 + 高级检索条件树）；个人筛选 `GET/POST/DELETE /api/hospital/followup/saved-filters`；导出 `POST /api/hospital/followup/exports`；批量指定 `POST /api/hospital/followup/patients/batch-assign`（均推断，待确认） |
+| 接口 | `POST /api/hospital/followup/patients/search`（body：分页 + 简单筛选 + 高级检索条件树）；个人筛选 `GET/POST/DELETE /api/hospital/followup/saved-filters`；导出 `POST /api/hospital/followup/exports`；批量指定 `POST /api/hospital/followup/patients/batch-assign` 与医生候选 `GET .../doctor-options`（E13-T07 已实现）；勾选「批量入组」跳 `/followup/patient/batch-enroll`（§8）并带入选中（sessionStorage，E13-T07） |
 
 ```text
 ┌ 患者管理 ─────────────────────────────────────────────── [导入] [导出] [+ 新建患者] ┐
@@ -487,7 +487,7 @@
 - 发布后不可修改，只能「复制为新版本」；患者入组时固定版本；在组患者迁移到新版本首期不做（A-FU-020 延后）。
 - 节点编辑器旁放**计算预览**（用 `packages/rules` 的日期函数，和后端共享用例：A 年度、B 3 个月、B 1 年、B 术后 1/3/5 天四个验算例）。
 - 患者列表页签：加入时间、随访完成次数、状态（已启动 / 已暂停 / 已移除）；单个暂停、恢复、移除并填原因；入口跳批量入组。
-- 批量入组（A-PAT-016）：左筛选（含高级检索）/ 中结果勾选 / 右选计划与责任医生；完成后显示成功与跳过（已在组、已死亡、已移除）明细。
+- 批量入组（A-PAT-016，E13-T07 已实现）：独立页 `/followup/patient/batch-enroll`（隐藏路由 plt_menu 225，患者列表勾选带入）；左筛选（含高级检索）/ 中结果勾选（跨页保留）/ 右选已发布计划与责任医生（可选）；「预检」先显示将加入 / 将跳过人数与原因，确认后显示成功与跳过（已在组、已死亡、已移除、越范围、医生不负责该病区）逐条明细；接口 `POST /plans/{id}/enrollments/batch-preview` 与 `/batch`。
 - 变更记录：计划变更审计（A-FU-021）。
 - 仅桌面 / 平板；手机 `MobileBlocker`。
 

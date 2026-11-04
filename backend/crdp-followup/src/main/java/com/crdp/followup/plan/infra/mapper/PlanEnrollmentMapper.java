@@ -87,6 +87,29 @@ public interface PlanEnrollmentMapper {
     Long findActiveIdByPatientAndPlanCode(
             @Param("patientId") long patientId, @Param("planCode") String planCode);
 
+    /** 患者入组状态位（E13-T07 批量入组预检的「已在组 / 已移除」判定）。 */
+    record PatientEnrollmentStatusRow(long patientId, String status) {}
+
+    /**
+     * 各患者在指定计划族（plan_code 跨版本不变）的全部入组行状态——含已移除（REMOVED 行 active_key 为生成列 NULL，须按 plan_code 查）。
+     * 只取状态位不输出患者明细，与 {@link #findActiveIdByPatientAndPlanCode} 同口径。
+     */
+    @IgnoreScope(
+            reason =
+                    "批量入组预检（A-PAT-016）的「已在组 / 已移除」判定：fu_enrollment 状态位是"
+                            + " uk_fu_enrollment_active 的唯一性口径（患者 × 计划族），只取状态位，"
+                            + "不输出患者或入组明细（与单条 findActiveIdByPatientAndPlanCode 同口径）")
+    @Select(
+            """
+            <script>
+            SELECT patient_id AS patientId, status FROM fu_enrollment
+            WHERE plan_code = #{planCode} AND patient_id IN
+              <foreach collection="ids" item="item" open="(" separator="," close=")">#{item}</foreach>
+            </script>
+            """)
+    List<PatientEnrollmentStatusRow> findStatusByPatientIdsAndPlanCode(
+            @Param("planCode") String planCode, @Param("ids") List<Long> ids);
+
     /** 新建入组（status = ACTIVE，起算日期快照可空——E14-T03/T05 计算任务日期时回填）。 */
     @Insert(
             """

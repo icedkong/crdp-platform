@@ -53,6 +53,7 @@ import {
   updateSavedFilter,
 } from '#/api/core/patient';
 import AdvancedSearch from '#/components/followup/advanced-search.vue';
+import BatchAssignDoctorModal from '#/components/followup/batch-assign-doctor-modal.vue';
 import DeletePatientModal from '#/components/followup/delete-patient-modal.vue';
 import PatientExportModal from '#/components/followup/patient-export-modal.vue';
 import TransferWardModal from '#/components/followup/transfer-ward-modal.vue';
@@ -64,6 +65,7 @@ import {
   savedFilterPayloadIsEmpty,
   savedFilterPayloadOf,
 } from './advanced-logic';
+import { stashBatchSelection } from './batch-logic';
 
 defineOptions({ name: 'FollowupPatient' });
 
@@ -86,6 +88,10 @@ const router = useRouter();
 const { hasPermission } = usePermission();
 const canCreate = computed(() => hasPermission('followup:patient:create'));
 const canTransfer = computed(() => hasPermission('followup:patient:transfer'));
+// E13-T07 / A-PAT-016、A-PAT-017：批量入组（followup:plan:enroll，按钮 221）与
+// 批量指定责任医生（followup:task:assign，OQ-18，按钮 224）；手机不提供批量（pages.md §3）
+const canBatchEnroll = computed(() => hasPermission('followup:plan:enroll'));
+const canBatchAssign = computed(() => hasPermission('followup:task:assign'));
 // E13-T09 / A-PAT-009、A-PAT-012：导出（敏感权限，走审批作业）与删除患者（软删除，敏感）
 const canExport = computed(() => hasPermission('followup:patient:export'));
 const canDelete = computed(() => hasPermission('followup:patient:delete'));
@@ -127,6 +133,11 @@ const transferTarget = ref<null | PatientSearchRow>(null);
 // E13-T09 / A-PAT-009：列表「导出」走导出作业与审批（PLT-AUD-007，pages.md §3）
 const exportOpen = ref(false);
 
+// E13-T07 / A-PAT-016、A-PAT-017：勾选 + 批量操作条（pages.md §3「已选 N 项」）。
+// 换页 / 查询保留勾选（preserveSelectedRowKeys），手机不提供批量（pages.md §3）。
+const selectedIds = ref<string[]>([]);
+const assignOpen = ref(false);
+
 // E13-T09 / A-PAT-012：行操作「⋮ 更多 → 删除」（pages.md §3：红色 + 确认 + 原因，软删除）
 const deleteOpen = ref(false);
 const deleteTarget = ref<null | PatientSearchRow>(null);
@@ -151,6 +162,18 @@ function handleDeleted(patientId: string) {
 
 /** 转病区成功：刷新列表——原病区医生立即失去访问权，行随之消失或病区列变化。 */
 function handleTransferred() {
+  void load();
+}
+
+/** E13-T07 / A-PAT-016：勾选患者跳批量入组页（三栏：筛选 / 勾选 / 计划与责任医生）。 */
+function openBatchEnroll() {
+  if (selectedIds.value.length === 0) return;
+  stashBatchSelection(selectedIds.value);
+  void router.push('/followup/patient/batch-enroll');
+}
+
+/** E13-T07 / A-PAT-017：批量指定责任医生完成后刷新列表（责任医生列变化）。 */
+function handleBatchAssigned() {
   void load();
 }
 
@@ -561,6 +584,36 @@ function handleEmptyAction() {
         </FormItem>
       </Form>
 
+      <!-- 批量操作条（pages.md §3「☐ 已选 N 项」；手机不提供批量操作） -->
+      <div v-if="!isMobile && selectedIds.length > 0" class="batch-bar">
+        <span data-testid="patient-batch-selected">
+          已选 {{ selectedIds.length }} 项
+        </span>
+        <Space>
+          <Button
+            v-if="canBatchAssign"
+            data-testid="patient-batch-assign"
+            @click="assignOpen = true"
+          >
+            批量指定责任医生
+          </Button>
+          <Button
+            v-if="canBatchEnroll"
+            data-testid="patient-batch-enroll"
+            @click="openBatchEnroll"
+          >
+            批量入组
+          </Button>
+          <Button
+            data-testid="patient-batch-clear"
+            type="link"
+            @click="selectedIds = []"
+          >
+            清除勾选
+          </Button>
+        </Space>
+      </div>
+
       <!-- 生效的高级检索提示条（点击 ✕ 清除；pages.md §3 高级检索入口） -->
       <div v-if="hasAdvancedActive" class="advanced-chip">
         <Tag
@@ -592,6 +645,14 @@ function handleEmptyAction() {
         "
         :patient-id="transferTarget?.id ?? ''"
         @success="handleTransferred"
+      />
+
+      <!-- E13-T07 / A-PAT-017：批量指定责任医生（只能选该病区的医生；结果逐条可查） -->
+      <BatchAssignDoctorModal
+        v-model:open="assignOpen"
+        :count="selectedIds.length"
+        :patient-ids="selectedIds"
+        @success="handleBatchAssigned"
       />
 
       <!-- 导出（A-PAT-009）：按当前筛选 + 高级检索提交导出作业；租户管理员免审批，普通用户待审批 -->
@@ -653,6 +714,12 @@ function handleEmptyAction() {
         :columns="columns"
         :data-source="dataSource"
         :loading="loading"
+        :row-selection="{
+          preserveSelectedRowKeys: true,
+          selectedRowKeys: selectedIds,
+          onChange: (keys: Array<number | string>) =>
+            (selectedIds = keys.map(String)),
+        }"
         :pagination="{
           current: pageNo,
           pageSize,
@@ -799,6 +866,16 @@ function handleEmptyAction() {
 
 .advanced-chip {
   margin-bottom: 8px;
+}
+
+.batch-bar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  background: #f5f8ff;
+  border-radius: 6px;
 }
 
 .saved-filter-row {
