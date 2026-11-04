@@ -7,6 +7,7 @@ import type {
   FieldDictLogView,
   FormFieldDef,
   FormFieldUpdateRequest,
+  FormSchema,
   FormSummary,
 } from '@crdp/api';
 
@@ -15,6 +16,17 @@ import { apiPath, requestClient } from '#/api/request';
 /** 表单清单（模板选择下拉）。 */
 export function listForms() {
   return requestClient.get<FormSummary[]>(apiPath('/form/forms'));
+}
+
+/**
+ * 表单模板（components.md §10.1 FormSchema；E15-T02 随访工作台使用）：不传 version
+ * 取当前发布版；已有记录按其保存时固化的版本取（旧版本快照可读，E11-T02）。
+ */
+export function fetchFormSchema(formCode: string, version?: number) {
+  const query = version ? `?version=${version}` : '';
+  return requestClient.get<FormSchema>(
+    apiPath(`/form/forms/${formCode}${query}`),
+  );
 }
 
 /** 字段清单（按表单、可再按分类锚点键过滤）。 */

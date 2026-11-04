@@ -436,4 +436,56 @@ public interface FollowupTaskMapper {
             @Param("reason") String reason,
             @Param("terminatedAt") java.time.LocalDateTime terminatedAt,
             @Param("terminatedBy") Long terminatedBy);
+
+    // ---------------------------------------------------------------- 工作台（E15-T02 /
+    // A-FU-005、C-FU-020）
+
+    /**
+     * 开始录入用任务行（E15-T02）：患者（范围校验锚点）、任务类型与表单码（REMINDER 无表单 40901）、当前状态与已关联记录。 只取流转所需列，不输出患者明文；
+     * 调用方（FollowupTaskStartService）先做患者数据范围校验（40400）。
+     */
+    record StartTaskRow(
+            long id,
+            long patientId,
+            String taskType,
+            String formCode,
+            String status,
+            Long recordId) {}
+
+    @IgnoreScope(
+            reason = "开始录入（E15-T02）读取任务行（任务类型 / 表单码 / 状态，不输出患者明文）；" + "调用方先做任务对应患者的数据范围校验（40400）")
+    @Select(
+            """
+            SELECT id, patient_id AS patientId, task_type AS taskType, form_code AS formCode,
+                   status, record_id AS recordId
+            FROM fu_task
+            WHERE id = #{id}
+            """)
+    StartTaskRow findStartTaskById(@Param("id") long id);
+
+    /**
+     * 回填任务 ↔ 草稿记录关联（followup V54，pages.md §5「任务开启时已创建草稿记录，统一用 recordId」）。 只在 record_id IS NULL
+     * 时写入（重复点击「录入」幂等返回已有记录）；uk_fu_task_record 兜底并发。
+     */
+    @IgnoreScope(
+            reason =
+                    "开始录入（E15-T02）回填任务与草稿记录关联：按任务 id 定向 UPDATE（record_id IS NULL 守卫），"
+                            + "调用方已做患者数据范围校验（40400）；无 SELECT 输出")
+    @Update(
+            """
+            UPDATE fu_task SET record_id = #{recordId}, lock_version = lock_version + 1
+            WHERE id = #{id} AND record_id IS NULL
+            """)
+    int linkRecord(@Param("id") long id, @Param("recordId") long recordId);
+
+    /** 记录关联的任务位（联动判定用，OQ-77② 草稿保存与 E15-T02 提交完成联动）。 */
+    record RecordLinkedTaskRow(long id, String status) {}
+
+    /** 按记录 id 找任务（草稿保存「任务变进行中」联动与提交完成联动；只取 id 与状态）。 */
+    @IgnoreScope(
+            reason =
+                    "记录联动（E15-T02）按 record_id 找任务行（id 与状态位，不输出患者数据）；"
+                            + "入口（草稿保存 / 提交）的记录可见性由创建时的范围校验承担")
+    @Select("SELECT id, status FROM fu_task WHERE record_id = #{recordId}")
+    RecordLinkedTaskRow findTaskByRecordId(@Param("recordId") long recordId);
 }

@@ -90,16 +90,30 @@ class MenuSyncServiceTest {
                         "followup:patient:view",
                         10,
                         "ENABLED"),
+                // E15-T02（平台库 V45）：提升为一级菜单（parent 0）并改标题「我的任务」
                 manifestRow(
                         22L,
-                        20L,
+                        0L,
                         "MENU",
-                        "随访任务",
+                        "我的任务",
                         "FollowupTask",
                         "/followup/task",
                         "followup/task/index",
                         "followup:task:view",
                         20,
+                        "ENABLED"),
+                // E15-T02 随访录入隐藏路由（平台库 V45 菜单 223）：挂在 22 下，perm_code 为
+                // NULL（followup:task:view 已由菜单 22 持有，uk_plt_menu_perm 全库唯一）
+                manifestRow(
+                        223L,
+                        22L,
+                        "MENU",
+                        "随访录入",
+                        "FollowupRecordForm",
+                        "/followup/record/:recordId",
+                        "followup/record/form",
+                        null,
+                        30,
                         "ENABLED"),
                 manifestRow(
                         23L,
@@ -434,10 +448,10 @@ class MenuSyncServiceTest {
     @Test
     void addedDetectedForMissingAndDisabledRows() {
         List<MenuRow> missing = new java.util.ArrayList<>(seedRows());
-        missing.remove(5); // 导出患者按钮不在库内
+        missing.remove(6); // 导出患者按钮不在库内（E15-T02 起 223 插队，212 顺移到 6）
         // 查看明文按钮被平台停用：清单又包含 → 按新增（复活）报告
         missing.set(
-                4,
+                5,
                 manifestRow(
                         211L,
                         21L,
@@ -494,7 +508,7 @@ class MenuSyncServiceTest {
     @Test
     void applyInsertsChangesAndDisablesAndAudits() {
         List<MenuRow> rows = new java.util.ArrayList<>(seedRows());
-        rows.remove(5); // 导出患者：ADDED
+        rows.remove(6); // 导出患者：ADDED（E15-T02 起 223 插队，212 顺移到 6）
         rows.set(
                 1,
                 manifestRow(

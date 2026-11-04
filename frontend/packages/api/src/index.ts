@@ -242,6 +242,9 @@ export type {
   FormFieldDef,
   FormFieldType,
   FormFieldUpdateRequest,
+  FormSchema,
+  FormSchemaCategory,
+  FormSchemaField,
   FormSummary,
   FormUsage,
 } from './form';
@@ -858,6 +861,33 @@ export {
 export type { ReauthFlowDeps, ReauthResult } from './reauth';
 
 export type { OnlineSessionView } from './session';
+// E15-T02 / A-FU-004、A-FU-005、C-FU-020：我的任务、任务列表与随访工作台
+export {
+  isTaskEnterable,
+  TASK_OPEN_STATUSES,
+  TASK_STATUS_OPTIONS,
+  TASK_STATUS_TEXT,
+  TASK_TABS,
+  taskDisplayStatus,
+  taskStatusTooltip,
+  taskWindowText,
+} from './task';
+
+export type {
+  RecordDetailView,
+  RecordSubmitResult,
+  RecordTaskContext,
+  TaskCompleteKind,
+  TaskPage,
+  TaskQueueView,
+  TaskRow,
+  TaskScope,
+  TaskSearchRequest,
+  TaskStartView,
+  TaskStatus,
+  TaskTabCounts,
+  TaskWardOption,
+} from './task';
 export {
   TENANT_ROLE_SCOPE_OPTIONS,
   tenantFieldPolicyText,
@@ -865,7 +895,6 @@ export {
   tenantRoleTypeHint,
   tenantRoleTypeText,
 } from './tenant-role';
-
 export type {
   FieldPolicy,
   RoleScopeType,
@@ -888,6 +917,7 @@ export type {
   TenantRoleView,
 } from './tenant-role';
 export { TENANT_SCOPE_STATE_TEXT } from './tenant-scope';
+
 export type {
   ScopeTemplateItem,
   ScopeTemplateModule,
@@ -915,7 +945,6 @@ export {
   userOptionLabel,
   userStatusText,
 } from './tenant-user';
-
 export type {
   FieldPolicyPreviewView,
   MenuPreviewNode,
@@ -950,6 +979,7 @@ export type {
 } from './user-import';
 export { menuNodesToRoutes, menuNodeToRoute, toIconifyIcon } from './vben-menu';
 export type { VbenMenuRoute } from './vben-menu';
+
 export {
   buildTransferPayload,
   buildWardPayload,

@@ -206,6 +206,10 @@ export const statusTone: Record<string, StatusTone> = {
   已电子化: 'success',
   正常: 'success',
   已启动: 'success', // 计划患者列表（A-FU-022）：已启动 / 已暂停 / 已移除
+  '已完成（窗口前完成）': 'success', // 任务完成方式派生（followup V53，E15-T02）
+  '已完成（逾期完成）': 'warning', // 窗口结束后提交（A-FU-010「逾期完成单独标记」）
+  '已完成（补录）': 'default', // 补录任务完成（create_type = BACKFILL 派生，E14-T05）
+  期间未执行: 'default', // 「停用 / 暂停期间未执行」（SKIPPED_SUSPENDED，E14-T06 / E15-T01）
   待随访: 'pending', // 白底主色描边
   窗口外: 'warning',
   失访: 'warning',

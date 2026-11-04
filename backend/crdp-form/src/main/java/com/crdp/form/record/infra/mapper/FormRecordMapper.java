@@ -137,6 +137,24 @@ public interface FormRecordMapper {
             @Param("updatedBy") long updatedBy);
 
     /**
+     * 提交（E15-T02 / A-FU-005）：DRAFT → SUBMITTED 并 version + 1。守卫 version 与 status = 'DRAFT'——并发已提交 /
+     * 版本前进时更新 0 行，由服务层区分 40901 与 40900（复用草稿冲突详情口径）。
+     */
+    @Update(
+            """
+            UPDATE fe_record
+            SET data = #{data}, data_meta = #{dataMeta}, version = version + 1,
+                status = 'SUBMITTED', updated_by = #{updatedBy}
+            WHERE id = #{id} AND version = #{baseVersion} AND status = 'DRAFT'
+            """)
+    int submitRecord(
+            @Param("id") long id,
+            @Param("baseVersion") int baseVersion,
+            @Param("data") String data,
+            @Param("dataMeta") String dataMeta,
+            @Param("updatedBy") long updatedBy);
+
+    /**
      * 更新人显示名（E25 草稿 40900 冲突详情「附更新人」，patient.md §4.1 形态为显示名）。 用户已删除等取不到时返回 null，由调用方按「未知」展示，不猜名字。
      */
     @Select("SELECT display_name FROM sys_user WHERE id = #{userId}")
