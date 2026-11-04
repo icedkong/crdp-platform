@@ -19,7 +19,7 @@ class TaskCreationPlannerTest {
 
     /** A 医院年度形态（A-FU-017）：持续循环每年一次、节点 +1 年、提前 7 天、窗口 ±7 天。 */
     private static NodeDef annualNode() {
-        return node("CYCLE", null, 1, "YEAR", "PLAN_START", 1, "YEAR", 7, 7, 7, null);
+        return node("CYCLE", null, 1, "YEAR", "PLAN_START", 1, "YEAR", 7, 7, 7, null, null);
     }
 
     private static NodeDef node(
@@ -33,7 +33,8 @@ class TaskCreationPlannerTest {
             int remindValue,
             int windowBefore,
             int windowAfter,
-            String enrollMode) {
+            String enrollMode,
+            String passedWindowAction) {
         return new NodeDef(
                 NODE_ID,
                 SUBPLAN_ID,
@@ -44,6 +45,7 @@ class TaskCreationPlannerTest {
                 cycleUnit,
                 basis,
                 enrollMode,
+                passedWindowAction,
                 offsetValue,
                 offsetUnit,
                 remindValue,
@@ -66,6 +68,7 @@ class TaskCreationPlannerTest {
                 cycleUnit,
                 null,
                 null,
+                null,
                 0,
                 "YEAR",
                 0,
@@ -73,6 +76,29 @@ class TaskCreationPlannerTest {
                 0,
                 "DAY",
                 0,
+                "DAY");
+    }
+
+    /** 医院 B 里程碑节点（第 14 章）：术后第 N 天、当天提醒、窗口前 0 后 1、入组前已过窗口策略可配。 */
+    private static NodeDef milestoneNode(long nodeId, int dayOffset, String passedWindowAction) {
+        return new NodeDef(
+                nodeId,
+                SUBPLAN_ID,
+                "NODE",
+                null,
+                null,
+                null,
+                null,
+                "PLAN_START",
+                null,
+                passedWindowAction,
+                dayOffset,
+                "DAY",
+                0,
+                "DAY",
+                0,
+                "DAY",
+                1,
                 "DAY");
     }
 
@@ -85,7 +111,7 @@ class TaskCreationPlannerTest {
     @Test
     void opensOnEarlierOfRemindStartAndWindowStart() {
         NodeDef remindEarlier =
-                node("CYCLE", null, 1, "YEAR", "PLAN_START", 1, "YEAR", 14, 3, 7, null);
+                node("CYCLE", null, 1, "YEAR", "PLAN_START", 1, "YEAR", 14, 3, 7, null, null);
         // 计划日期 2026-03-15：提醒开始日 2026-03-01（−14 天）、窗口开始日 2026-03-12（−3 天）→ 开启日 03-01
         PlanResult result =
                 TaskCreationPlanner.plan(
@@ -107,7 +133,7 @@ class TaskCreationPlannerTest {
     @Test
     void opensOnWindowStartWhenWindowOpensEarlier() {
         NodeDef windowEarlier =
-                node("CYCLE", null, 1, "YEAR", "PLAN_START", 1, "YEAR", 3, 14, 7, null);
+                node("CYCLE", null, 1, "YEAR", "PLAN_START", 1, "YEAR", 3, 14, 7, null, null);
         // 计划日期 2026-03-15：提醒开始日 2026-03-12（−3 天）、窗口开始日 2026-03-01（−14 天）→ 开启日 03-01
         PlanResult result =
                 TaskCreationPlanner.plan(
@@ -143,7 +169,8 @@ class TaskCreationPlannerTest {
     @Test
     void catchUpCreatesAllOccurrencesOpenedByLogicalDate() {
         // 月度循环：第 1/2/3 次开启日均不晚于逻辑日 → 一次补跑全部创建；next = 第 4 次
-        NodeDef monthly = node("CYCLE", null, 1, "MONTH", "PLAN_START", 1, "MONTH", 7, 7, 7, null);
+        NodeDef monthly =
+                node("CYCLE", null, 1, "MONTH", "PLAN_START", 1, "MONTH", 7, 7, 7, null, null);
         PlanResult result =
                 TaskCreationPlanner.plan(
                         planOf(monthly, subplan("CYCLE", null, 1, "MONTH")),
@@ -164,7 +191,8 @@ class TaskCreationPlannerTest {
     void occurrencesWhoseWindowEndedBeforeEnrollmentAreLeftToBackfillPolicy() {
         // 迟入组：第 1 次窗口 02-08..02-22 在入组日（03-01）前已结束 → 留给 E14-T05 的 passed_window_action；
         // 第 2 次开启日 03-08 已到 → 正常创建
-        NodeDef monthly = node("CYCLE", null, 1, "MONTH", "PLAN_START", 1, "MONTH", 7, 7, 7, null);
+        NodeDef monthly =
+                node("CYCLE", null, 1, "MONTH", "PLAN_START", 1, "MONTH", 7, 7, 7, null, null);
         PlanResult result =
                 TaskCreationPlanner.plan(
                         planOf(monthly, subplan("CYCLE", null, 1, "MONTH")),
@@ -182,7 +210,7 @@ class TaskCreationPlannerTest {
     @Test
     void fixedSubplanWithoutStoredCycleFallsBackToOffsetAsPeriod() {
         // 配置面 FIXED 只收次数不收周期（PlanNodeRule）：周期回落节点偏移 → 第 N 次 = 基准 + N × 偏移
-        NodeDef yearly = node("FIXED", 3, null, null, "PLAN_START", 1, "YEAR", 7, 7, 7, null);
+        NodeDef yearly = node("FIXED", 3, null, null, "PLAN_START", 1, "YEAR", 7, 7, 7, null, null);
         PlanResult result =
                 TaskCreationPlanner.plan(
                         planOf(yearly, subplan("FIXED", 3, null, null)),
@@ -200,7 +228,7 @@ class TaskCreationPlannerTest {
 
     @Test
     void fixedSubplanUsesStoredCycleWhenPresent() {
-        NodeDef node = node("FIXED", 3, 6, "MONTH", "PLAN_START", 1, "MONTH", 0, 7, 7, null);
+        NodeDef node = node("FIXED", 3, 6, "MONTH", "PLAN_START", 1, "MONTH", 0, 7, 7, null, null);
         PlanResult result =
                 TaskCreationPlanner.plan(
                         planOf(node, subplan("FIXED", 3, 6, "MONTH")),
@@ -234,7 +262,8 @@ class TaskCreationPlannerTest {
     @Test
     void lastVisitBasisSchedulesOnlyFirstOccurrence() {
         // C 常规随访按上次实际随访日期滚动：无已提交记录（fu_record 随 E15）时只排第 1 次（基准回落起算日期）
-        NodeDef rolling = node("CYCLE", null, 1, "YEAR", "LAST_VISIT", 1, "YEAR", 7, 7, 7, null);
+        NodeDef rolling =
+                node("CYCLE", null, 1, "YEAR", "LAST_VISIT", 1, "YEAR", 7, 7, 7, null, null);
         PlanResult result =
                 TaskCreationPlanner.plan(
                         planOf(rolling, subplan("CYCLE", null, 1, "YEAR")),
@@ -250,7 +279,8 @@ class TaskCreationPlannerTest {
     @Test
     void enrollModeMismatchedNodesAreSkipped() {
         // C：ERI 期循环节点只在 ERI 模式生效；常规入组不排
-        NodeDef eriOnly = node("CYCLE", null, 1, "MONTH", "PLAN_START", 1, "MONTH", 7, 7, 7, "ERI");
+        NodeDef eriOnly =
+                node("CYCLE", null, 1, "MONTH", "PLAN_START", 1, "MONTH", 7, 7, 7, "ERI", null);
         PlanResult result =
                 TaskCreationPlanner.plan(
                         planOf(eriOnly, subplan("CYCLE", null, 1, "MONTH")),
@@ -277,7 +307,8 @@ class TaskCreationPlannerTest {
 
     @Test
     void nextCacheIsEarliestUpcomingAcrossNodes() {
-        NodeDef early = node("CYCLE", null, 1, "YEAR", "PLAN_START", 1, "YEAR", 7, 7, 7, null);
+        NodeDef early =
+                node("CYCLE", null, 1, "YEAR", "PLAN_START", 1, "YEAR", 7, 7, 7, null, null);
         NodeDef later =
                 new NodeDef(
                         201L,
@@ -288,6 +319,7 @@ class TaskCreationPlannerTest {
                         1,
                         "YEAR",
                         "PLAN_START",
+                        null,
                         null,
                         2,
                         "YEAR",
@@ -320,7 +352,107 @@ class TaskCreationPlannerTest {
                         LocalDate.of(2024, 3, 1),
                         null);
         assertEquals(2, result.due().size(), "2025、2026 两次已开启（各 −7 天）");
+        assertEquals("NORMAL", result.due().get(0).createType(), "每日调度创建方式恒为正常（NORMAL）");
         assertEquals(LocalDate.of(2025, 2, 28), result.due().get(0).planDate());
         assertEquals(LocalDate.of(2026, 2, 28), result.due().get(1).planDate());
+    }
+
+    // ---------------------------------------------------------------- E14-T05 入组即建（补录 / 当期）
+
+    @Test
+    void enrollmentBackfillsHospitalBStyleMilestonesEndedBeforeEnrollmentDay() {
+        // A 规格第 5 章验收形态（医院 B，Q44）：手术 2026-03-01、出院建档 2026-03-08——
+        // 术后第 1/3/5 天窗口（03-02..03、03-04..05、03-06..07）均已结束 → 照常建任务并标补录
+        NodeDef day1 = milestoneNode(201L, 1, "BACKFILL");
+        NodeDef day3 = milestoneNode(202L, 3, "BACKFILL");
+        NodeDef day5 = milestoneNode(203L, 5, "BACKFILL");
+        NodeDef threeMonths =
+                node("FIXED", null, null, null, "PLAN_START", 3, "MONTH", 14, 14, 14, null, null);
+        PlanResult result =
+                TaskCreationPlanner.planForEnrollment(
+                        List.of(subplan("FIXED", 1, null, null), day1, day3, day5, threeMonths),
+                        "NORMAL",
+                        LocalDate.of(2026, 3, 1),
+                        LocalDate.of(2026, 3, 8),
+                        null);
+        assertEquals(3, result.due().size(), "三个已结束窗口的里程碑照常建任务");
+        assertEquals("BACKFILL", result.due().get(0).createType(), "已结束窗口 → 标补录");
+        assertEquals("BACKFILL", result.due().get(1).createType());
+        assertEquals("BACKFILL", result.due().get(2).createType());
+        assertEquals(LocalDate.of(2026, 3, 2), result.due().get(0).planDate(), "计划日期 = 手术 + 1 天");
+        assertEquals(LocalDate.of(2026, 3, 4), result.due().get(1).planDate());
+        assertEquals(LocalDate.of(2026, 3, 6), result.due().get(2).planDate());
+        assertEquals(LocalDate.of(2026, 3, 2), result.due().get(0).windowStart());
+        assertEquals(LocalDate.of(2026, 3, 3), result.due().get(0).windowEnd());
+        assertEquals(
+                LocalDate.of(2026, 5, 18),
+                result.next().openDate(),
+                "3 个月节点（计划 06-01 −14 天）为下次开启日缓存");
+    }
+
+    @Test
+    void enrollmentSkipsEndedWindowsWhenNodePolicyIsSkipOrUnset() {
+        // 医院 C 口径（Q14）：节点策略 SKIP（或未配置）→ 入组前已结束窗口不建任务、不计入
+        NodeDef skipNode = milestoneNode(201L, 1, "SKIP");
+        NodeDef unsetNode = milestoneNode(202L, 3, null);
+        PlanResult result =
+                TaskCreationPlanner.planForEnrollment(
+                        List.of(subplan("FIXED", 1, null, null), skipNode, unsetNode),
+                        "NORMAL",
+                        LocalDate.of(2026, 3, 1),
+                        LocalDate.of(2026, 3, 8),
+                        null);
+        assertTrue(result.due().isEmpty(), "SKIP / 未配置的节点不建补录任务");
+        assertNull(result.next());
+    }
+
+    @Test
+    void enrollmentCreatesCurrentlyOpenWindowAsNormalAndBackfillsEarlierOnes() {
+        // 迟入组（月度循环，基准 2026-01-15，入组日 03-10）：第 1 次窗口 02-08..02-22 已结束 → 补录；
+        // 第 2 次窗口 03-08..03-22 已开启未结束 → 当天正常创建（A 规格第 5 章）
+        NodeDef monthly =
+                node(
+                        "CYCLE",
+                        null,
+                        1,
+                        "MONTH",
+                        "PLAN_START",
+                        1,
+                        "MONTH",
+                        7,
+                        7,
+                        7,
+                        null,
+                        "BACKFILL");
+        PlanResult result =
+                TaskCreationPlanner.planForEnrollment(
+                        planOf(monthly, subplan("CYCLE", null, 1, "MONTH")),
+                        "NORMAL",
+                        LocalDate.of(2026, 1, 15),
+                        LocalDate.of(2026, 3, 10),
+                        null);
+        assertEquals(2, result.due().size());
+        assertEquals("BACKFILL", result.due().get(0).createType(), "入组前已结束的窗口标补录");
+        assertEquals(1, result.due().get(0).occurrence());
+        assertEquals("NORMAL", result.due().get(1).createType(), "当前窗口内当天正常创建");
+        assertEquals(2, result.due().get(1).occurrence());
+        assertEquals(LocalDate.of(2026, 3, 22), result.due().get(1).windowEnd(), "窗口尚未结束");
+        assertEquals(LocalDate.of(2026, 4, 8), result.next().openDate(), "第 3 次开启日缓存");
+    }
+
+    @Test
+    void enrollmentWindowEndingTodayIsStillCurrent() {
+        // 窗口结束日 = 入组日：不算「已结束」，按当期任务正常创建（已结束 = 窗口结束日严格早于入组日）
+        NodeDef endsToday =
+                node("FIXED", null, null, null, "PLAN_START", 5, "DAY", 0, 5, 5, null, "BACKFILL");
+        PlanResult result =
+                TaskCreationPlanner.planForEnrollment(
+                        List.of(subplan("FIXED", 1, null, null), endsToday),
+                        "NORMAL",
+                        LocalDate.of(2026, 3, 5),
+                        LocalDate.of(2026, 3, 10),
+                        null);
+        assertEquals(1, result.due().size());
+        assertEquals("NORMAL", result.due().get(0).createType(), "窗口今天结束仍在窗口内");
     }
 }

@@ -10,9 +10,9 @@
 | 方法 | 路径 | 权限（A / C） | 说明 |
 |---|---|---|---|
 | GET | `/api/hospital/followup/plans` | `plan:view` / `plan:edit` | 列表：名称、版本、状态（`UNPUBLISHED/PUBLISHED/RUNNING/PAUSED/DISABLED`）、入组人数 |
-| POST | `/api/hospital/followup/plans` | `plan:edit` | 新建（未发布） |
+| POST | `/api/hospital/followup/plans` | `plan:edit` | 新建（未发布）；body 可带 `autoEnroll`（自动入组开关，Q35，缺省 false） |
 | GET | `/api/hospital/followup/plans/{id}` | `plan:view` / `plan:edit` | 详情：计划 → 子计划 → 节点（偏移、提醒、窗口、周期、事件类型 `FORM|REMINDER`、表单 code） |
-| PUT | `/api/hospital/followup/plans/{id}` | `plan:edit` | 仅未发布可改，否则 40901 |
+| PUT | `/api/hospital/followup/plans/{id}` | `plan:edit` | 仅未发布可改，否则 40901；body 可带 `autoEnroll`（Q35） |
 | PUT | `/api/hospital/followup/plans/{id}/nodes` | `plan:edit` | 整体保存节点 `{ version, nodes[] }` |
 | POST | `/api/hospital/followup/plans/{id}/publish` | `plan:publish` / `plan:edit` | 发布后不可改（A-FU-019） |
 | POST | `/api/hospital/followup/plans/{id}/copy` | `plan:edit` | 复制出新版本（A-FU-019） |
@@ -22,6 +22,8 @@
 | GET | `/api/hospital/followup/plans/{id}/logs` | `plan:view` / `plan:edit` | **E14-T08 已实现**。计划变更审计（A-FU-021）：倒序最近 100 条 `{ items: [{ id, planId, planCode, action, description, beforeJson, afterJson, operatorId, operatorName(联查 sys_user), createdAt }] }`；action ∈ `PLAN_CREATE/PLAN_UPDATE/PLAN_NODE_SAVE/PLAN_PUBLISH/PLAN_COPY/PLAN_PAUSE/PLAN_RESUME/PLAN_DISABLE`；计划不存在 40400 |
 
 E14-T01 已实现（OQ-76 暂行口径）：每个版本一行 `fu_plan`（`code` 跨版本不变、`version` 递增）；「随访中 / RUNNING」为派生态（PUBLISHED 且有在组入组，不入库）；发布新版本时同族旧已发布 / 已暂停版本自动转 DISABLED（不再允许入组 → 新入组必然用新版本；在组患者沿用原版本，A-FU-020 迁移延后）；停用为终态（恢复 40901）；基本信息与节点共用乐观锁 `lockVersion`（保存带 `baseVersion`，冲突 40900）；节点两层共表 `fu_plan_node`，`PUT .../nodes` body `{ baseVersion, nodes[] }`（节点行带 `key` / `parentKey` 请求内引用，整体替换，仅未发布）；发布前置至少一个子计划与一个节点。入组领域入口 `PlanEnrollmentService.enroll(patientId, planId, mode)`（批量入组 E13-T07、自动入组 E14-T05 复用；入组只允许 PUBLISHED，同一计划族至多一条在组入组；批量接口随 E13-T07、暂停恢复移出随 E14-T06）。权限「任一码命中即放行」由 `@RequiresPermission` 多值实现（OQ-13）。
+
+E14-T05 已实现（Q44 建档补录 + Q35 自动入组）：`PlanEnrollmentService.enroll` 入组当天同一事务内即时建任务——窗口在入组日前已结束的次数按节点 `passed_window_action` 处理：`BACKFILL` 照常建任务并标 `create_type = BACKFILL`（补录：PENDING 可直接录入、**不写** `TaskOpened` 事件 → 不进即将逾期 / 已逾期 / 失访候选通知，E15-T01 状态流转同样按 create_type 豁免逾期；提交后为「已完成（补录）」，统计按 Q38 照常计入）；`SKIP` 或未配置不建（医院 C 口径 Q14）；窗口已开启未结束的次数当天正常创建（NORMAL，照常发 `TaskOpened`）；未来次数不预生成只刷新缓存；起算日期快照为空时入组侧解析回填（与每日调度同口径）；任务建不出来整个入组回滚（每日调度不补入组前已过窗口，OQ-78③）。自动入组（Q35）：`PatientRegistrationService.create`（出院登记，E13-T01 接口）登记成功后调 `PlanEnrollmentService.autoEnrollOnRegistration`——加入全部 `auto_enroll = 1` 且 PUBLISHED 的计划（`fu_plan.auto_enroll`，followup V50；复制新版本沿用开关、仅未发布可改），出院状态为死亡（dischargeStatus = 3）不加入；单个计划的业务性失败只跳过不中断登记，登记侧重故障记 `PLAN_ENROLL` FAIL 审计（登记本体不回滚）。历史导入（E18）不走 enroll 入口，按自身规则生成历史记录。
 
 E14-T08 已实现（A-FU-021「计划改动全记审计」、A-FU-022 计划患者列表）：每次成功改动（新建 / 编辑 / 保存节点 / 发布 / 复制 / 暂停 / 恢复 / 停用）双写 aud_log 审计与 `fu_plan_log` 变更记录（followup V49，只追加）——审计只追加且缺 `(object_type, object_id)` 索引，`GET .../logs` 从 fu_plan_log 出（口径同 `fe_field_dict_log`，OQ-69③）；前后内容：基本信息为摘要对象（含备注）、节点保存为替换前后节点数组、复制含 `copiedFromVersion`；发布新版本时同族旧版本的自动停用在旧版本自己的记录里落 `PLAN_DISABLE`（逐版本留痕）；被拒操作只写审计 DENIED、不落变更记录。患者列表（`GET .../enrollments`）行含加入时间、随访完成次数、状态三态（已启动 / 已暂停 / 已移除，原因随 E14-T06 的操作写入）；单个患者的暂停 / 恢复 / 移出操作与批量入组入口随 E14-T06 / E13-T07。
 
@@ -43,7 +45,7 @@ E14-T08 已实现（A-FU-021「计划改动全记审计」、A-FU-022 计划患�
 后端规则（无独立接口）：
 
 - 按需生成：任务在“任务开启日”才创建（A-FU-001、C-FU-004）；未来节点在时间轴中以计算值“计划中”展示，不落库。日期计算（E14-T03，A-FU-002、A-NFR-006）由领域库 `PlanDateCalculator` 实现：计划日期 = 基准 + 偏移 +（N − 1）× 周期（月 / 年按总量一次相加，遇月末取当月最后一天）、提醒开始日 = 计划日期 − 提醒提前量、开启日 = min（提醒开始日，窗口开始日），全部按北京时间 `LocalDate`；与前端 `packages/rules/plan-date`（E14-T02 计算预览）共享 A 年度、B 3 个月、B 1 年、B 术后 1/3/5 天验算用例；E14-T10 起跨年、闰年（含世纪年 2100 非闰 / 2000 闰、闰日基准）与窗口（不对称、零宽、跨年、按月钳制）共享用例 `shared-cases/plan-date-cases.json`（components.md §10.5）由后端 `PlanDateSharedCasesTest` 与前端 `packages/rules/src/plan-date-cases.test.ts` 各执行一遍，循环第 N 次（occurrenceCases）仅后端调度端执行（前端预览只算第 1 次）。
-- 每日调度（**E14-T04 已实现**，A-NFR-006 / C-NFR-007 建议 00:10，北京时间）：`FollowupTaskScheduler`（cron `0 10 0 * * *` + 启动补跑）按租户扇出（E02-T06 `JobScheduler`，jobCode `fu-task-create`，job_tenant_run 记执行、补跑区间 = 上次成功日 + 1 至当天）；followup 模块未开通的租户跳过（OQ-46②）。作业体 `FollowupTaskCreationService` 逐逻辑日遍历「已启动」入组（计划 PAUSED 不建、被顶替 DISABLED 版本在组沿用照建 OQ-76①；患者死亡 / 终止不建），用 `TaskCreationPlanner`（纯函数）排期后创建 `fu_task` 行：初始 PENDING 待随访、创建方式 NORMAL（补录随 E14-T05、暂停 / 停用补偿随 E14-T06、跟进 / 临时随 E15），幂等键 uk（入组 + 节点 + 第 N 次），负责人按 A-FU-009 回落链解析（责任医生 → 病区默认负责人 OQ-60 → NULL 待认领）；入组前已过窗口的次数不建（E14-T05 的 passed_window_action）、LAST_VISIT 基准只排第 1 次、FIXED 未存周期回落偏移（OQ-78）；刷新入组 `next_plan_date` / `next_open_date` 缓存，新建任务写 `TaskOpened` 事件到租户库 outbox（消费方随 E15，OQ-60③）、每租户每次运行汇总一条 `TASK_CREATE` 审计。
+- 每日调度（**E14-T04 已实现**，A-NFR-006 / C-NFR-007 建议 00:10，北京时间）：`FollowupTaskScheduler`（cron `0 10 0 * * *` + 启动补跑）按租户扇出（E02-T06 `JobScheduler`，jobCode `fu-task-create`，job_tenant_run 记执行、补跑区间 = 上次成功日 + 1 至当天）；followup 模块未开通的租户跳过（OQ-46②）。作业体 `FollowupTaskCreationService` 逐逻辑日遍历「已启动」入组（计划 PAUSED 不建、被顶替 DISABLED 版本在组沿用照建 OQ-76①；患者死亡 / 终止不建），用 `TaskCreationPlanner`（纯函数）排期后创建 `fu_task` 行：初始 PENDING 待随访、创建方式 NORMAL（**入组即建的补录 / 当期任务由 E14-T05 在 enroll 时同步创建**；暂停 / 停用补偿随 E14-T06、跟进 / 临时随 E15），幂等键 uk（入组 + 节点 + 第 N 次），负责人按 A-FU-009 回落链解析（责任医生 → 病区默认负责人 OQ-60 → NULL 待认领）；入组前已过窗口的次数不属每日调度（enroll 时已按 passed_window_action 处理，OQ-78③）、LAST_VISIT 基准只排第 1 次、FIXED 未存周期回落偏移（OQ-78）；刷新入组 `next_plan_date` / `next_open_date` 缓存，新建任务写 `TaskOpened` 事件到租户库 outbox（消费方随 E15，OQ-60③）、每租户每次运行汇总一条 `TASK_CREATE` 审计。
 - 逾期与逾期完成（A-FU-010）；起算日期变更重算（A-FU-011）；失访判定：窗口内连续 3 次“未联系到 / 号码错误”且窗口结束 → 失访候选，“拒访”不计（A-FU-012）。
 - 未联系到自动跟进：次日生成跟进任务，每窗口最多 5 次（A-FU-024，P1）；站内提醒类任务（A-FU-026，P1）。
 - 定时作业受功能开关与租户状态控制（E14-T04 已按 openedModules 过滤扇出），多实例用调度锁。

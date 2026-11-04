@@ -73,6 +73,7 @@ public class PlanController {
                                 request.startDateField(),
                                 request.cycleType(),
                                 request.cycleYears(),
+                                request.autoEnroll(),
                                 request.remark())));
     }
 
@@ -94,6 +95,7 @@ public class PlanController {
                                 request.startDateField(),
                                 request.cycleType(),
                                 request.cycleYears(),
+                                request.autoEnroll(),
                                 request.remark())));
     }
 
@@ -187,22 +189,24 @@ public class PlanController {
         return ApiResponse.ok(service.logs(id));
     }
 
-    /** 新建请求体。 */
+    /** 新建请求体（autoEnroll = 自动入组开关，Q35 / E14-T05，缺省关）。 */
     public record CreateRequest(
             @Size(max = 64) String code,
             @Size(max = 128) String name,
             @Size(max = 32) String startDateField,
             @Size(max = 16) String cycleType,
             Integer cycleYears,
+            Boolean autoEnroll,
             @Size(max = 255) String remark) {}
 
-    /** 编辑请求体（baseVersion = 详情返回的 lockVersion，乐观锁）。 */
+    /** 编辑请求体（baseVersion = 详情返回的 lockVersion，乐观锁；autoEnroll = 自动入组开关，Q35 / E14-T05）。 */
     public record UpdateRequest(
             int baseVersion,
             @Size(max = 128) String name,
             @Size(max = 32) String startDateField,
             @Size(max = 16) String cycleType,
             Integer cycleYears,
+            Boolean autoEnroll,
             @Size(max = 255) String remark) {}
 
     /** 节点整体保存请求体（key / parentKey 为请求内引用，两层树整体替换）。 */

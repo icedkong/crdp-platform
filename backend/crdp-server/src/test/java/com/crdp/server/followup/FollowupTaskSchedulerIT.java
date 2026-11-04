@@ -263,12 +263,30 @@ class FollowupTaskSchedulerIT {
         String admin = hospitalToken("demoa", "nurse.demo", PASSWORD);
         long planId = createPublishedPlan(admin, PLAN_CODE + "-O", "MONTH", 1);
         long patientId = registerPatient("demoa", admin, "O1", "2024-01-15");
-        // 入组即今天（不回拨 created_at）：全部历史次数窗口都已在入组前结束
+        // 入组即今天（不回拨 created_at）：全部历史次数窗口都已在入组前结束；节点未配置补录策略（NULL → 跳过）
         enroll("demoa", patientId, planId, null);
+        int atEnrollment = taskCount("demoa", patientId);
 
         creationService.runForDate(LocalDate.now());
 
-        assertEquals(0, taskCount("demoa", patientId), "入组前已过窗口交给 E14-T05（补录 / 跳过）");
+        // 入组当天恰落在某个窗口内时（0 或 1 条当期任务）调度不重复建；入组前已结束窗口的次数一律不建
+        assertEquals(
+                atEnrollment,
+                taskCount("demoa", patientId),
+                "入组前已过窗口交给节点策略（E14-T05 补录 / 跳过），调度不重复建");
+        assertEquals(
+                0,
+                runInTenant(
+                        "demoa",
+                        () ->
+                                jdbc.queryForObject(
+                                        "SELECT COUNT(*) FROM fu_task t JOIN fu_enrollment e"
+                                                + " ON e.id = t.enrollment_id"
+                                                + " WHERE t.patient_id = ?"
+                                                + " AND t.window_end < DATE(e.created_at)",
+                                        Integer.class,
+                                        patientId)),
+                "没有任何一条任务来自入组前已结束的窗口");
         Map<String, Object> cache =
                 runInTenant(
                         "demoa",
@@ -430,7 +448,10 @@ class FollowupTaskSchedulerIT {
         return Long.parseLong((String) data(created).get("id"));
     }
 
-    /** 服务层入组并把 created_at 回拨到入组早期（null = 保持今天，用于「入组即已过窗口」场景）。 */
+    /**
+     * 服务层入组并把 created_at 回拨到入组早期（null = 保持今天，用于「入组即已过窗口」场景）。 回拨场景另清掉入组即建的任务与事件（E14-T05 起入组当天即建补录 /
+     * 当期任务），保持「入组已久、调度逐日推进」的时序语义。
+     */
     private long enroll(String tenant, long patientId, long planId, LocalDate backdateTo) {
         return runInTenant(
                 tenant,
@@ -442,6 +463,11 @@ class FollowupTaskSchedulerIT {
                                 "UPDATE fu_enrollment SET created_at = ? WHERE id = ?",
                                 backdateTo.atStartOfDay(),
                                 enrollmentId);
+                        jdbc.update("DELETE FROM fu_task WHERE enrollment_id = ?", enrollmentId);
+                        jdbc.update(
+                                "DELETE FROM sys_outbox WHERE event_type = 'TaskOpened'"
+                                        + " AND JSON_EXTRACT(payload, '$.patientId') = ?",
+                                patientId);
                     }
                     return enrollmentId;
                 });

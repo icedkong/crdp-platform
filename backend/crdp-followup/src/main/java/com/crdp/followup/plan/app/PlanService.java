@@ -88,7 +88,7 @@ public class PlanService {
 
     // ---------------------------------------------------------------- DTO
 
-    /** 计划行（列表与详情共用；status 为派生后的展示态，enrolledCount = 在组人数）。 */
+    /** 计划行（列表与详情共用；status 为派生后的展示态，autoEnroll = 自动入组开关（Q35），enrolledCount = 在组人数）。 */
     public record PlanView(
             String id,
             String code,
@@ -98,6 +98,7 @@ public class PlanService {
             String startDateField,
             String cycleType,
             Integer cycleYears,
+            boolean autoEnroll,
             String remark,
             int lockVersion,
             long enrolledCount,
@@ -133,27 +134,29 @@ public class PlanService {
 
     public record PlanDetailView(PlanView plan, List<NodeView> nodes) {}
 
-    /** 新建请求（新建即未发布；code 创建后不可改）。 */
+    /** 新建请求（新建即未发布；code 创建后不可改；autoEnroll = 自动入组开关，Q35 / E14-T05）。 */
     public record CreateRequest(
             String code,
             String name,
             String startDateField,
             String cycleType,
             Integer cycleYears,
+            Boolean autoEnroll,
             String remark) {}
 
-    /** 编辑请求（仅未发布；带 baseVersion 乐观锁）。 */
+    /** 编辑请求（仅未发布；带 baseVersion 乐观锁；autoEnroll = 自动入组开关，Q35 / E14-T05）。 */
     public record UpdateRequest(
             String name,
             String startDateField,
             String cycleType,
             Integer cycleYears,
+            Boolean autoEnroll,
             String remark) {}
 
     /** 节点整体保存请求（docs/api/followup.md §1：{ version, nodes[] }）。 */
     public record SaveNodesRequest(int baseVersion, List<PlanNodeRule.NodeInput> nodes) {}
 
-    /** 审计摘要（不含患者数据；E14-T08 起含备注，A-FU-021「前后内容」全量口径）。 */
+    /** 审计摘要（不含患者数据；E14-T08 起含备注，A-FU-021「前后内容」全量口径；E14-T05 起含自动入组开关）。 */
     private record PlanSummary(
             String code,
             String name,
@@ -162,6 +165,7 @@ public class PlanService {
             String startDateField,
             String cycleType,
             Integer cycleYears,
+            boolean autoEnroll,
             String remark) {}
 
     /** 变更记录行（A-FU-021：操作人、时间与前后内容；GET /plans/{id}/logs）。 */
@@ -224,6 +228,7 @@ public class PlanService {
         String startDateField = normalizeStartDateField(request.startDateField());
         String cycleType = normalizeCycleType(request.cycleType());
         Integer cycleYears = validateCycleYears(cycleType, request.cycleYears());
+        boolean autoEnroll = normalizeAutoEnroll(request.autoEnroll());
         String remark = normalizeRemark(request.remark());
 
         PlanInsertRow row =
@@ -235,6 +240,7 @@ public class PlanService {
                         startDateField,
                         cycleType,
                         cycleYears,
+                        autoEnroll,
                         remark,
                         currentUserId());
         try {
@@ -254,6 +260,7 @@ public class PlanService {
                                 startDateField,
                                 cycleType,
                                 cycleYears,
+                                autoEnroll,
                                 remark));
         String description = "新建计划（未发布）：" + name;
         audit.append(
@@ -279,10 +286,18 @@ public class PlanService {
         String startDateField = normalizeStartDateField(request.startDateField());
         String cycleType = normalizeCycleType(request.cycleType());
         Integer cycleYears = validateCycleYears(cycleType, request.cycleYears());
+        boolean autoEnroll = normalizeAutoEnroll(request.autoEnroll());
         String remark = normalizeRemark(request.remark());
         int rows =
                 mapper.updateBasics(
-                        planId, name, startDateField, cycleType, cycleYears, remark, baseVersion);
+                        planId,
+                        name,
+                        startDateField,
+                        cycleType,
+                        cycleYears,
+                        autoEnroll,
+                        remark,
+                        baseVersion);
         if (rows == 0) {
             throw lockOrStateConflict(current, baseVersion);
         }
@@ -297,6 +312,7 @@ public class PlanService {
                                 startDateField,
                                 cycleType,
                                 cycleYears,
+                                autoEnroll,
                                 remark));
         String description = "编辑计划（未发布）：" + name;
         audit.append(
@@ -429,6 +445,8 @@ public class PlanService {
                                                     oldRow.startDateField(),
                                                     oldRow.cycleType(),
                                                     oldRow.cycleYears(),
+                                                    oldRow.autoEnroll() != null
+                                                            && oldRow.autoEnroll(),
                                                     oldRow.remark())))
                             .result(AuditResult.SUCCESS)
                             .build());
@@ -447,6 +465,7 @@ public class PlanService {
                                     oldRow.startDateField(),
                                     oldRow.cycleType(),
                                     oldRow.cycleYears(),
+                                    oldRow.autoEnroll() != null && oldRow.autoEnroll(),
                                     oldRow.remark())));
         }
         String beforeJson = writeJson(summaryOf(current));
@@ -460,6 +479,7 @@ public class PlanService {
                                 current.startDateField(),
                                 current.cycleType(),
                                 current.cycleYears(),
+                                current.autoEnroll() != null && current.autoEnroll(),
                                 current.remark()));
         String description =
                 "发布计划："
@@ -512,6 +532,7 @@ public class PlanService {
                         source.startDateField(),
                         source.cycleType(),
                         source.cycleYears(),
+                        source.autoEnroll() != null && source.autoEnroll(),
                         source.remark(),
                         currentUserId());
         mapper.insertPlan(row);
@@ -626,6 +647,7 @@ public class PlanService {
                                 current.startDateField(),
                                 current.cycleType(),
                                 current.cycleYears(),
+                                current.autoEnroll() != null && current.autoEnroll(),
                                 current.remark()));
         String description = verb + "：" + current.name() + " v" + current.version();
         audit.append(
@@ -781,6 +803,7 @@ public class PlanService {
                 row.startDateField(),
                 row.cycleType(),
                 row.cycleYears(),
+                row.autoEnroll() != null && row.autoEnroll(),
                 row.remark());
     }
 
@@ -792,9 +815,18 @@ public class PlanService {
             String startDateField,
             String cycleType,
             Integer cycleYears,
+            boolean autoEnroll,
             String remark) {
         return new PlanSummary(
-                code, name, version, status, startDateField, cycleType, cycleYears, remark);
+                code,
+                name,
+                version,
+                status,
+                startDateField,
+                cycleType,
+                cycleYears,
+                autoEnroll,
+                remark);
     }
 
     /**
@@ -831,10 +863,16 @@ public class PlanService {
                 row.startDateField(),
                 row.cycleType(),
                 row.cycleYears(),
+                row.autoEnroll() != null && row.autoEnroll(),
                 row.remark(),
                 row.lockVersion(),
                 active,
                 row.publishedAt() == null ? null : row.publishedAt().toString());
+    }
+
+    /** 自动入组开关（Q35 / E14-T05）：null 视为关；发布前后含义一致（只有 PUBLISHED 计划参与自动入组）。 */
+    private static boolean normalizeAutoEnroll(Boolean autoEnroll) {
+        return Boolean.TRUE.equals(autoEnroll);
     }
 
     private static List<NodeView> nodeViews(List<PlanMapper.NodeRow> rows) {

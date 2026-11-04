@@ -15,6 +15,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.crdp.followup.plan.domain.PlanDateCalculator;
 import com.crdp.followup.plan.infra.mapper.PlanMapper;
 import com.crdp.followup.task.infra.mapper.FollowupTaskInsertRow;
 import com.crdp.followup.task.infra.mapper.FollowupTaskMapper;
@@ -23,6 +24,7 @@ import com.crdp.framework.job.JobScheduler;
 import com.crdp.framework.job.TenantJob;
 import com.crdp.framework.outbox.OutboxPublisher;
 import com.crdp.framework.tenant.TenantContext;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
@@ -83,6 +85,7 @@ class FollowupTaskCreationServiceTest {
                                 "PUBLISHED",
                                 "DISCHARGE_DATE",
                                 "ONGOING",
+                                null,
                                 null,
                                 null,
                                 0,
@@ -319,6 +322,7 @@ class FollowupTaskCreationServiceTest {
                                 "ONGOING",
                                 null,
                                 null,
+                                null,
                                 0,
                                 null,
                                 1L));
@@ -383,6 +387,7 @@ class FollowupTaskCreationServiceTest {
                                 "ONGOING",
                                 null,
                                 null,
+                                null,
                                 0,
                                 null,
                                 1L));
@@ -425,6 +430,7 @@ class FollowupTaskCreationServiceTest {
                                 "ONGOING",
                                 null,
                                 null,
+                                null,
                                 0,
                                 null,
                                 1L));
@@ -440,5 +446,259 @@ class FollowupTaskCreationServiceTest {
                 ArgumentCaptor.forClass(FollowupTaskInsertRow.class);
         verify(taskMapper).insertTask(captor.capture());
         assertNull(captor.getValue().getAssigneeId(), "两级都无人 → NULL 进病区待认领池（A-FU-009）");
+    }
+
+    // ---------------------------------------------------------------- E14-T05 入组即建（补录 / 当期）
+
+    /** 医院 B 里程碑形态：FIXED×1 子计划 + 术后第 N 天节点（当天提醒、窗口前 0 后 1）。 */
+    private static PlanMapper.NodeRow milestoneRow(
+            long nodeId, int dayOffset, String passedWindowAction) {
+        return new PlanMapper.NodeRow(
+                nodeId,
+                SUBPLAN_ID,
+                "NODE",
+                "术后第" + dayOffset + "天随访（示例）",
+                null,
+                null,
+                null,
+                null,
+                "PLAN_START",
+                dayOffset,
+                "DAY",
+                0,
+                "DAY",
+                0,
+                "DAY",
+                1,
+                "DAY",
+                "FORM",
+                "WARD_DEFAULT",
+                "fu_postop_v1",
+                passedWindowAction,
+                null,
+                20);
+    }
+
+    private static PlanMapper.NodeRow fixedOnceSubplanRow() {
+        return new PlanMapper.NodeRow(
+                SUBPLAN_ID,
+                null,
+                "SUBPLAN",
+                "术后早期随访（示例）",
+                "FIXED",
+                1,
+                null,
+                null,
+                null,
+                0,
+                "YEAR",
+                0,
+                "DAY",
+                0,
+                "DAY",
+                0,
+                "DAY",
+                null,
+                null,
+                null,
+                null,
+                null,
+                10);
+    }
+
+    /** 手术起算 + 医院 B 里程碑（第 1/3/5 天 BACKFILL、第 4 天 SKIP）+ 3 个月节点。 */
+    private void hospitalBMilestonePlan(LocalDate surgery) {
+        when(taskMapper.resolveStartDate(PLAN_ID, PATIENT_ID)).thenReturn(surgery);
+        when(planMapper.findById(PLAN_ID))
+                .thenReturn(
+                        new PlanMapper.PlanRow(
+                                PLAN_ID,
+                                "PLAN-IT-B",
+                                "示例 IT 术后随访计划",
+                                1,
+                                "PUBLISHED",
+                                "SURGERY_DATE",
+                                "ONGOING",
+                                null,
+                                false,
+                                null,
+                                0,
+                                null,
+                                1L));
+        when(planMapper.findNodesByPlanId(PLAN_ID))
+                .thenReturn(
+                        List.of(
+                                fixedOnceSubplanRow(),
+                                milestoneRow(201L, 1, "BACKFILL"),
+                                milestoneRow(202L, 3, "BACKFILL"),
+                                milestoneRow(203L, 5, "BACKFILL"),
+                                milestoneRow(204L, 4, "SKIP"),
+                                new PlanMapper.NodeRow(
+                                        205L,
+                                        SUBPLAN_ID,
+                                        "NODE",
+                                        "3 个月随访（示例）",
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        "PLAN_START",
+                                        3,
+                                        "MONTH",
+                                        14,
+                                        "DAY",
+                                        14,
+                                        "DAY",
+                                        14,
+                                        "DAY",
+                                        "FORM",
+                                        "WARD_DEFAULT",
+                                        "fu_postop_v1",
+                                        null,
+                                        null,
+                                        30)));
+        when(taskMapper.findOwnerContext(PATIENT_ID))
+                .thenReturn(new FollowupTaskMapper.PatientOwnerRow(55L, 66L));
+    }
+
+    @Test
+    void enrollmentInitCreatesBackfillTasksForEndedWithoutEvents() {
+        LocalDate today = PlanDateCalculator.businessToday(Instant.now());
+        LocalDate surgery = today.minusDays(8);
+        hospitalBMilestonePlan(surgery);
+        when(taskMapper.findTaskId(anyLong(), anyLong(), anyInt())).thenReturn(null);
+        doAnswer(
+                        invocation -> {
+                            invocation.getArgument(0, FollowupTaskInsertRow.class).setId(901L);
+                            return 1;
+                        })
+                .when(taskMapper)
+                .insertTask(any(FollowupTaskInsertRow.class));
+
+        FollowupTaskCreationService.EnrollmentInitSummary summary =
+                service.initializeForNewEnrollment(ENROLLMENT_ID, PATIENT_ID, PLAN_ID, "NORMAL");
+
+        ArgumentCaptor<FollowupTaskInsertRow> captor =
+                ArgumentCaptor.forClass(FollowupTaskInsertRow.class);
+        verify(taskMapper, times(3)).insertTask(captor.capture());
+        List<FollowupTaskInsertRow> rows = captor.getAllValues();
+        for (FollowupTaskInsertRow row : rows) {
+            assertEquals("BACKFILL", row.getCreateType(), "已结束窗口 → 标补录（验收）");
+            assertEquals("PENDING", row.getStatus(), "补录任务创建即待随访、可直接录入");
+            assertEquals(today, row.getCreatedLogicalDate(), "建档当天创建");
+            assertEquals("fu_postop_v1", row.getFormCode(), "使用完整随访记录表单");
+            assertEquals(66L, row.getAssigneeId());
+        }
+        assertEquals(surgery.plusDays(1), rows.get(0).getPlanDate(), "第 1 天节点计划日期");
+        assertEquals(surgery.plusDays(3), rows.get(1).getPlanDate());
+        assertEquals(surgery.plusDays(5), rows.get(2).getPlanDate());
+        verify(outbox, never()).publish(anyString(), anyString());
+        assertEquals(3, summary.backfill());
+        assertEquals(0, summary.normal());
+        // 起算日期快照回填 + 下次缓存指向 3 个月节点（计划 06-01 −14 天开启）
+        verify(taskMapper).backfillStartDate(ENROLLMENT_ID, surgery);
+        verify(taskMapper)
+                .updateNextCache(
+                        ENROLLMENT_ID, surgery.plusMonths(3), surgery.plusMonths(3).minusDays(14));
+    }
+
+    @Test
+    void enrollmentInitCreatesCurrentWindowTaskAsNormalWithEvent() {
+        // 基准 10 天前：+1 天节点窗口已结束（补录）；+5 天节点窗口今天结束（当期 NORMAL）
+        LocalDate today = PlanDateCalculator.businessToday(Instant.now());
+        LocalDate basis = today.minusDays(10);
+        when(taskMapper.resolveStartDate(PLAN_ID, PATIENT_ID)).thenReturn(basis);
+        when(planMapper.findById(PLAN_ID))
+                .thenReturn(
+                        new PlanMapper.PlanRow(
+                                PLAN_ID,
+                                "PLAN-IT-B",
+                                "示例 IT 术后随访计划",
+                                1,
+                                "PUBLISHED",
+                                "SURGERY_DATE",
+                                "ONGOING",
+                                null,
+                                false,
+                                null,
+                                0,
+                                null,
+                                1L));
+        when(planMapper.findNodesByPlanId(PLAN_ID))
+                .thenReturn(
+                        List.of(
+                                fixedOnceSubplanRow(),
+                                milestoneRow(201L, 1, "BACKFILL"),
+                                new PlanMapper.NodeRow(
+                                        202L,
+                                        SUBPLAN_ID,
+                                        "NODE",
+                                        "窗口内节点（示例）",
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        "PLAN_START",
+                                        5,
+                                        "DAY",
+                                        0,
+                                        "DAY",
+                                        5,
+                                        "DAY",
+                                        5,
+                                        "DAY",
+                                        "FORM",
+                                        "WARD_DEFAULT",
+                                        "fu_postop_v1",
+                                        "BACKFILL",
+                                        null,
+                                        20)));
+        when(taskMapper.findOwnerContext(PATIENT_ID))
+                .thenReturn(new FollowupTaskMapper.PatientOwnerRow(55L, 66L));
+        when(taskMapper.findTaskId(anyLong(), anyLong(), anyInt())).thenReturn(null);
+        doAnswer(
+                        invocation -> {
+                            invocation.getArgument(0, FollowupTaskInsertRow.class).setId(901L);
+                            return 1;
+                        })
+                .when(taskMapper)
+                .insertTask(any(FollowupTaskInsertRow.class));
+
+        FollowupTaskCreationService.EnrollmentInitSummary summary =
+                service.initializeForNewEnrollment(ENROLLMENT_ID, PATIENT_ID, PLAN_ID, "NORMAL");
+
+        ArgumentCaptor<FollowupTaskInsertRow> captor =
+                ArgumentCaptor.forClass(FollowupTaskInsertRow.class);
+        verify(taskMapper, times(2)).insertTask(captor.capture());
+        // due 按开启日排序：+5 天节点（窗口今天结束）先创建，+1 天节点（窗口已结束）补录
+        assertEquals("NORMAL", captor.getAllValues().get(0).getCreateType(), "窗口已开启未结束 → 当天正常创建");
+        assertEquals(202L, captor.getAllValues().get(0).getNodeId());
+        assertEquals("BACKFILL", captor.getAllValues().get(1).getCreateType());
+        assertEquals(201L, captor.getAllValues().get(1).getNodeId());
+        assertEquals(1, summary.backfill());
+        assertEquals(1, summary.normal());
+        // 只有当期任务发 TaskOpened（补录不发即将逾期 / 已逾期 / 失访候选等通知）
+        verify(outbox, times(1)).publish(eq("TaskOpened"), anyString());
+    }
+
+    @Test
+    void enrollmentInitSkipsWhenBasisUnresolvableOrTasksExist() {
+        // 起算日期不可解析：不建任务、不回填快照（与每日调度同口径）
+        when(taskMapper.resolveStartDate(PLAN_ID, PATIENT_ID)).thenReturn(null);
+        FollowupTaskCreationService.EnrollmentInitSummary skipped =
+                service.initializeForNewEnrollment(ENROLLMENT_ID, PATIENT_ID, PLAN_ID, "NORMAL");
+        assertEquals(0, skipped.backfill());
+        assertEquals(0, skipped.normal());
+        verify(taskMapper, never()).insertTask(any());
+        verify(taskMapper, never()).backfillStartDate(anyLong(), any());
+
+        // 幂等：该次已存在（重复入组重放）不重复创建
+        LocalDate today = PlanDateCalculator.businessToday(Instant.now());
+        hospitalBMilestonePlan(today.minusDays(8));
+        when(taskMapper.findTaskId(anyLong(), anyLong(), anyInt())).thenReturn(901L);
+        FollowupTaskCreationService.EnrollmentInitSummary existing =
+                service.initializeForNewEnrollment(ENROLLMENT_ID, PATIENT_ID, PLAN_ID, "NORMAL");
+        assertEquals(0, existing.backfill());
+        verify(taskMapper, never()).insertTask(any());
     }
 }

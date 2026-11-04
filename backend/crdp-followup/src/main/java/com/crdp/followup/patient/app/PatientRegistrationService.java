@@ -2,6 +2,7 @@ package com.crdp.followup.patient.app;
 
 import com.crdp.followup.patient.infra.mapper.PatientInsert;
 import com.crdp.followup.patient.infra.mapper.PatientMapper;
+import com.crdp.followup.plan.app.PlanEnrollmentService;
 import com.crdp.framework.audit.AuditEntry;
 import com.crdp.framework.audit.AuditLogger;
 import com.crdp.framework.audit.AuditResult;
@@ -57,6 +58,7 @@ public class PatientRegistrationService {
     private final AuditLogger audit;
     private final PatientStatusHistoryService statusHistory;
     private final PatientSummaryService summary;
+    private final PlanEnrollmentService enrollments;
 
     public PatientRegistrationService(
             PatientMapper mapper,
@@ -64,13 +66,15 @@ public class PatientRegistrationService {
             CryptoService crypto,
             AuditLogger audit,
             PatientStatusHistoryService statusHistory,
-            PatientSummaryService summary) {
+            PatientSummaryService summary,
+            PlanEnrollmentService enrollments) {
         this.mapper = mapper;
         this.gateway = gateway;
         this.crypto = crypto;
         this.audit = audit;
         this.statusHistory = statusHistory;
         this.summary = summary;
+        this.enrollments = enrollments;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -210,6 +214,10 @@ public class PatientRegistrationService {
                 row.getId(), LocalDate.now(), CurrentSession.requireHospital().userId());
         summary.recompute(row.getId(), CurrentSession.requireHospital().userId());
 
+        // E14-T05 / Q35 自动入组：出院登记后自动加入预置计划（auto_enroll 的已发布计划），
+        // 出院状态为死亡由 plan 侧判定不加入；登记是主操作，自动入组故障不回滚登记（记 FAIL 审计提示人工入组）
+        autoEnrollQuietly(row.getId(), dischargeStatus);
+
         audit.append(
                 AuditEntry.operation("followup", "PATIENT_CREATE")
                         .objectType("PATIENT")
@@ -257,6 +265,25 @@ public class PatientRegistrationService {
     }
 
     // ---------------------------------------------------------------- 内部
+
+    /**
+     * 自动入组的登记侧兜底（E14-T05 / Q35）：登记是主操作，自动入组故障不回滚登记， 只记 FAIL 审计提示人工入组（业务性跳过——死亡、无预置计划、已在组——由 plan
+     * 侧静默处理，不进本分支）。
+     */
+    private void autoEnrollQuietly(long patientId, Integer dischargeStatus) {
+        try {
+            enrollments.autoEnrollOnRegistration(patientId, dischargeStatus);
+        } catch (RuntimeException ex) {
+            log.warn("自动入组失败，登记不受影响（可人工入组）patient={} 原因={}", patientId, ex.getMessage());
+            audit.append(
+                    AuditEntry.operation("followup", "PLAN_ENROLL")
+                            .objectType("PATIENT")
+                            .objectId(String.valueOf(patientId))
+                            .description("自动入组失败，登记不受影响（可人工入组）：" + ex.getMessage())
+                            .result(AuditResult.FAIL)
+                            .build());
+        }
+    }
 
     /** 40902 阻止（A-PAT-007「提示并阻止」）：data 带范围内已有患者脱敏摘要；范围外只报重复不泄露摘要。 */
     private ApiException duplicateBlocked(String mrn, String mrnBlind) {

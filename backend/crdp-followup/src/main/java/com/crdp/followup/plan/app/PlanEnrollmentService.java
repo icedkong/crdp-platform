@@ -3,6 +3,7 @@ package com.crdp.followup.plan.app;
 import com.crdp.followup.plan.infra.mapper.PlanEnrollmentInsertRow;
 import com.crdp.followup.plan.infra.mapper.PlanEnrollmentMapper;
 import com.crdp.followup.plan.infra.mapper.PlanMapper;
+import com.crdp.followup.task.app.FollowupTaskCreationService;
 import com.crdp.framework.audit.AuditEntry;
 import com.crdp.framework.audit.AuditLogger;
 import com.crdp.framework.audit.AuditResult;
@@ -27,10 +28,17 @@ import org.springframework.transaction.annotation.Transactional;
  * DISABLED（不再允许入组），因此入组必然固定在当前最新发布版本； 入组行把版本固定在
  * fu_enrollment.plan_id，之后按需创建的任务也按该版本（E14-T04），患者不随计划升版迁移（A-FU-020 延后）。
  *
+ * <p>E14-T05 / Q44 建档补录：{@link #enroll} 在同一事务内调 {@code
+ * FollowupTaskCreationService.initializeForNewEnrollment}——窗口在入组日前已结束的次数按节点 passed_window_action
+ * 补建「补录」任务（BACKFILL，不发通知）或跳过，窗口已开启未结束的次数当天正常创建；任务建不出来整个入组回滚。
+ *
+ * <p>E14-T05 / Q35 自动入组：{@link #autoEnrollOnRegistration}（出院登记后调用）把患者加入全部 auto_enroll = 1
+ * 的已发布计划；出院状态为死亡（A 规格字段 191 取值 3）不加入。单个计划的业务性失败（如计划恰好被暂停）只跳过不中断。
+ *
  * <p>E14-T08 / A-FU-022 计划患者列表：该计划版本的全部入组（含已暂停 / 已移除）——加入时间、随访完成次数、状态（已启动 / 已暂停 / 已移除）。患者面数据按
  * {@code @DataScope(resource = "patient")} 出行（fu_enrollment 自 E14-T01 起登记 ControlledTables）；姓名 /
  * 病案号只输出脱敏值（AGENTS §5.3，明文只走 E07-T05 专用接口）；随访完成次数为 fu_task 管理口径聚合计数（E15-T01 状态流转后开始累计）。单个患者的暂停 / 恢复
- * / 移出（A-FU-008）随 E14-T06；批量入组（A-PAT-016）随 E13-T07、自动入组随 E14-T05 复用 {@link #enroll} 入口。
+ * / 移出（A-FU-008）随 E14-T06；批量入组（A-PAT-016）随 E13-T07、自动入组复用 {@link #enroll} 入口。
  */
 @Service
 public class PlanEnrollmentService {
@@ -39,6 +47,9 @@ public class PlanEnrollmentService {
 
     /** 入组模式（C：常规 / ERI 期）。 */
     public static final String MODE_NORMAL = "NORMAL";
+
+    /** 出院状态「死亡」（A 规格字段 191：1 存活 / 2 病重自动出院 / 3 死亡）——Q35 不自动入组。 */
+    private static final int DISCHARGE_STATUS_DEAD = 3;
 
     /** 默认分页（AGENTS §6：pageNo 从 1 起、pageSize 默认 20、上限 100）。 */
     private static final int DEFAULT_PAGE_SIZE = 20;
@@ -54,15 +65,19 @@ public class PlanEnrollmentService {
 
     private final CryptoService crypto;
 
+    private final FollowupTaskCreationService taskCreation;
+
     public PlanEnrollmentService(
             PlanMapper planMapper,
             PlanEnrollmentMapper mapper,
             AuditLogger audit,
-            CryptoService crypto) {
+            CryptoService crypto,
+            FollowupTaskCreationService taskCreation) {
         this.planMapper = planMapper;
         this.mapper = mapper;
         this.audit = audit;
         this.crypto = crypto;
+        this.taskCreation = taskCreation;
     }
 
     /** 入组结果（planId = 固定的计划版本行 id，A-FU-019）。 */
@@ -136,6 +151,11 @@ public class PlanEnrollmentService {
             log.warn("入组并发冲突（患者 {} 计划族 {}），按已在组处理（E14-T01）", patientId, plan.code());
             throw duplicate(plan, patientId);
         }
+        // E14-T05 / Q44 建档补录：入组同一事务内建任务（已结束窗口标补录、窗口内当期任务）；
+        // 建不出来（如配置异常）整个入组回滚——每日调度不补入组前已过窗口，不能留在组无任务的半状态
+        FollowupTaskCreationService.EnrollmentInitSummary initialized =
+                taskCreation.initializeForNewEnrollment(
+                        row.getId(), patientId, planId, normalizedMode);
         audit.append(
                 AuditEntry.operation("followup", "PLAN_ENROLL")
                         .objectType("ENROLLMENT")
@@ -147,7 +167,11 @@ public class PlanEnrollmentService {
                                         + plan.version()
                                         + "（版本固定在 v"
                                         + plan.version()
-                                        + "，A-FU-019）")
+                                        + "，A-FU-019；入组即建补录 "
+                                        + initialized.backfill()
+                                        + " 条、当期 "
+                                        + initialized.normal()
+                                        + " 条）")
                         .afterJson(
                                 "{\"patientId\":"
                                         + patientId
@@ -159,7 +183,11 @@ public class PlanEnrollmentService {
                                         + plan.version()
                                         + ",\"mode\":\""
                                         + normalizedMode
-                                        + "\",\"status\":\"ACTIVE\"}")
+                                        + "\",\"status\":\"ACTIVE\",\"backfillTasks\":"
+                                        + initialized.backfill()
+                                        + ",\"currentTasks\":"
+                                        + initialized.normal()
+                                        + "}")
                         .result(AuditResult.SUCCESS)
                         .build());
         return new EnrollmentView(
@@ -167,6 +195,37 @@ public class PlanEnrollmentService {
                 String.valueOf(patientId),
                 String.valueOf(planId),
                 normalizedMode);
+    }
+
+    // ---------------------------------------------------------------- 自动入组（E14-T05 / Q35）
+
+    /**
+     * 出院登记后的自动入组（Q35）：加入全部 auto_enroll = 1 且 PUBLISHED 的计划；出院状态为死亡不加入。
+     *
+     * <p>在登记事务内调用（patient.app → plan.app 跨子域入口）；单个计划的业务性失败（计划被暂停、患者不可入组等 ApiException）只记 DEBUG
+     * 跳过、不中断登记；登记侧重故障（如库不可达）由调用方兜底记 FAIL 审计。
+     *
+     * @return 实际入组的计划数
+     */
+    public int autoEnrollOnRegistration(long patientId, Integer dischargeStatus) {
+        if (dischargeStatus != null && dischargeStatus == DISCHARGE_STATUS_DEAD) {
+            log.debug("出院状态为死亡，不自动入组（Q35）patient={}", patientId);
+            return 0;
+        }
+        int enrolled = 0;
+        for (PlanMapper.PlanRow plan : planMapper.findAutoEnrollPlans()) {
+            try {
+                enroll(patientId, plan.id(), MODE_NORMAL);
+                enrolled++;
+            } catch (ApiException skip) {
+                // 单个计划不可入组（状态变化、并发已在组等）：跳过继续其余计划，不打断登记
+                log.debug("自动入组跳过计划 {}（{}），原因：{}", plan.id(), plan.code(), skip.getMessage());
+            }
+        }
+        if (enrolled > 0) {
+            log.info("出院登记自动入组完成 patient={} plans={}", patientId, enrolled);
+        }
+        return enrolled;
     }
 
     // ---------------------------------------------------------------- 计划患者列表（E14-T08 / A-FU-022）

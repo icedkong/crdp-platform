@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -62,6 +63,7 @@ class PlanServiceTest {
                 status,
                 "DISCHARGE_DATE",
                 "ONGOING",
+                null,
                 null,
                 null,
                 lockVersion,
@@ -133,6 +135,7 @@ class PlanServiceTest {
                                 "discharge_date",
                                 "ongoing",
                                 null,
+                                null,
                                 null));
 
         assertEquals("PLAN-IT-1", view.code(), "编码归一为大写");
@@ -160,6 +163,7 @@ class PlanServiceTest {
                                                 "DISCHARGE_DATE",
                                                 "ONGOING",
                                                 null,
+                                                null,
                                                 null)));
         assertEquals(40901, denied.code());
         assertTrue(denied.getMessage().contains("复制为新版本"), denied.getMessage());
@@ -175,7 +179,14 @@ class PlanServiceTest {
 
         verify(mapper, never())
                 .updateBasics(
-                        anyLong(), anyString(), anyString(), anyString(), any(), any(), eq(3));
+                        anyLong(),
+                        anyString(),
+                        anyString(),
+                        anyString(),
+                        any(),
+                        anyBoolean(),
+                        any(),
+                        eq(3));
         // 被拒写 DENIED 审计（A-FU-021 计划变更审计含被拒操作）
         verify(audit, org.mockito.Mockito.times(2)).append(any(AuditEntry.class));
     }
@@ -299,6 +310,7 @@ class PlanServiceTest {
                         "ONGOING",
                         null,
                         null,
+                        null,
                         0,
                         null,
                         0L);
@@ -378,7 +390,13 @@ class PlanServiceTest {
 
         service.create(
                 new PlanService.CreateRequest(
-                        "PLAN-IT-1", "示例 IT 年度随访计划", "DISCHARGE_DATE", "ONGOING", null, "备注（示例）"));
+                        "PLAN-IT-1",
+                        "示例 IT 年度随访计划",
+                        "DISCHARGE_DATE",
+                        "ONGOING",
+                        null,
+                        null,
+                        "备注（示例）"));
 
         ArgumentCaptor<PlanLogInsertRow> captor = ArgumentCaptor.forClass(PlanLogInsertRow.class);
         verify(logMapper).insertLog(captor.capture());
@@ -517,6 +535,7 @@ class PlanServiceTest {
                                                 "改名（示例）",
                                                 "DISCHARGE_DATE",
                                                 "ONGOING",
+                                                null,
                                                 null,
                                                 null)));
         assertEquals(40901, denied.code());

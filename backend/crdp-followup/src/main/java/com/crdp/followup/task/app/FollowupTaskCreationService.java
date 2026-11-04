@@ -1,5 +1,6 @@
 package com.crdp.followup.task.app;
 
+import com.crdp.followup.plan.domain.PlanDateCalculator;
 import com.crdp.followup.plan.infra.mapper.PlanMapper;
 import com.crdp.followup.task.domain.TaskCreationPlanner;
 import com.crdp.followup.task.domain.TaskCreationPlanner.NodeDef;
@@ -14,6 +15,7 @@ import com.crdp.framework.job.JobScheduler;
 import com.crdp.framework.job.TenantJobResult;
 import com.crdp.framework.outbox.OutboxPublisher;
 import com.crdp.framework.tenant.TenantContext;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
@@ -26,7 +28,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 /**
- * 每日 00:10 的任务按需创建作业体（E14-T04 / A-FU-001、C-FU-004、A-NFR-006、C-NFR-007；验收：任务在提醒开始日与 窗口开始日较早一天创建）。
+ * 每日 00:10 的任务按需创建作业体（E14-T04 / A-FU-001、C-FU-004、A-NFR-006、C-NFR-007；验收：任务在提醒开始日与 窗口开始日较早一天创建）
+ * 与入组即建入口（E14-T05 / Q44，验收：已结束窗口照常建任务并标补录）。
  *
  * <p>结构（tech-plan §8「每日调度」流程图）：
  *
@@ -41,6 +44,10 @@ import org.springframework.stereotype.Service;
  *   <li>刷新入组的下次计划日期 / 开启日缓存（fu_enrollment.next_plan_date / next_open_date，V46 预留）。
  * </ul>
  *
+ * <p>{@link #initializeForNewEnrollment}（E14-T05）：入组当天同步创建补录（BACKFILL）与当期（NORMAL）任务，
+ * 与入组同一事务（建不出来就整个入组回滚，不留「在组无任务」的半状态）；补录任务<b>不写</b> {@code TaskOpened} 事件（不进即将逾期 / 已逾期 / 失访候选通知，A
+ * 规格第 5 章；状态流转侧 E15-T01 按 create_type 同样豁免）。
+ *
  * <p>单条入组失败只记 WARN 并继续（起算日期不可解析等配置问题不应拖垮整院当日调度）； 全租户汇总创建数写一条 OPERATION 审计（任务行本身即业务记录，不逐条写审计）。负责人解析按
  * A-FU-009 回落链： 责任医生 → 病区默认负责人 （OQ-60）→ NULL 进病区待认领池。
  */
@@ -52,6 +59,9 @@ public class FollowupTaskCreationService {
 
     /** 任务开启 outbox 事件类型（E15 通知规则引擎消费，OQ-60②）。 */
     static final String EVENT_TASK_OPENED = "TaskOpened";
+
+    /** 入组即建结果（E14-T05）：补录（已结束窗口）与当期（窗口已开启未结束）任务数，供入组审计并入。 */
+    public record EnrollmentInitSummary(int backfill, int normal) {}
 
     private static final Logger log = LoggerFactory.getLogger(FollowupTaskCreationService.class);
 
@@ -151,42 +161,81 @@ public class FollowupTaskCreationService {
 
     // ---------------------------------------------------------------- 单入组处理
 
+    /** 每日调度口径（入组前已过窗口不建，OQ-78③）；返回新建任务数（创建方式恒 NORMAL）。 */
     private int processEnrollment(
             FollowupTaskMapper.EnrollmentRow enrollment, LocalDate logicalDate) {
+        EnrollmentInitSummary summary = initializeForLogicalDate(enrollment, logicalDate, false);
+        return summary.backfill() + summary.normal();
+    }
+
+    // ---------------------------------------------------------------- 入组即建（E14-T05 / Q44）
+
+    /**
+     * 入组当天同步创建任务（与入组同一事务，由 {@code PlanEnrollmentService.enroll} 调用）：
+     *
+     * <ul>
+     *   <li>窗口在入组日前已结束的次数：按节点 passed_window_action 补建为「补录」任务（create_type = BACKFILL， Q44）或跳过（SKIP /
+     *       未配置，医院 C 的 Q14）；补录任务不写 TaskOpened 事件（不发通知）；
+     *   <li>窗口已开启未结束的次数：当天正常创建（NORMAL）并写 TaskOpened（A 规格第 5 章「窗口已开启未结束的节点当天正常创建」）；
+     *   <li>未来次数不预生成，只刷新下次计划日期 / 开启日缓存；起算日期快照为空时解析并回填（与每日调度同口径）。
+     * </ul>
+     *
+     * <p>历史导入（E18）不走本入口（导入按自身规则生成历史记录，不建补录任务）。任务创建失败直接抛出：整个入组回滚，
+     * 避免留下「在组但缺补录任务」的半状态（每日调度不补入组前已过窗口，OQ-78③）。
+     */
+    public EnrollmentInitSummary initializeForNewEnrollment(
+            long enrollmentId, long patientId, long planId, String mode) {
+        LocalDate today = PlanDateCalculator.businessToday(Instant.now());
+        return initializeForLogicalDate(
+                new FollowupTaskMapper.EnrollmentRow(
+                        enrollmentId, patientId, planId, null, mode, today),
+                today,
+                true);
+    }
+
+    /** 单入组的排期与建任务（每日调度与入组即建共用；atEnrollment = true 用入组即建口径分类补录 / 当期）。 */
+    private EnrollmentInitSummary initializeForLogicalDate(
+            FollowupTaskMapper.EnrollmentRow enrollment,
+            LocalDate logicalDate,
+            boolean atEnrollment) {
         LocalDate startDate =
                 enrollment.startDate() != null
                         ? enrollment.startDate()
                         : resolveAndBackfillStartDate(enrollment);
         if (startDate == null) {
             log.debug(
-                    "起算日期不可解析（IMPLANT_DATE 随 E21、CUSTOM 未定义或字段值为空），跳过 enrollment={}",
+                    "起算日期不可解析（IMPLANT_DATE 随 E21、CUSTOM 未定义或字段值为空），入组暂不建任务 enrollment={}",
                     enrollment.id());
-            return 0;
+            return new EnrollmentInitSummary(0, 0);
         }
         PlanMapper.PlanRow plan = planMapper.findById(enrollment.planId());
         List<PlanMapper.NodeRow> rows =
                 plan == null ? List.of() : planMapper.findNodesByPlanId(enrollment.planId());
         if (rows.isEmpty()) {
-            return 0; // 已发布计划必有节点（发布前置），防御跳过
+            return new EnrollmentInitSummary(0, 0); // 已发布计划必有节点（发布前置），防御跳过
         }
         LocalDate planEnd =
                 "YEARS".equals(plan.cycleType()) && plan.cycleYears() != null
                         ? startDate.plusYears(plan.cycleYears())
                         : null;
         PlanResult result =
-                TaskCreationPlanner.plan(
-                        nodeDefs(rows),
-                        enrollment.mode(),
-                        startDate,
-                        logicalDate,
-                        enrollment.enrolledOn(),
-                        planEnd);
+                atEnrollment
+                        ? TaskCreationPlanner.planForEnrollment(
+                                nodeDefs(rows), enrollment.mode(), startDate, logicalDate, planEnd)
+                        : TaskCreationPlanner.plan(
+                                nodeDefs(rows),
+                                enrollment.mode(),
+                                startDate,
+                                logicalDate,
+                                enrollment.enrolledOn(),
+                                planEnd);
         FollowupTaskMapper.PatientOwnerRow owner =
                 taskMapper.findOwnerContext(enrollment.patientId());
         Map<Long, PlanMapper.NodeRow> templates =
                 rows.stream()
                         .collect(Collectors.toMap(PlanMapper.NodeRow::id, Function.identity()));
-        int created = 0;
+        int backfill = 0;
+        int normal = 0;
         for (PlannedTask task : result.due()) {
             // 幂等：已存在（重复执行 / 补跑重放）直接跳过；并发撞 uk 由唯一键兜底转已存在
             if (taskMapper.findTaskId(enrollment.id(), task.nodeId(), task.occurrence()) != null) {
@@ -212,7 +261,7 @@ public class FollowupTaskCreationService {
                             task.windowStart(),
                             task.windowEnd(),
                             task.openDate(),
-                            "NORMAL",
+                            task.createType(),
                             "PENDING",
                             logicalDate);
             try {
@@ -226,14 +275,18 @@ public class FollowupTaskCreationService {
                         task.occurrence());
                 continue;
             }
-            created++;
-            publishTaskOpened(enrollment, task, row.getId());
+            if (TaskCreationPlanner.CREATE_BACKFILL.equals(task.createType())) {
+                backfill++; // 补录不发 TaskOpened（不进即将逾期 / 已逾期 / 失访候选通知）
+            } else {
+                normal++;
+                publishTaskOpened(enrollment, task, row.getId());
+            }
         }
         taskMapper.updateNextCache(
                 enrollment.id(),
                 result.next() != null ? result.next().planDate() : null,
                 result.next() != null ? result.next().openDate() : null);
-        return created;
+        return new EnrollmentInitSummary(backfill, normal);
     }
 
     /** 起算日期快照为空：按计划起算字段解析并回填（只补空值；解析不到返回 null 跳过该入组）。 */
@@ -315,6 +368,7 @@ public class FollowupTaskCreationService {
                                         row.cycleUnit(),
                                         defaultIfBlank(row.basis(), "PLAN_START"),
                                         row.enrollMode(),
+                                        row.passedWindowAction(),
                                         orZero(row.offsetValue()),
                                         defaultIfBlank(row.offsetUnit(), "YEAR"),
                                         orZero(row.remindValue()),
