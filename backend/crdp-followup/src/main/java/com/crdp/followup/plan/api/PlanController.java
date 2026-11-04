@@ -1,5 +1,6 @@
 package com.crdp.followup.plan.api;
 
+import com.crdp.followup.plan.app.BatchEnrollmentService;
 import com.crdp.followup.plan.app.PlanEnrollmentService;
 import com.crdp.followup.plan.app.PlanService;
 import com.crdp.followup.plan.domain.PlanNodeRule;
@@ -36,9 +37,15 @@ public class PlanController {
 
     private final PlanEnrollmentService enrollmentsService;
 
-    public PlanController(PlanService service, PlanEnrollmentService enrollmentsService) {
+    private final BatchEnrollmentService batchService;
+
+    public PlanController(
+            PlanService service,
+            PlanEnrollmentService enrollmentsService,
+            BatchEnrollmentService batchService) {
         this.service = service;
         this.enrollmentsService = enrollmentsService;
+        this.batchService = batchService;
     }
 
     @Operation(summary = "计划列表（A-FU-016/018）：名称、编码、版本、状态（含派生「随访中」RUNNING）、" + "在组人数；每族最新版本在前")
@@ -239,6 +246,45 @@ public class PlanController {
 
     /** 暂停 / 移出原因体（A-PAT-011 须选原因：拒绝随访 / 外地随访 / 其他）。 */
     public record ReasonRequest(@Size(max = 255) String reason) {}
+
+    // ---------------------------------------------------------------- 批量入组（E13-T07 / A-PAT-016）
+
+    @Operation(
+            summary =
+                    "批量入组预检（A-PAT-016「确认前显示将加入人数与将跳过人数」）：逐条 ENROLL / SKIP"
+                            + " + 原因（已在组 / 已死亡 / 已移除 / 已终止 / 越范围 / 医生不负责该病区），"
+                            + "不写任何数据；写 BATCH_QUERY 数据访问审计")
+    @PostMapping("/{id}/enrollments/batch-preview")
+    @RequireModule("followup")
+    @RequiresPermission({"followup:plan:enroll", "followup:plan:edit"})
+    public ApiResponse<BatchEnrollmentService.BatchEnrollResult> batchPreview(
+            @PathVariable long id, @RequestBody BatchEnrollRequest request) {
+        return ApiResponse.ok(
+                batchService.preview(
+                        id,
+                        request == null ? null : request.patientIds(),
+                        request == null ? null : request.doctorId()));
+    }
+
+    @Operation(
+            summary =
+                    "批量入组（A-PAT-016）：逐条入组并返回成功 / 跳过明细（批量操作结果逐条可查）；"
+                            + "doctorId 可选——同时为入组患者指定责任医生（A-PAT-017，只能选该病区的医生）；"
+                            + "写 PLAN_ENROLL_BATCH 汇总审计（单条成功另有 PLAN_ENROLL 审计）")
+    @PostMapping("/{id}/enrollments/batch")
+    @RequireModule("followup")
+    @RequiresPermission({"followup:plan:enroll", "followup:plan:edit"})
+    public ApiResponse<BatchEnrollmentService.BatchEnrollResult> batchEnroll(
+            @PathVariable long id, @RequestBody BatchEnrollRequest request) {
+        return ApiResponse.ok(
+                batchService.enroll(
+                        id,
+                        request == null ? null : request.patientIds(),
+                        request == null ? null : request.doctorId()));
+    }
+
+    /** 批量入组请求体（单次 ≤ 500；doctorId 可选 = 入组同时指定责任医生）。 */
+    public record BatchEnrollRequest(List<Long> patientIds, Long doctorId) {}
 
     /** 新建请求体（autoEnroll = 自动入组开关，Q35 / E14-T05，缺省关）。 */
     public record CreateRequest(

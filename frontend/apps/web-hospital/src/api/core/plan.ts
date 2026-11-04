@@ -7,6 +7,7 @@
  * E14-T08：计划患者列表（A-FU-022）与变更记录（A-FU-021）；批量入组随 E13-T07。
  */
 import type {
+  BatchResult,
   PlanCreateRequest,
   PlanDetailView,
   PlanEnrollmentPage,
@@ -105,5 +106,35 @@ export function fetchPlanEnrollments(
 export function fetchPlanLogs(planId: string) {
   return requestClient.get<PlanLogsView>(
     apiPath(`/followup/plans/${planId}/logs`),
+  );
+}
+
+// ---------------------------------------------------------------- 批量入组（E13-T07 / A-PAT-016）
+
+/**
+ * 批量入组预检（A-PAT-016「确认前显示将加入人数与将跳过人数」）：逐条 ENROLL / SKIP +
+ * 原因码（已在组 / 已死亡 / 已移除 / 已终止 / 越范围 / 医生不负责该病区），不写任何数据。
+ */
+export function batchEnrollPreview(
+  planId: string,
+  payload: { doctorId?: number | string; patientIds: Array<number | string> },
+) {
+  return requestClient.post<BatchResult>(
+    apiPath(`/followup/plans/${planId}/enrollments/batch-preview`),
+    payload,
+  );
+}
+
+/**
+ * 批量入组（A-PAT-016）：逐条入组并返回成功 / 跳过明细（批量操作结果逐条可查）；
+ * doctorId 可选——入组同时指定责任医生（A-PAT-017，只能选该病区的医生）。
+ */
+export function batchEnroll(
+  planId: string,
+  payload: { doctorId?: number | string; patientIds: Array<number | string> },
+) {
+  return requestClient.post<BatchResult>(
+    apiPath(`/followup/plans/${planId}/enrollments/batch`),
+    payload,
   );
 }

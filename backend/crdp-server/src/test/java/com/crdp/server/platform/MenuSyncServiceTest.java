@@ -239,6 +239,30 @@ class MenuSyncServiceTest {
                         "followup:record:edit",
                         10,
                         "ENABLED"),
+                // E13-T07 批量指定责任医生按钮与批量入组隐藏路由（平台库 V44 同构）：
+                // 患者档案（21）下；批量入组 perm_code 为 NULL（操作权限沿用按钮 221 plan:enroll）
+                manifestRow(
+                        224L,
+                        21L,
+                        "BUTTON",
+                        "批量指定责任医生",
+                        null,
+                        null,
+                        null,
+                        "followup:task:assign",
+                        40,
+                        "ENABLED"),
+                manifestRow(
+                        225L,
+                        21L,
+                        "MENU",
+                        "批量入组",
+                        "FollowupPatientBatchEnroll",
+                        "/followup/patient/batch-enroll",
+                        "followup/patient/batch-enroll",
+                        null,
+                        60,
+                        "ENABLED"),
                 // E09-T04 通知设置：followup 菜单挂在 base 的系统设置目录（30）下，
                 // 父项经 findMenuIdByRouteName 跨模块解析（MenuSyncService.resolveParentLater 回落）
                 manifestRow(

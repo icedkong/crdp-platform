@@ -342,7 +342,38 @@ public class MenuManifest {
                             null,
                             "followup:record:edit",
                             null,
-                            10));
+                            10),
+                    // E13-T07 / A-PAT-017、C-PAT-016：患者档案下的「批量指定责任医生」按钮
+                    // （followup:task:assign，OQ-18 暂行口径；平台库 V44 同构）
+                    new MenuManifestItem(
+                            "followup",
+                            "HOSPITAL",
+                            "BUTTON",
+                            "followup:task:assign",
+                            "FollowupPatient",
+                            "批量指定责任医生",
+                            null,
+                            null,
+                            null,
+                            "followup:task:assign",
+                            null,
+                            40),
+                    // E13-T07 / A-PAT-016：批量入组隐藏路由（患者档案下，平台库 V44 同构；
+                    // perm_code 为 NULL——批量入组操作权限 followup:plan:enroll 已由按钮 221 持有，
+                    // 路由可见性随患者档案菜单）
+                    new MenuManifestItem(
+                            "followup",
+                            "HOSPITAL",
+                            "MENU",
+                            "FollowupPatientBatchEnroll",
+                            "FollowupPatient",
+                            "批量入组",
+                            "FollowupPatientBatchEnroll",
+                            "/followup/patient/batch-enroll",
+                            "followup/patient/batch-enroll",
+                            null,
+                            null,
+                            60));
 
     public List<MenuManifestItem> items() {
         return ITEMS;

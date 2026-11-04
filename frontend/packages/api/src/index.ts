@@ -115,6 +115,21 @@ export {
 export type { TwoFactorChallenge } from './auth-flow';
 
 export {
+  BATCH_SKIP_REASON_TEXT,
+  batchOutcomeText,
+  countSkipByReason,
+  doctorOptionLabel,
+  filterDoctorsByWards,
+} from './batch-operation';
+
+export type {
+  BatchOutcomeItem,
+  BatchResult,
+  DoctorOption,
+  DoctorOptions,
+} from './batch-operation';
+
+export {
   ASSET_URL_PATTERN,
   isValidAssetUrl,
   loginLogResultText,
@@ -130,7 +145,6 @@ export type {
   TenantBrandView,
   ThemeColorOption,
 } from './brand';
-
 export {
   DICT_LOG_ACTION_TEXT,
   DICT_SOURCE_TEXT,
@@ -166,6 +180,7 @@ export type {
   TenantParamOverrideRequest,
   TenantParamView,
 } from './config';
+
 export {
   DEPT_IMPORT_COLUMNS,
   deptImportActionText,
@@ -173,13 +188,11 @@ export {
   failedRows,
   isXlsxFile,
 } from './dept-import';
-
 export type {
   DeptImportAction,
   DeptImportReport,
   DeptImportRowResult,
 } from './dept-import';
-
 export {
   EXPIRE_TYPE_TEXT,
   MODULE_LOG_ACTION_TEXT,
@@ -278,6 +291,7 @@ export type {
   NotifySettings,
   NotifySettingsUpdate,
 } from './notify';
+
 export { DEPT_TYPE_OPTIONS, ORG_STATUS_TEXT, orgStatusText } from './org';
 export type {
   DeptImpactView,
@@ -292,7 +306,6 @@ export type {
   OrgTreeView,
   OrgView,
 } from './org';
-
 export {
   PASSWORD_EXPIRY_REMIND_DAYS,
   PASSWORD_HISTORY_COUNT,
@@ -379,6 +392,7 @@ export type {
   RegistrationOptionItem,
   RegistrationWardOption,
 } from './patient-registration';
+
 export {
   buildPatientSearchPayload,
   emptyPatientFilters,
@@ -414,6 +428,7 @@ export {
   menuSyncActionText,
   menuTypeText,
 } from './perm-resources';
+
 export type {
   ApiMarkRequest,
   ApiResourceItem,
@@ -426,53 +441,6 @@ export type {
   MenuSyncDiffResult,
   MenuUpdateRequest,
 } from './perm-resources';
-
-// E14-T02 随访计划配置（docs/api/followup.md §1；页面 pages.md §8）
-export {
-  PLAN_ENROLL_MODE_TEXT,
-  PLAN_ENROLLMENT_STATUS_TEXT,
-  PLAN_LOG_ACTION_TEXT,
-  PLAN_NODE_BASIS_TEXT,
-  PLAN_OFFSET_UNIT_TEXT,
-  PLAN_OWNER_TYPE_TEXT,
-  PLAN_PASSED_WINDOW_TEXT,
-  PLAN_REMIND_UNIT_TEXT,
-  PLAN_REPEAT_MODE_TEXT,
-  PLAN_START_DATE_FIELD_OPTIONS,
-  PLAN_START_DATE_FIELD_TEXT,
-  PLAN_TASK_TYPE_TEXT,
-  planCycleText,
-  planEnrollmentStatusText,
-  planLogActionText,
-  planStartDateFieldText,
-} from './plan';
-
-export type {
-  PlanCreateRequest,
-  PlanCycleType,
-  PlanDetailView,
-  PlanEnrollmentPage,
-  PlanEnrollmentPatientView,
-  PlanEnrollmentStatus,
-  PlanEnrollMode,
-  PlanLogAction,
-  PlanLogsView,
-  PlanLogView,
-  PlanNodeBasis,
-  PlanNodeInput,
-  PlanNodeView,
-  PlanOffsetUnit,
-  PlanOwnerType,
-  PlanPassedWindowAction,
-  PlanRemindUnit,
-  PlanRepeatMode,
-  PlanSaveNodesRequest,
-  PlanStartDateField,
-  PlanStatus,
-  PlanTaskType,
-  PlanUpdateRequest,
-  PlanView,
-} from './plan';
 
 export interface CreateTenantRequest {
   /** 不填由后端自动生成（页面展示建议值可改）。 */
@@ -808,6 +776,52 @@ export interface ModuleOpenLog {
   tenantName: string;
 }
 
+// E14-T02 随访计划配置（docs/api/followup.md §1；页面 pages.md §8）
+export {
+  PLAN_ENROLL_MODE_TEXT,
+  PLAN_ENROLLMENT_STATUS_TEXT,
+  PLAN_LOG_ACTION_TEXT,
+  PLAN_NODE_BASIS_TEXT,
+  PLAN_OFFSET_UNIT_TEXT,
+  PLAN_OWNER_TYPE_TEXT,
+  PLAN_PASSED_WINDOW_TEXT,
+  PLAN_REMIND_UNIT_TEXT,
+  PLAN_REPEAT_MODE_TEXT,
+  PLAN_START_DATE_FIELD_OPTIONS,
+  PLAN_START_DATE_FIELD_TEXT,
+  PLAN_TASK_TYPE_TEXT,
+  planCycleText,
+  planEnrollmentStatusText,
+  planLogActionText,
+  planStartDateFieldText,
+} from './plan';
+export type {
+  PlanCreateRequest,
+  PlanCycleType,
+  PlanDetailView,
+  PlanEnrollmentPage,
+  PlanEnrollmentPatientView,
+  PlanEnrollmentStatus,
+  PlanEnrollMode,
+  PlanLogAction,
+  PlanLogsView,
+  PlanLogView,
+  PlanNodeBasis,
+  PlanNodeInput,
+  PlanNodeView,
+  PlanOffsetUnit,
+  PlanOwnerType,
+  PlanPassedWindowAction,
+  PlanRemindUnit,
+  PlanRepeatMode,
+  PlanSaveNodesRequest,
+  PlanStartDateField,
+  PlanStatus,
+  PlanTaskType,
+  PlanUpdateRequest,
+  PlanView,
+} from './plan';
+
 export {
   platformAccountStatusText,
   platformRoleStatusText,
@@ -874,7 +888,6 @@ export type {
   TenantRoleView,
 } from './tenant-role';
 export { TENANT_SCOPE_STATE_TEXT } from './tenant-scope';
-
 export type {
   ScopeTemplateItem,
   ScopeTemplateModule,
@@ -902,6 +915,7 @@ export {
   userOptionLabel,
   userStatusText,
 } from './tenant-user';
+
 export type {
   FieldPolicyPreviewView,
   MenuPreviewNode,
@@ -929,7 +943,6 @@ export {
   userImportActionText,
   userImportSummary,
 } from './user-import';
-
 export type {
   UserImportAction,
   UserImportReport,
