@@ -504,4 +504,50 @@ class TaskCreationPlannerTest {
         assertEquals("NORMAL", result.due().get(0).createType());
         assertEquals(LocalDate.of(2026, 1, 21), result.due().get(0).windowEnd());
     }
+
+    // ---------------------------------------------------------------- E14-T07 单次重算排期（A-FU-011）
+
+    @Test
+    void occurrenceScheduleMatchesDailyPlanningMathIncludingMonthEnd() {
+        // 闰日起算：A 年度形态第 N 次 = 起算 + N 年 → 2024-02-29 第 3 次 = 2027-02-28（2027 非闰，月末钳制）；
+        // 窗口 ±7、提前 7
+        var schedule =
+                TaskCreationPlanner.occurrenceScheduleOf(
+                        planOf(annualNode(), subplan("CYCLE", null, 1, "YEAR")),
+                        NODE_ID,
+                        3,
+                        LocalDate.of(2024, 2, 29));
+        assertEquals(LocalDate.of(2027, 2, 28), schedule.planDate(), "与 plan() 同一套次数推进口径");
+        assertEquals(LocalDate.of(2027, 2, 21), schedule.remindStart());
+        assertEquals(LocalDate.of(2027, 2, 21), schedule.windowStart());
+        assertEquals(LocalDate.of(2027, 3, 7), schedule.windowEnd());
+        assertEquals(LocalDate.of(2027, 2, 21), schedule.openDate());
+    }
+
+    @Test
+    void occurrenceScheduleFallsBackToNodeOffsetWhenFixedSubplanHasNoCycle() {
+        // FIXED 未存周期（配置面只收次数，OQ-78）：周期回落节点偏移 → 第 N 次 = 基准 + N × 偏移
+        var schedule =
+                TaskCreationPlanner.occurrenceScheduleOf(
+                        planOf(milestoneNode(NODE_ID, 10, null), subplan("FIXED", 5, null, null)),
+                        NODE_ID,
+                        2,
+                        LocalDate.of(2026, 1, 1));
+        assertEquals(LocalDate.of(2026, 1, 21), schedule.planDate(), "第 2 次 = 基准 + 2 × 10 天");
+    }
+
+    @Test
+    void occurrenceScheduleReturnsNullForUnknownNodeOrSubplanRow() {
+        List<NodeDef> nodes = planOf(annualNode(), subplan("CYCLE", null, 1, "YEAR"));
+        assertNull(
+                TaskCreationPlanner.occurrenceScheduleOf(nodes, 999L, 1, LocalDate.of(2026, 1, 1)));
+        assertNull(
+                TaskCreationPlanner.occurrenceScheduleOf(
+                        List.of(annualNode()), NODE_ID, 1, LocalDate.of(2026, 1, 1)),
+                "缺子计划行（配置防御）返回 null");
+        assertNull(
+                TaskCreationPlanner.occurrenceScheduleOf(
+                        nodes, SUBPLAN_ID, 1, LocalDate.of(2026, 1, 1)),
+                "子计划行不是任务节点");
+    }
 }

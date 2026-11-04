@@ -153,6 +153,64 @@ public final class TaskCreationPlanner {
                 nodes, enrollmentMode, basisDate, logicalDate, null, planEnd, false, pausedFrom);
     }
 
+    /**
+     * 单个已存在次数的重算排期（E14-T07 / A-FU-011 起算日期变更重算）：按节点参数与新起算日期， 算「该节点第 occurrence
+     * 次」的完整日期组（计划日期、提醒开始日、窗口与开启日）， 与 {@link #plan} 同一套次数推进口径（FIXED 未存周期回落节点偏移，OQ-78）； 不做开启日 /
+     * 窗口判定——重算侧自行决定重排还是撤回。
+     *
+     * @param nodes 入组固定计划版本的全部节点（SUBPLAN + NODE 混排）
+     * @param nodeId 任务行的节点 id（fu_task.node_id）
+     * @param occurrence 任务行的次数（fu_task.occurrence）
+     * @param basisDate 新起算日期（fu_enrollment.start_date 的新值）
+     * @return 该次日期组；节点缺失 / 不是 NODE / 缺子计划（配置防御）返回 null
+     */
+    public static PlanDateCalculator.NodeSchedule occurrenceScheduleOf(
+            List<NodeDef> nodes, long nodeId, int occurrence, LocalDate basisDate) {
+        NodeDef target = null;
+        Map<Long, NodeDef> subplans = new LinkedHashMap<>();
+        for (NodeDef node : nodes) {
+            if ("SUBPLAN".equals(node.nodeType())) {
+                subplans.put(node.id(), node);
+            }
+            if (node.id() == nodeId) {
+                target = node;
+            }
+        }
+        if (target == null || !"NODE".equals(target.nodeType())) {
+            return null;
+        }
+        NodeDef subplan = subplans.get(target.parentId());
+        if (subplan == null) {
+            return null;
+        }
+        int cycleValue =
+                subplan.cycleValue() != null
+                        ? subplan.cycleValue()
+                        : Math.abs(target.offsetValue());
+        String cycleUnit =
+                subplan.cycleUnit() != null
+                        ? subplan.cycleUnit().toUpperCase()
+                        : target.offsetUnit().toUpperCase();
+        PlanDateCalculator.NodeTiming timing = timingOf(target);
+        LocalDate planDate =
+                PlanDateCalculator.occurrencePlanDate(
+                        basisDate, timing, cycleValue, cycleUnit, occurrence);
+        return PlanDateCalculator.scheduleFromPlanDate(timing, planDate);
+    }
+
+    /** 节点行的日期参数（fu_plan_node 偏移 / 提醒 / 窗口列 → NodeTiming，单位归一大写）。 */
+    private static PlanDateCalculator.NodeTiming timingOf(NodeDef node) {
+        return new PlanDateCalculator.NodeTiming(
+                node.offsetValue(),
+                node.offsetUnit().toUpperCase(),
+                node.remindValue(),
+                node.remindUnit().toUpperCase(),
+                node.windowBeforeValue(),
+                node.windowBeforeUnit().toUpperCase(),
+                node.windowAfterValue(),
+                node.windowAfterUnit().toUpperCase());
+    }
+
     /** 入口共用的排期主干（atEnrollment = true 按入组即建口径；pausedFrom 非空按恢复补偿口径）。 */
     private static PlanResult schedule(
             List<NodeDef> nodes,
@@ -227,16 +285,7 @@ public final class TaskCreationPlanner {
                 subplan.cycleUnit() != null
                         ? subplan.cycleUnit().toUpperCase()
                         : node.offsetUnit().toUpperCase();
-        PlanDateCalculator.NodeTiming timing =
-                new PlanDateCalculator.NodeTiming(
-                        node.offsetValue(),
-                        node.offsetUnit().toUpperCase(),
-                        node.remindValue(),
-                        node.remindUnit().toUpperCase(),
-                        node.windowBeforeValue(),
-                        node.windowBeforeUnit().toUpperCase(),
-                        node.windowAfterValue(),
-                        node.windowAfterUnit().toUpperCase());
+        PlanDateCalculator.NodeTiming timing = timingOf(node);
         for (int occurrence = 1; occurrence <= MAX_OCCURRENCES; occurrence++) {
             if (fixed && occurrence > repeatCount) {
                 return null; // 固定次数排完：无下次（该计划「随访结束」由展示层派生）

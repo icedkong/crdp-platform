@@ -3,6 +3,7 @@ package com.crdp.followup.task.infra.mapper;
 import com.crdp.framework.datascope.IgnoreScope;
 import java.time.LocalDate;
 import java.util.List;
+import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Options;
@@ -140,6 +141,92 @@ public interface FollowupTaskMapper {
             @Param("id") long id,
             @Param("nextPlanDate") LocalDate nextPlanDate,
             @Param("nextOpenDate") LocalDate nextOpenDate);
+
+    // ---------------------------------------------------------------- 起算日期变更重算（E14-T07 /
+    // A-FU-011）
+
+    /**
+     * 患者在组（ACTIVE / PAUSED）入组与其起算日期快照（E14-T07 重算对象；REMOVED 的任务已终止不重算）。 只取 id 与状态位、不输出患者明细，
+     * 患者存在性已由调用方先行校验（40400）。
+     */
+    record RecalcEnrollmentRow(
+            long id,
+            long patientId,
+            long planId,
+            LocalDate startDate,
+            String mode,
+            LocalDate enrolledOn) {}
+
+    @IgnoreScope(
+            reason = "起算日期变更重算（E14-T07）只取在组入组行与起算快照（id 与状态位），" + "不输出患者数据；患者存在性校验由服务层（40400）完成")
+    @Select(
+            """
+            SELECT e.id, e.patient_id AS patientId, e.plan_id AS planId,
+                   e.start_date AS startDate, e.mode, DATE(e.created_at) AS enrolledOn
+            FROM fu_enrollment e
+            JOIN pt_patient pt ON pt.id = e.patient_id
+            WHERE e.patient_id = #{patientId} AND e.status IN ('ACTIVE', 'PAUSED') AND pt.deleted = 0
+            ORDER BY e.id
+            """)
+    List<RecalcEnrollmentRow> findInGroupEnrollmentsByPatient(@Param("patientId") long patientId);
+
+    /**
+     * 该入组「已创建但尚无联系记录」的任务（A-FU-011 重算口径）：status = PENDING 待随访（fu_contact_log 随 E15 落地前以状态位判定，
+     * OQ-81②；进行中 / 已完成 / 逾期 / 失访 / 已终止 / 期间未执行均不重算）。只取重算所需列。
+     */
+    record UnstartedTaskRow(long id, long nodeId, int occurrence, String createType) {}
+
+    @IgnoreScope(reason = "起算日期变更重算（E14-T07）读取该入组的未开始任务行（日期组重算用），" + "不输出患者数据；调用方已做患者存在性与范围校验")
+    @Select(
+            """
+            SELECT id, node_id AS nodeId, occurrence, create_type AS createType
+            FROM fu_task
+            WHERE enrollment_id = #{enrollmentId} AND status = 'PENDING'
+            ORDER BY node_id, occurrence
+            """)
+    List<UnstartedTaskRow> findUnstartedTasks(@Param("enrollmentId") long enrollmentId);
+
+    /**
+     * 未开始任务按新日期重排窗口（A-FU-011「已创建但尚无联系记录的当期任务按新日期重算窗口」）： 只改五个日期列并递增乐观锁版本； 状态守卫 PENDING——并发写入联系记录（E15
+     * 起置进行中）后本列不覆盖，返回 0 由调用方按未重排计。
+     */
+    @IgnoreScope(
+            reason =
+                    "起算日期变更重算（E14-T07）：按任务 id 定向 UPDATE（状态守卫 PENDING），"
+                            + "调用方已做患者数据范围校验（40400）；无 SELECT 输出")
+    @Update(
+            """
+            UPDATE fu_task
+            SET plan_date = #{planDate}, remind_start = #{remindStart},
+                window_start = #{windowStart}, window_end = #{windowEnd},
+                open_date = #{openDate}, lock_version = lock_version + 1
+            WHERE id = #{id} AND status = 'PENDING'
+            """)
+    int rescheduleTask(
+            @Param("id") long id,
+            @Param("planDate") LocalDate planDate,
+            @Param("remindStart") LocalDate remindStart,
+            @Param("windowStart") LocalDate windowStart,
+            @Param("windowEnd") LocalDate windowEnd,
+            @Param("openDate") LocalDate openDate);
+
+    /**
+     * 未开始任务撤回为「计划中」（A-FU-011「新窗口尚未开启的撤回为计划中」；A-FU-003 该显示态不对应实际任务）： 删任务行——每日调度到新开启日按新日期重建， uk（入组 +
+     * 节点 + 第 N 次）允许；状态守卫 PENDING（并发进入联系后不撤回）。
+     */
+    @IgnoreScope(
+            reason =
+                    "起算日期变更重算（E14-T07）撤回未开始任务：按任务 id 定向 DELETE（状态守卫 PENDING），"
+                            + "调用方已做患者数据范围校验（40400）；无 SELECT 输出")
+    @Delete("DELETE FROM fu_task WHERE id = #{id} AND status = 'PENDING'")
+    int withdrawTask(@Param("id") long id);
+
+    /** 更新入组起算日期快照（A-FU-011「下次计划日期按新日期实时重算」的基准；V46 预留列，调度回填只补空值，本入口整体覆盖）。 */
+    @IgnoreScope(
+            reason =
+                    "起算日期变更重算（E14-T07）：按入组 id 定向 UPDATE 起算快照，" + "调用方已做患者数据范围校验（40400）；无 SELECT 输出")
+    @Update("UPDATE fu_enrollment SET start_date = #{startDate} WHERE id = #{id}")
+    int updateStartDate(@Param("id") long id, @Param("startDate") LocalDate startDate);
 
     // ---------------------------------------------------------------- 终止（E14-T06 /
     // A-FU-007、A-FU-008）
