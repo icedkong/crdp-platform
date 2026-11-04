@@ -45,8 +45,23 @@ class PlanEnrollmentServiceTest {
     private final com.crdp.followup.task.app.FollowupTaskCreationService taskCreation =
             mock(com.crdp.followup.task.app.FollowupTaskCreationService.class);
 
+    private final com.crdp.followup.patient.app.PatientContactGateway patientScope =
+            mock(com.crdp.followup.patient.app.PatientContactGateway.class);
+    private final com.crdp.followup.patient.app.PatientFollowupStatusService patientStatus =
+            mock(com.crdp.followup.patient.app.PatientFollowupStatusService.class);
+    private final com.crdp.followup.task.app.FollowupTaskTerminator taskTerminations =
+            mock(com.crdp.followup.task.app.FollowupTaskTerminator.class);
+
     private final PlanEnrollmentService service =
-            new PlanEnrollmentService(planMapper, mapper, audit, crypto, taskCreation);
+            new PlanEnrollmentService(
+                    planMapper,
+                    mapper,
+                    audit,
+                    crypto,
+                    taskCreation,
+                    patientScope,
+                    patientStatus,
+                    taskTerminations);
 
     private static PlanMapper.PlanRow plan(String status, int version) {
         return plan(status, version, false);

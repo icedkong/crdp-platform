@@ -189,6 +189,57 @@ public class PlanController {
         return ApiResponse.ok(service.logs(id));
     }
 
+    // ---------------------------------------------------------------- 暂停 / 恢复 / 移出（E14-T06 /
+    // A-FU-008、A-PAT-011）
+
+    @Operation(
+            summary =
+                    "暂停计划内患者（E14-T06 / A-FU-008）：在组 → 已暂停，须填原因（拒绝随访 / 外地随访 / 其他）；"
+                            + "暂停期间不创建任务、不发通知；患者越数据范围 40400；写 ENROLLMENT_PAUSE 审计")
+    @PostMapping("/{id}/enrollments/{enrollmentId}/pause")
+    @RequireModule("followup")
+    @RequiresPermission({"followup:plan:enroll", "followup:plan:edit"})
+    public ApiResponse<PlanEnrollmentService.EnrollmentActionView> pauseEnrollment(
+            @PathVariable long id,
+            @PathVariable long enrollmentId,
+            @RequestBody ReasonRequest request) {
+        return ApiResponse.ok(
+                enrollmentsService.pause(
+                        id, enrollmentId, request == null ? null : request.reason()));
+    }
+
+    @Operation(
+            summary =
+                    "恢复计划内患者（E14-T06 / A-FU-008）：已暂停 → 在组，从下一个窗口起继续按需创建任务；"
+                            + "暂停期间本应开启且窗口已结束的次数补建为「暂停期间未执行」（Q32，由医生选择补做或关闭）；"
+                            + "患者已死亡 / 已终止 40901")
+    @PostMapping("/{id}/enrollments/{enrollmentId}/resume")
+    @RequireModule("followup")
+    @RequiresPermission({"followup:plan:enroll", "followup:plan:edit"})
+    public ApiResponse<PlanEnrollmentService.EnrollmentActionView> resumeEnrollment(
+            @PathVariable long id, @PathVariable long enrollmentId) {
+        return ApiResponse.ok(enrollmentsService.resume(id, enrollmentId));
+    }
+
+    @Operation(
+            summary =
+                    "移出计划内患者（E14-T06 / A-FU-008 / A-PAT-011）：在组（含已暂停）→ 已移除，须填原因；"
+                            + "该入组未完成任务自动终止（终止原因 = 移除原因），之后不再创建任务")
+    @PostMapping("/{id}/enrollments/{enrollmentId}/remove")
+    @RequireModule("followup")
+    @RequiresPermission({"followup:plan:enroll", "followup:plan:edit"})
+    public ApiResponse<PlanEnrollmentService.EnrollmentActionView> removeEnrollment(
+            @PathVariable long id,
+            @PathVariable long enrollmentId,
+            @RequestBody ReasonRequest request) {
+        return ApiResponse.ok(
+                enrollmentsService.remove(
+                        id, enrollmentId, request == null ? null : request.reason()));
+    }
+
+    /** 暂停 / 移出原因体（A-PAT-011 须选原因：拒绝随访 / 外地随访 / 其他）。 */
+    public record ReasonRequest(@Size(max = 255) String reason) {}
+
     /** 新建请求体（autoEnroll = 自动入组开关，Q35 / E14-T05，缺省关）。 */
     public record CreateRequest(
             @Size(max = 64) String code,

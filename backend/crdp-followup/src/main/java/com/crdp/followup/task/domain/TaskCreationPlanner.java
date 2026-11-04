@@ -10,10 +10,10 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * 任务排期纯函数（E14-T04 / A-FU-001、C-FU-004；E14-T05 入组即建）：对一条在组入组，按其固定的计划版本算出「某逻辑日 应存在的各节点各次任务」与「下次计划日期 /
- * 开启日缓存」。不碰库。
+ * 任务排期纯函数（E14-T04 / A-FU-001、C-FU-004；E14-T05 入组即建；E14-T06 恢复补偿）：对一条在组入组，按其固定的计划版本算出「某逻辑日
+ * 应存在的各节点各次任务」与「下次计划日期 / 开启日缓存」。不碰库。
  *
- * <p>两个入口、同一套次数推进口径（tech-plan §8「日期计算」）：
+ * <p>三个入口、同一套次数推进口径（tech-plan §8「日期计算」）：
  *
  * <ul>
  *   <li>{@link #plan}（每日调度，E14-T04）：任务开启日 = 提醒开始日与窗口开始日中较早的一天 （{@link
@@ -22,6 +22,8 @@ import java.util.Objects;
  *   <li>{@link #planForEnrollment}（入组即建，E14-T05 / A 规格第 5 章、Q44）：建档入组当天同步创建—— 窗口在入组日前已结束的次数按节点
  *       passed_window_action 处理（BACKFILL 补建为「补录」任务、SKIP 或未配置跳过， 医院 C 的
  *       Q14）；窗口已开启未结束（窗口结束日不早于入组日且开启日不晚于入组日）的次数当天正常创建（NORMAL）； 其余次数不预生成，只写缓存（A-FU-001「未来节点不预先创建」）。
+ *   <li>{@link #planForResume}（恢复补偿，E14-T06 / A 的 Q32、A-FU-008）：患者暂停恢复当天同步创建——
+ *       暂停区间内本应开启且窗口已结束的次数补建为「暂停期间未执行」（PAUSED_SKIPPED，由医生选择补做或关闭，与平台停用规则一致）；窗口未结束的次数当天正常创建（NORMAL）；其余只写缓存。
  * </ul>
  *
  * <p>其余口径（两入口共用）：
@@ -43,6 +45,19 @@ public final class TaskCreationPlanner {
     public static final String CREATE_NORMAL = "NORMAL";
 
     public static final String CREATE_BACKFILL = "BACKFILL";
+
+    /**
+     * 暂停期间未执行（E14-T06 / A 的 Q32、A-FU-008）：恢复时，暂停区间内本应开启且窗口已结束的次数补建为
+     * 「暂停期间未执行」，由医生选择补做或关闭（与平台停用规则一致）。状态侧建为 SKIPPED_SUSPENDED。
+     */
+    public static final String CREATE_PAUSED_SKIPPED = "PAUSED_SKIPPED";
+
+    /**
+     * 停用期间未执行（E14-T06 / PLT-TEN-017、tech-plan §8 停用补偿）：租户停用（含作业未执行）期间本应开启且窗口
+     * 已结束的次数，恢复后补建为「停用期间未执行」，由人工选择补做或关闭。由服务层 （FollowupTaskCreationService）在每日调度补跑时按「窗口已结束 +
+     * 不属该入组暂停区间」判定， 排期纯函数不感知作业执行历史。
+     */
+    public static final String CREATE_DISABLED_SKIPPED = "DISABLED_SKIPPED";
 
     /** 入组前已过窗口策略（fu_plan_node.passed_window_action）：BACKFILL 补建补录任务（A、B，Q44）。 */
     public static final String PASSED_WINDOW_BACKFILL = "BACKFILL";
@@ -104,7 +119,8 @@ public final class TaskCreationPlanner {
             LocalDate logicalDate,
             LocalDate enrolledOn,
             LocalDate planEnd) {
-        return schedule(nodes, enrollmentMode, basisDate, logicalDate, enrolledOn, planEnd, false);
+        return schedule(
+                nodes, enrollmentMode, basisDate, logicalDate, enrolledOn, planEnd, false, null);
     }
 
     /**
@@ -117,10 +133,27 @@ public final class TaskCreationPlanner {
             LocalDate basisDate,
             LocalDate logicalDate,
             LocalDate planEnd) {
-        return schedule(nodes, enrollmentMode, basisDate, logicalDate, null, planEnd, true);
+        return schedule(nodes, enrollmentMode, basisDate, logicalDate, null, planEnd, true, null);
     }
 
-    /** 两入口共用的排期主干（atEnrollment = true 时按入组即建口径分类补录 / 当期）。 */
+    /**
+     * 恢复当天的排期（E14-T06 / A 的 Q32、A-FU-008「恢复后从下一个窗口起继续按需创建任务」）： 暂停区间 [pausedFrom, logicalDate]
+     * 内本应开启（开启日不晚于逻辑日且不早于暂停起始日）且窗口已结束的次数补建为 「暂停期间未执行」（PAUSED_SKIPPED，由医生选择补做或关闭）；
+     * 窗口已开启未结束的次数当天正常创建（NORMAL，照常发任务开启事件）； 其余次数不预生成，只进缓存。
+     * 开启日早于暂停起始日的次数不属暂停补偿（当时应已由每日调度创建，缺建由调度口径的停用补偿兜底）。
+     */
+    public static PlanResult planForResume(
+            List<NodeDef> nodes,
+            String enrollmentMode,
+            LocalDate basisDate,
+            LocalDate logicalDate,
+            LocalDate pausedFrom,
+            LocalDate planEnd) {
+        return schedule(
+                nodes, enrollmentMode, basisDate, logicalDate, null, planEnd, false, pausedFrom);
+    }
+
+    /** 入口共用的排期主干（atEnrollment = true 按入组即建口径；pausedFrom 非空按恢复补偿口径）。 */
     private static PlanResult schedule(
             List<NodeDef> nodes,
             String enrollmentMode,
@@ -128,7 +161,8 @@ public final class TaskCreationPlanner {
             LocalDate logicalDate,
             LocalDate enrolledOn,
             LocalDate planEnd,
-            boolean atEnrollment) {
+            boolean atEnrollment,
+            LocalDate pausedFrom) {
         Map<Long, NodeDef> subplans = new LinkedHashMap<>();
         for (NodeDef node : nodes) {
             if ("SUBPLAN".equals(node.nodeType())) {
@@ -157,6 +191,7 @@ public final class TaskCreationPlanner {
                             enrolledOn,
                             planEnd,
                             atEnrollment,
+                            pausedFrom,
                             due);
             if (nodeNext != null
                     && (next == null || nodeNext.openDate().isBefore(next.openDate()))) {
@@ -179,6 +214,7 @@ public final class TaskCreationPlanner {
             LocalDate enrolledOn,
             LocalDate planEnd,
             boolean atEnrollment,
+            LocalDate pausedFrom,
             List<PlannedTask> due) {
         boolean rolling = "LAST_VISIT".equals(node.basis());
         String repeatMode = Objects.requireNonNullElse(subplan.repeatMode(), "CYCLE").toUpperCase();
@@ -216,7 +252,8 @@ public final class TaskCreationPlanner {
             if (schedule.openDate().isAfter(logicalDate)) {
                 return task(node.id(), occurrence, schedule, CREATE_NORMAL);
             }
-            String createType = classify(node, schedule, logicalDate, enrolledOn, atEnrollment);
+            String createType =
+                    classify(node, schedule, logicalDate, enrolledOn, atEnrollment, pausedFrom);
             if (createType != null) {
                 due.add(task(node.id(), occurrence, schedule, createType));
             }
@@ -233,6 +270,8 @@ public final class TaskCreationPlanner {
      * <ul>
      *   <li>入组即建（E14-T05）：窗口在入组日前已结束（windowEnd 早于逻辑日）→ 节点策略 BACKFILL 则补建为补录任务、 SKIP / 未配置跳过（医院 C 的
      *       Q14）；窗口未结束 → 当期任务正常创建（NORMAL）；
+     *   <li>恢复补偿（E14-T06）：开启日在暂停区间内且窗口已结束 → 补建为「暂停期间未执行」（PAUSED_SKIPPED）； 窗口未结束 → 当期任务正常创建
+     *       （NORMAL）；开启日早于暂停起始日的次数不属暂停补偿（当时应已由每日调度创建）；
      *   <li>每日调度（E14-T04）：窗口在入组日前已结束的一律不建（OQ-78③）；其余 NORMAL。
      * </ul>
      */
@@ -241,7 +280,17 @@ public final class TaskCreationPlanner {
             PlanDateCalculator.NodeSchedule schedule,
             LocalDate logicalDate,
             LocalDate enrolledOn,
-            boolean atEnrollment) {
+            boolean atEnrollment,
+            LocalDate pausedFrom) {
+        if (pausedFrom != null) {
+            // 恢复补偿口径（E14-T06）：只接管暂停区间内本应开启的次数
+            if (!schedule.openDate().isBefore(pausedFrom)) {
+                return schedule.windowEnd().isBefore(logicalDate)
+                        ? CREATE_PAUSED_SKIPPED
+                        : CREATE_NORMAL;
+            }
+            return CREATE_NORMAL; // 早于暂停起始：按调度常规口径（窗口已结束时由服务层停用补偿兜底）
+        }
         boolean endedBeforeEnrollmentDay =
                 atEnrollment
                         ? schedule.windowEnd().isBefore(logicalDate)

@@ -1,9 +1,12 @@
 package com.crdp.followup.plan.app;
 
+import com.crdp.followup.patient.app.PatientContactGateway;
+import com.crdp.followup.patient.app.PatientFollowupStatusService;
 import com.crdp.followup.plan.infra.mapper.PlanEnrollmentInsertRow;
 import com.crdp.followup.plan.infra.mapper.PlanEnrollmentMapper;
 import com.crdp.followup.plan.infra.mapper.PlanMapper;
 import com.crdp.followup.task.app.FollowupTaskCreationService;
+import com.crdp.followup.task.app.FollowupTaskTerminator;
 import com.crdp.framework.audit.AuditEntry;
 import com.crdp.framework.audit.AuditLogger;
 import com.crdp.framework.audit.AuditResult;
@@ -51,6 +54,18 @@ public class PlanEnrollmentService {
     /** 出院状态「死亡」（A 规格字段 191：1 存活 / 2 病重自动出院 / 3 死亡）——Q35 不自动入组。 */
     private static final int DISCHARGE_STATUS_DEAD = 3;
 
+    /** 患者级随访状态（components.md §2 patient 域；E14-T06 暂停 / 恢复 / 移出同步流转）。 */
+    static final String PATIENT_ACTIVE = "ACTIVE";
+
+    static final String PATIENT_PAUSED = "PAUSED";
+
+    static final String PATIENT_DEAD = "DEAD";
+
+    static final String PATIENT_TERMINATED = "TERMINATED";
+
+    /** 状态时间线来源：计划域联动（V39 source 枚举 REGISTRATION / MANUAL / PLAN / SYSTEM）。 */
+    static final String STATUS_SOURCE_PLAN = "PLAN";
+
     /** 默认分页（AGENTS §6：pageNo 从 1 起、pageSize 默认 20、上限 100）。 */
     private static final int DEFAULT_PAGE_SIZE = 20;
 
@@ -67,17 +82,29 @@ public class PlanEnrollmentService {
 
     private final FollowupTaskCreationService taskCreation;
 
+    private final PatientContactGateway patientScope;
+
+    private final PatientFollowupStatusService patientStatus;
+
+    private final FollowupTaskTerminator taskTerminations;
+
     public PlanEnrollmentService(
             PlanMapper planMapper,
             PlanEnrollmentMapper mapper,
             AuditLogger audit,
             CryptoService crypto,
-            FollowupTaskCreationService taskCreation) {
+            FollowupTaskCreationService taskCreation,
+            PatientContactGateway patientScope,
+            PatientFollowupStatusService patientStatus,
+            FollowupTaskTerminator taskTerminations) {
         this.planMapper = planMapper;
         this.mapper = mapper;
         this.audit = audit;
         this.crypto = crypto;
         this.taskCreation = taskCreation;
+        this.patientScope = patientScope;
+        this.patientStatus = patientStatus;
+        this.taskTerminations = taskTerminations;
     }
 
     /** 入组结果（planId = 固定的计划版本行 id，A-FU-019）。 */
@@ -228,6 +255,281 @@ public class PlanEnrollmentService {
         return enrolled;
     }
 
+    // ---------------------------------------------------------------- 暂停 / 恢复 / 移出（E14-T06 /
+    // A-FU-008、A-PAT-011）
+
+    /** 暂停 / 恢复 / 移出操作结果（counts：恢复的暂停补偿与当期任务、移出终止的任务数）。 */
+    public record EnrollmentActionView(
+            String id,
+            String patientId,
+            String planId,
+            String status,
+            int pausedSkipped,
+            int normal,
+            int terminated) {}
+
+    /**
+     * 暂停单个患者（A-FU-008 / A-PAT-011）：在组（ACTIVE）→ 已暂停，须填原因；暂停期间不创建任务、不发通知 （每日调度只遍历 ACTIVE
+     * 入组），已开启的任务保留原状（统计「暂停中的患者仍计入应随访」）。 无其他在组入组时患者级状态同步「已暂停」。
+     */
+    @Transactional
+    public EnrollmentActionView pause(long planId, long enrollmentId, String reason) {
+        PlanEnrollmentMapper.EnrollmentStateRow enrollment =
+                requireOwnEnrollment(planId, enrollmentId);
+        String normalized = requireReason(reason, "暂停");
+        if (!"ACTIVE".equals(enrollment.status())) {
+            denied(
+                    "ENROLLMENT_PAUSE",
+                    enrollment,
+                    "暂停",
+                    "ENROLLMENT_STATUS_" + enrollment.status());
+            throw new ApiException(409, 40901, "只有已启动（在组）的入组才能暂停；已暂停的可直接恢复，已移出的需重新入组");
+        }
+        if (mapper.pauseEnrollment(enrollmentId, normalized) == 0) {
+            throw new ApiException(409, 40901, "入组状态已变化，请刷新后重试");
+        }
+        // 患者级「已暂停」：多计划并存时只在该患者无其他在组入组时落（A 医院单计划场景即恒落）
+        if (mapper.countOtherEnrolled(enrollment.patientId(), enrollmentId) == 0
+                && "ACTIVE".equals(enrollment.patientFollowupStatus())) {
+            patientStatus.transition(
+                    enrollment.patientId(),
+                    PATIENT_PAUSED,
+                    normalized,
+                    STATUS_SOURCE_PLAN,
+                    PATIENT_ACTIVE,
+                    currentUserId());
+        }
+        audit.append(
+                AuditEntry.operation("followup", "ENROLLMENT_PAUSE")
+                        .objectType("ENROLLMENT")
+                        .objectId(String.valueOf(enrollmentId))
+                        .description(
+                                "暂停计划内患者（A-FU-008）：计划 "
+                                        + enrollment.planCode()
+                                        + "，原因 "
+                                        + normalized
+                                        + "（暂停期间不创建任务、不发通知）")
+                        .afterJson(
+                                "{\"enrollmentId\":"
+                                        + enrollmentId
+                                        + ",\"planCode\":\""
+                                        + enrollment.planCode()
+                                        + "\",\"status\":\"PAUSED\",\"reason\":\""
+                                        + normalized
+                                        + "\"}")
+                        .result(AuditResult.SUCCESS)
+                        .build());
+        return new EnrollmentActionView(
+                String.valueOf(enrollmentId),
+                String.valueOf(enrollment.patientId()),
+                String.valueOf(planId),
+                "PAUSED",
+                0,
+                0,
+                0);
+    }
+
+    /**
+     * 恢复单个患者（A-FU-008 / A-PAT-011「恢复后从下一个窗口起继续按需创建任务」）：已暂停 → 在组，落暂停区间止点；
+     * 同一事务内补建暂停期间的次数——窗口已结束的补为「暂停期间未执行」（PAUSED_SKIPPED，由医生选择补做或关闭，A 的 Q32），窗口未结束的当期任务正常创建。患者已死亡 /
+     * 已终止时不能恢复（A-FU-007 之后不再随访）。
+     */
+    @Transactional
+    public EnrollmentActionView resume(long planId, long enrollmentId) {
+        PlanEnrollmentMapper.EnrollmentStateRow enrollment =
+                requireOwnEnrollment(planId, enrollmentId);
+        if (!"PAUSED".equals(enrollment.status())) {
+            denied(
+                    "ENROLLMENT_RESUME",
+                    enrollment,
+                    "恢复",
+                    "ENROLLMENT_STATUS_" + enrollment.status());
+            throw new ApiException(409, 40901, "只有已暂停的入组才能恢复");
+        }
+        if (PATIENT_DEAD.equals(enrollment.patientFollowupStatus())
+                || PATIENT_TERMINATED.equals(enrollment.patientFollowupStatus())) {
+            denied(
+                    "ENROLLMENT_RESUME",
+                    enrollment,
+                    "恢复",
+                    "PATIENT_" + enrollment.patientFollowupStatus());
+            throw new ApiException(409, 40901, "患者已死亡或已终止随访，不能恢复（A-FU-007 之后不再创建任务）");
+        }
+        if (mapper.resumeEnrollment(enrollmentId) == 0) {
+            throw new ApiException(409, 40901, "入组状态已变化，请刷新后重试");
+        }
+        FollowupTaskCreationService.ResumeInitSummary compensation =
+                enrollment.pauseFrom() == null
+                        ? new FollowupTaskCreationService.ResumeInitSummary(0, 0)
+                        : taskCreation.initializeForResumedEnrollment(
+                                enrollmentId,
+                                enrollment.patientId(),
+                                enrollment.planId(),
+                                enrollment.mode(),
+                                enrollment.pauseFrom());
+        // 患者级回「随访中」：该患者已无其他已暂停入组且当前为「已暂停」时解除
+        if (mapper.countOtherPaused(enrollment.patientId(), enrollmentId) == 0
+                && PATIENT_PAUSED.equals(enrollment.patientFollowupStatus())) {
+            patientStatus.transition(
+                    enrollment.patientId(),
+                    PATIENT_ACTIVE,
+                    "恢复随访（计划 " + enrollment.planCode() + "）",
+                    STATUS_SOURCE_PLAN,
+                    PATIENT_PAUSED,
+                    currentUserId());
+        }
+        audit.append(
+                AuditEntry.operation("followup", "ENROLLMENT_RESUME")
+                        .objectType("ENROLLMENT")
+                        .objectId(String.valueOf(enrollmentId))
+                        .description(
+                                "恢复计划内患者（A-FU-008）：计划 "
+                                        + enrollment.planCode()
+                                        + "，从下一个窗口起继续按需创建任务；补建暂停期间未执行 "
+                                        + compensation.pausedSkipped()
+                                        + " 条、当期 "
+                                        + compensation.normal()
+                                        + " 条")
+                        .afterJson(
+                                "{\"enrollmentId\":"
+                                        + enrollmentId
+                                        + ",\"planCode\":\""
+                                        + enrollment.planCode()
+                                        + "\",\"status\":\"ACTIVE\",\"pausedSkippedTasks\":"
+                                        + compensation.pausedSkipped()
+                                        + ",\"currentTasks\":"
+                                        + compensation.normal()
+                                        + "}")
+                        .result(AuditResult.SUCCESS)
+                        .build());
+        return new EnrollmentActionView(
+                String.valueOf(enrollmentId),
+                String.valueOf(enrollment.patientId()),
+                String.valueOf(planId),
+                "ACTIVE",
+                compensation.pausedSkipped(),
+                compensation.normal(),
+                0);
+    }
+
+    /**
+     * 移出单个患者（A-FU-008 / A-PAT-011，须填原因：拒绝随访 / 外地随访 / 其他）：在组（含已暂停）→ 已移除； 该入组全部未完成任务自动终止（终止原因 =
+     * 移除原因），之后不再创建任务（调度只遍历在组入组）。 无其他在组入组时患者级状态同步「已终止」。
+     */
+    @Transactional
+    public EnrollmentActionView remove(long planId, long enrollmentId, String reason) {
+        PlanEnrollmentMapper.EnrollmentStateRow enrollment =
+                requireOwnEnrollment(planId, enrollmentId);
+        String normalized = requireReason(reason, "移出");
+        if (!"ACTIVE".equals(enrollment.status()) && !"PAUSED".equals(enrollment.status())) {
+            denied(
+                    "ENROLLMENT_REMOVE",
+                    enrollment,
+                    "移出",
+                    "ENROLLMENT_STATUS_" + enrollment.status());
+            throw new ApiException(409, 40901, "该入组已移出，无需重复操作");
+        }
+        if (mapper.removeEnrollment(enrollmentId, normalized) == 0) {
+            throw new ApiException(409, 40901, "入组状态已变化，请刷新后重试");
+        }
+        int terminated =
+                taskTerminations.terminateUnfinishedByEnrollment(
+                        enrollmentId, normalized, currentUserId());
+        // 患者级「已终止」：无其他在组入组且患者仍在随访中 / 已暂停时落（已死亡 / 失访等更强状态不覆盖）
+        if (mapper.countOtherEnrolled(enrollment.patientId(), enrollmentId) == 0
+                && (PATIENT_ACTIVE.equals(enrollment.patientFollowupStatus())
+                        || PATIENT_PAUSED.equals(enrollment.patientFollowupStatus()))) {
+            patientStatus.transition(
+                    enrollment.patientId(),
+                    PATIENT_TERMINATED,
+                    normalized,
+                    STATUS_SOURCE_PLAN,
+                    enrollment.patientFollowupStatus(),
+                    currentUserId());
+        }
+        audit.append(
+                AuditEntry.operation("followup", "ENROLLMENT_REMOVE")
+                        .objectType("ENROLLMENT")
+                        .objectId(String.valueOf(enrollmentId))
+                        .description(
+                                "移出计划内患者（A-FU-008 / A-PAT-011）：计划 "
+                                        + enrollment.planCode()
+                                        + "，原因 "
+                                        + normalized
+                                        + "，终止未完成任务 "
+                                        + terminated
+                                        + " 条")
+                        .afterJson(
+                                "{\"enrollmentId\":"
+                                        + enrollmentId
+                                        + ",\"planCode\":\""
+                                        + enrollment.planCode()
+                                        + "\",\"status\":\"REMOVED\",\"reason\":\""
+                                        + normalized
+                                        + "\",\"terminatedTasks\":"
+                                        + terminated
+                                        + "}")
+                        .result(AuditResult.SUCCESS)
+                        .build());
+        return new EnrollmentActionView(
+                String.valueOf(enrollmentId),
+                String.valueOf(enrollment.patientId()),
+                String.valueOf(planId),
+                "REMOVED",
+                0,
+                0,
+                terminated);
+    }
+
+    /** 操作对象定位：入组存在、属于该计划，且患者在操作者数据范围内（越范围 40400，不暴露存在）。 */
+    private PlanEnrollmentMapper.EnrollmentStateRow requireOwnEnrollment(
+            long planId, long enrollmentId) {
+        PlanEnrollmentMapper.EnrollmentStateRow enrollment =
+                mapper.findEnrollmentState(enrollmentId);
+        if (enrollment == null || enrollment.planId() != planId) {
+            throw new ApiException(404, 40400, "入组不存在或不属于该计划");
+        }
+        if (patientScope.patientIdInScope(enrollment.patientId()) == null) {
+            throw new ApiException(404, 40400, "患者不存在或不在您的数据范围内");
+        }
+        return enrollment;
+    }
+
+    /** 原因必填（A-PAT-011：暂停 / 移出须选原因），≤255 字符。 */
+    private static String requireReason(String reason, String verb) {
+        if (reason == null || reason.isBlank()) {
+            throw new ApiException(400, 40001, "请填写" + verb + "原因（A-PAT-011）");
+        }
+        String trimmed = reason.trim();
+        if (trimmed.length() > 255) {
+            throw new ApiException(400, 40001, verb + "原因最多 255 个字符");
+        }
+        return trimmed;
+    }
+
+    /** 被拒的状态流转只写 DENIED 审计（没有发生改动，不落计划变更记录）。 */
+    private void denied(
+            String action,
+            PlanEnrollmentMapper.EnrollmentStateRow enrollment,
+            String verb,
+            String reasonCode) {
+        audit.append(
+                AuditEntry.operation("followup", action)
+                        .objectType("ENROLLMENT")
+                        .objectId(String.valueOf(enrollment.id()))
+                        .description(
+                                verb
+                                        + "计划内患者被阻止：计划 "
+                                        + enrollment.planCode()
+                                        + "（当前入组状态 "
+                                        + enrollment.status()
+                                        + "）")
+                        .result(AuditResult.DENIED)
+                        .errorCode(40901)
+                        .reason(reasonCode)
+                        .build());
+    }
+
     // ---------------------------------------------------------------- 计划患者列表（E14-T08 / A-FU-022）
 
     /**
@@ -305,6 +607,10 @@ public class PlanEnrollmentService {
                         .reason("PATIENT_ALREADY_ENROLLED")
                         .build());
         return new ApiException(409, 40901, "该患者已在该计划中（在组），不能重复入组；如需迁移版本请等待后续任务");
+    }
+
+    private static Long currentUserId() {
+        return CurrentSession.current().map(principal -> principal.userId()).orElse(null);
     }
 
     private static String normalizeMode(String mode) {
