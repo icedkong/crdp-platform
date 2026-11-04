@@ -2,6 +2,7 @@ package com.crdp.followup.plan.infra.mapper;
 
 import com.crdp.framework.datascope.DataScope;
 import com.crdp.framework.datascope.IgnoreScope;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.apache.ibatis.annotations.Insert;
@@ -9,6 +10,7 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Options;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
 /**
  * 患者入组（E14-T01 / A-FU-019、A-PAT-016；表 followup V46 建）。
@@ -51,6 +53,18 @@ public interface PlanEnrollmentMapper {
 
     /** 完成次数聚合行（fu_task 管理口径计数，不输出患者数据）。 */
     record CompletedCountRow(long enrollmentId, long completed) {}
+
+    /** 入组行（E14-T06 暂停 / 恢复 / 移出操作对象）：只取入组与患者状态位，不含患者明细。 患者在册与否、操作者数据范围由调用方先行校验。 */
+    record EnrollmentStateRow(
+            long id,
+            long patientId,
+            long planId,
+            String planCode,
+            String mode,
+            String status,
+            LocalDate pauseFrom,
+            LocalDate pauseTo,
+            String patientFollowupStatus) {}
 
     /** 患者状态位（存在性 + 随访状态，不输出患者数据）。 */
     @IgnoreScope(
@@ -136,4 +150,86 @@ public interface PlanEnrollmentMapper {
             </script>
             """)
     List<CompletedCountRow> countCompletedByEnrollmentIds(@Param("ids") List<Long> ids);
+
+    // ---------------------------------------------------------------- 暂停 / 恢复 / 移出（E14-T06 /
+    // A-FU-008、A-PAT-011）
+
+    /** 入组行与患者随访状态位（只取状态位与暂停区间，不输出患者明细；患者范围校验由调用方经 PatientContactGateway 做）。 */
+    @IgnoreScope(
+            reason =
+                    "入组暂停 / 恢复 / 移出（E14-T06）的操作对象定位：只取入组状态位与患者随访状态位，"
+                            + "不输出患者数据；操作者的患者数据范围校验在服务层（40400）")
+    @Select(
+            """
+            SELECT e.id, e.patient_id AS patientId, e.plan_id AS planId, e.plan_code AS planCode,
+                   e.mode, e.status, DATE(e.pause_from) AS pauseFrom, DATE(e.pause_to) AS pauseTo,
+                   p.followup_status AS patientFollowupStatus
+            FROM fu_enrollment e
+            JOIN pt_patient p ON p.id = e.patient_id AND p.deleted = 0
+            WHERE e.id = #{enrollmentId}
+            """)
+    EnrollmentStateRow findEnrollmentState(@Param("enrollmentId") long enrollmentId);
+
+    /** 暂停（A-FU-008）：ACTIVE → PAUSED，起记暂停区间并清除上一区间止点；返回 0 = 已不在组（并发状态变化）。 */
+    @IgnoreScope(
+            reason =
+                    "入组暂停（E14-T06）：按入组 id 定向 UPDATE（状态守卫 ACTIVE），调用方已做患者数据范围"
+                            + "校验（40400）；无 SELECT 输出")
+    @Update(
+            """
+            UPDATE fu_enrollment
+            SET status = 'PAUSED', pause_reason = #{reason},
+                pause_from = CURRENT_TIMESTAMP(3), pause_to = NULL
+            WHERE id = #{enrollmentId} AND status = 'ACTIVE'
+            """)
+    int pauseEnrollment(@Param("enrollmentId") long enrollmentId, @Param("reason") String reason);
+
+    /** 恢复（A-FU-008「恢复后从下一个窗口起继续按需创建任务」）：PAUSED → ACTIVE，落暂停区间止点；返回 0 = 并发状态变化。 */
+    @IgnoreScope(
+            reason =
+                    "入组恢复（E14-T06）：按入组 id 定向 UPDATE（状态守卫 PAUSED），调用方已做患者数据范围"
+                            + "校验（40400）；无 SELECT 输出")
+    @Update(
+            """
+            UPDATE fu_enrollment
+            SET status = 'ACTIVE', pause_to = CURRENT_TIMESTAMP(3)
+            WHERE id = #{enrollmentId} AND status = 'PAUSED'
+            """)
+    int resumeEnrollment(@Param("enrollmentId") long enrollmentId);
+
+    /**
+     * 移出（A-FU-008 / A-PAT-011 须填原因）：在组（ACTIVE / PAUSED）→ REMOVED（active_key 置空释放唯一键）；返回 0 = 并发状态变化。
+     */
+    @IgnoreScope(
+            reason = "入组移出（E14-T06）：按入组 id 定向 UPDATE（状态守卫在组），调用方已做患者数据范围" + "校验（40400）；无 SELECT 输出")
+    @Update(
+            """
+            UPDATE fu_enrollment
+            SET status = 'REMOVED', remove_reason = #{reason}
+            WHERE id = #{enrollmentId} AND status IN ('ACTIVE', 'PAUSED')
+            """)
+    int removeEnrollment(@Param("enrollmentId") long enrollmentId, @Param("reason") String reason);
+
+    /** 患者除本入组外是否还有在组（ACTIVE / PAUSED）入组（多计划并存时患者级状态不落的判定，只取计数）。 */
+    @IgnoreScope(reason = "患者级随访状态流转判定（E14-T06）：只取在组入组计数，不输出患者或入组明细；" + "与计划患者列表的管理口径计数同思路")
+    @Select(
+            """
+            SELECT COUNT(*) FROM fu_enrollment
+            WHERE patient_id = #{patientId} AND id <> #{excludeEnrollmentId}
+              AND status IN ('ACTIVE', 'PAUSED')
+            """)
+    int countOtherEnrolled(
+            @Param("patientId") long patientId,
+            @Param("excludeEnrollmentId") long excludeEnrollmentId);
+
+    /** 患者除本入组外是否仍有已暂停入组（恢复后患者级「已暂停」是否解除的判定，只取计数）。 */
+    @IgnoreScope(reason = "患者级随访状态流转判定（E14-T06）：只取已暂停入组计数，不输出患者或入组明细")
+    @Select(
+            """
+            SELECT COUNT(*) FROM fu_enrollment
+            WHERE patient_id = #{patientId} AND id <> #{excludeEnrollmentId} AND status = 'PAUSED'
+            """)
+    int countOtherPaused(
+            @Param("patientId") long patientId,
+            @Param("excludeEnrollmentId") long excludeEnrollmentId);
 }

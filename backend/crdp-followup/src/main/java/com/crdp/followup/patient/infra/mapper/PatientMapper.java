@@ -197,6 +197,25 @@ public interface PatientMapper {
     int updateWard(
             @Param("id") long id, @Param("wardId") long wardId, @Param("updatedBy") long updatedBy);
 
+    /**
+     * 随访状态流转（E14-T06 / A-FU-007、A-FU-008、A-PAT-011）：只改状态位并递增乐观锁版本，guardedOn 非空时只在当前值等于它才更新（并发流转 0
+     * 行由调用方处理）。定向 UPDATE，数据范围前置校验由调用方 （经 PatientContactGateway 40400）完成；状态时间线 pt_status_history 由
+     * PatientStatusHistoryService 只追加写入。
+     */
+    @Update(
+            """
+            <script>
+            UPDATE pt_patient
+            SET followup_status = #{status}, updated_by = #{updatedBy}, version = version + 1
+            WHERE id = #{id} AND deleted = 0
+              <if test="guardedOn != null">AND followup_status = #{guardedOn}</if>
+            </script>""")
+    int updateFollowupStatus(
+            @Param("id") long id,
+            @Param("status") String status,
+            @Param("guardedOn") String guardedOn,
+            @Param("updatedBy") Long updatedBy);
+
     /** 出院登记写入；并发同号由 uk_pt_patient_mrn 兜底（DuplicateKeyException → 40902）。 */
     @Insert(
             """

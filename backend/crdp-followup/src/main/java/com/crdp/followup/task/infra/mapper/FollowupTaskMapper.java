@@ -18,14 +18,19 @@ import org.apache.ibatis.annotations.Update;
 @Mapper
 public interface FollowupTaskMapper {
 
-    /** 可调入组（患者与计划版本快照；enrolledOn = 入组日，作为「入组前已过窗口」的下界）。 */
+    /**
+     * 可调入组（患者与计划版本快照；enrolledOn = 入组日，作为「入组前已过窗口」的下界；pauseFrom / pauseTo =
+     * 最近一次暂停区间，停用补偿归属判定用，E14-T06）。
+     */
     record EnrollmentRow(
             long id,
             long patientId,
             long planId,
             LocalDate startDate,
             String mode,
-            LocalDate enrolledOn) {}
+            LocalDate enrolledOn,
+            LocalDate pauseFrom,
+            LocalDate pauseTo) {}
 
     /** 负责人解析上下文（A-FU-009 回落链：责任医生 → 病区默认负责人 → 待认领池）。 */
     record PatientOwnerRow(Long responsibleUserId, Long wardDefaultOwnerId) {}
@@ -42,7 +47,8 @@ public interface FollowupTaskMapper {
     @Select(
             """
             SELECT e.id, e.patient_id AS patientId, e.plan_id AS planId,
-                   e.start_date AS startDate, e.mode, DATE(e.created_at) AS enrolledOn
+                   e.start_date AS startDate, e.mode, DATE(e.created_at) AS enrolledOn,
+                   DATE(e.pause_from) AS pauseFrom, DATE(e.pause_to) AS pauseTo
             FROM fu_enrollment e
             JOIN fu_plan p ON p.id = e.plan_id
             JOIN pt_patient pt ON pt.id = e.patient_id
@@ -134,4 +140,50 @@ public interface FollowupTaskMapper {
             @Param("id") long id,
             @Param("nextPlanDate") LocalDate nextPlanDate,
             @Param("nextOpenDate") LocalDate nextOpenDate);
+
+    // ---------------------------------------------------------------- 终止（E14-T06 /
+    // A-FU-007、A-FU-008）
+
+    /**
+     * 终止一条入组的全部未完成任务（移出计划，A-FU-008 / A-PAT-011）：未完成 = 尚未终止且未完成（含待随访、 进行中、逾期、暂停 /
+     * 停用期间未执行）；已完成与已失访保留原状（历史事实）。返回终止条数。 数据范围前置校验由调用方 （PlanEnrollmentService.remove，经
+     * PatientContactGateway 40400）完成。
+     */
+    @IgnoreScope(
+            reason = "移出计划终止未完成任务（E14-T06）：按入组 id 定向 UPDATE，调用方已做患者数据范围校验" + "（40400）；无 SELECT 输出")
+    @Update(
+            """
+            UPDATE fu_task
+            SET status = 'TERMINATED', terminate_reason = #{reason},
+                terminated_at = #{terminatedAt}, terminated_by = #{terminatedBy}
+            WHERE enrollment_id = #{enrollmentId}
+              AND status IN ('PENDING', 'IN_PROGRESS', 'OVERDUE', 'SKIPPED_SUSPENDED')
+            """)
+    int terminateUnfinishedByEnrollment(
+            @Param("enrollmentId") long enrollmentId,
+            @Param("reason") String reason,
+            @Param("terminatedAt") java.time.LocalDateTime terminatedAt,
+            @Param("terminatedBy") Long terminatedBy);
+
+    /**
+     * 终止一位患者全部入组的未完成任务（死亡自动终止，A-FU-007 / tasks.csv 验收「告知已故后未开始任务全部终止」）。 返回终止条数。
+     * 数据范围前置校验由调用方（FollowupTerminationService，经 PatientContactGateway 40400）完成。
+     */
+    @IgnoreScope(
+            reason =
+                    "死亡自动终止未完成任务（E14-T06 / A-FU-007）：按患者 id 定向 UPDATE，调用方已做患者数据"
+                            + "范围校验（40400）；无 SELECT 输出")
+    @Update(
+            """
+            UPDATE fu_task
+            SET status = 'TERMINATED', terminate_reason = #{reason},
+                terminated_at = #{terminatedAt}, terminated_by = #{terminatedBy}
+            WHERE patient_id = #{patientId}
+              AND status IN ('PENDING', 'IN_PROGRESS', 'OVERDUE', 'SKIPPED_SUSPENDED')
+            """)
+    int terminateUnfinishedByPatient(
+            @Param("patientId") long patientId,
+            @Param("reason") String reason,
+            @Param("terminatedAt") java.time.LocalDateTime terminatedAt,
+            @Param("terminatedBy") Long terminatedBy);
 }

@@ -28,8 +28,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 /**
- * 每日 00:10 的任务按需创建作业体（E14-T04 / A-FU-001、C-FU-004、A-NFR-006、C-NFR-007；验收：任务在提醒开始日与 窗口开始日较早一天创建）
- * 与入组即建入口（E14-T05 / Q44，验收：已结束窗口照常建任务并标补录）。
+ * 每日 00:10 的任务按需创建作业体（E14-T04 / A-FU-001、C-FU-004、A-NFR-006、C-NFR-007；验收：任务在提醒开始日与 窗口开始日较早一天创建）、
+ * 入组即建入口（E14-T05 / Q44，验收：已结束窗口照常建任务并标补录）与恢复补偿入口（E14-T06 / A 的 Q32、A-FU-008）。
  *
  * <p>结构（tech-plan §8「每日调度」流程图）：
  *
@@ -37,9 +37,11 @@ import org.springframework.stereotype.Service;
  *   <li>扇出、执行记录与补跑区间（上次成功日 + 1 至逻辑日）由 E02-T06 的 {@link JobScheduler} 承担（job_tenant_run， jobCode =
  *       {@value #JOB_CODE}）；单租户失败不影响其他租户；
  *   <li>followup 模块未开通的租户跳过（OQ-46②：E14 起模块作业按 openedModules 扇出过滤）；
- *   <li>每逻辑日遍历「已启动」入组（暂停 / 移除的不建，恢复补偿随 E14-T06；计划 PAUSED 不建、被顶替 DISABLED 版本在组沿用继续建，OQ-76①；患者死亡 /
- *       终止不再建，A-FU-007），用 {@link TaskCreationPlanner} 排期， 逐次创建 PENDING 任务——幂等由 uk（入组 + 节点 + 第 N
- *       次）保证，重复执行与停机补跑重放不重复创建；
+ *   <li>每逻辑日遍历「已启动」入组（暂停 / 移除的不建，恢复补偿由 {@link #initializeForResumedEnrollment} 在恢复当天同步补建； 计划 PAUSED
+ *       不建、被顶替 DISABLED 版本在组沿用继续建，OQ-76①；患者死亡 / 终止不再建，A-FU-007）， 用 {@link TaskCreationPlanner} 排期，
+ *       逐次创建 PENDING 任务——幂等由 uk（入组 + 节点 + 第 N 次）保证，重复执行与停机补跑重放不重复创建；
+ *   <li>停用补偿（E14-T06 / PLT-TEN-017、tech-plan §8）：补跑时窗口已在本次运行目标逻辑日前结束、 又未被按时创建的次数（租户停用 /
+ *       作业未执行期间本应执行）补建为「停用期间未执行」（DISABLED_SKIPPED + SKIPPED_SUSPENDED）， 不发通知，由人工选择补做或关闭；
  *   <li>新建任务写 {@code TaskOpened} 事件到租户库 outbox（消费方随 E15 通知落地，无人订阅保持 PENDING，OQ-60③）；
  *   <li>刷新入组的下次计划日期 / 开启日缓存（fu_enrollment.next_plan_date / next_open_date，V46 预留）。
  * </ul>
@@ -60,8 +62,14 @@ public class FollowupTaskCreationService {
     /** 任务开启 outbox 事件类型（E15 通知规则引擎消费，OQ-60②）。 */
     static final String EVENT_TASK_OPENED = "TaskOpened";
 
+    /** 任务状态：停用 / 暂停期间未执行（PLT-TEN-017、A 的 Q32；补做或关闭的流转随 E15-T01）。 */
+    static final String STATUS_SKIPPED_SUSPENDED = "SKIPPED_SUSPENDED";
+
     /** 入组即建结果（E14-T05）：补录（已结束窗口）与当期（窗口已开启未结束）任务数，供入组审计并入。 */
     public record EnrollmentInitSummary(int backfill, int normal) {}
+
+    /** 恢复补偿结果（E14-T06）：「暂停期间未执行」与当期（窗口未结束）任务数，供恢复审计并入。 */
+    public record ResumeInitSummary(int pausedSkipped, int normal) {}
 
     private static final Logger log = LoggerFactory.getLogger(FollowupTaskCreationService.class);
 
@@ -115,7 +123,7 @@ public class FollowupTaskCreationService {
                         .orElse(logicalDate);
         int created = 0;
         for (LocalDate date = from; !date.isAfter(logicalDate); date = date.plusDays(1)) {
-            created += createForDate(date);
+            created += createForDate(date, logicalDate);
         }
         log.info(
                 "任务创建完成 tenant={} from={} to={} created={}",
@@ -141,13 +149,16 @@ public class FollowupTaskCreationService {
         }
     }
 
-    /** 一个逻辑日：遍历可调入组，单条失败记 WARN 继续（返回新建数）。 */
-    private int createForDate(LocalDate logicalDate) {
+    /**
+     * 一个逻辑日：遍历可调入组，单条失败记 WARN 继续（返回新建数）。 runDate = 本次运行的目标逻辑日（补跑时晚于逐日推进的
+     * date），停用补偿按它判定「窗口在本次运行时点已结束」（E14-T06）。
+     */
+    private int createForDate(LocalDate logicalDate, LocalDate runDate) {
         int created = 0;
         for (FollowupTaskMapper.EnrollmentRow enrollment :
                 taskMapper.findSchedulableEnrollments()) {
             try {
-                created += processEnrollment(enrollment, logicalDate);
+                created += processEnrollment(enrollment, logicalDate, runDate);
             } catch (RuntimeException ex) {
                 log.warn(
                         "入组任务创建失败，跳过该入组继续 enrollment={} plan={} 原因={}",
@@ -161,11 +172,11 @@ public class FollowupTaskCreationService {
 
     // ---------------------------------------------------------------- 单入组处理
 
-    /** 每日调度口径（入组前已过窗口不建，OQ-78③）；返回新建任务数（创建方式恒 NORMAL）。 */
+    /** 每日调度口径（入组前已过窗口不建，OQ-78③）；返回新建任务数（含停用补偿，E14-T06）。 */
     private int processEnrollment(
-            FollowupTaskMapper.EnrollmentRow enrollment, LocalDate logicalDate) {
-        EnrollmentInitSummary summary = initializeForLogicalDate(enrollment, logicalDate, false);
-        return summary.backfill() + summary.normal();
+            FollowupTaskMapper.EnrollmentRow enrollment, LocalDate logicalDate, LocalDate runDate) {
+        CreationCounts counts = initializeInternal(enrollment, logicalDate, runDate, null, false);
+        return counts.total();
     }
 
     // ---------------------------------------------------------------- 入组即建（E14-T05 / Q44）
@@ -186,17 +197,51 @@ public class FollowupTaskCreationService {
     public EnrollmentInitSummary initializeForNewEnrollment(
             long enrollmentId, long patientId, long planId, String mode) {
         LocalDate today = PlanDateCalculator.businessToday(Instant.now());
-        return initializeForLogicalDate(
-                new FollowupTaskMapper.EnrollmentRow(
-                        enrollmentId, patientId, planId, null, mode, today),
-                today,
-                true);
+        CreationCounts counts =
+                initializeInternal(
+                        new FollowupTaskMapper.EnrollmentRow(
+                                enrollmentId, patientId, planId, null, mode, today, null, null),
+                        today,
+                        today,
+                        null,
+                        true);
+        return new EnrollmentInitSummary(counts.backfill(), counts.normal());
     }
 
-    /** 单入组的排期与建任务（每日调度与入组即建共用；atEnrollment = true 用入组即建口径分类补录 / 当期）。 */
-    private EnrollmentInitSummary initializeForLogicalDate(
+    // ---------------------------------------------------------------- 恢复补偿（E14-T06 / A 的
+    // Q32、A-FU-008）
+
+    /**
+     * 恢复当天同步创建任务（与恢复同一事务，由 {@code PlanEnrollmentService.resume} 调用）：
+     *
+     * <ul>
+     *   <li>暂停区间 [pausedFrom, 今天] 内本应开启且窗口已结束的次数：补建为「暂停期间未执行」（create_type = PAUSED_SKIPPED、状态
+     *       SKIPPED_SUSPENDED，由医生选择补做或关闭，Q32），不写 TaskOpened 事件；
+     *   <li>窗口已开启未结束的次数：当天正常创建（NORMAL，「恢复后剩余子计划重新开启」）并照常写 TaskOpened；
+     *   <li>未来次数不预生成，只刷新下次计划日期 / 开启日缓存；开启日早于暂停起始且窗口已结束的次数按停用补偿口径 （DISABLED_SKIPPED）兜底，不属本次暂停。
+     * </ul>
+     *
+     * <p>幂等由 uk（入组 + 节点 + 第 N 次）保证：恢复补偿与之后的每日调度重放不重复创建。
+     */
+    public ResumeInitSummary initializeForResumedEnrollment(
+            long enrollmentId, long patientId, long planId, String mode, LocalDate pausedFrom) {
+        LocalDate today = PlanDateCalculator.businessToday(Instant.now());
+        FollowupTaskMapper.EnrollmentRow row =
+                new FollowupTaskMapper.EnrollmentRow(
+                        enrollmentId, patientId, planId, null, mode, today, pausedFrom, today);
+        CreationCounts counts = initializeInternal(row, today, today, pausedFrom, false);
+        return new ResumeInitSummary(counts.skipped(), counts.normal());
+    }
+
+    /**
+     * 单入组的排期与建任务（各同步入口与每日调度共用；runDate = 本次运行目标逻辑日，停用补偿判定用；atEnrollment = 入组即建口径；resumePausedFrom 非空
+     * = 恢复补偿口径）。
+     */
+    private CreationCounts initializeInternal(
             FollowupTaskMapper.EnrollmentRow enrollment,
             LocalDate logicalDate,
+            LocalDate runDate,
+            LocalDate resumePausedFrom,
             boolean atEnrollment) {
         LocalDate startDate =
                 enrollment.startDate() != null
@@ -206,36 +251,71 @@ public class FollowupTaskCreationService {
             log.debug(
                     "起算日期不可解析（IMPLANT_DATE 随 E21、CUSTOM 未定义或字段值为空），入组暂不建任务 enrollment={}",
                     enrollment.id());
-            return new EnrollmentInitSummary(0, 0);
+            return new CreationCounts(0, 0, 0);
         }
         PlanMapper.PlanRow plan = planMapper.findById(enrollment.planId());
         List<PlanMapper.NodeRow> rows =
                 plan == null ? List.of() : planMapper.findNodesByPlanId(enrollment.planId());
         if (rows.isEmpty()) {
-            return new EnrollmentInitSummary(0, 0); // 已发布计划必有节点（发布前置），防御跳过
+            return new CreationCounts(0, 0, 0); // 已发布计划必有节点（发布前置），防御跳过
         }
         LocalDate planEnd =
                 "YEARS".equals(plan.cycleType()) && plan.cycleYears() != null
                         ? startDate.plusYears(plan.cycleYears())
                         : null;
-        PlanResult result =
-                atEnrollment
-                        ? TaskCreationPlanner.planForEnrollment(
-                                nodeDefs(rows), enrollment.mode(), startDate, logicalDate, planEnd)
-                        : TaskCreationPlanner.plan(
-                                nodeDefs(rows),
-                                enrollment.mode(),
-                                startDate,
-                                logicalDate,
-                                enrollment.enrolledOn(),
-                                planEnd);
+        PlanResult result;
+        if (resumePausedFrom != null) {
+            result =
+                    TaskCreationPlanner.planForResume(
+                            nodeDefs(rows),
+                            enrollment.mode(),
+                            startDate,
+                            logicalDate,
+                            resumePausedFrom,
+                            planEnd);
+        } else if (atEnrollment) {
+            result =
+                    TaskCreationPlanner.planForEnrollment(
+                            nodeDefs(rows), enrollment.mode(), startDate, logicalDate, planEnd);
+        } else {
+            result =
+                    TaskCreationPlanner.plan(
+                            nodeDefs(rows),
+                            enrollment.mode(),
+                            startDate,
+                            logicalDate,
+                            enrollment.enrolledOn(),
+                            planEnd);
+        }
+        return createPlannedTasks(enrollment, result, rows, logicalDate, runDate);
+    }
+
+    /**
+     * 按排期结果落任务行（各入口共用）：
+     *
+     * <ul>
+     *   <li>幂等：已存在（重复执行 / 补跑重放）跳过；并发撞 uk 按已存在处理；
+     *   <li>停用补偿改判（E14-T06 / PLT-TEN-017）：runDate 非空时，排期为 NORMAL 但窗口在本次运行目标逻辑日前已结束的次数
+     *       ——本应在开启日创建而未创建（租户停用 / 作业未执行期间）——改建为「停用期间未执行」（DISABLED_SKIPPED +
+     *       SKIPPED_SUSPENDED）；窗口结束日落在此前暂停区间内的归「暂停期间未执行」（PAUSED_SKIPPED）。 入组即建口径（runDate
+     *       与逻辑日同为入组日）不会有窗口已结束的 NORMAL 次数，改判天然不生效；
+     *   <li>只有 NORMAL 写 TaskOpened 事件（补录 / 暂停期间未执行 / 停用期间未执行不进通知，A 规格第 5 章）。
+     * </ul>
+     */
+    private CreationCounts createPlannedTasks(
+            FollowupTaskMapper.EnrollmentRow enrollment,
+            PlanResult result,
+            List<PlanMapper.NodeRow> rows,
+            LocalDate logicalDate,
+            LocalDate runDate) {
         FollowupTaskMapper.PatientOwnerRow owner =
                 taskMapper.findOwnerContext(enrollment.patientId());
         Map<Long, PlanMapper.NodeRow> templates =
                 rows.stream()
                         .collect(Collectors.toMap(PlanMapper.NodeRow::id, Function.identity()));
-        int backfill = 0;
         int normal = 0;
+        int backfill = 0;
+        int skipped = 0;
         for (PlannedTask task : result.due()) {
             // 幂等：已存在（重复执行 / 补跑重放）直接跳过；并发撞 uk 由唯一键兜底转已存在
             if (taskMapper.findTaskId(enrollment.id(), task.nodeId(), task.occurrence()) != null) {
@@ -245,6 +325,13 @@ public class FollowupTaskCreationService {
             if (template == null) {
                 continue;
             }
+            String createType = effectiveCreateType(enrollment, task, runDate);
+            String status =
+                    TaskCreationPlanner.CREATE_NORMAL.equals(createType)
+                            ? "PENDING"
+                            : TaskCreationPlanner.CREATE_BACKFILL.equals(createType)
+                                    ? "PENDING"
+                                    : STATUS_SKIPPED_SUSPENDED;
             FollowupTaskInsertRow row =
                     new FollowupTaskInsertRow(
                             enrollment.id(),
@@ -261,8 +348,8 @@ public class FollowupTaskCreationService {
                             task.windowStart(),
                             task.windowEnd(),
                             task.openDate(),
-                            task.createType(),
-                            "PENDING",
+                            createType,
+                            status,
                             logicalDate);
             try {
                 taskMapper.insertTask(row);
@@ -275,18 +362,53 @@ public class FollowupTaskCreationService {
                         task.occurrence());
                 continue;
             }
-            if (TaskCreationPlanner.CREATE_BACKFILL.equals(task.createType())) {
-                backfill++; // 补录不发 TaskOpened（不进即将逾期 / 已逾期 / 失访候选通知）
-            } else {
-                normal++;
-                publishTaskOpened(enrollment, task, row.getId());
+            switch (createType) {
+                case TaskCreationPlanner.CREATE_NORMAL -> {
+                    normal++;
+                    publishTaskOpened(enrollment, task, row.getId());
+                }
+                case TaskCreationPlanner.CREATE_BACKFILL -> backfill++;
+                default -> skipped++; // 暂停 / 停用期间未执行：不发 TaskOpened（不进通知）
             }
         }
         taskMapper.updateNextCache(
                 enrollment.id(),
                 result.next() != null ? result.next().planDate() : null,
                 result.next() != null ? result.next().openDate() : null);
-        return new EnrollmentInitSummary(backfill, normal);
+        return new CreationCounts(normal, backfill, skipped);
+    }
+
+    /**
+     * 停用 / 暂停补偿的改判（E14-T06）：排期为 NORMAL 但窗口已在本次运行目标逻辑日前结束 → 「未执行」补偿任务； 窗口结束日落在此前暂停区间内归
+     * PAUSED_SKIPPED（患者暂停），否则 DISABLED_SKIPPED（租户停用 / 作业未执行，PLT-TEN-017）。 排期已给出的补偿 / 补录类型不改。
+     */
+    private static String effectiveCreateType(
+            FollowupTaskMapper.EnrollmentRow enrollment, PlannedTask task, LocalDate runDate) {
+        if (!TaskCreationPlanner.CREATE_NORMAL.equals(task.createType())) {
+            return task.createType();
+        }
+        if (runDate == null || !task.windowEnd().isBefore(runDate)) {
+            return task.createType();
+        }
+        return pauseCoversWindowEnd(enrollment, task.windowEnd())
+                ? TaskCreationPlanner.CREATE_PAUSED_SKIPPED
+                : TaskCreationPlanner.CREATE_DISABLED_SKIPPED;
+    }
+
+    /** 窗口结束日是否落在此前暂停区间 [pause_from, pause_to] 内（最近一次区间，V46 单区间口径；未暂停恒 false）。 */
+    private static boolean pauseCoversWindowEnd(
+            FollowupTaskMapper.EnrollmentRow enrollment, LocalDate windowEnd) {
+        return enrollment.pauseFrom() != null
+                && !windowEnd.isBefore(enrollment.pauseFrom())
+                && (enrollment.pauseTo() == null || !windowEnd.isAfter(enrollment.pauseTo()));
+    }
+
+    /** 一次排期落库的分类计数（normal 当期 / backfill 补录 / skipped 暂停或停用期间未执行）。 */
+    record CreationCounts(int normal, int backfill, int skipped) {
+
+        int total() {
+            return normal + backfill + skipped;
+        }
     }
 
     /** 起算日期快照为空：按计划起算字段解析并回填（只补空值；解析不到返回 null 跳过该入组）。 */

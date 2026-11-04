@@ -73,7 +73,9 @@ class FollowupTaskCreationServiceTest {
                                         PLAN_ID,
                                         null,
                                         "NORMAL",
-                                        LocalDate.of(2025, 4, 1))));
+                                        LocalDate.of(2025, 4, 1),
+                                        null,
+                                        null)));
         when(taskMapper.resolveStartDate(PLAN_ID, PATIENT_ID)).thenReturn(BASIS);
         when(planMapper.findById(PLAN_ID))
                 .thenReturn(
@@ -302,14 +304,18 @@ class FollowupTaskCreationServiceTest {
                                         PLAN_ID,
                                         BASIS,
                                         "NORMAL",
-                                        LocalDate.of(2025, 4, 1)),
+                                        LocalDate.of(2025, 4, 1),
+                                        null,
+                                        null),
                                 new FollowupTaskMapper.EnrollmentRow(
                                         32L,
                                         78L,
                                         PLAN_ID,
                                         BASIS,
                                         "NORMAL",
-                                        LocalDate.of(2025, 4, 1))));
+                                        LocalDate.of(2025, 4, 1),
+                                        null,
+                                        null)));
         when(planMapper.findById(PLAN_ID))
                 .thenReturn(
                         new PlanMapper.PlanRow(
@@ -351,7 +357,9 @@ class FollowupTaskCreationServiceTest {
                                         PLAN_ID,
                                         null,
                                         "NORMAL",
-                                        LocalDate.of(2025, 4, 1))));
+                                        LocalDate.of(2025, 4, 1),
+                                        null,
+                                        null)));
         when(taskMapper.resolveStartDate(PLAN_ID, PATIENT_ID)).thenReturn(null);
 
         run(LocalDate.of(2026, 3, 8));
@@ -374,7 +382,9 @@ class FollowupTaskCreationServiceTest {
                                         PLAN_ID,
                                         BASIS,
                                         "NORMAL",
-                                        LocalDate.of(2025, 4, 1))));
+                                        LocalDate.of(2025, 4, 1),
+                                        null,
+                                        null)));
         when(planMapper.findById(PLAN_ID))
                 .thenReturn(
                         new PlanMapper.PlanRow(
@@ -417,7 +427,9 @@ class FollowupTaskCreationServiceTest {
                                         PLAN_ID,
                                         BASIS,
                                         "NORMAL",
-                                        LocalDate.of(2025, 4, 1))));
+                                        LocalDate.of(2025, 4, 1),
+                                        null,
+                                        null)));
         when(planMapper.findById(PLAN_ID))
                 .thenReturn(
                         new PlanMapper.PlanRow(
@@ -700,5 +712,161 @@ class FollowupTaskCreationServiceTest {
                 service.initializeForNewEnrollment(ENROLLMENT_ID, PATIENT_ID, PLAN_ID, "NORMAL");
         assertEquals(0, existing.backfill());
         verify(taskMapper, never()).insertTask(any());
+    }
+
+    // ---------------------------------------------------------------- E14-T06 停用 / 暂停补偿与恢复即建
+
+    /** 可调入组行（带最近暂停区间，E14-T06 归属判定用）。 */
+    private void pausedAnnualEnrollment(LocalDate pauseFrom, LocalDate pauseTo) {
+        when(taskMapper.findSchedulableEnrollments())
+                .thenReturn(
+                        List.of(
+                                new FollowupTaskMapper.EnrollmentRow(
+                                        ENROLLMENT_ID,
+                                        PATIENT_ID,
+                                        PLAN_ID,
+                                        BASIS,
+                                        "NORMAL",
+                                        LocalDate.of(2025, 4, 1),
+                                        pauseFrom,
+                                        pauseTo)));
+        when(planMapper.findById(PLAN_ID))
+                .thenReturn(
+                        new PlanMapper.PlanRow(
+                                PLAN_ID,
+                                "PLAN-IT-1",
+                                "示例 IT 年度随访计划",
+                                1,
+                                "PUBLISHED",
+                                "DISCHARGE_DATE",
+                                "ONGOING",
+                                null,
+                                null,
+                                null,
+                                0,
+                                null,
+                                1L));
+        when(planMapper.findNodesByPlanId(PLAN_ID))
+                .thenReturn(List.of(subplanRow(), nodeRow("WARD_DEFAULT")));
+        when(taskMapper.findOwnerContext(PATIENT_ID))
+                .thenReturn(new FollowupTaskMapper.PatientOwnerRow(55L, 66L));
+    }
+
+    @Test
+    void catchUpMarksEndedWindowAsDisabledSkippedWithoutEvent() {
+        moduleOpen();
+        // 运行目标逻辑日 2026-04-01 > 窗口结束日 2026-03-22：第 1 次本应在开启日 2026-03-08 创建而未创建
+        // （租户停用 / 作业未执行期间），补跑时补建为「停用期间未执行」（PLT-TEN-017）
+        pausedAnnualEnrollment(null, null);
+        insertSucceeds();
+
+        run(LocalDate.of(2026, 4, 1));
+
+        ArgumentCaptor<FollowupTaskInsertRow> captor =
+                ArgumentCaptor.forClass(FollowupTaskInsertRow.class);
+        verify(taskMapper).insertTask(captor.capture());
+        FollowupTaskInsertRow row = captor.getValue();
+        assertEquals("DISABLED_SKIPPED", row.getCreateType(), "窗口已结束 → 停用期间未执行");
+        assertEquals("SKIPPED_SUSPENDED", row.getStatus(), "待人工选择补做或关闭");
+        verify(outbox, never()).publish(anyString(), anyString());
+        verify(audit).append(any());
+    }
+
+    @Test
+    void catchUpAttributesEndedWindowToPauseWhenIntervalCoversIt() {
+        moduleOpen();
+        // 窗口结束日 2026-03-22 落在此前暂停区间 [2026-03-01, 2026-03-25] 内 → 归「暂停期间未执行」（A 的 Q32）
+        pausedAnnualEnrollment(LocalDate.of(2026, 3, 1), LocalDate.of(2026, 3, 25));
+        insertSucceeds();
+
+        run(LocalDate.of(2026, 4, 1));
+
+        ArgumentCaptor<FollowupTaskInsertRow> captor =
+                ArgumentCaptor.forClass(FollowupTaskInsertRow.class);
+        verify(taskMapper).insertTask(captor.capture());
+        assertEquals("PAUSED_SKIPPED", captor.getValue().getCreateType());
+        assertEquals("SKIPPED_SUSPENDED", captor.getValue().getStatus());
+        verify(outbox, never()).publish(anyString(), anyString());
+    }
+
+    @Test
+    void catchUpKeepsOpenWindowAsNormalWithEvent() {
+        moduleOpen();
+        // 运行目标逻辑日与窗口重叠（窗口 2026-03-08..03-22，运行 2026-03-15）：照常 NORMAL + 事件（既有口径不回归）
+        pausedAnnualEnrollment(null, null);
+        insertSucceeds();
+
+        run(LocalDate.of(2026, 3, 15));
+
+        ArgumentCaptor<FollowupTaskInsertRow> captor =
+                ArgumentCaptor.forClass(FollowupTaskInsertRow.class);
+        verify(taskMapper).insertTask(captor.capture());
+        assertEquals("NORMAL", captor.getValue().getCreateType());
+        assertEquals("PENDING", captor.getValue().getStatus());
+        verify(outbox).publish(eq("TaskOpened"), anyString());
+    }
+
+    @Test
+    void resumeInitCreatesPausedSkippedAndCurrentNormalTasks() {
+        // 恢复补偿：暂停始于 12 天前；+10 天节点窗口已结束（暂停区间内开启）→ 暂停期间未执行；
+        // +20 天节点窗口未结束 → 当期 NORMAL（照常发任务开启事件）
+        LocalDate today = PlanDateCalculator.businessToday(Instant.now());
+        LocalDate basis = today.minusDays(20);
+        when(taskMapper.resolveStartDate(PLAN_ID, PATIENT_ID)).thenReturn(basis);
+        when(planMapper.findById(PLAN_ID))
+                .thenReturn(
+                        new PlanMapper.PlanRow(
+                                PLAN_ID,
+                                "PLAN-IT-B",
+                                "示例 IT 术后随访计划",
+                                1,
+                                "PUBLISHED",
+                                "SURGERY_DATE",
+                                "ONGOING",
+                                null,
+                                false,
+                                null,
+                                0,
+                                null,
+                                1L));
+        when(planMapper.findNodesByPlanId(PLAN_ID))
+                .thenReturn(
+                        List.of(
+                                fixedOnceSubplanRow(),
+                                milestoneRow(201L, 10, "BACKFILL"),
+                                milestoneRow(202L, 20, "BACKFILL"),
+                                milestoneRow(203L, 30, "BACKFILL")));
+        when(taskMapper.findOwnerContext(PATIENT_ID))
+                .thenReturn(new FollowupTaskMapper.PatientOwnerRow(55L, 66L));
+        when(taskMapper.findTaskId(anyLong(), anyLong(), anyInt())).thenReturn(null);
+        doAnswer(
+                        invocation -> {
+                            invocation.getArgument(0, FollowupTaskInsertRow.class).setId(901L);
+                            return 1;
+                        })
+                .when(taskMapper)
+                .insertTask(any(FollowupTaskInsertRow.class));
+
+        FollowupTaskCreationService.ResumeInitSummary summary =
+                service.initializeForResumedEnrollment(
+                        ENROLLMENT_ID, PATIENT_ID, PLAN_ID, "NORMAL", today.minusDays(12));
+
+        ArgumentCaptor<FollowupTaskInsertRow> captor =
+                ArgumentCaptor.forClass(FollowupTaskInsertRow.class);
+        verify(taskMapper, times(2)).insertTask(captor.capture());
+        List<FollowupTaskInsertRow> rows = captor.getAllValues();
+        // due 按开启日排序：+10 天节点（窗口已结束）先补建为暂停期间未执行，+20 天节点（窗口未结束）当期 NORMAL
+        assertEquals(201L, rows.get(0).getNodeId());
+        assertEquals("PAUSED_SKIPPED", rows.get(0).getCreateType(), "暂停期间到期的次数 → 暂停期间未执行（Q32）");
+        assertEquals("SKIPPED_SUSPENDED", rows.get(0).getStatus());
+        assertEquals(today.minusDays(9), rows.get(0).getWindowEnd());
+        assertEquals(202L, rows.get(1).getNodeId());
+        assertEquals("NORMAL", rows.get(1).getCreateType(), "窗口未结束 → 恢复后当期正常创建");
+        assertEquals("PENDING", rows.get(1).getStatus());
+        assertEquals(1, summary.pausedSkipped());
+        assertEquals(1, summary.normal());
+        verify(outbox, times(1)).publish(eq("TaskOpened"), anyString());
+        // 下次缓存指向 +30 天节点（开启日 = 计划日期，当天提醒、零宽窗口）
+        verify(taskMapper).updateNextCache(ENROLLMENT_ID, basis.plusDays(30), basis.plusDays(30));
     }
 }

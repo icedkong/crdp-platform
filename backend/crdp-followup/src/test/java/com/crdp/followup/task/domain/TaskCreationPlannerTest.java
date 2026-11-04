@@ -455,4 +455,53 @@ class TaskCreationPlannerTest {
         assertEquals(1, result.due().size());
         assertEquals("NORMAL", result.due().get(0).createType(), "窗口今天结束仍在窗口内");
     }
+
+    // ---------------------------------------------------------------- E14-T06 恢复补偿（A 的
+    // Q32、A-FU-008）
+
+    /** 零宽窗口循环节点（周期 10 天、当天提醒、窗口前 0 后 0）：第 N 次计划日期 = 基准 + 10 +（N−1）×10。 */
+    private static NodeDef zeroWindowCycleNode() {
+        return node("CYCLE", null, 10, "DAY", "PLAN_START", 10, "DAY", 0, 0, 0, null, null);
+    }
+
+    @Test
+    void planForResumeMarksInPauseEndedWindowAsPausedSkipped() {
+        // 基准 2026-01-01（周期 10 天、偏移 10 天）：第 1 次 01-11、第 2 次 01-21（开启早于暂停起始 01-25）、
+        // 第 3 次 01-31（暂停区间内开启、窗口已结束）、第 4 次 02-10（未开启 → 下次缓存）
+        PlanResult result =
+                TaskCreationPlanner.planForResume(
+                        planOf(zeroWindowCycleNode(), subplan("CYCLE", null, 10, "DAY")),
+                        "NORMAL",
+                        LocalDate.of(2026, 1, 1),
+                        LocalDate.of(2026, 2, 5),
+                        LocalDate.of(2026, 1, 25),
+                        null);
+        assertEquals(3, result.due().size());
+        assertEquals(1, result.due().get(0).occurrence());
+        assertEquals(2, result.due().get(1).occurrence());
+        assertEquals("NORMAL", result.due().get(0).createType(), "开启日早于暂停起始不属暂停补偿（由停用补偿口径兜底）");
+        assertEquals("NORMAL", result.due().get(1).createType());
+        assertEquals(3, result.due().get(2).occurrence());
+        assertEquals("PAUSED_SKIPPED", result.due().get(2).createType(), "暂停区间内开启且窗口已结束 → 暂停期间未执行");
+        assertEquals(LocalDate.of(2026, 2, 10), result.next().planDate());
+        assertEquals(LocalDate.of(2026, 2, 10), result.next().openDate());
+    }
+
+    @Test
+    void planForResumeKeepsOpenWindowAsNormal() {
+        // 第 1 次计划 01-11、窗口 [01-11, 01-21]：恢复日 01-15 窗口未结束 → 当期正常创建（「恢复后剩余子计划重新开启」）
+        NodeDef openWindow =
+                node("CYCLE", null, 30, "DAY", "PLAN_START", 10, "DAY", 0, 0, 10, null, null);
+        PlanResult result =
+                TaskCreationPlanner.planForResume(
+                        planOf(openWindow, subplan("CYCLE", null, 30, "DAY")),
+                        "NORMAL",
+                        LocalDate.of(2026, 1, 1),
+                        LocalDate.of(2026, 1, 15),
+                        LocalDate.of(2026, 1, 5),
+                        null);
+        assertEquals(1, result.due().size());
+        assertEquals("NORMAL", result.due().get(0).createType());
+        assertEquals(LocalDate.of(2026, 1, 21), result.due().get(0).windowEnd());
+    }
 }
