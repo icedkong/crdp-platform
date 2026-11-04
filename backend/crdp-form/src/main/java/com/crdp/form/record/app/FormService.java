@@ -178,6 +178,19 @@ public class FormService {
     public record VersionConflictView(
             int serverVersion, List<String> changedFields, String updatedBy, String updatedAt) {}
 
+    /**
+     * 40900 冲突详情（E25 自动保存草稿口径，patient.md §4.1 形态）：currentVersion 供「保留我的并覆盖」 作为 baseVersion 重发（带
+     * overwrite，业务层写审计），diffFields 只列本次 changes 里两边取值不同的键（不做字段级合并）。
+     */
+    public record DraftConflictView(
+            int currentVersion,
+            String updatedBy,
+            String updatedAt,
+            List<DiffFieldView> diffFields) {}
+
+    /** 两边不同字段（E25 / NFR-SAVE-003）：mine = 请求值、server = 服务器当前值，label 取记录模板版本快照。 */
+    public record DiffFieldView(String key, String label, Object mine, Object server) {}
+
     // ---------------------------------------------------------------- 模板：按版本读（旧版本可读）
 
     /** FormSchema：version 省略取当前发布版；版本不存在 40400。rules 为 fe_rule 当前启用规则（实时读取，不进快照）。 */
@@ -369,6 +382,90 @@ public class FormService {
             throw conflict(current, command);
         }
         return record(id);
+    }
+
+    /**
+     * 服务器自动保存草稿（E25-T01 / NFR-SAVE-001、NFR-SAVE-003，tech-plan §6「服务器自动保存与版本冲突」；业务 HTTP 端点
+     * followup.md §3 {@code PUT /records/{id}/draft}）。
+     *
+     * <p>与 {@link #saveRecord} 的差别：只带<b>变更字段</b>（changes 部分合并到既有 data，null 清空该键——前端「只在有新改动时发送」），
+     * data_meta 不随草稿更新（changes 只承载字段值）。其余同草稿语义：只过写入闸门（键 / 类型 / 派生重算 / 硬范围），必填、跨字段与软范围
+     * 不进闸门（「草稿不触发提交逻辑」）；不写字段历史（提交 / 保存修改时才写，E11-T06）、不逐次写审计（「覆盖他人版本」的审计在业务层， overwrite 标志随业务请求）。
+     *
+     * <p>乐观锁（NFR-SAVE-003）：baseVersion 与当前不一致（或条件更新 0 行的并发竞态）抛 40900，附 {@link DraftConflictView}
+     * （当前版本、更新人显示名、更新时间、两边不同字段；patient.md §4.1）；已提交 40901、记录 / 模板版本不存在 40400。
+     */
+    @Transactional
+    public RecordView saveDraft(long id, Integer baseVersion, Map<String, Object> changes) {
+        if (baseVersion == null) {
+            throw new ApiException(400, 40001, "自动保存必须携带 baseVersion（乐观锁）");
+        }
+        FormRecordRow row = requireRecord(id);
+        if ("SUBMITTED".equals(row.status())) {
+            throw new ApiException(409, 40901, "记录已提交，不再自动保存（修改走已提交记录修改流程）");
+        }
+        if (row.version() != baseVersion) {
+            throw draftConflict(row, changes);
+        }
+        List<VersionFieldRow> fields =
+                recordMapper.findVersionFields(row.formCode(), row.templateVersion());
+        if (fields.isEmpty()) {
+            throw new ApiException(404, 40400, "记录的模板版本不存在（formCode=" + row.formCode() + "）");
+        }
+        validator.validateData(changes, fields);
+        Map<String, Object> merged = readMap(row.data());
+        if (changes != null) {
+            for (Map.Entry<String, Object> entry : changes.entrySet()) {
+                if (entry.getValue() == null) {
+                    merged.remove(entry.getKey());
+                } else {
+                    merged.put(entry.getKey(), entry.getValue());
+                }
+            }
+        }
+        Map<String, Object> persisted = applyDerived(fields, merged);
+        enforceHardRange(persisted, fields);
+
+        long operator = CurrentSession.requireHospital().userId();
+        int updated =
+                recordMapper.updateRecord(
+                        id, baseVersion, writeJson(persisted), row.dataMeta(), operator);
+        if (updated != 1) {
+            throw draftConflict(requireRecord(id), changes);
+        }
+        return record(id);
+    }
+
+    /** 草稿冲突详情（E25 口径）：只列 changes 里两边取值不同的键，label 取记录模板版本快照的显示名。 */
+    private ApiException draftConflict(FormRecordRow row, Map<String, Object> changes) {
+        Map<String, Object> server = readMap(row.data());
+        List<VersionFieldRow> fields =
+                recordMapper.findVersionFields(row.formCode(), row.templateVersion());
+        Map<String, String> labels = new LinkedHashMap<>();
+        for (VersionFieldRow field : fields) {
+            labels.put(field.fieldKey(), field.label());
+        }
+        List<DiffFieldView> diffFields = new ArrayList<>();
+        if (changes != null) {
+            for (String key : changes.keySet()) {
+                Object mine = changes.get(key);
+                Object serverValue = server.get(key);
+                if (!java.util.Objects.equals(mine, serverValue)) {
+                    diffFields.add(
+                            new DiffFieldView(
+                                    key, labels.getOrDefault(key, key), mine, serverValue));
+                }
+            }
+        }
+        DraftConflictView detail =
+                new DraftConflictView(
+                        row.version(),
+                        row.updatedBy() == null
+                                ? null
+                                : recordMapper.findDisplayName(row.updatedBy()),
+                        Time.format(row.updatedAt()),
+                        diffFields);
+        return new ApiException(409, 40900, "该记录已被他人更新", detail);
     }
 
     /**

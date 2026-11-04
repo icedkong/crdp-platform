@@ -227,6 +227,18 @@ class MenuSyncServiceTest {
                         "followup:plan:enroll",
                         30,
                         "ENABLED"),
+                // E25-T01 录入随访记录按钮：挂在随访任务（22）下（平台库 V43 同构）
+                manifestRow(
+                        222L,
+                        22L,
+                        "BUTTON",
+                        "录入随访记录",
+                        null,
+                        null,
+                        null,
+                        "followup:record:edit",
+                        10,
+                        "ENABLED"),
                 // E09-T04 通知设置：followup 菜单挂在 base 的系统设置目录（30）下，
                 // 父项经 findMenuIdByRouteName 跨模块解析（MenuSyncService.resolveParentLater 回落）
                 manifestRow(

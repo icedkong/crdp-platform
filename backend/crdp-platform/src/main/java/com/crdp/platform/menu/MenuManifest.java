@@ -327,7 +327,22 @@ public class MenuManifest {
                             null,
                             "followup:plan:enroll",
                             null,
-                            30));
+                            30),
+                    // E25-T01 / NFR-SAVE-001、NFR-SAVE-003：随访任务下的「录入随访记录」按钮（暂存草稿 /
+                    // 提交，A / C 规格权限点表原有码；平台库 V43 同构；录入工作台页面随 E15-T02）
+                    new MenuManifestItem(
+                            "followup",
+                            "HOSPITAL",
+                            "BUTTON",
+                            "followup:record:edit",
+                            "FollowupTask",
+                            "录入随访记录",
+                            null,
+                            null,
+                            null,
+                            "followup:record:edit",
+                            null,
+                            10));
 
     public List<MenuManifestItem> items() {
         return ITEMS;
