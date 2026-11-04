@@ -190,6 +190,8 @@ export {
   moduleShelfText,
   moduleSyncActionText,
   PATIENT_STATUS_TEXT,
+  PLAN_STATUS_TEXT,
+  planStatusText,
   SURVIVAL_STATUS_TEXT,
   survivalStatusText,
   TENANT_MODULE_NOT_OPENED_TEXT,
@@ -412,7 +414,6 @@ export {
   menuSyncActionText,
   menuTypeText,
 } from './perm-resources';
-
 export type {
   ApiMarkRequest,
   ApiResourceItem,
@@ -425,6 +426,43 @@ export type {
   MenuSyncDiffResult,
   MenuUpdateRequest,
 } from './perm-resources';
+
+// E14-T02 随访计划配置（docs/api/followup.md §1；页面 pages.md §8）
+export {
+  PLAN_ENROLL_MODE_TEXT,
+  PLAN_NODE_BASIS_TEXT,
+  PLAN_OFFSET_UNIT_TEXT,
+  PLAN_OWNER_TYPE_TEXT,
+  PLAN_PASSED_WINDOW_TEXT,
+  PLAN_REMIND_UNIT_TEXT,
+  PLAN_REPEAT_MODE_TEXT,
+  PLAN_START_DATE_FIELD_OPTIONS,
+  PLAN_START_DATE_FIELD_TEXT,
+  PLAN_TASK_TYPE_TEXT,
+  planCycleText,
+  planStartDateFieldText,
+} from './plan';
+
+export type {
+  PlanCreateRequest,
+  PlanCycleType,
+  PlanDetailView,
+  PlanEnrollMode,
+  PlanNodeBasis,
+  PlanNodeInput,
+  PlanNodeView,
+  PlanOffsetUnit,
+  PlanOwnerType,
+  PlanPassedWindowAction,
+  PlanRemindUnit,
+  PlanRepeatMode,
+  PlanSaveNodesRequest,
+  PlanStartDateField,
+  PlanStatus,
+  PlanTaskType,
+  PlanUpdateRequest,
+  PlanView,
+} from './plan';
 
 export interface CreateTenantRequest {
   /** 不填由后端自动生成（页面展示建议值可改）。 */

@@ -40,6 +40,23 @@ export const PATIENT_STATUS_TEXT: Record<string, string> = {
   FINISHED: '随访结束',
 };
 
+/**
+ * 计划状态（components.md §2 plan 域；fu_plan.status + 派生展示态）：
+ * RUNNING「随访中」不入库——已发布（PUBLISHED）且有在组入组时由后端派生（A-FU-018、OQ-76）。
+ */
+export const PLAN_STATUS_TEXT: Record<string, string> = {
+  UNPUBLISHED: '未发布',
+  PUBLISHED: '已发布',
+  RUNNING: '随访中',
+  PAUSED: '已暂停',
+  DISABLED: '已停用',
+};
+
+export function planStatusText(status: null | string | undefined): string {
+  if (status === null || status === undefined || status === '') return '—';
+  return PLAN_STATUS_TEXT[status] ?? status;
+}
+
 /** 生存状态（pt_patient_summary.survival_status，最近已提交记录；E15 写入）。 */
 export const SURVIVAL_STATUS_TEXT: Record<string, string> = {
   ALIVE: '存活',
