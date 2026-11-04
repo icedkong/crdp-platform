@@ -73,10 +73,11 @@ class PlatformTenantScopeMySqlIT {
     private static final List<Object> WITHOUT_TASK =
             java.util.stream.Stream.concat(
                             BASE_ALL.stream(),
-                            // 218 审批患者导出随 E13-T09 进授权范围模板（V41）
+                            // 218 审批患者导出随 E13-T09 进模板（V41）；
+                            // 24/25/219/220/221 随访计划菜单与按钮随 E14-T01 进模板（V42）
                             List.of(
-                                    20L, 21L, 23L, 36L, 37L, 38L, 213L, 214L, 215L, 216L, 218L,
-                                    231L)
+                                    20L, 21L, 23L, 24L, 25L, 36L, 37L, 38L, 213L, 214L, 215L, 216L,
+                                    218L, 219L, 220L, 221L, 231L)
                                     .stream())
                     .toList();
 

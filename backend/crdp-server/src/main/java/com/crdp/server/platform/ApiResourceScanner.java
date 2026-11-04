@@ -237,11 +237,12 @@ public class ApiResourceScanner implements ApplicationRunner {
         RequiresPermission onMethod =
                 AnnotatedElementUtils.findMergedAnnotation(method, RequiresPermission.class);
         if (onMethod != null) {
-            return onMethod.value();
+            // 多码「任一命中即放行」（E14-T01 / OQ-13），登记为逗号拼接，闸门按逗号拆开逐一匹配
+            return String.join(",", onMethod.value());
         }
         RequiresPermission onType =
                 AnnotatedElementUtils.findMergedAnnotation(beanType, RequiresPermission.class);
-        return onType == null ? null : onType.value();
+        return onType == null ? null : String.join(",", onType.value());
     }
 
     private static String moduleOf(

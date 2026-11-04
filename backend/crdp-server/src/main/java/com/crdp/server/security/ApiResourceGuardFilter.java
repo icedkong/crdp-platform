@@ -84,7 +84,7 @@ public class ApiResourceGuardFilter extends OncePerRequestFilter {
             filterChain.doFilter(request, response);
             return;
         }
-        if (principal != null && !principal.permissionCodes().contains(permCode)) {
+        if (principal != null && !holdsAnyPermission(principal, permCode)) {
             log.info(
                     "接口权限码校验未过 method={} uri={} perm={} userId={}",
                     request.getMethod(),
@@ -106,5 +106,19 @@ public class ApiResourceGuardFilter extends OncePerRequestFilter {
             return principal;
         }
         return null;
+    }
+
+    /**
+     * 权限码匹配（E14-T01 / OQ-13）：登记值可能是逗号拼接的多个候选码（如 计划查看 {@code
+     * followup:plan:view,followup:plan:edit}），任一码命中即放行；单码行为不变。 权限码自身不含逗号（{模块}:{资源}:{动作}
+     * 格式），按逗号拆分无歧义。
+     */
+    private static boolean holdsAnyPermission(SessionPrincipal principal, String permCode) {
+        for (String candidate : permCode.split(",")) {
+            if (principal.permissionCodes().contains(candidate)) {
+                return true;
+            }
+        }
+        return false;
     }
 }

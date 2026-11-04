@@ -255,7 +255,79 @@ public class MenuManifest {
                             "followup/patient/detail",
                             null,
                             null,
-                            20));
+                            20),
+                    // E14-T01 / A-FU-016、A-FU-018、A-FU-019、C-FU-001：随访计划页面菜单（随访目录下，
+                    // 平台库 V42 同构；页面随 E14-T02 落地，本任务先落数据面接口与菜单资源）
+                    new MenuManifestItem(
+                            "followup",
+                            "HOSPITAL",
+                            "MENU",
+                            "FollowupPlan",
+                            "Followup",
+                            "随访计划",
+                            "FollowupPlan",
+                            "/followup/plan",
+                            "followup/plan/index",
+                            "followup:plan:view",
+                            null,
+                            15),
+                    // E14-T01 / pages.md §8：计划详情隐藏路由（随访计划下，平台库 V42 同构；
+                    // perm_code 为 NULL——followup:plan:view 已由随访计划菜单持有，接口校验在
+                    // @RequiresPermission；页签患者列表 / 变更记录随 E14-T08）
+                    new MenuManifestItem(
+                            "followup",
+                            "HOSPITAL",
+                            "MENU",
+                            "FollowupPlanDetail",
+                            "FollowupPlan",
+                            "计划详情",
+                            "FollowupPlanDetail",
+                            "/followup/plan/:planId",
+                            "followup/plan/detail",
+                            null,
+                            null,
+                            20),
+                    // E14-T01 / A-FU-019、OQ-13：随访计划下的操作按钮（平台库 V42 同构）——
+                    // C 没有这三个码，计划相关一律用 followup:plan:edit，接口按「任一码命中」声明
+                    new MenuManifestItem(
+                            "followup",
+                            "HOSPITAL",
+                            "BUTTON",
+                            "followup:plan:edit",
+                            "FollowupPlan",
+                            "编辑计划",
+                            null,
+                            null,
+                            null,
+                            "followup:plan:edit",
+                            null,
+                            10),
+                    new MenuManifestItem(
+                            "followup",
+                            "HOSPITAL",
+                            "BUTTON",
+                            "followup:plan:publish",
+                            "FollowupPlan",
+                            "发布计划",
+                            null,
+                            null,
+                            null,
+                            "followup:plan:publish",
+                            null,
+                            20),
+                    new MenuManifestItem(
+                            "followup",
+                            "HOSPITAL",
+                            "BUTTON",
+                            "followup:plan:enroll",
+                            "FollowupPlan",
+                            "计划入组",
+                            null,
+                            null,
+                            null,
+                            "followup:plan:enroll",
+                            null,
+                            30));
 
     public List<MenuManifestItem> items() {
         return ITEMS;
