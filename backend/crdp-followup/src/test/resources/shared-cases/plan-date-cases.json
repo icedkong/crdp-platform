@@ -1,0 +1,627 @@
+{
+  "comment": "E14-T10 前后端共用日期计算用例（components.md §10.5；A-FU-002、A-FU-016、A-NFR-006）：同一份文件由后端 PlanDateCalculator（PlanDateSharedCasesTest）与前端 @crdp/rules plan-date（plan-date-cases.test）各执行一遍，期望结果逐条一致才通过。用例按任务主题分三组：addDateUnitCases（单位运算：跨年、闰年、月末钳制）、scheduleCases（完整排期：计划日期、提醒开始日、窗口前后与任务开启日 = min（提醒开始日，窗口开始日））、occurrenceCases（持续循环第 N 次 = 基准 + 偏移 +（N − 1）× 周期，月 / 年按总量一次相加——仅后端执行，前端计算预览只算第 1 次，循环推进在调度端 E14-T04）。口径：按月 / 年加遇目标月没有该日取当月最后一天（fu_plan_node V46 注释、A-FU-016）；2100 年非闰（÷100 不 ÷400）、2000 年闰（÷400）；业务日期为北京时间 LocalDate（A-NFR-006）。全部虚构数据（示例）。",
+  "shape": {
+    "addDateUnitCases[]": "单位运算用例：name、base / value / unit（value 可为负，与提醒提前量、窗口前的减法同口径）、expected（结果日，YYYY-MM-DD）",
+    "scheduleCases[]": "一次完整排期：name、basis（基准日期 = 起算日期或上次实际随访日期，由调用方决定）、timing（fu_plan_node 的偏移 offset*、提醒提前量 remind*、窗口前 windowBefore*、窗口后 windowAfter* 数值 + 单位）、expected（planDate = 基准 + 偏移、remindStart = planDate − remind、windowStart / windowEnd = planDate ∓ windowBefore / windowAfter、openDate = min（remindStart, windowStart））",
+    "occurrenceCases[]": "持续循环第 N 次计划日期（仅后端 PlanDateCalculator.occurrencePlanDate，E14-T04 调度推进）：name、basis、timing（取 offset*）、cycleValue / cycleUnit、occurrence（从 1 起）、expected（计划日期）"
+  },
+  "addDateUnitCases": [
+    {
+      "name": "跨年：12-20 + 1 月 → 次年 01-20",
+      "base": "2026-12-20",
+      "value": 1,
+      "unit": "MONTH",
+      "expected": "2027-01-20"
+    },
+    {
+      "name": "跨年：12-31 + 1 天 → 次年 01-01（年界按天进位）",
+      "base": "2026-12-31",
+      "value": 1,
+      "unit": "DAY",
+      "expected": "2027-01-01"
+    },
+    {
+      "name": "跨年：12-29 + 1 周 → 次年 01-05（周 = 7 天）",
+      "base": "2026-12-29",
+      "value": 1,
+      "unit": "WEEK",
+      "expected": "2027-01-05"
+    },
+    {
+      "name": "跨年（减）：01-31 − 1 月 → 上年 12-31（窗口前 / 提醒提前量的跨年减法）",
+      "base": "2027-01-31",
+      "value": -1,
+      "unit": "MONTH",
+      "expected": "2026-12-31"
+    },
+    {
+      "name": "跨年 + 月末：01-31 + 13 月 → 次年 02-28（钳到大月 31 日的目标月末）",
+      "base": "2026-01-31",
+      "value": 13,
+      "unit": "MONTH",
+      "expected": "2027-02-28"
+    },
+    {
+      "name": "闰年：闰日 + 1 年 → 平年 02-28（V46：目标月没有该日取当月最后一天）",
+      "base": "2024-02-29",
+      "value": 1,
+      "unit": "YEAR",
+      "expected": "2025-02-28"
+    },
+    {
+      "name": "闰年：闰日 + 4 年 → 闰年 02-29（第 4 次回闰）",
+      "base": "2024-02-29",
+      "value": 4,
+      "unit": "YEAR",
+      "expected": "2028-02-29"
+    },
+    {
+      "name": "闰年：01-31 + 1 月 → 闰年 02-29（不钳到 28）",
+      "base": "2024-01-31",
+      "value": 1,
+      "unit": "MONTH",
+      "expected": "2024-02-29"
+    },
+    {
+      "name": "平年对照：01-31 + 1 月 → 02-28（同一天入平年 2 月被钳）",
+      "base": "2023-01-31",
+      "value": 1,
+      "unit": "MONTH",
+      "expected": "2023-02-28"
+    },
+    {
+      "name": "闰年（世纪）：2100 非闰（÷100 不 ÷400），01-31 + 1 月 → 02-28",
+      "base": "2100-01-31",
+      "value": 1,
+      "unit": "MONTH",
+      "expected": "2100-02-28"
+    },
+    {
+      "name": "闰年（世纪）：2096 闰日 + 4 年 → 2100-02-28（4 年一步跨世纪不回闰）",
+      "base": "2096-02-29",
+      "value": 4,
+      "unit": "YEAR",
+      "expected": "2100-02-28"
+    },
+    {
+      "name": "闰年（世纪）：2000 是闰（÷400），1999-01-31 + 13 月 → 2000-02-29",
+      "base": "1999-01-31",
+      "value": 13,
+      "unit": "MONTH",
+      "expected": "2000-02-29"
+    },
+    {
+      "name": "闰年：02-27 + 3 天跨闰日 → 03-01（2028 闰）",
+      "base": "2028-02-27",
+      "value": 3,
+      "unit": "DAY",
+      "expected": "2028-03-01"
+    },
+    {
+      "name": "平年对照：02-27 + 3 天 → 03-02（2027 平，差一天）",
+      "base": "2027-02-27",
+      "value": 3,
+      "unit": "DAY",
+      "expected": "2027-03-02"
+    },
+    {
+      "name": "闰年（减）：闰日 − 1 月 → 01-29（减法不触发钳制）",
+      "base": "2024-02-29",
+      "value": -1,
+      "unit": "MONTH",
+      "expected": "2024-01-29"
+    },
+    {
+      "name": "月末：03-31 − 1 月 → 02-28（提醒 / 窗口前按月减遇钳）",
+      "base": "2026-03-31",
+      "value": -1,
+      "unit": "MONTH",
+      "expected": "2026-02-28"
+    },
+    {
+      "name": "月末：08-31 + 1 月 → 09-30（大月到小月取目标月末）",
+      "base": "2026-08-31",
+      "value": 1,
+      "unit": "MONTH",
+      "expected": "2026-09-30"
+    },
+    {
+      "name": "月末：钳制单向不放大，02-28 + 1 月 → 03-28（不粘在月末）",
+      "base": "2026-02-28",
+      "value": 1,
+      "unit": "MONTH",
+      "expected": "2026-03-28"
+    },
+    {
+      "name": "长期：03-15 + 12 年 → 2038-03-15（A 不设结束年度，长期随访跨度）",
+      "base": "2026-03-15",
+      "value": 12,
+      "unit": "YEAR",
+      "expected": "2038-03-15"
+    }
+  ],
+  "scheduleCases": [
+    {
+      "name": "A 年度随访（共享验算例，pages.md §8 / tech-plan §8）：出院 2025-03-15、+1 年、提前 7 天、窗口 ±7 天 → 计划 2026-03-15、开启 2026-03-08、窗口至 03-22",
+      "basis": "2025-03-15",
+      "timing": {
+        "offsetValue": 1,
+        "offsetUnit": "YEAR",
+        "remindValue": 7,
+        "remindUnit": "DAY",
+        "windowBeforeValue": 7,
+        "windowBeforeUnit": "DAY",
+        "windowAfterValue": 7,
+        "windowAfterUnit": "DAY"
+      },
+      "expected": {
+        "planDate": "2026-03-15",
+        "remindStart": "2026-03-08",
+        "windowStart": "2026-03-08",
+        "windowEnd": "2026-03-22",
+        "openDate": "2026-03-08"
+      }
+    },
+    {
+      "name": "跨年排期：B 3 个月节点手术 2026-10-03 → 计划 2027-01-03（偏移跨年）、提醒 2 周与窗口前 14 天回到 2026-12-20、窗口至 2027-01-17（开启日在上一年）",
+      "basis": "2026-10-03",
+      "timing": {
+        "offsetValue": 3,
+        "offsetUnit": "MONTH",
+        "remindValue": 2,
+        "remindUnit": "WEEK",
+        "windowBeforeValue": 14,
+        "windowBeforeUnit": "DAY",
+        "windowAfterValue": 14,
+        "windowAfterUnit": "DAY"
+      },
+      "expected": {
+        "planDate": "2027-01-03",
+        "remindStart": "2026-12-20",
+        "windowStart": "2026-12-20",
+        "windowEnd": "2027-01-17",
+        "openDate": "2026-12-20"
+      }
+    },
+    {
+      "name": "跨年窗口：B 1 年节点手术 2025-12-15 → 计划 2026-12-15、提醒 / 窗口前 1 个月至 11-15、窗口后 1 个月延到 2027-01-15（窗口本身跨年）",
+      "basis": "2025-12-15",
+      "timing": {
+        "offsetValue": 1,
+        "offsetUnit": "YEAR",
+        "remindValue": 1,
+        "remindUnit": "MONTH",
+        "windowBeforeValue": 1,
+        "windowBeforeUnit": "MONTH",
+        "windowAfterValue": 1,
+        "windowAfterUnit": "MONTH"
+      },
+      "expected": {
+        "planDate": "2026-12-15",
+        "remindStart": "2026-11-15",
+        "windowStart": "2026-11-15",
+        "windowEnd": "2027-01-15",
+        "openDate": "2026-11-15"
+      }
+    },
+    {
+      "name": "闰年排期：闰日出院的 A 年度 → 计划 2025-02-28（钳制）、提醒 / 窗口前 7 天至 02-21、窗口至 03-07",
+      "basis": "2024-02-29",
+      "timing": {
+        "offsetValue": 1,
+        "offsetUnit": "YEAR",
+        "remindValue": 7,
+        "remindUnit": "DAY",
+        "windowBeforeValue": 7,
+        "windowBeforeUnit": "DAY",
+        "windowAfterValue": 7,
+        "windowAfterUnit": "DAY"
+      },
+      "expected": {
+        "planDate": "2025-02-28",
+        "remindStart": "2025-02-21",
+        "windowStart": "2025-02-21",
+        "windowEnd": "2025-03-07",
+        "openDate": "2025-02-21"
+      }
+    },
+    {
+      "name": "闰年排期：闰日出院 + 4 年 → 计划 2028-02-29（回闰）、提醒 / 窗口前 7 天至 02-22、窗口至 03-07",
+      "basis": "2024-02-29",
+      "timing": {
+        "offsetValue": 4,
+        "offsetUnit": "YEAR",
+        "remindValue": 7,
+        "remindUnit": "DAY",
+        "windowBeforeValue": 7,
+        "windowBeforeUnit": "DAY",
+        "windowAfterValue": 7,
+        "windowAfterUnit": "DAY"
+      },
+      "expected": {
+        "planDate": "2028-02-29",
+        "remindStart": "2028-02-22",
+        "windowStart": "2028-02-22",
+        "windowEnd": "2028-03-07",
+        "openDate": "2028-02-22"
+      }
+    },
+    {
+      "name": "闰年窗口：基准 2028-01-05 + 2 月 → 计划 2028-03-05，±7 天窗口 02-27 ~ 03-12 含闰日 02-29（天窗宽度不因闰日漂移）",
+      "basis": "2028-01-05",
+      "timing": {
+        "offsetValue": 2,
+        "offsetUnit": "MONTH",
+        "remindValue": 7,
+        "remindUnit": "DAY",
+        "windowBeforeValue": 7,
+        "windowBeforeUnit": "DAY",
+        "windowAfterValue": 7,
+        "windowAfterUnit": "DAY"
+      },
+      "expected": {
+        "planDate": "2028-03-05",
+        "remindStart": "2028-02-27",
+        "windowStart": "2028-02-27",
+        "windowEnd": "2028-03-12",
+        "openDate": "2028-02-27"
+      }
+    },
+    {
+      "name": "不对称窗口（C 术后 72 小时，hospital-c-spec §5）：植入 2026-05-10 + 3 天 → 计划 05-13，窗口前 3 后 4 = 05-10 ~ 05-17",
+      "basis": "2026-05-10",
+      "timing": {
+        "offsetValue": 3,
+        "offsetUnit": "DAY",
+        "remindValue": 0,
+        "remindUnit": "DAY",
+        "windowBeforeValue": 3,
+        "windowBeforeUnit": "DAY",
+        "windowAfterValue": 4,
+        "windowAfterUnit": "DAY"
+      },
+      "expected": {
+        "planDate": "2026-05-13",
+        "remindStart": "2026-05-13",
+        "windowStart": "2026-05-10",
+        "windowEnd": "2026-05-17",
+        "openDate": "2026-05-10"
+      }
+    },
+    {
+      "name": "窗口按月 + 月末钳制：B 1 年节点手术 2026-03-31 → 计划 2027-03-31、提醒 / 窗口前 1 月从 02-31 钳到 02-28、窗口后至 04-30",
+      "basis": "2026-03-31",
+      "timing": {
+        "offsetValue": 1,
+        "offsetUnit": "YEAR",
+        "remindValue": 1,
+        "remindUnit": "MONTH",
+        "windowBeforeValue": 1,
+        "windowBeforeUnit": "MONTH",
+        "windowAfterValue": 1,
+        "windowAfterUnit": "MONTH"
+      },
+      "expected": {
+        "planDate": "2027-03-31",
+        "remindStart": "2027-02-28",
+        "windowStart": "2027-02-28",
+        "windowEnd": "2027-04-30",
+        "openDate": "2027-02-28"
+      }
+    },
+    {
+      "name": "零宽窗口：偏移 7 天、提醒 0、窗口前后均 0 → 计划 = 提醒 = 窗口首末日 = 开启日（2026-06-08）",
+      "basis": "2026-06-01",
+      "timing": {
+        "offsetValue": 7,
+        "offsetUnit": "DAY",
+        "remindValue": 0,
+        "remindUnit": "DAY",
+        "windowBeforeValue": 0,
+        "windowBeforeUnit": "DAY",
+        "windowAfterValue": 0,
+        "windowAfterUnit": "DAY"
+      },
+      "expected": {
+        "planDate": "2026-06-08",
+        "remindStart": "2026-06-08",
+        "windowStart": "2026-06-08",
+        "windowEnd": "2026-06-08",
+        "openDate": "2026-06-08"
+      }
+    },
+    {
+      "name": "开启日取较早者（提醒更早）：提醒提前 1 个月（2026-09-20）、窗口前 7 天（2026-10-13）→ 开启 2026-09-20",
+      "basis": "2025-10-20",
+      "timing": {
+        "offsetValue": 1,
+        "offsetUnit": "YEAR",
+        "remindValue": 1,
+        "remindUnit": "MONTH",
+        "windowBeforeValue": 7,
+        "windowBeforeUnit": "DAY",
+        "windowAfterValue": 7,
+        "windowAfterUnit": "DAY"
+      },
+      "expected": {
+        "planDate": "2026-10-20",
+        "remindStart": "2026-09-20",
+        "windowStart": "2026-10-13",
+        "windowEnd": "2026-10-27",
+        "openDate": "2026-09-20"
+      }
+    },
+    {
+      "name": "开启日取较早者（窗口更早）：提醒提前 7 天（2026-10-13）、窗口前 1 个月（2026-09-20）→ 开启 2026-09-20",
+      "basis": "2025-10-20",
+      "timing": {
+        "offsetValue": 1,
+        "offsetUnit": "YEAR",
+        "remindValue": 7,
+        "remindUnit": "DAY",
+        "windowBeforeValue": 1,
+        "windowBeforeUnit": "MONTH",
+        "windowAfterValue": 7,
+        "windowAfterUnit": "DAY"
+      },
+      "expected": {
+        "planDate": "2026-10-20",
+        "remindStart": "2026-10-13",
+        "windowStart": "2026-09-20",
+        "windowEnd": "2026-10-27",
+        "openDate": "2026-09-20"
+      }
+    },
+    {
+      "name": "C 常规随访滚动（基准 = 上次实际随访）：2026-06-20、+12 个月、±30 天 → 计划 2027-06-20、窗口 05-21 ~ 07-20",
+      "basis": "2026-06-20",
+      "timing": {
+        "offsetValue": 12,
+        "offsetUnit": "MONTH",
+        "remindValue": 0,
+        "remindUnit": "DAY",
+        "windowBeforeValue": 30,
+        "windowBeforeUnit": "DAY",
+        "windowAfterValue": 30,
+        "windowAfterUnit": "DAY"
+      },
+      "expected": {
+        "planDate": "2027-06-20",
+        "remindStart": "2027-06-20",
+        "windowStart": "2027-05-21",
+        "windowEnd": "2027-07-20",
+        "openDate": "2027-05-21"
+      }
+    },
+    {
+      "name": "偏移 0：建档日当天即计划日（2026-03-08），窗口当日开启、次日出窗",
+      "basis": "2026-03-08",
+      "timing": {
+        "offsetValue": 0,
+        "offsetUnit": "DAY",
+        "remindValue": 0,
+        "remindUnit": "DAY",
+        "windowBeforeValue": 0,
+        "windowBeforeUnit": "DAY",
+        "windowAfterValue": 1,
+        "windowAfterUnit": "DAY"
+      },
+      "expected": {
+        "planDate": "2026-03-08",
+        "remindStart": "2026-03-08",
+        "windowStart": "2026-03-08",
+        "windowEnd": "2026-03-09",
+        "openDate": "2026-03-08"
+      }
+    },
+    {
+      "name": "B 术后第 1 天（共享验算例）：手术 2026-03-01 → 计划 03-02、窗口 03-02 ~ 03-03",
+      "basis": "2026-03-01",
+      "timing": {
+        "offsetValue": 1,
+        "offsetUnit": "DAY",
+        "remindValue": 0,
+        "remindUnit": "DAY",
+        "windowBeforeValue": 0,
+        "windowBeforeUnit": "DAY",
+        "windowAfterValue": 1,
+        "windowAfterUnit": "DAY"
+      },
+      "expected": {
+        "planDate": "2026-03-02",
+        "remindStart": "2026-03-02",
+        "windowStart": "2026-03-02",
+        "windowEnd": "2026-03-03",
+        "openDate": "2026-03-02"
+      }
+    },
+    {
+      "name": "B 术后第 3 天（共享验算例）：手术 2026-03-01 → 计划 03-04、窗口 03-04 ~ 03-05",
+      "basis": "2026-03-01",
+      "timing": {
+        "offsetValue": 3,
+        "offsetUnit": "DAY",
+        "remindValue": 0,
+        "remindUnit": "DAY",
+        "windowBeforeValue": 0,
+        "windowBeforeUnit": "DAY",
+        "windowAfterValue": 1,
+        "windowAfterUnit": "DAY"
+      },
+      "expected": {
+        "planDate": "2026-03-04",
+        "remindStart": "2026-03-04",
+        "windowStart": "2026-03-04",
+        "windowEnd": "2026-03-05",
+        "openDate": "2026-03-04"
+      }
+    },
+    {
+      "name": "B 术后第 5 天（共享验算例）：手术 2026-03-01 → 计划 03-06、窗口 03-06 ~ 03-07",
+      "basis": "2026-03-01",
+      "timing": {
+        "offsetValue": 5,
+        "offsetUnit": "DAY",
+        "remindValue": 0,
+        "remindUnit": "DAY",
+        "windowBeforeValue": 0,
+        "windowBeforeUnit": "DAY",
+        "windowAfterValue": 1,
+        "windowAfterUnit": "DAY"
+      },
+      "expected": {
+        "planDate": "2026-03-06",
+        "remindStart": "2026-03-06",
+        "windowStart": "2026-03-06",
+        "windowEnd": "2026-03-07",
+        "openDate": "2026-03-06"
+      }
+    }
+  ],
+  "occurrenceCases": [
+    {
+      "name": "跨年循环：基准 2026-11-20、偏移 2 月、周期 12 月、第 3 次 = 基准 + 26 个月 = 2029-01-20（总量一次相加跨两个年界）",
+      "basis": "2026-11-20",
+      "timing": {
+        "offsetValue": 2,
+        "offsetUnit": "MONTH",
+        "remindValue": 0,
+        "remindUnit": "DAY",
+        "windowBeforeValue": 0,
+        "windowBeforeUnit": "DAY",
+        "windowAfterValue": 0,
+        "windowAfterUnit": "DAY"
+      },
+      "cycleValue": 12,
+      "cycleUnit": "MONTH",
+      "occurrence": 3,
+      "expected": "2029-01-20"
+    },
+    {
+      "name": "闰年循环：闰日基准 + 年度周期第 1 次 = 2025-02-28（平年钳制）",
+      "basis": "2024-02-29",
+      "timing": {
+        "offsetValue": 1,
+        "offsetUnit": "YEAR",
+        "remindValue": 0,
+        "remindUnit": "DAY",
+        "windowBeforeValue": 0,
+        "windowBeforeUnit": "DAY",
+        "windowAfterValue": 0,
+        "windowAfterUnit": "DAY"
+      },
+      "cycleValue": 1,
+      "cycleUnit": "YEAR",
+      "occurrence": 1,
+      "expected": "2025-02-28"
+    },
+    {
+      "name": "闰年循环：闰日基准 + 年度周期第 4 次 = 2028-02-29（回闰）",
+      "basis": "2024-02-29",
+      "timing": {
+        "offsetValue": 1,
+        "offsetUnit": "YEAR",
+        "remindValue": 0,
+        "remindUnit": "DAY",
+        "windowBeforeValue": 0,
+        "windowBeforeUnit": "DAY",
+        "windowAfterValue": 0,
+        "windowAfterUnit": "DAY"
+      },
+      "cycleValue": 1,
+      "cycleUnit": "YEAR",
+      "occurrence": 4,
+      "expected": "2028-02-29"
+    },
+    {
+      "name": "闰年循环：闰日基准 + 年度周期第 8 次 = 2032-02-29（跨两个闰年周期仍回闰）",
+      "basis": "2024-02-29",
+      "timing": {
+        "offsetValue": 1,
+        "offsetUnit": "YEAR",
+        "remindValue": 0,
+        "remindUnit": "DAY",
+        "windowBeforeValue": 0,
+        "windowBeforeUnit": "DAY",
+        "windowAfterValue": 0,
+        "windowAfterUnit": "DAY"
+      },
+      "cycleValue": 1,
+      "cycleUnit": "YEAR",
+      "occurrence": 8,
+      "expected": "2032-02-29"
+    },
+    {
+      "name": "闰年循环：闰日基准 + 年度周期第 11 次 = 2035-02-28（10 年以上长期随访，A 不设结束年度）",
+      "basis": "2024-02-29",
+      "timing": {
+        "offsetValue": 1,
+        "offsetUnit": "YEAR",
+        "remindValue": 0,
+        "remindUnit": "DAY",
+        "windowBeforeValue": 0,
+        "windowBeforeUnit": "DAY",
+        "windowAfterValue": 0,
+        "windowAfterUnit": "DAY"
+      },
+      "cycleValue": 1,
+      "cycleUnit": "YEAR",
+      "occurrence": 11,
+      "expected": "2035-02-28"
+    },
+    {
+      "name": "月末不链加：基准 01-31、偏移 1 月、周期 1 月、第 2 次 = 2026-03-31（总量一次相加，不是逐次链加的 03-28）",
+      "basis": "2026-01-31",
+      "timing": {
+        "offsetValue": 1,
+        "offsetUnit": "MONTH",
+        "remindValue": 0,
+        "remindUnit": "DAY",
+        "windowBeforeValue": 0,
+        "windowBeforeUnit": "DAY",
+        "windowAfterValue": 0,
+        "windowAfterUnit": "DAY"
+      },
+      "cycleValue": 1,
+      "cycleUnit": "MONTH",
+      "occurrence": 2,
+      "expected": "2026-03-31"
+    },
+    {
+      "name": "天 / 周周期：B 术后第 3 天节点（FIXED）第 1 次 = 基准 + 3 天 = 2026-03-04",
+      "basis": "2026-03-01",
+      "timing": {
+        "offsetValue": 3,
+        "offsetUnit": "DAY",
+        "remindValue": 0,
+        "remindUnit": "DAY",
+        "windowBeforeValue": 0,
+        "windowBeforeUnit": "DAY",
+        "windowAfterValue": 1,
+        "windowAfterUnit": "DAY"
+      },
+      "cycleValue": 1,
+      "cycleUnit": "WEEK",
+      "occurrence": 1,
+      "expected": "2026-03-04"
+    },
+    {
+      "name": "混合单位：偏移 3 天 + 周期 1 年、第 4 次 = 基准 + 3 天 + 3 年 = 2029-03-04（先偏移后周期）",
+      "basis": "2026-03-01",
+      "timing": {
+        "offsetValue": 3,
+        "offsetUnit": "DAY",
+        "remindValue": 0,
+        "remindUnit": "DAY",
+        "windowBeforeValue": 0,
+        "windowBeforeUnit": "DAY",
+        "windowAfterValue": 1,
+        "windowAfterUnit": "DAY"
+      },
+      "cycleValue": 1,
+      "cycleUnit": "YEAR",
+      "occurrence": 4,
+      "expected": "2029-03-04"
+    }
+  ]
+}
