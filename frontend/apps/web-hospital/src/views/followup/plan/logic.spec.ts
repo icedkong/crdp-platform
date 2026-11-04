@@ -1,14 +1,18 @@
 import type { PlanDetailView, PlanNodeView } from '@crdp/api';
 
+import { planEnrollmentStatusText, planLogActionText } from '@crdp/api';
 import { describe, expect, it } from 'vitest';
 
 import {
   buildNodeInputs,
   canEditPlan,
+  enrollmentReasonText,
   newNodeRow,
   newSubplanRow,
   planActionsFor,
   planDetailPath,
+  planLogJsonText,
+  planTimeText,
   toNodeRows,
   validateBasicInfo,
   validateNodeRows,
@@ -613,3 +617,50 @@ function detailOfNodes(nodes: PlanNodeView[]): PlanDetailView {
     },
   };
 }
+
+// E14-T08 / A-FU-021、A-FU-022 · 患者列表与变更记录页签的逻辑
+// （时间到分钟、前后内容 JSON 美化、状态补充说明与中文映射）。
+describe('e14-T08 · 患者列表与变更记录', () => {
+  it('时间列到分钟（ISO-8601 → YYYY-MM-DD HH:mm）', () => {
+    expect(planTimeText('2026-03-01T09:30:25+08:00')).toBe('2026-03-01 09:30');
+    expect(planTimeText(null)).toBe('—');
+    expect(planTimeText('2026-03-01')).toBe('2026-03-01');
+  });
+
+  it('前后内容 JSON 美化，非 JSON 回退原文', () => {
+    expect(planLogJsonText('{"status":"PUBLISHED"}')).toBe(
+      '{\n  "status": "PUBLISHED"\n}',
+    );
+    expect(planLogJsonText('非 JSON 文本（示例）')).toBe(
+      '非 JSON 文本（示例）',
+    );
+    expect(planLogJsonText(null)).toBe('—');
+  });
+
+  it('状态补充说明：已暂停带暂停原因、已移除带移除原因', () => {
+    expect(
+      enrollmentReasonText({
+        pauseReason: '外地随访（示例）',
+        status: 'PAUSED',
+      }),
+    ).toBe('外地随访（示例）');
+    expect(
+      enrollmentReasonText({ removeReason: '拒访（示例）', status: 'REMOVED' }),
+    ).toBe('拒访（示例）');
+    expect(enrollmentReasonText({ status: 'ACTIVE' })).toBe('');
+  });
+
+  it('入组状态与变更动作的中文映射（A-FU-022 三态 / A-FU-021 动作集）', () => {
+    expect(planEnrollmentStatusText('ACTIVE')).toBe('已启动');
+    expect(planEnrollmentStatusText('PAUSED')).toBe('已暂停');
+    expect(planEnrollmentStatusText('REMOVED')).toBe('已移除');
+    expect(planEnrollmentStatusText('UNKNOWN')).toBe('UNKNOWN');
+    expect(planEnrollmentStatusText(null)).toBe('—');
+
+    expect(planLogActionText('PLAN_CREATE')).toBe('新建计划');
+    expect(planLogActionText('PLAN_NODE_SAVE')).toBe('保存节点');
+    expect(planLogActionText('PLAN_DISABLE')).toBe('停用计划');
+    expect(planLogActionText('OTHER')).toBe('OTHER');
+    expect(planLogActionText(null)).toBe('—');
+  });
+});

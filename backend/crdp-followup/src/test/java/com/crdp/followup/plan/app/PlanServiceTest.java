@@ -1,6 +1,7 @@
 package com.crdp.followup.plan.app;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -14,6 +15,8 @@ import static org.mockito.Mockito.when;
 
 import com.crdp.followup.plan.domain.PlanNodeRule;
 import com.crdp.followup.plan.infra.mapper.PlanInsertRow;
+import com.crdp.followup.plan.infra.mapper.PlanLogInsertRow;
+import com.crdp.followup.plan.infra.mapper.PlanLogMapper;
 import com.crdp.followup.plan.infra.mapper.PlanMapper;
 import com.crdp.followup.plan.infra.mapper.PlanNodeInsertRow;
 import com.crdp.framework.audit.AuditEntry;
@@ -26,16 +29,20 @@ import org.mockito.ArgumentCaptor;
 
 /**
  * E14-T01 / A-FU-018、A-FU-019 单元测试（验收：发布后版本只读，新入组用新版本）。 锁定口径：已发布版本编辑 40901 + DENIED 审计；乐观锁冲突
- * 40900；发布自动停用同族旧版本（新入组用新版本）；复制出新版本（草稿唯一）； 状态机迁移与非法迁移 40901；「随访中」为派生展示态。全部虚构数据。
+ * 40900；发布自动停用同族旧版本（新入组用新版本）；复制出新版本（草稿唯一）； 状态机迁移与非法迁移 40901；「随访中」为派生展示态。
+ *
+ * <p>E14-T08 / A-FU-021（验收「计划改动全记审计」）：每次成功改动除审计外双写 fu_plan_log 变更记录（含前后内容快照）；
+ * 节点保存的前后节点数组、发布自动停用旧版本的逐版本 PLAN_DISABLE 记录；被拒操作不落变更记录。全部虚构数据。
  */
 class PlanServiceTest {
 
     private static final long PLAN_ID = 11L;
 
     private final PlanMapper mapper = mock(PlanMapper.class);
+    private final PlanLogMapper logMapper = mock(PlanLogMapper.class);
     private final AuditLogger audit = mock(AuditLogger.class);
 
-    private final PlanService service = new PlanService(mapper, audit);
+    private final PlanService service = new PlanService(mapper, logMapper, audit);
 
     private static PlanMapper.PlanRow row(String status) {
         return row(status, 1, 0L);
@@ -206,6 +213,8 @@ class PlanServiceTest {
         when(mapper.countNodes(PLAN_ID)).thenReturn(1);
         when(mapper.findSupersededIds("PLAN-IT-1", PLAN_ID)).thenReturn(List.of(5L));
         when(mapper.transitionStatus(anyLong(), anyString(), anyString())).thenReturn(1);
+        // E14-T08：被顶替的旧版本逐版本留痕（PLAN_DISABLE 审计 + 变更记录）需要读到旧行
+        when(mapper.findById(5L)).thenReturn(row("PUBLISHED", 1, 3L));
 
         service.publish(PLAN_ID);
 
@@ -357,5 +366,191 @@ class PlanServiceTest {
         ApiException disableAgain =
                 assertThrows(ApiException.class, () -> service.disable(PLAN_ID));
         assertEquals(40901, disableAgain.code());
+    }
+
+    // ---------------------------------------------------------------- 变更审计（E14-T08 / A-FU-021）
+
+    @Test
+    void createWritesChangeLogWithAfterSummary() {
+        when(mapper.findById(anyLong())).thenReturn(row("UNPUBLISHED"));
+        when(logMapper.findLogsByPlanId(anyLong(), org.mockito.ArgumentMatchers.anyInt()))
+                .thenReturn(List.of());
+
+        service.create(
+                new PlanService.CreateRequest(
+                        "PLAN-IT-1", "示例 IT 年度随访计划", "DISCHARGE_DATE", "ONGOING", null, "备注（示例）"));
+
+        ArgumentCaptor<PlanLogInsertRow> captor = ArgumentCaptor.forClass(PlanLogInsertRow.class);
+        verify(logMapper).insertLog(captor.capture());
+        PlanLogInsertRow logRow = captor.getValue();
+        assertEquals("PLAN_CREATE", logRow.getAction());
+        assertEquals("PLAN-IT-1", logRow.getPlanCode());
+        assertNull(logRow.getBeforeJson(), "新建无前内容");
+        assertTrue(
+                logRow.getAfterJson().contains("\"remark\":\"备注（示例）\""),
+                "后内容含备注（A-FU-021 全量前后内容）：" + logRow.getAfterJson());
+    }
+
+    @Test
+    void saveNodesWritesBeforeAfterNodeSnapshotsIntoAuditAndChangeLog() {
+        when(mapper.findById(anyLong())).thenReturn(row("UNPUBLISHED"));
+        when(mapper.bumpLockVersion(anyLong(), org.mockito.ArgumentMatchers.anyInt()))
+                .thenReturn(1);
+        PlanMapper.NodeRow beforeNode =
+                new PlanMapper.NodeRow(
+                        101L,
+                        null,
+                        "SUBPLAN",
+                        "旧子计划（示例）",
+                        "CYCLE",
+                        null,
+                        1,
+                        "YEAR",
+                        null,
+                        0,
+                        "YEAR",
+                        0,
+                        "DAY",
+                        0,
+                        "DAY",
+                        0,
+                        "DAY",
+                        "FORM",
+                        "WARD_DEFAULT",
+                        null,
+                        null,
+                        null,
+                        10);
+        PlanMapper.NodeRow afterNode =
+                new PlanMapper.NodeRow(
+                        201L,
+                        null,
+                        "SUBPLAN",
+                        "新子计划（示例）",
+                        "CYCLE",
+                        null,
+                        1,
+                        "YEAR",
+                        null,
+                        0,
+                        "YEAR",
+                        0,
+                        "DAY",
+                        0,
+                        "DAY",
+                        0,
+                        "DAY",
+                        "FORM",
+                        "WARD_DEFAULT",
+                        null,
+                        null,
+                        null,
+                        10);
+        // 保存前快照 → 替换 → 保存后快照（detail 再读一次沿用 after）
+        when(mapper.findNodesByPlanId(PLAN_ID))
+                .thenReturn(List.of(beforeNode))
+                .thenReturn(List.of(afterNode))
+                .thenReturn(List.of(afterNode));
+
+        service.saveNodes(PLAN_ID, new PlanService.SaveNodesRequest(3, annualNodes()));
+
+        ArgumentCaptor<PlanLogInsertRow> logCaptor =
+                ArgumentCaptor.forClass(PlanLogInsertRow.class);
+        verify(logMapper).insertLog(logCaptor.capture());
+        PlanLogInsertRow logRow = logCaptor.getValue();
+        assertEquals("PLAN_NODE_SAVE", logRow.getAction());
+        assertTrue(
+                logRow.getBeforeJson().contains("旧子计划（示例）"),
+                "前内容 = 替换前节点数组：" + logRow.getBeforeJson());
+        assertTrue(
+                logRow.getAfterJson().contains("新子计划（示例）"),
+                "后内容 = 替换后节点数组：" + logRow.getAfterJson());
+        // 审计同样带前后内容（A-FU-021）
+        ArgumentCaptor<AuditEntry> auditCaptor = ArgumentCaptor.forClass(AuditEntry.class);
+        verify(audit).append(auditCaptor.capture());
+        assertEquals("PLAN_NODE_SAVE", auditCaptor.getValue().action());
+        assertTrue(auditCaptor.getValue().beforeJson().contains("旧子计划（示例）"));
+        assertTrue(auditCaptor.getValue().afterJson().contains("新子计划（示例）"));
+    }
+
+    @Test
+    void publishWritesChangeLogForNewAndSupersededVersions() {
+        when(mapper.findById(PLAN_ID)).thenReturn(row("UNPUBLISHED", 2, 0));
+        when(mapper.countSubplans(PLAN_ID)).thenReturn(1);
+        when(mapper.countNodes(PLAN_ID)).thenReturn(1);
+        when(mapper.findSupersededIds("PLAN-IT-1", PLAN_ID)).thenReturn(List.of(5L));
+        when(mapper.transitionStatus(anyLong(), anyString(), anyString())).thenReturn(1);
+        when(mapper.findById(5L)).thenReturn(row("PUBLISHED", 1, 3L));
+
+        service.publish(PLAN_ID);
+
+        ArgumentCaptor<PlanLogInsertRow> captor = ArgumentCaptor.forClass(PlanLogInsertRow.class);
+        verify(logMapper, org.mockito.Mockito.times(2)).insertLog(captor.capture());
+        // 被顶替的旧版本 5：PLAN_DISABLE 记录（发布新版本引起的停用也是计划改动）
+        PlanLogInsertRow supersededLog = captor.getAllValues().get(0);
+        assertEquals(5L, supersededLog.getPlanId());
+        assertEquals("PLAN_DISABLE", supersededLog.getAction());
+        assertTrue(supersededLog.getBeforeJson().contains("\"status\":\"PUBLISHED\""));
+        assertTrue(supersededLog.getAfterJson().contains("\"status\":\"DISABLED\""));
+        // 新版本：PLAN_PUBLISH 记录
+        PlanLogInsertRow publishLog = captor.getAllValues().get(1);
+        assertEquals(PLAN_ID, publishLog.getPlanId());
+        assertEquals("PLAN_PUBLISH", publishLog.getAction());
+        assertTrue(publishLog.getBeforeJson().contains("\"status\":\"UNPUBLISHED\""));
+        assertTrue(publishLog.getAfterJson().contains("\"status\":\"PUBLISHED\""));
+        // 审计同样逐版本留痕（旧版本 PLAN_DISABLE + 新版本 PLAN_PUBLISH）
+        verify(audit, org.mockito.Mockito.times(2)).append(any(AuditEntry.class));
+    }
+
+    @Test
+    void deniedOperationsDoNotWriteChangeLog() {
+        when(mapper.findById(anyLong())).thenReturn(row("PUBLISHED"));
+
+        ApiException denied =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.update(
+                                        PLAN_ID,
+                                        3,
+                                        new PlanService.UpdateRequest(
+                                                "改名（示例）",
+                                                "DISCHARGE_DATE",
+                                                "ONGOING",
+                                                null,
+                                                null)));
+        assertEquals(40901, denied.code());
+        verify(logMapper, never()).insertLog(any(PlanLogInsertRow.class));
+    }
+
+    @Test
+    void logsReturnsRowsWithOperatorAndTime() {
+        when(mapper.findById(anyLong())).thenReturn(row("PUBLISHED"));
+        when(logMapper.findLogsByPlanId(PLAN_ID, 100))
+                .thenReturn(
+                        List.of(
+                                new PlanLogMapper.PlanLogRow(
+                                        9L,
+                                        PLAN_ID,
+                                        "PLAN-IT-1",
+                                        "PLAN_PAUSE",
+                                        "暂停计划：示例 IT 年度随访计划 v1",
+                                        "{\"status\":\"PUBLISHED\"}",
+                                        "{\"status\":\"PAUSED\"}",
+                                        7L,
+                                        "甲医生（示例）",
+                                        java.time.LocalDateTime.of(2026, 3, 1, 8, 0))));
+
+        PlanService.PlanLogsView view = service.logs(PLAN_ID);
+
+        assertEquals(1, view.items().size());
+        PlanService.PlanLogView item = view.items().get(0);
+        assertEquals("PLAN_PAUSE", item.action());
+        assertEquals("甲医生（示例）", item.operatorName(), "操作人姓名联查 sys_user");
+        assertTrue(item.createdAt().startsWith("2026-03-01T"), "ISO-8601 带时区：" + item.createdAt());
+
+        when(mapper.findById(anyLong())).thenReturn(null);
+        ApiException missing = assertThrows(ApiException.class, () -> service.logs(PLAN_ID));
+        assertEquals(40400, missing.code());
     }
 }

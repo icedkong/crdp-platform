@@ -205,6 +205,7 @@ export const statusTone: Record<string, StatusTone> = {
   已联系: 'success',
   已电子化: 'success',
   正常: 'success',
+  已启动: 'success', // 计划患者列表（A-FU-022）：已启动 / 已暂停 / 已移除
   待随访: 'pending', // 白底主色描边
   窗口外: 'warning',
   失访: 'warning',
@@ -225,6 +226,7 @@ export const statusTone: Record<string, StatusTone> = {
   死亡: 'default',
   已禁用: 'default',
   已停用: 'default',
+  已移除: 'default', // 计划患者列表（A-FU-022）
   无需录入: 'default',
   草稿: 'default',
   // 租户（PLT-TEN-010 七态；开通中是向导阶段的初始态，components.md tenant 行的补充）

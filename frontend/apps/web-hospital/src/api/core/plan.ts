@@ -4,11 +4,13 @@
  * 页面 pages.md §8）。查看 followup:plan:view（C 无此码，用 followup:plan:edit，OQ-13）；
  * 新建 / 编辑 / 复制 followup:plan:edit；发布 / 暂停 / 恢复 / 停用
  * followup:plan:publish 或 followup:plan:edit（任一命中即放行）。
- * 计划患者列表与批量入组随 E14-T08 / E13-T07。
+ * E14-T08：计划患者列表（A-FU-022）与变更记录（A-FU-021）；批量入组随 E13-T07。
  */
 import type {
   PlanCreateRequest,
   PlanDetailView,
+  PlanEnrollmentPage,
+  PlanLogsView,
   PlanSaveNodesRequest,
   PlanUpdateRequest,
   PlanView,
@@ -81,5 +83,27 @@ export function resumePlan(planId: string) {
 export function disablePlan(planId: string) {
   return requestClient.post<PlanView>(
     apiPath(`/followup/plans/${planId}/disable`),
+  );
+}
+
+/**
+ * 计划患者列表（E14-T08 / A-FU-022）：加入时间、随访完成次数、状态（已启动 /
+ * 已暂停 / 已移除）；姓名与病案号只含脱敏值，按当前用户数据范围出行。
+ */
+export function fetchPlanEnrollments(
+  planId: string,
+  pageNo = 1,
+  pageSize = 20,
+) {
+  return requestClient.get<PlanEnrollmentPage>(
+    apiPath(`/followup/plans/${planId}/enrollments`),
+    { params: { pageNo, pageSize } },
+  );
+}
+
+/** 计划变更记录（E14-T08 / A-FU-021）：倒序最近 100 条，操作人、时间与前后内容。 */
+export function fetchPlanLogs(planId: string) {
+  return requestClient.get<PlanLogsView>(
+    apiPath(`/followup/plans/${planId}/logs`),
   );
 }
