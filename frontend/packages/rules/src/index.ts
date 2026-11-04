@@ -61,3 +61,11 @@ export {
   permissionVersionChanged,
   shouldRefreshPermissions,
 } from './permission-refresh';
+export {
+  addDateUnit,
+  computeNodeSchedule,
+  type NodeSchedule,
+  type OffsetUnit,
+  type RemindUnit,
+  type ScheduleParams,
+} from './plan-date';
