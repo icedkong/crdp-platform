@@ -52,10 +52,11 @@ class FollowupTaskCreationServiceTest {
     private final OutboxPublisher outbox = mock(OutboxPublisher.class);
     private final AuditLogger audit = mock(AuditLogger.class);
     private final JdbcTemplate jdbc = mock(JdbcTemplate.class);
+    private final FollowupTaskStatusService statusService = mock(FollowupTaskStatusService.class);
 
     private final FollowupTaskCreationService service =
             new FollowupTaskCreationService(
-                    jobScheduler, taskMapper, planMapper, outbox, audit, jdbc);
+                    jobScheduler, taskMapper, planMapper, outbox, audit, jdbc, statusService);
 
     // ---------------------------------------------------------------- 装配（A 年度形态：开启日 2026-03-08）
 
@@ -290,6 +291,20 @@ class FollowupTaskCreationServiceTest {
 
         verify(taskMapper, never()).findSchedulableEnrollments();
         verify(jobScheduler, never()).lastSuccessDate(anyString());
+        verify(statusService, never()).refreshOverdue(any()); // 模块关闭：不创建也不刷新（E15-T01）
+    }
+
+    @Test
+    void dailyRunRefreshesOverdueAfterCreationLoop() {
+        moduleOpen();
+        annualEnrollment();
+        insertSucceeds();
+        when(statusService.refreshOverdue(any())).thenReturn(0);
+
+        run(LocalDate.of(2026, 3, 8));
+
+        // E15-T01 / A-FU-010（tech-plan §8 步骤 W）：创建循环后按本次运行目标逻辑日一次刷完逾期
+        verify(statusService).refreshOverdue(LocalDate.of(2026, 3, 8));
     }
 
     @Test

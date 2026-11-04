@@ -76,6 +76,8 @@ class StartDateRecalculationIT {
                                     + "%')))"
                                     + " OR (action = 'TASK_CREATE' AND detail LIKE '%每日调度%')"
                                     + " OR action = 'PLAN_START_DATE_RECALC'"
+                                    + " OR (action = 'TASK_OVERDUE_MARK'"
+                                    + " AND detail LIKE '%每日逾期刷新%')"
                                     + " OR (event_type = 'PATIENT_CREATE'"
                                     + " AND target IN (SELECT CONCAT('PATIENT:', id) FROM pt_patient"
                                     + " WHERE legacy_no LIKE '"
@@ -89,6 +91,10 @@ class StartDateRecalculationIT {
                     for (Long patientId : patientIds) {
                         jdbc.update(
                                 "DELETE FROM sys_outbox WHERE event_type = 'TaskOpened'"
+                                        + " AND JSON_EXTRACT(payload, '$.patientId') = ?",
+                                patientId);
+                        jdbc.update(
+                                "DELETE FROM sys_outbox WHERE event_type = 'TASK_OVERDUE'"
                                         + " AND JSON_EXTRACT(payload, '$.patientId') = ?",
                                 patientId);
                     }
