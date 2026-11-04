@@ -21,7 +21,7 @@ import org.apache.ibatis.annotations.Update;
 @Mapper
 public interface PlanMapper {
 
-    /** 计划行（activeCount = 在组入组数，用于「随访中」派生态与列表在组人数）。 */
+    /** 计划行（autoEnroll = 自动入组开关 Q35；activeCount = 在组入组数，用于「随访中」派生态与列表在组人数）。 */
     record PlanRow(
             Long id,
             String code,
@@ -31,6 +31,7 @@ public interface PlanMapper {
             String startDateField,
             String cycleType,
             Integer cycleYears,
+            Boolean autoEnroll,
             String remark,
             Integer lockVersion,
             LocalDateTime publishedAt,
@@ -68,7 +69,8 @@ public interface PlanMapper {
 
     String PLAN_COLUMNS =
             "p.id, p.code, p.name, p.version, p.status, p.start_date_field AS startDateField,"
-                    + " p.cycle_type AS cycleType, p.cycle_years AS cycleYears, p.remark,"
+                    + " p.cycle_type AS cycleType, p.cycle_years AS cycleYears,"
+                    + " p.auto_enroll AS autoEnroll, p.remark,"
                     + " p.lock_version AS lockVersion, p.published_at AS publishedAt, "
                     + ACTIVE_COUNT
                     + " AS activeCount";
@@ -89,6 +91,21 @@ public interface PlanMapper {
     @Select("SELECT " + PLAN_COLUMNS + " FROM fu_plan p WHERE p.id = #{id}")
     PlanRow findById(long id);
 
+    /**
+     * 自动入组的预置计划（E14-T05 / Q35）：auto_enroll = 1 且状态 PUBLISHED（「随访中」派生态同为 PUBLISHED）。 PAUSED「不开启新任务」、
+     * DISABLED「不再允许入组」不参与；被新版本顶替的旧版本已转 DISABLED → 自动入组必然落在新版本（A-FU-019）。 配置行读取、不输出患者数据。
+     */
+    @IgnoreScope(
+            reason =
+                    "自动入组（Q35）只读计划配置行（auto_enroll 开关与状态位），不输出患者数据；"
+                            + "随后的入组复用 PlanEnrollmentService.enroll 的全部校验")
+    @Select(
+            "SELECT "
+                    + PLAN_COLUMNS
+                    + " FROM fu_plan p WHERE p.auto_enroll = 1 AND p.status = 'PUBLISHED'"
+                    + " ORDER BY p.id")
+    List<PlanRow> findAutoEnrollPlans();
+
     /** 指定计划族的未发布草稿 id（至多一个；复制前查重）。 */
     @Select("SELECT id FROM fu_plan WHERE code = #{code} AND status = 'UNPUBLISHED'" + " LIMIT 1")
     Long findDraftIdByCode(String code);
@@ -103,14 +120,15 @@ public interface PlanMapper {
                     + " AND id <> #{excludeId}")
     List<Long> findSupersededIds(@Param("code") String code, @Param("excludeId") long excludeId);
 
-    /** 新建计划（未发布，lock_version 从 0 起）。 */
+    /** 新建计划（未发布，lock_version 从 0 起；auto_enroll 随 E14-T05 / Q35 入列）。 */
     @Insert(
             """
             INSERT INTO fu_plan
-              (code, name, version, status, start_date_field, cycle_type, cycle_years, remark, created_by)
+              (code, name, version, status, start_date_field, cycle_type, cycle_years,
+               auto_enroll, remark, created_by)
             VALUES
               (#{code}, #{name}, #{version}, #{status}, #{startDateField}, #{cycleType},
-               #{cycleYears}, #{remark}, #{createdBy})
+               #{cycleYears}, #{autoEnroll}, #{remark}, #{createdBy})
             """)
     @Options(useGeneratedKeys = true, keyProperty = "id")
     void insertPlan(PlanInsertRow row);
@@ -119,8 +137,8 @@ public interface PlanMapper {
     @Update(
             """
             UPDATE fu_plan SET name = #{name}, start_date_field = #{startDateField},
-              cycle_type = #{cycleType}, cycle_years = #{cycleYears}, remark = #{remark},
-              lock_version = lock_version + 1
+              cycle_type = #{cycleType}, cycle_years = #{cycleYears}, auto_enroll = #{autoEnroll},
+              remark = #{remark}, lock_version = lock_version + 1
             WHERE id = #{id} AND status = 'UNPUBLISHED' AND lock_version = #{baseVersion}
             """)
     int updateBasics(
@@ -129,6 +147,7 @@ public interface PlanMapper {
             @Param("startDateField") String startDateField,
             @Param("cycleType") String cycleType,
             @Param("cycleYears") Integer cycleYears,
+            @Param("autoEnroll") boolean autoEnroll,
             @Param("remark") String remark,
             @Param("baseVersion") int baseVersion);
 

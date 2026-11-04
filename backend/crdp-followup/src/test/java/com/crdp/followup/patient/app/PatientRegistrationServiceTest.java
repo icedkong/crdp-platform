@@ -58,9 +58,12 @@ class PatientRegistrationServiceTest {
     private final PatientStatusHistoryService statusHistory =
             mock(PatientStatusHistoryService.class);
     private final PatientSummaryService summary = mock(PatientSummaryService.class);
+    private final com.crdp.followup.plan.app.PlanEnrollmentService enrollments =
+            mock(com.crdp.followup.plan.app.PlanEnrollmentService.class);
 
     private final PatientRegistrationService service =
-            new PatientRegistrationService(mapper, gateway, crypto, audit, statusHistory, summary);
+            new PatientRegistrationService(
+                    mapper, gateway, crypto, audit, statusHistory, summary, enrollments);
 
     @BeforeEach
     void login() {
@@ -219,6 +222,40 @@ class PatientRegistrationServiceTest {
         // E13-T03：同一登记补写状态时间线初始行（登记即 ACTIVE，OQ-71②）与当前状态摘要建行
         verify(statusHistory).recordRegistration(eq(101L), eq(LocalDate.now()), eq(OPERATOR_ID));
         verify(summary).recompute(101L, OPERATOR_ID);
+
+        // E14-T05 / Q35：出院登记（存活）后自动加入预置计划
+        verify(enrollments).autoEnrollOnRegistration(101L, 1);
+    }
+
+    @Test
+    void createSurvivesAutoEnrollFailureAndWritesFailAudit() {
+        wardEnabled();
+        when(gateway.liveIdByMrnBlind("BLIND:" + MRN)).thenReturn(null);
+        when(mapper.findWards()).thenReturn(List.of(new PatientMapper.OptionRow(WARD_ID, "示例二病区")));
+        when(mapper.insertPatient(any()))
+                .thenAnswer(
+                        invocation -> {
+                            PatientInsert row = invocation.getArgument(0);
+                            row.setId(101L);
+                            return 1;
+                        });
+        when(enrollments.autoEnrollOnRegistration(eq(101L), any()))
+                .thenThrow(new IllegalStateException("租户库抖动（示例）"));
+
+        // 登记是主操作：自动入组失败不回滚登记，只记 FAIL 审计提示人工入组
+        PatientRegistrationService.CreatedView view = service.create(request(MRN, NAME).build());
+
+        assertEquals("101", view.id());
+        // 登记流程：先自动入组（失败记 FAIL），再写登记 SUCCESS 审计
+        ArgumentCaptor<AuditEntry> captor = ArgumentCaptor.forClass(AuditEntry.class);
+        verify(audit, org.mockito.Mockito.times(2)).append(captor.capture());
+        AuditEntry failure = captor.getAllValues().get(0);
+        assertEquals("PLAN_ENROLL", failure.action(), "自动入组失败单独记审计");
+        assertEquals(AuditResult.FAIL, failure.result());
+        assertTrue(failure.description().contains("自动入组失败"));
+        AuditEntry registration = captor.getAllValues().get(1);
+        assertEquals("PATIENT_CREATE", registration.action(), "登记本体照常成功记审计");
+        assertEquals(AuditResult.SUCCESS, registration.result());
     }
 
     @Test

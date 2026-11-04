@@ -11,6 +11,7 @@ public class PlanInsertRow {
     private String startDateField;
     private String cycleType;
     private Integer cycleYears;
+    private boolean autoEnroll;
     private String remark;
     private Long createdBy;
 
@@ -22,6 +23,7 @@ public class PlanInsertRow {
             String startDateField,
             String cycleType,
             Integer cycleYears,
+            boolean autoEnroll,
             String remark,
             Long createdBy) {
         this.code = code;
@@ -31,8 +33,13 @@ public class PlanInsertRow {
         this.startDateField = startDateField;
         this.cycleType = cycleType;
         this.cycleYears = cycleYears;
+        this.autoEnroll = autoEnroll;
         this.remark = remark;
         this.createdBy = createdBy;
+    }
+
+    public boolean getAutoEnroll() {
+        return autoEnroll;
     }
 
     public long getId() {

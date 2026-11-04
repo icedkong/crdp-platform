@@ -10,6 +10,7 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -41,11 +42,17 @@ class PlanEnrollmentServiceTest {
     private final PlanEnrollmentMapper mapper = mock(PlanEnrollmentMapper.class);
     private final AuditLogger audit = mock(AuditLogger.class);
     private final CryptoService crypto = mock(CryptoService.class);
+    private final com.crdp.followup.task.app.FollowupTaskCreationService taskCreation =
+            mock(com.crdp.followup.task.app.FollowupTaskCreationService.class);
 
     private final PlanEnrollmentService service =
-            new PlanEnrollmentService(planMapper, mapper, audit, crypto);
+            new PlanEnrollmentService(planMapper, mapper, audit, crypto, taskCreation);
 
     private static PlanMapper.PlanRow plan(String status, int version) {
+        return plan(status, version, false);
+    }
+
+    private static PlanMapper.PlanRow plan(String status, int version, boolean autoEnroll) {
         return new PlanMapper.PlanRow(
                 PLAN_ID,
                 "PLAN-IT-1",
@@ -55,6 +62,7 @@ class PlanEnrollmentServiceTest {
                 "DISCHARGE_DATE",
                 "ONGOING",
                 null,
+                autoEnroll,
                 null,
                 0,
                 null,
@@ -64,6 +72,12 @@ class PlanEnrollmentServiceTest {
     private void patientAlive() {
         when(mapper.findPatientState(PATIENT_ID))
                 .thenReturn(new PlanEnrollmentMapper.PatientStateRow(PATIENT_ID, "ACTIVE"));
+        // E14-T05：入组同一事务建任务；单测默认「0 补录 / 0 当期」（入组即建细节由
+        // FollowupTaskCreationServiceTest 与 EnrollmentBackfillIT 锁定）
+        when(taskCreation.initializeForNewEnrollment(anyLong(), anyLong(), anyLong(), anyString()))
+                .thenReturn(
+                        new com.crdp.followup.task.app.FollowupTaskCreationService
+                                .EnrollmentInitSummary(0, 0));
     }
 
     @Test
@@ -150,6 +164,158 @@ class PlanEnrollmentServiceTest {
                 assertThrows(
                         ApiException.class, () -> service.enroll(PATIENT_ID, PLAN_ID, "monthly"));
         assertEquals(40001, badMode.code());
+    }
+
+    // ---------------------------------------------------------------- E14-T05 入组即建 + 自动入组
+
+    @Test
+    void enrollInitializesTasksAtEnrollmentAndAuditsCounts() {
+        when(planMapper.findById(PLAN_ID)).thenReturn(plan("PUBLISHED", 1));
+        patientAlive();
+        when(mapper.findActiveIdByPatientAndPlanCode(PATIENT_ID, "PLAN-IT-1")).thenReturn(null);
+        org.mockito.Mockito.doAnswer(
+                        invocation -> {
+                            invocation.getArgument(0, PlanEnrollmentInsertRow.class).setId(31L);
+                            return null;
+                        })
+                .when(mapper)
+                .insertEnrollment(any(PlanEnrollmentInsertRow.class));
+        when(taskCreation.initializeForNewEnrollment(31L, PATIENT_ID, PLAN_ID, "NORMAL"))
+                .thenReturn(
+                        new com.crdp.followup.task.app.FollowupTaskCreationService
+                                .EnrollmentInitSummary(3, 1));
+
+        service.enroll(PATIENT_ID, PLAN_ID, null);
+
+        // 入组同一事务内创建任务：已结束窗口标补录 + 窗口内当期任务（E14-T05）
+        verify(taskCreation).initializeForNewEnrollment(31L, PATIENT_ID, PLAN_ID, "NORMAL");
+        ArgumentCaptor<com.crdp.framework.audit.AuditEntry> captor =
+                ArgumentCaptor.forClass(com.crdp.framework.audit.AuditEntry.class);
+        verify(audit).append(captor.capture());
+        assertTrue(
+                captor.getValue().afterJson().contains("\"backfillTasks\":3"),
+                "审计并入补录任务数：" + captor.getValue().afterJson());
+        assertTrue(captor.getValue().afterJson().contains("\"currentTasks\":1"));
+    }
+
+    @Test
+    void enrollFailsWholeEnrollmentWhenTaskInitFails() {
+        when(planMapper.findById(PLAN_ID)).thenReturn(plan("PUBLISHED", 1));
+        patientAlive();
+        when(mapper.findActiveIdByPatientAndPlanCode(PATIENT_ID, "PLAN-IT-1")).thenReturn(null);
+        org.mockito.Mockito.doAnswer(
+                        invocation -> {
+                            invocation.getArgument(0, PlanEnrollmentInsertRow.class).setId(31L);
+                            return null;
+                        })
+                .when(mapper)
+                .insertEnrollment(any(PlanEnrollmentInsertRow.class));
+        when(taskCreation.initializeForNewEnrollment(anyLong(), anyLong(), anyLong(), anyString()))
+                .thenThrow(new IllegalStateException("租户库抖动（示例）"));
+
+        // 补录任务建不出来 → 整个入组失败（同一事务回滚；不留在组无任务的半状态）
+        assertThrows(IllegalStateException.class, () -> service.enroll(PATIENT_ID, PLAN_ID, null));
+    }
+
+    @Test
+    void autoEnrollSkipsWhenDischargeStatusIsDeath() {
+        // Q35：出院状态为死亡的不加入
+        int enrolled = service.autoEnrollOnRegistration(PATIENT_ID, 3);
+
+        assertEquals(0, enrolled);
+        verify(planMapper, never()).findAutoEnrollPlans();
+        verify(mapper, never()).insertEnrollment(any(PlanEnrollmentInsertRow.class));
+    }
+
+    @Test
+    void autoEnrollJoinsEveryPublishedAutoPlanAndCreatesTasks() {
+        PlanMapper.PlanRow first = plan("PUBLISHED", 1, true);
+        PlanMapper.PlanRow second =
+                new PlanMapper.PlanRow(
+                        12L,
+                        "PLAN-IT-2",
+                        "示例 IT 专病随访计划",
+                        1,
+                        "PUBLISHED",
+                        "SURGERY_DATE",
+                        "ONGOING",
+                        null,
+                        true,
+                        null,
+                        0,
+                        null,
+                        0L);
+        when(planMapper.findAutoEnrollPlans()).thenReturn(List.of(first, second));
+        patientAlive();
+        when(mapper.findActiveIdByPatientAndPlanCode(anyLong(), anyString())).thenReturn(null);
+        org.mockito.Mockito.doAnswer(
+                        invocation -> {
+                            invocation.getArgument(0, PlanEnrollmentInsertRow.class).setId(31L);
+                            return null;
+                        })
+                .when(mapper)
+                .insertEnrollment(any(PlanEnrollmentInsertRow.class));
+        when(planMapper.findById(PLAN_ID)).thenReturn(first);
+        when(planMapper.findById(12L)).thenReturn(second);
+        when(taskCreation.initializeForNewEnrollment(anyLong(), anyLong(), anyLong(), anyString()))
+                .thenReturn(
+                        new com.crdp.followup.task.app.FollowupTaskCreationService
+                                .EnrollmentInitSummary(0, 0));
+
+        int enrolled = service.autoEnrollOnRegistration(PATIENT_ID, 1);
+
+        assertEquals(2, enrolled, "每个自动入组的已发布计划各入一条（Q35）");
+        verify(mapper, org.mockito.Mockito.times(2)).insertEnrollment(any());
+        verify(taskCreation).initializeForNewEnrollment(31L, PATIENT_ID, PLAN_ID, "NORMAL");
+        verify(taskCreation).initializeForNewEnrollment(31L, PATIENT_ID, 12L, "NORMAL");
+    }
+
+    @Test
+    void autoEnrollContinuesWhenSinglePlanFails() {
+        PlanMapper.PlanRow broken = plan("PUBLISHED", 1, true);
+        PlanMapper.PlanRow healthy =
+                new PlanMapper.PlanRow(
+                        12L,
+                        "PLAN-IT-2",
+                        "示例 IT 专病随访计划",
+                        1,
+                        "PUBLISHED",
+                        "SURGERY_DATE",
+                        "ONGOING",
+                        null,
+                        true,
+                        null,
+                        0,
+                        null,
+                        0L);
+        when(planMapper.findAutoEnrollPlans()).thenReturn(List.of(broken, healthy));
+        // 第一个计划：患者状态不可入组（已终止）→ 跳过继续
+        when(mapper.findPatientState(PATIENT_ID))
+                .thenReturn(new PlanEnrollmentMapper.PatientStateRow(PATIENT_ID, "TERMINATED"));
+        when(planMapper.findById(PLAN_ID)).thenReturn(broken);
+        when(planMapper.findById(12L)).thenReturn(healthy);
+        when(mapper.findActiveIdByPatientAndPlanCode(anyLong(), anyString())).thenReturn(null);
+        org.mockito.Mockito.doAnswer(
+                        invocation -> {
+                            invocation.getArgument(0, PlanEnrollmentInsertRow.class).setId(31L);
+                            return null;
+                        })
+                .when(mapper)
+                .insertEnrollment(any(PlanEnrollmentInsertRow.class));
+        when(taskCreation.initializeForNewEnrollment(anyLong(), anyLong(), anyLong(), anyString()))
+                .thenReturn(
+                        new com.crdp.followup.task.app.FollowupTaskCreationService
+                                .EnrollmentInitSummary(0, 0));
+
+        // 前置：第二个计划可入组（状态改回在册）——findPatientState 按 plan 顺序依次打桩改为两次调用
+        when(mapper.findPatientState(PATIENT_ID))
+                .thenReturn(new PlanEnrollmentMapper.PatientStateRow(PATIENT_ID, "TERMINATED"))
+                .thenReturn(new PlanEnrollmentMapper.PatientStateRow(PATIENT_ID, "ACTIVE"));
+
+        int enrolled = service.autoEnrollOnRegistration(PATIENT_ID, 2);
+
+        assertEquals(1, enrolled, "单个计划失败不影响其余计划（病重自动出院 2 同样入组）");
+        verify(mapper, org.mockito.Mockito.times(1)).insertEnrollment(any());
     }
 
     // ---------------------------------------------------------------- 计划患者列表（E14-T08 / A-FU-022）
