@@ -2,7 +2,7 @@
 
 > 后端：`crdp-followup`；表 `fu_plan`、`fu_plan_node`、`fu_enrollment`、`fu_task`、`fu_record`、`fu_contact_log`、`fu_saved_filter`。
 > 页面：`docs/design/pages.md` §4（随访页签、沟通）、§5（整页随访表单）、§7（任务）、§8（计划）。组件：FollowupTimeline、FormRenderer、ContactLogModal、AudioPlayer、ConflictBanner、FormStatusBar。
-> **规格已定**：`PUT /api/hospital/followup/records/{id}/draft`（`baseVersion`、409）。其余 **推断，待确认**。
+> **规格已定**：`PUT /api/hospital/followup/records/{id}/draft`（`baseVersion`、409）——**E25-T01 已实现**（载体 fe_record，OQ-77①）。其余 **推断，待确认**。
 > 权限差异：A 用 `followup:plan:view/edit/publish/enroll`；C 只有 `followup:plan:edit`。修改已提交记录：A 用 `followup:record:edit`，C 用 `followup:record:edit-submitted`；删除记录两院都是 `followup:record:delete`。
 
 ## 1. 计划（A-FU-002/016..022、C-FU-001/002）
@@ -50,7 +50,7 @@ E14-T01 已实现（OQ-76 暂行口径）：每个版本一行 `fu_plan`（`code
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
 | GET | `/api/hospital/followup/records/{id}` | `followup:task:view` | `{ id, patientId, taskId?, formCode, formVersion, status: DRAFT|SUBMITTED, version, data, meta, context, previous, history[≤3], source: TASK|BACKFILL|UNPLANNED|REMOTE, visitDate, sequenceNo(C) }` |
-| PUT | `/api/hospital/followup/records/{id}/draft` | `followup:record:edit` | **规格已定**。`{ baseVersion, changes }` → `{ version, savedAt }`；冲突 409（同 `patient.md` §4.1）；已提交 40901 |
+| PUT | `/api/hospital/followup/records/{id}/draft` | `followup:record:edit` | **E25-T01 已实现**（按钮 plt_menu 222，平台库 V43）。`{ baseVersion, changes: { [fieldKey]: value }, overwrite? }` → `{ version, savedAt }`；changes 只带变更字段（null 值 = 清空该键），只过写入闸门（键 / 类型 / 派生重算 / 硬范围），不做必填 / 跨字段 / 软范围校验、不写字段历史、不逐次写审计、不更新 data_meta（OQ-77）；冲突 409（40900，同 `patient.md` §4.1：currentVersion / updatedBy 显示名 / updatedAt / diffFields 只列 changes 两边不同的键）；「保留我的并覆盖」= currentVersion 作 baseVersion 重发并带 `overwrite: true`，后端写 RECORD_DRAFT_OVERWRITE 审计（只记字段键）；已提交 40901；载体 fe_record（fu_record 随 E15 落地后迁业务表，HTTP 契约不变，OQ-77①）；「任务变进行中」的联动接入点在保存成功后，随 E14-T04 / E15-T01（OQ-77②） |
 | POST | `/api/hospital/followup/records/{id}/submit` | `followup:record:edit` | `{ baseVersion, data, meta }`；完整校验（42200）；任务完成；生成下次任务；写字段历史与审计；C 处理“下次随访时间”与 ERI 标记 |
 | POST | `/api/hospital/followup/records/{id}/edit-session` | A `record:edit`；C `record:edit-submitted` | 开始修改已提交记录（返回当前 version） |
 | PUT | `/api/hospital/followup/records/{id}` | 同上 | 保存修改 `{ baseVersion, data, meta, reason }`；C 原因必填，A 是否必填见 OQ-14；写字段级历史 |

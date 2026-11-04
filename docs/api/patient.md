@@ -76,6 +76,8 @@ interface PatientRow {
 
 前端处理（ConflictBanner，components.md §13）：暂停自动保存 → 「保留我的并覆盖」= 以 `currentVersion` 作为 `baseVersion` 重发并带 `overwrite: true`（后端写审计）；「载入服务器版本」= 本地改动另存本机副本。**不做字段级自动合并**。已提交或只读的记录不自动保存（自动保存请求返回 40901）。
 
+E25-T01 已按此形态落地（随访记录草稿接口，followup.md §3）：`updatedBy` 为更新人显示名（`sys_user.display_name`，用户已删除等取不到时为 null）；`diffFields` 只列本次 `changes` 里两边取值不同的键（`mine` = 请求值、`server` = 服务器当前值，`label` 取记录模板版本快照的显示名；值相同的键与请求未涉及的字段不列，后者由「载入服务器版本」兜底，见 OQ-77③）；`overwrite: true` 的覆盖写 `RECORD_DRAFT_OVERWRITE` 审计（只记字段键，不落值）。
+
 ## 5. 明文查看（A-PAT-010、C-PAT-012；技术方案“明文查看（已确认 2026-10-31）”；E07-T05 已实现）
 
 | 方法 | 路径 | 权限 | 说明 |

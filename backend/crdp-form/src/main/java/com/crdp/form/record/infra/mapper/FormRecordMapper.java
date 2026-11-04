@@ -135,4 +135,10 @@ public interface FormRecordMapper {
             @Param("data") String data,
             @Param("dataMeta") String dataMeta,
             @Param("updatedBy") long updatedBy);
+
+    /**
+     * 更新人显示名（E25 草稿 40900 冲突详情「附更新人」，patient.md §4.1 形态为显示名）。 用户已删除等取不到时返回 null，由调用方按「未知」展示，不猜名字。
+     */
+    @Select("SELECT display_name FROM sys_user WHERE id = #{userId}")
+    String findDisplayName(@Param("userId") Long userId);
 }

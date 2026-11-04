@@ -230,13 +230,13 @@ class TenantOnboardingServiceMySqlIT {
                 // 病区管理 / 转病区菜单授权，followup 目录）。
                 // E13-T09 增加 V44（审批患者导出按钮授权，followup 目录）与
                 // V45（job_export.scope_json 冻结导出范围，base 目录）；
-                // E14-T01 增加 V46（fu_plan / fu_plan_node / fu_enrollment 与计划菜单授权，
-                // followup 目录）。此处随迁移清单维护
+                // E14-T01 增加 V46（fu_plan / fu_plan_node / fu_enrollment 与计划菜单授权，followup 目录）；
+                // E25-T01 增加 V47（录入随访记录按钮授权 followup V47 与种子 V118）。此处随迁移清单维护
                 List.of(
                         "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14",
                         "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26",
                         "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38",
-                        "39", "40", "41", "42", "43", "44", "45", "46"),
+                        "39", "40", "41", "42", "43", "44", "45", "46", "47"),
                 root.queryForList(
                         "SELECT version FROM "
                                 + DB

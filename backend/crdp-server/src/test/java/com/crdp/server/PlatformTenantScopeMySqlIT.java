@@ -74,10 +74,11 @@ class PlatformTenantScopeMySqlIT {
             java.util.stream.Stream.concat(
                             BASE_ALL.stream(),
                             // 218 审批患者导出随 E13-T09 进模板（V41）；
-                            // 24/25/219/220/221 随访计划菜单与按钮随 E14-T01 进模板（V42）
+                            // 24/25/219/220/221 随访计划菜单与按钮随 E14-T01 进模板（V42）；
+                            // 222 录入随访记录按钮随 E25-T01 进模板（V43）
                             List.of(
                                     20L, 21L, 23L, 24L, 25L, 36L, 37L, 38L, 213L, 214L, 215L, 216L,
-                                    218L, 219L, 220L, 221L, 231L)
+                                    218L, 219L, 220L, 221L, 222L, 231L)
                                     .stream())
                     .toList();
 
@@ -123,11 +124,14 @@ class PlatformTenantScopeMySqlIT {
                         + " AND (m.perm_code IS NULL OR m.perm_code NOT IN"
                         + " (SELECT perm_code FROM plt_sensitive_perm))");
         platform.update("DELETE FROM plt_sensitive_perm");
+        // 与迁移后的种子一致（V18 七项 + V41 的 followup:patient:delete）：漏掉 217 的码会让上面的
+        // 模板重建把 217 当非敏感项收回模板，下一次运行 revoke 用例 removed 变 2 条而失败（本地持久库才会踩到）
         platform.update(
                 "INSERT INTO plt_sensitive_perm (perm_code, name) VALUES"
                         + " ('followup:patient:plain', '敏感字段明文查看（证件号、手机号、住址等原值）'),"
                         + " ('followup:patient:export', '患者与业务数据导出（含批量导出）'),"
                         + " ('followup:record:delete', '删除业务数据（患者、随访记录等）'),"
+                        + " ('followup:patient:delete', '删除患者（软删除，数据长期保留）'),"
                         + " ('followup:scan:download', '原件与附件下载（报告单、电子化资料、通话录音）'),"
                         + " ('tenant:audit:export', '审计日志导出'),"
                         + " ('tenant:user:export', '用户导出（含手机号等个人信息）'),"
