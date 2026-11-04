@@ -21,6 +21,8 @@
 | POST | `/api/hospital/followup/plans/{id}/enrollments/batch` | `plan:enroll` / `plan:edit` | 批量入组 `{ patientIds[], startDateField: 'dischargeDate'|..., doctorId? }`（A-PAT-016）；返回成功 / 跳过明细 |
 | GET | `/api/hospital/followup/plans/{id}/logs` | `plan:view` / `plan:edit` | 计划变更审计 |
 
+E14-T01 已实现（OQ-76 暂行口径）：每个版本一行 `fu_plan`（`code` 跨版本不变、`version` 递增）；「随访中 / RUNNING」为派生态（PUBLISHED 且有在组入组，不入库）；发布新版本时同族旧已发布 / 已暂停版本自动转 DISABLED（不再允许入组 → 新入组必然用新版本；在组患者沿用原版本，A-FU-020 迁移延后）；停用为终态（恢复 40901）；基本信息与节点共用乐观锁 `lockVersion`（保存带 `baseVersion`，冲突 40900）；节点两层共表 `fu_plan_node`，`PUT .../nodes` body `{ baseVersion, nodes[] }`（节点行带 `key` / `parentKey` 请求内引用，整体替换，仅未发布）；发布前置至少一个子计划与一个节点。入组领域入口 `PlanEnrollmentService.enroll(patientId, planId, mode)`（批量入组 E13-T07、自动入组 E14-T05 复用；入组只允许 PUBLISHED，同一计划族至多一条在组入组；患者列表 / 变更记录 / 批量接口随 E14-T08、暂停恢复移出随 E14-T06）。权限「任一码命中即放行」由 `@RequiresPermission` 多值实现（OQ-13）。
+
 不做：迁移到计划新版本（A-FU-020，延后）。预置计划（A-FU-017、C-FU-002）通过 Flyway 种子写入，**种子只含配置，不含任何真实患者数据**。
 
 ## 2. 任务（A-FU-001/003/004/009..013/024/026、C-FU-004/020）

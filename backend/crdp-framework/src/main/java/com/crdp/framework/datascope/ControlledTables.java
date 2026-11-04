@@ -18,6 +18,7 @@ public final class ControlledTables {
                     "pt_implant",
                     "pt_lead",
                     "pt_implant_lead",
+                    "fu_enrollment",
                     "fu_task",
                     "fu_record",
                     "fu_contact_log",

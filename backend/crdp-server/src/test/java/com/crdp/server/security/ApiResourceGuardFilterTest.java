@@ -45,7 +45,13 @@ class ApiResourceGuardFilterTest {
                                 "/api/platform/tenants/{tenantId}",
                                 "platform:tenant:view",
                                 false),
-                        row("GET", "/api/broken/unbound", null, false)));
+                        row("GET", "/api/broken/unbound", null, false),
+                        // E14-T01 / OQ-13：计划接口按 docs/api/followup.md §1 声明两个候选码（逗号拼接）
+                        row(
+                                "GET",
+                                "/api/hospital/followup/plans",
+                                "followup:plan:view,followup:plan:edit",
+                                false)));
         filter =
                 new ApiResourceGuardFilter(
                         registry,
@@ -154,5 +160,20 @@ class ApiResourceGuardFilterTest {
         assertTrue(run("OPTIONS", "/api/platform/nonexistent"));
         assertTrue(run("GET", "/actuator/health"));
         assertTrue(run("GET", "/v3/api-docs"));
+    }
+
+    @Test
+    void commaJoinedCodesPassOnAnyHeldCode() throws Exception {
+        // E14-T01 / OQ-13：登记为「A 码,C 码」时，会话只持有其中一个（如 C 只有 followup:plan:edit）也放行
+        login(List.of("followup:plan:edit"));
+        assertTrue(run("GET", "/api/hospital/followup/plans"), "持有任一候选码应放行");
+
+        login(List.of("followup:plan:view"));
+        assertTrue(run("GET", "/api/hospital/followup/plans"), "持有首码应放行");
+
+        login(List.of("followup:task:view"));
+        assertFalse(run("GET", "/api/hospital/followup/plans"), "候选码全缺失不得进入业务层");
+        assertEquals(403, STATUS.get());
+        assertTrue(BODY.get().contains("40300"), BODY.get());
     }
 }

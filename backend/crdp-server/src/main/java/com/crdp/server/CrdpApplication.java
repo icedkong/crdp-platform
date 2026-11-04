@@ -17,6 +17,7 @@ import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
     "com.crdp.followup.notice.infra.mapper",
     "com.crdp.followup.file.infra.mapper",
     "com.crdp.followup.patient.infra.mapper",
+    "com.crdp.followup.plan.infra.mapper",
     "com.crdp.followup.ward.infra.mapper"
 })
 public class CrdpApplication {
