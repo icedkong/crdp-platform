@@ -90,7 +90,7 @@ class MenuSyncServiceTest {
                         "followup:patient:view",
                         10,
                         "ENABLED"),
-                // E15-T02（平台库 V45）：提升为一级菜单（parent 0）并改标题「我的任务」
+                // E15-T02（平台库种子 V106）：提升为一级菜单（parent 0）并改标题「我的任务」
                 manifestRow(
                         22L,
                         0L,
@@ -102,7 +102,7 @@ class MenuSyncServiceTest {
                         "followup:task:view",
                         20,
                         "ENABLED"),
-                // E15-T02 随访录入隐藏路由（平台库 V45 菜单 223）：挂在 22 下，perm_code 为
+                // E15-T02 随访录入隐藏路由（平台库种子 V106 菜单 223）：挂在 22 下，perm_code 为
                 // NULL（followup:task:view 已由菜单 22 持有，uk_plt_menu_perm 全库唯一）
                 manifestRow(
                         223L,

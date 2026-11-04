@@ -1,7 +1,10 @@
 -- E15-T02 / A-FU-004、A-FU-005、C-FU-020：我的任务与随访录入工作台的菜单资源
 -- （pages.md §0.1、§5、§7）。
+-- 为什么放种子目录：平台库主迁移（V1–V44）在全新库先于种子 V100 执行（AGENTS §仓库结构排序），
+-- 改菜单 22 的 UPDATE 在菜单行尚未由 V100 插入时会命中 0 行；种子序号（V100+）保证全新库与
+-- 老库都在 V100 之后执行（与 V103 改名同口径）。
 --   * 菜单 22「随访任务」→「我的任务」，并按线框定稿提升为一级菜单（sort_no 15：
---     首页（10）之后、随访目录（20）之前；pages.md §0.1 备注为推断待确认，按文档建议实现）。
+--     首页（10）之后、随访目录（20）之前；pages.md §0.1 备注为推断待确认，按文档建议实现，OQ-83⑤）。
 --     path / component / 权限码不变（followup:task:view），角色授予按 menu_id 不受
 --     层级调整影响；按钮 222（录入随访记录，followup:record:edit）随父菜单保持挂靠。
 --   * 菜单 223「随访录入」（隐藏路由 /followup/record/:recordId，component
@@ -17,7 +20,7 @@ UPDATE plt_menu
 SET title = '我的任务', parent_id = 0, sort_no = 15
 WHERE id = 22 AND side = 'HOSPITAL';
 
-INSERT INTO plt_menu
+INSERT IGNORE INTO plt_menu
   (id, parent_id, side, type, module_code, title, route_name, path, component, perm_code, icon, sort_no, hidden, status) VALUES
   (223, 22, 'HOSPITAL', 'MENU', 'followup', '随访录入', 'FollowupRecordForm', '/followup/record/:recordId', 'followup/record/form', NULL, NULL, 30, 1, 'ENABLED');
 

@@ -40,7 +40,7 @@ public class MenuManifest {
                             "followup:patient:view",
                             null,
                             10),
-                    // E15-T02（pages.md §0.1）：提升为一级菜单（平台库 V45 同步改标题与上级）
+                    // E15-T02（pages.md §0.1）：提升为一级菜单（平台库种子 V106 同步改标题与上级）
                     new MenuManifestItem(
                             "followup",
                             "HOSPITAL",
@@ -54,7 +54,7 @@ public class MenuManifest {
                             "followup:task:view",
                             null,
                             20),
-                    // E15-T02（pages.md §5）：随访录入隐藏路由（平台库 V45 菜单 223；hidden 是平台维护值，由迁移落）
+                    // E15-T02（pages.md §5）：随访录入隐藏路由（平台库种子 V106 菜单 223；hidden 是平台维护值，由迁移落）
                     new MenuManifestItem(
                             "followup",
                             "HOSPITAL",

@@ -415,7 +415,7 @@ class PlatformTenantScopeMySqlIT {
     void revokeShrinksTenantRolesAndSessions() {
         connect();
         // 前置归一（本机持久库重跑用；CI 全新库天然满足）：补齐种子授予——22 六角色、
-        // 223 隐藏路由（管理员与随访医生，followup V55 / 平台库 V45，E15-T02）。
+        // 223 隐藏路由（管理员与随访医生，followup V55 / 平台库种子 V106，E15-T02）。
         // 上一次运行到 Order(3) 会把 22/223 一并收回，重跑前先还原。
         root.update(
                 """
