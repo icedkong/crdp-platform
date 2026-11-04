@@ -130,7 +130,11 @@ public final class PlanDateCalculator {
         return shifted.plusDays((long) daysOf(cycleValue, unit) * cycles);
     }
 
-    private static NodeSchedule scheduleFromPlanDate(NodeTiming timing, LocalDate planDate) {
+    /**
+     * 已知计划日期（持续循环第 N 次由 {@link #occurrencePlanDate} 算出）时补全一次排期： 提醒开始日、窗口开始 / 结束日与任务开启日。 E14-T04 调度按
+     * occurrencePlanDate 逐次推进后用本方法取完整排期（开启日 = 提醒开始日与窗口开始日中较早的一天）。
+     */
+    public static NodeSchedule scheduleFromPlanDate(NodeTiming timing, LocalDate planDate) {
         LocalDate remindStart =
                 addDateUnit(planDate, -timing.remindValue(), normalized(timing.remindUnit()));
         LocalDate windowStart =

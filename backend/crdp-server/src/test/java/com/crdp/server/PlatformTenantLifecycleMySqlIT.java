@@ -230,7 +230,10 @@ class PlatformTenantLifecycleMySqlIT {
         Map<?, ?> impactData = (Map<?, ?>) impact.get("data");
         assertEquals("TRIAL", impactData.get("status"));
         assertEquals(0, ((Number) impactData.get("onlineUserCount")).intValue());
-        assertNull(impactData.get("pendingTaskCount"), "随访任务表未建（E15），进行中任务数为空");
+        assertEquals(
+                0,
+                ((Number) impactData.get("pendingTaskCount")).intValue(),
+                "fu_task 已由 followup V48（E14-T04）建表，新租户进行中任务数为 0");
 
         // 状态图：试用不能直接停用；缺原因 40001
         Map<?, ?> premature =
