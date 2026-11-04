@@ -2,6 +2,8 @@ package com.crdp.followup.plan.app;
 
 import com.crdp.followup.plan.domain.PlanNodeRule;
 import com.crdp.followup.plan.infra.mapper.PlanInsertRow;
+import com.crdp.followup.plan.infra.mapper.PlanLogInsertRow;
+import com.crdp.followup.plan.infra.mapper.PlanLogMapper;
 import com.crdp.followup.plan.infra.mapper.PlanMapper;
 import com.crdp.followup.plan.infra.mapper.PlanNodeInsertRow;
 import com.crdp.framework.audit.AuditEntry;
@@ -38,13 +40,20 @@ import org.springframework.transaction.annotation.Transactional;
  *       →（停用） DISABLED（终态，需要新版本走复制）；「随访中 / RUNNING」不入库，由「PUBLISHED 且有在组入组」派生展示。
  * </ul>
  *
- * <p>乐观锁（AGENTS §5.10）：基本信息与节点共用 lock_version，保存带 baseVersion，冲突 40900。 增改与状态迁移全部写审计（A-FU-021
- * 全量前后内容由 E14-T08 扩展，这里先落操作审计）。
+ * <p>乐观锁（AGENTS §5.10）：基本信息与节点共用 lock_version，保存带 baseVersion，冲突 40900。
+ *
+ * <p>计划变更审计（E14-T08 / A-FU-021，验收「计划改动全记审计」）：创建、编辑、保存节点、发布（含发布新版本时
+ * 同族旧版本自动停用）、复制、暂停、恢复、停用每次成功改动都双写——aud_log 审计（操作人 / 时间 / 结果）与 fu_plan_log 变更记录（前后内容快照 + 可读说明）。
+ * 变更记录页 GET /plans/{id}/logs 从 fu_plan_log 倒序出（审计只追加且缺 (object_type, object_id) 索引，口径同
+ * fe_field_dict_log，OQ-69③）； 被拒操作只写审计 DENIED、不落变更记录（没有发生改动）。
  */
 @Service
 public class PlanService {
 
     private static final Logger log = LoggerFactory.getLogger(PlanService.class);
+
+    /** 变更记录页条数上限（与字段字典 / 字典变更记录同口径）。 */
+    private static final int LOG_LIMIT = 100;
 
     /** 起算日期字段（A-FU-016：出院 / 手术 / 建档 / 自定义；植入日期为 C 的起算字段）。 */
     public static final Set<String> START_DATE_FIELDS =
@@ -68,10 +77,12 @@ public class PlanService {
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private final PlanMapper mapper;
+    private final PlanLogMapper logMapper;
     private final AuditLogger audit;
 
-    public PlanService(PlanMapper mapper, AuditLogger audit) {
+    public PlanService(PlanMapper mapper, PlanLogMapper logMapper, AuditLogger audit) {
         this.mapper = mapper;
+        this.logMapper = logMapper;
         this.audit = audit;
     }
 
@@ -142,7 +153,7 @@ public class PlanService {
     /** 节点整体保存请求（docs/api/followup.md §1：{ version, nodes[] }）。 */
     public record SaveNodesRequest(int baseVersion, List<PlanNodeRule.NodeInput> nodes) {}
 
-    /** 审计摘要（不含患者数据）。 */
+    /** 审计摘要（不含患者数据；E14-T08 起含备注，A-FU-021「前后内容」全量口径）。 */
     private record PlanSummary(
             String code,
             String name,
@@ -150,7 +161,24 @@ public class PlanService {
             String status,
             String startDateField,
             String cycleType,
-            Integer cycleYears) {}
+            Integer cycleYears,
+            String remark) {}
+
+    /** 变更记录行（A-FU-021：操作人、时间与前后内容；GET /plans/{id}/logs）。 */
+    public record PlanLogView(
+            String id,
+            String planId,
+            String planCode,
+            String action,
+            String description,
+            String beforeJson,
+            String afterJson,
+            String operatorId,
+            String operatorName,
+            String createdAt) {}
+
+    /** 变更记录响应（倒序最近 100 条）。 */
+    public record PlanLogsView(List<PlanLogView> items) {}
 
     // ---------------------------------------------------------------- 查询
 
@@ -165,6 +193,27 @@ public class PlanService {
         return new PlanDetailView(toView(row), nodeViews(mapper.findNodesByPlanId(planId)));
     }
 
+    /** 变更记录（A-FU-021：倒序最近 100 条；计划不存在 40400）。 */
+    public PlanLogsView logs(long planId) {
+        requirePlan(planId);
+        List<PlanLogView> items = new ArrayList<>();
+        for (PlanLogMapper.PlanLogRow row : logMapper.findLogsByPlanId(planId, LOG_LIMIT)) {
+            items.add(
+                    new PlanLogView(
+                            String.valueOf(row.id()),
+                            String.valueOf(row.planId()),
+                            row.planCode(),
+                            row.action(),
+                            row.description(),
+                            row.beforeJson(),
+                            row.afterJson(),
+                            row.operatorId() == null ? null : String.valueOf(row.operatorId()),
+                            row.operatorName(),
+                            Time.format(row.createdAt())));
+        }
+        return new PlanLogsView(items);
+    }
+
     // ---------------------------------------------------------------- 新建（A-FU-016）
 
     /** 新建计划（未发布，v1）；code 归一、本院族唯一（40902）。 */
@@ -175,6 +224,7 @@ public class PlanService {
         String startDateField = normalizeStartDateField(request.startDateField());
         String cycleType = normalizeCycleType(request.cycleType());
         Integer cycleYears = validateCycleYears(cycleType, request.cycleYears());
+        String remark = normalizeRemark(request.remark());
 
         PlanInsertRow row =
                 new PlanInsertRow(
@@ -185,7 +235,7 @@ public class PlanService {
                         startDateField,
                         cycleType,
                         cycleYears,
-                        normalizeRemark(request.remark()),
+                        remark,
                         currentUserId());
         try {
             mapper.insertPlan(row);
@@ -194,23 +244,27 @@ public class PlanService {
             log.warn("计划编码并发新建冲突，按重复处理（E14-T01）");
             throw duplicateCode(code);
         }
+        String afterJson =
+                writeJson(
+                        summary(
+                                code,
+                                name,
+                                1,
+                                UNPUBLISHED,
+                                startDateField,
+                                cycleType,
+                                cycleYears,
+                                remark));
+        String description = "新建计划（未发布）：" + name;
         audit.append(
                 AuditEntry.operation("followup", "PLAN_CREATE")
                         .objectType("PLAN")
                         .objectId(String.valueOf(row.getId()))
-                        .description("新建计划（未发布）：" + name)
-                        .afterJson(
-                                writeJson(
-                                        summary(
-                                                code,
-                                                name,
-                                                1,
-                                                UNPUBLISHED,
-                                                startDateField,
-                                                cycleType,
-                                                cycleYears)))
+                        .description(description)
+                        .afterJson(afterJson)
                         .result(AuditResult.SUCCESS)
                         .build());
+        recordChange(row.getId(), code, "PLAN_CREATE", description, null, afterJson);
         return toView(requirePlan(row.getId()));
     }
 
@@ -225,40 +279,40 @@ public class PlanService {
         String startDateField = normalizeStartDateField(request.startDateField());
         String cycleType = normalizeCycleType(request.cycleType());
         Integer cycleYears = validateCycleYears(cycleType, request.cycleYears());
+        String remark = normalizeRemark(request.remark());
         int rows =
                 mapper.updateBasics(
-                        planId,
-                        name,
-                        startDateField,
-                        cycleType,
-                        cycleYears,
-                        normalizeRemark(request.remark()),
-                        baseVersion);
+                        planId, name, startDateField, cycleType, cycleYears, remark, baseVersion);
         if (rows == 0) {
             throw lockOrStateConflict(current, baseVersion);
         }
+        String beforeJson = writeJson(summaryOf(current));
+        String afterJson =
+                writeJson(
+                        summary(
+                                current.code(),
+                                name,
+                                current.version(),
+                                UNPUBLISHED,
+                                startDateField,
+                                cycleType,
+                                cycleYears,
+                                remark));
+        String description = "编辑计划（未发布）：" + name;
         audit.append(
                 AuditEntry.operation("followup", "PLAN_UPDATE")
                         .objectType("PLAN")
                         .objectId(String.valueOf(planId))
-                        .description("编辑计划（未发布）：" + name)
-                        .beforeJson(writeJson(summaryOf(current)))
-                        .afterJson(
-                                writeJson(
-                                        summary(
-                                                current.code(),
-                                                name,
-                                                current.version(),
-                                                UNPUBLISHED,
-                                                startDateField,
-                                                cycleType,
-                                                cycleYears)))
+                        .description(description)
+                        .beforeJson(beforeJson)
+                        .afterJson(afterJson)
                         .result(AuditResult.SUCCESS)
                         .build());
+        recordChange(planId, current.code(), "PLAN_UPDATE", description, beforeJson, afterJson);
         return toView(requirePlan(planId));
     }
 
-    /** 节点整体保存（两层树整体替换；仅未发布）。 */
+    /** 节点整体保存（两层树整体替换；仅未发布；前后节点快照入审计与变更记录，A-FU-021）。 */
     @Transactional
     public PlanDetailView saveNodes(long planId, SaveNodesRequest request) {
         PlanMapper.PlanRow current = requirePlan(planId);
@@ -270,6 +324,8 @@ public class PlanService {
         if (mapper.bumpLockVersion(planId, baseVersion) == 0) {
             throw lockOrStateConflict(current, baseVersion);
         }
+        // 替换前快照（A-FU-021「前后内容」：节点数组全量）
+        List<PlanMapper.NodeRow> beforeNodes = mapper.findNodesByPlanId(planId);
         mapper.deleteNodesByPlanId(planId);
         // 第一遍插子计划行，建立「请求内 key → 新行 id」映射；第二遍挂节点行（parentKey 必须指向子计划行）
         Map<String, Long> keyToId = new HashMap<>();
@@ -289,14 +345,19 @@ public class PlanService {
                 mapper.insertNode(toInsertRow(planId, parentId, node));
             }
         }
+        String beforeJson = writeJson(beforeNodes);
+        String afterJson = writeJson(mapper.findNodesByPlanId(planId));
+        String description = "保存计划节点（未发布）：" + current.name() + "，共 " + normalized.size() + " 行";
         audit.append(
                 AuditEntry.operation("followup", "PLAN_NODE_SAVE")
                         .objectType("PLAN")
                         .objectId(String.valueOf(planId))
-                        .description(
-                                "保存计划节点（未发布）：" + current.name() + "，共 " + normalized.size() + " 行")
+                        .description(description)
+                        .beforeJson(beforeJson)
+                        .afterJson(afterJson)
                         .result(AuditResult.SUCCESS)
                         .build());
+        recordChange(planId, current.code(), "PLAN_NODE_SAVE", description, beforeJson, afterJson);
         return detail(planId);
     }
 
@@ -341,34 +402,81 @@ public class PlanService {
         mapper.markPublished(planId, LocalDateTime.now(), currentUserId());
         List<Long> superseded = mapper.findSupersededIds(current.code(), planId);
         for (Long oldId : superseded) {
+            // 同族旧版本自动停用（A-FU-021：停用也是计划改动，逐版本留痕）
+            PlanMapper.PlanRow oldRow = requirePlan(oldId);
             mapper.transitionStatus(oldId, PUBLISHED, DISABLED);
             mapper.transitionStatus(oldId, PAUSED, DISABLED);
+            String oldDescription =
+                    "停用计划（新版本 v"
+                            + current.version()
+                            + " 发布后自动停用，不再允许入组；在组患者沿用本版本）："
+                            + oldRow.name()
+                            + " v"
+                            + oldRow.version();
+            audit.append(
+                    AuditEntry.operation("followup", "PLAN_DISABLE")
+                            .objectType("PLAN")
+                            .objectId(String.valueOf(oldId))
+                            .description(oldDescription)
+                            .beforeJson(writeJson(summaryOf(oldRow)))
+                            .afterJson(
+                                    writeJson(
+                                            summary(
+                                                    oldRow.code(),
+                                                    oldRow.name(),
+                                                    oldRow.version(),
+                                                    DISABLED,
+                                                    oldRow.startDateField(),
+                                                    oldRow.cycleType(),
+                                                    oldRow.cycleYears(),
+                                                    oldRow.remark())))
+                            .result(AuditResult.SUCCESS)
+                            .build());
+            recordChange(
+                    oldId,
+                    oldRow.code(),
+                    "PLAN_DISABLE",
+                    oldDescription,
+                    writeJson(summaryOf(oldRow)),
+                    writeJson(
+                            summary(
+                                    oldRow.code(),
+                                    oldRow.name(),
+                                    oldRow.version(),
+                                    DISABLED,
+                                    oldRow.startDateField(),
+                                    oldRow.cycleType(),
+                                    oldRow.cycleYears(),
+                                    oldRow.remark())));
         }
+        String beforeJson = writeJson(summaryOf(current));
+        String afterJson =
+                writeJson(
+                        summary(
+                                current.code(),
+                                current.name(),
+                                current.version(),
+                                PUBLISHED,
+                                current.startDateField(),
+                                current.cycleType(),
+                                current.cycleYears(),
+                                current.remark()));
+        String description =
+                "发布计划："
+                        + current.name()
+                        + " v"
+                        + current.version()
+                        + (superseded.isEmpty() ? "" : "；同族旧版本自动停用（不再允许入组，新入组用新版本）" + superseded);
         audit.append(
                 AuditEntry.operation("followup", "PLAN_PUBLISH")
                         .objectType("PLAN")
                         .objectId(String.valueOf(planId))
-                        .description(
-                                "发布计划："
-                                        + current.name()
-                                        + " v"
-                                        + current.version()
-                                        + (superseded.isEmpty()
-                                                ? ""
-                                                : "；同族旧版本自动停用（不再允许入组，新入组用新版本）" + superseded))
-                        .beforeJson(writeJson(summaryOf(current)))
-                        .afterJson(
-                                writeJson(
-                                        summary(
-                                                current.code(),
-                                                current.name(),
-                                                current.version(),
-                                                PUBLISHED,
-                                                current.startDateField(),
-                                                current.cycleType(),
-                                                current.cycleYears())))
+                        .description(description)
+                        .beforeJson(beforeJson)
+                        .afterJson(afterJson)
                         .result(AuditResult.SUCCESS)
                         .build());
+        recordChange(planId, current.code(), "PLAN_PUBLISH", description, beforeJson, afterJson);
         return toView(requirePlan(planId));
     }
 
@@ -425,32 +533,38 @@ public class PlanService {
                 mapper.insertNode(toInsertRow(row.getId(), newParentId, node));
             }
         }
+        Map<String, Object> afterContent = new HashMap<>();
+        afterContent.put("code", source.code());
+        afterContent.put("name", source.name());
+        afterContent.put("version", nextVersion);
+        afterContent.put("status", UNPUBLISHED);
+        afterContent.put("startDateField", source.startDateField());
+        afterContent.put("cycleType", source.cycleType());
+        afterContent.put("cycleYears", source.cycleYears());
+        afterContent.put("remark", source.remark());
+        afterContent.put("copiedFromPlanId", source.id());
+        afterContent.put("copiedFromVersion", source.version());
+        afterContent.put("copiedNodeCount", sourceNodes.size());
+        String afterJson = writeJson(afterContent);
+        String description =
+                "复制计划为新版本："
+                        + source.name()
+                        + " v"
+                        + source.version()
+                        + " → v"
+                        + nextVersion
+                        + "（未发布，"
+                        + sourceNodes.size()
+                        + " 个节点行）";
         audit.append(
                 AuditEntry.operation("followup", "PLAN_COPY")
                         .objectType("PLAN")
                         .objectId(String.valueOf(row.getId()))
-                        .description(
-                                "复制计划为新版本："
-                                        + source.name()
-                                        + " v"
-                                        + source.version()
-                                        + " → v"
-                                        + nextVersion
-                                        + "（未发布，"
-                                        + sourceNodes.size()
-                                        + " 个节点行）")
-                        .afterJson(
-                                writeJson(
-                                        summary(
-                                                source.code(),
-                                                source.name(),
-                                                nextVersion,
-                                                UNPUBLISHED,
-                                                source.startDateField(),
-                                                source.cycleType(),
-                                                source.cycleYears())))
+                        .description(description)
+                        .afterJson(afterJson)
                         .result(AuditResult.SUCCESS)
                         .build());
+        recordChange(row.getId(), source.code(), "PLAN_COPY", description, null, afterJson);
         return toView(requirePlan(row.getId()));
     }
 
@@ -501,24 +615,29 @@ public class PlanService {
         if (mapper.transitionStatus(planId, from, to) == 0) {
             throw new ApiException(409, 40901, "计划状态已变化，请刷新后重试");
         }
+        String beforeJson = writeJson(summaryOf(current));
+        String afterJson =
+                writeJson(
+                        summary(
+                                current.code(),
+                                current.name(),
+                                current.version(),
+                                to,
+                                current.startDateField(),
+                                current.cycleType(),
+                                current.cycleYears(),
+                                current.remark()));
+        String description = verb + "：" + current.name() + " v" + current.version();
         audit.append(
                 AuditEntry.operation("followup", action)
                         .objectType("PLAN")
                         .objectId(String.valueOf(planId))
-                        .description(verb + "：" + current.name() + " v" + current.version())
-                        .beforeJson(writeJson(summaryOf(current)))
-                        .afterJson(
-                                writeJson(
-                                        summary(
-                                                current.code(),
-                                                current.name(),
-                                                current.version(),
-                                                to,
-                                                current.startDateField(),
-                                                current.cycleType(),
-                                                current.cycleYears())))
+                        .description(description)
+                        .beforeJson(beforeJson)
+                        .afterJson(afterJson)
                         .result(AuditResult.SUCCESS)
                         .build());
+        recordChange(planId, current.code(), action, description, beforeJson, afterJson);
         return toView(requirePlan(planId));
     }
 
@@ -661,7 +780,8 @@ public class PlanService {
                 row.status(),
                 row.startDateField(),
                 row.cycleType(),
-                row.cycleYears());
+                row.cycleYears(),
+                row.remark());
     }
 
     private static PlanSummary summary(
@@ -671,8 +791,32 @@ public class PlanService {
             String status,
             String startDateField,
             String cycleType,
-            Integer cycleYears) {
-        return new PlanSummary(code, name, version, status, startDateField, cycleType, cycleYears);
+            Integer cycleYears,
+            String remark) {
+        return new PlanSummary(
+                code, name, version, status, startDateField, cycleType, cycleYears, remark);
+    }
+
+    /**
+     * 追加计划变更记录（E14-T08 / A-FU-021）：与 aud_log 审计双写，fu_plan_log 供变更记录页查询 （审计只追加且缺 (object_type,
+     * object_id) 索引，口径同 fe_field_dict_log，OQ-69③）。 只在成功改动后调用；被拒操作只写审计 DENIED。
+     */
+    private void recordChange(
+            long planId,
+            String planCode,
+            String action,
+            String description,
+            String beforeJson,
+            String afterJson) {
+        logMapper.insertLog(
+                new PlanLogInsertRow(
+                        planId,
+                        planCode,
+                        action,
+                        description,
+                        beforeJson,
+                        afterJson,
+                        currentUserId()));
     }
 
     private static PlanView toView(PlanMapper.PlanRow row) {
@@ -786,6 +930,19 @@ public class PlanService {
             return JSON.writeValueAsString(value);
         } catch (JsonProcessingException failure) {
             return null;
+        }
+    }
+
+    /** 接口时间口径：ISO-8601 带时区（北京时间，AGENTS §6）。 */
+    static final class Time {
+        private Time() {}
+
+        static String format(java.time.LocalDateTime time) {
+            return time == null
+                    ? null
+                    : java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME
+                            .withZone(java.time.ZoneId.of("Asia/Shanghai"))
+                            .format(time.atZone(java.time.ZoneId.systemDefault()).toInstant());
         }
     }
 }

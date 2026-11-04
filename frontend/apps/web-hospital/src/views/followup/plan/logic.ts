@@ -381,3 +381,38 @@ export function previewBaseLabel(
   };
   return labels[startDateField] ?? '起算日期';
 }
+
+// ---------------------------------------------------------------- 患者列表与变更记录（E14-T08 / A-FU-022、A-FU-021）
+
+/** 时间列文案：到分钟（与审计 / 站内信口径一致）。 */
+export function planTimeText(value: null | string | undefined): string {
+  if (!value) return '—';
+  return value.length >= 16 ? value.slice(0, 16).replace('T', ' ') : value;
+}
+
+/**
+ * 变更记录前后内容展示：JSON 美化（两空格缩进），解析失败回退原文
+ * （A-FU-021「前后内容」——基本信息为摘要对象、节点保存为节点数组）。
+ */
+export function planLogJsonText(value: null | string | undefined): string {
+  if (!value) return '—';
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2);
+  } catch {
+    return value;
+  }
+}
+
+/**
+ * 患者列表状态列的补充说明：已暂停 → 暂停原因、已移除 → 移除原因
+ * （A-FU-008 须填原因；暂停 / 移出操作随 E14-T06 开放，这里先按行数据展示）。
+ */
+export function enrollmentReasonText(row: {
+  pauseReason?: null | string;
+  removeReason?: null | string;
+  status: string;
+}): string {
+  if (row.status === 'PAUSED') return row.pauseReason ?? '';
+  if (row.status === 'REMOVED') return row.removeReason ?? '';
+  return '';
+}

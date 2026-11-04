@@ -2,6 +2,8 @@
 import type {
   PlanCycleType,
   PlanDetailView,
+  PlanEnrollmentPatientView,
+  PlanLogView,
   PlanStartDateField,
   PlanView,
 } from '@crdp/api';
@@ -24,6 +26,8 @@ import {
   PLAN_START_DATE_FIELD_OPTIONS,
   PLAN_TASK_TYPE_TEXT,
   planCycleText,
+  planEnrollmentStatusText,
+  planLogActionText,
   planStartDateFieldText,
   planStatusText,
 } from '@crdp/api';
@@ -43,6 +47,7 @@ import {
   InputNumber,
   message,
   Modal,
+  Pagination,
   Popconfirm,
   Result,
   Select,
@@ -52,11 +57,14 @@ import {
   Table,
   TabPane,
   Tabs,
+  Textarea,
 } from 'ant-design-vue';
 
 import {
   copyPlan,
   fetchPlanDetail,
+  fetchPlanEnrollments,
+  fetchPlanLogs,
   publishPlan,
   savePlanNodes,
   updatePlan,
@@ -67,9 +75,12 @@ import { usePermission } from '#/reference/use-permission';
 import {
   buildNodeInputs,
   canEditPlan,
+  enrollmentReasonText,
   newNodeRow,
   newSubplanRow,
   planActionsFor,
+  planLogJsonText,
+  planTimeText,
   previewBaseLabel,
   toNodeRows,
   unitValueText,
@@ -81,11 +92,12 @@ defineOptions({ name: 'FollowupPlanDetail' });
 
 /**
  * E14-T02 / A-FU-002、A-FU-016、A-FU-018、A-FU-019 · 计划详情
- * （/followup/plan/:planId，pages.md §8）：页签「基本信息 / 节点」；患者列表与变更记录
- * 页签随 E14-T08、C 器械映射随 E21。仅未发布可编辑（基本信息与节点整体保存，乐观锁
- * baseVersion，冲突 40900）；已发布 / 暂停 / 停用只读，提示复制为新版本。发布走
- * a-steps 确认（检查节点 → 确认影响 → 发布）。节点编辑表 + 计算预览用 @crdp/rules
- * 的 plan-date（与后端 E14-T03 共享用例：A 年度、B 3 个月、B 1 年、B 术后 1/3/5 天）。
+ * （/followup/plan/:planId，pages.md §8）：页签「基本信息 / 节点」；E14-T08 起补
+ * 「患者列表 / 变更记录」（A-FU-022、A-FU-021）；C 器械映射随 E21。仅未发布可编辑
+ * （基本信息与节点整体保存，乐观锁 baseVersion，冲突 40900）；已发布 / 暂停 / 停用
+ * 只读，提示复制为新版本。发布走 a-steps 确认（检查节点 → 确认影响 → 发布）。节点
+ * 编辑表 + 计算预览用 @crdp/rules 的 plan-date（与后端 E14-T03 共享用例：A 年度、
+ * B 3 个月、B 1 年、B 术后 1/3/5 天）。
  */
 const route = useRoute();
 const router = useRouter();
@@ -331,6 +343,90 @@ async function copyAsNewVersion() {
   }
 }
 
+// ---------------------------------------------------------------- 患者列表 / 变更记录（E14-T08）
+
+const activeTab = ref('basic');
+const PATIENT_PAGE_SIZE = 20;
+
+const enrollments = ref<PlanEnrollmentPatientView[]>([]);
+const enrollmentsTotal = ref(0);
+const enrollmentsPageNo = ref(1);
+const enrollmentsLoading = ref(false);
+const enrollmentsError = ref('');
+const enrollmentsLoaded = ref(false);
+
+const logs = ref<PlanLogView[]>([]);
+const logsLoading = ref(false);
+const logsError = ref('');
+const logsLoaded = ref(false);
+
+const enrollmentColumns = [
+  { key: 'patient', title: '患者（脱敏）', width: 200 },
+  { key: 'gender', title: '性别', width: 60 },
+  { key: 'ward', title: '病区', width: 130 },
+  { key: 'enrolledAt', title: '加入时间', width: 150 },
+  { key: 'completedCount', title: '随访完成次数', width: 110 },
+  { key: 'status', title: '状态', width: 170 },
+];
+
+const logColumns = [
+  { key: 'createdAt', title: '时间', width: 150 },
+  { key: 'action', title: '操作', width: 110 },
+  { key: 'operator', title: '操作人', width: 120 },
+  { key: 'description', title: '说明' },
+];
+
+async function loadEnrollments() {
+  enrollmentsLoading.value = true;
+  enrollmentsError.value = '';
+  try {
+    const page = await fetchPlanEnrollments(
+      planId.value,
+      enrollmentsPageNo.value,
+      PATIENT_PAGE_SIZE,
+    );
+    enrollments.value = page.items;
+    enrollmentsTotal.value = page.total;
+    enrollmentsLoaded.value = true;
+  } catch (error) {
+    enrollmentsError.value =
+      error instanceof Error ? error.message : String(error);
+    enrollments.value = [];
+  } finally {
+    enrollmentsLoading.value = false;
+  }
+}
+
+async function loadLogs() {
+  logsLoading.value = true;
+  logsError.value = '';
+  try {
+    const view = await fetchPlanLogs(planId.value);
+    logs.value = view.items;
+    logsLoaded.value = true;
+  } catch (error) {
+    logsError.value = error instanceof Error ? error.message : String(error);
+    logs.value = [];
+  } finally {
+    logsLoading.value = false;
+  }
+}
+
+/** 页签切换按需加载（患者列表 / 变更记录只在首次进入时拉取）。 */
+function onTabChange(key: number | string) {
+  if (key === 'patients' && !enrollmentsLoaded.value) {
+    loadEnrollments();
+  }
+  if (key === 'logs' && !logsLoaded.value) {
+    loadLogs();
+  }
+}
+
+function changeEnrollmentsPage(page: number) {
+  enrollmentsPageNo.value = page;
+  loadEnrollments();
+}
+
 // ---------------------------------------------------------------- 装载
 
 async function reload() {
@@ -420,7 +516,7 @@ const nodeColumns = [
       style="margin-bottom: 12px"
     />
 
-    <Tabs default-active-key="basic">
+    <Tabs v-model:active-key="activeTab" @change="onTabChange">
       <TabPane key="basic" tab="基本信息">
         <Card>
           <Descriptions v-if="!basicEditing" :column="2" bordered size="small">
@@ -990,6 +1086,134 @@ const nodeColumns = [
           </Spin>
         </Card>
       </TabPane>
+
+      <TabPane key="patients" tab="患者列表">
+        <Card>
+          <Alert
+            v-if="enrollmentsError"
+            :message="enrollmentsError"
+            show-icon
+            type="error"
+            style="margin-bottom: 12px"
+          />
+          <Spin :spinning="enrollmentsLoading">
+            <Empty
+              v-if="enrollments.length === 0 && !enrollmentsLoading"
+              description="暂无入组患者"
+            />
+            <template v-else>
+              <Table
+                :columns="enrollmentColumns"
+                :data-source="enrollments"
+                :pagination="false"
+                row-key="id"
+                size="small"
+              >
+                <template #bodyCell="{ column, record }">
+                  <template v-if="column.key === 'patient'">
+                    <div>{{ record.name }}</div>
+                    <div class="cell-sub">病案号 {{ record.mrn }}</div>
+                  </template>
+                  <template v-else-if="column.key === 'gender'">
+                    {{
+                      record.gender === 'M'
+                        ? '男'
+                        : record.gender === 'F'
+                          ? '女'
+                          : '—'
+                    }}
+                  </template>
+                  <template v-else-if="column.key === 'ward'">
+                    {{ record.wardName ?? '—' }}
+                  </template>
+                  <template v-else-if="column.key === 'enrolledAt'">
+                    {{ planTimeText(record.enrolledAt) }}
+                  </template>
+                  <template v-else-if="column.key === 'completedCount'">
+                    {{ record.completedCount }}
+                  </template>
+                  <template v-else-if="column.key === 'status'">
+                    <StatusTag
+                      :status="planEnrollmentStatusText(record.status)"
+                    />
+                    <div v-if="enrollmentReasonText(record)" class="cell-sub">
+                      {{ enrollmentReasonText(record) }}
+                    </div>
+                  </template>
+                </template>
+              </Table>
+              <Pagination
+                v-model:current="enrollmentsPageNo"
+                class="mt-4"
+                :page-size="PATIENT_PAGE_SIZE"
+                :show-size-changer="false"
+                :show-total="(count: number) => `共 ${count} 人`"
+                :total="enrollmentsTotal"
+                @change="changeEnrollmentsPage"
+              />
+            </template>
+          </Spin>
+        </Card>
+      </TabPane>
+
+      <TabPane key="logs" tab="变更记录">
+        <Card>
+          <Alert
+            v-if="logsError"
+            :message="logsError"
+            show-icon
+            type="error"
+            style="margin-bottom: 12px"
+          />
+          <Spin :spinning="logsLoading">
+            <Empty
+              v-if="logs.length === 0 && !logsLoading"
+              description="暂无变更记录"
+            />
+            <Table
+              v-else
+              :columns="logColumns"
+              :data-source="logs"
+              :pagination="false"
+              row-key="id"
+              size="small"
+            >
+              <template #bodyCell="{ column, record }">
+                <template v-if="column.key === 'createdAt'">
+                  {{ planTimeText(record.createdAt) }}
+                </template>
+                <template v-else-if="column.key === 'action'">
+                  {{ planLogActionText(record.action) }}
+                </template>
+                <template v-else-if="column.key === 'operator'">
+                  {{ record.operatorName ?? '—' }}
+                </template>
+                <template v-else-if="column.key === 'description'">
+                  {{ record.description ?? '—' }}
+                </template>
+              </template>
+              <template #expandedRowRender="{ record }">
+                <div class="log-json">
+                  <div class="log-json-label">变更前</div>
+                  <Textarea
+                    :value="planLogJsonText(record.beforeJson)"
+                    auto-size
+                    class="log-json-body"
+                    readonly
+                  />
+                  <div class="log-json-label">变更后</div>
+                  <Textarea
+                    :value="planLogJsonText(record.afterJson)"
+                    auto-size
+                    class="log-json-body"
+                    readonly
+                  />
+                </div>
+              </template>
+            </Table>
+          </Spin>
+        </Card>
+      </TabPane>
     </Tabs>
 
     <!-- 发布确认（a-steps：检查节点 → 确认影响 → 发布） -->
@@ -1161,5 +1385,23 @@ const nodeColumns = [
   font-size: 13px;
   line-height: 1.8;
   color: rgb(0 0 0 / 65%);
+}
+
+.log-json {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 4px 8px;
+  align-items: start;
+}
+
+.log-json-label {
+  font-size: 12px;
+  line-height: 22px;
+  color: rgb(0 0 0 / 45%);
+}
+
+.log-json-body {
+  font-family: monospace;
+  font-size: 12px;
 }
 </style>

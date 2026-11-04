@@ -470,7 +470,7 @@
 | 权限 | 查看 `followup:plan:view`（A）；编辑未发布 / 复制 `followup:plan:edit`；发布 / 暂停 / 停用 `followup:plan:publish`（A；C 并入 `followup:plan:edit`）；入组相关 `followup:plan:enroll` |
 | 需求 | A-FU-016、017、018、019、021、022、002、008、026；A-PAT-016；C-FU-001、002、003、006、007；（A-FU-020 迁移到新版本延后） |
 | 组件 | `a-table`、`StatusTag domain=plan`、`a-form`（4 列弹窗）、节点编辑表格（行内编辑）、`a-steps`（发布确认）、`ReasonModal` |
-| 接口 | `GET/POST /api/hospital/followup/plans`；`GET/PUT .../plans/{id}`（仅未发布）；`POST .../plans/{id}/publish`、`/copy`、`/pause`、`/disable`；节点 `PUT .../plans/{id}/nodes`；计划患者 `GET .../plans/{id}/enrollments`；入组 `POST .../plans/{id}/enrollments/batch`；C 映射 `GET/PUT .../plans/device-mapping`（均推断，待确认） |
+| 接口 | `GET/POST /api/hospital/followup/plans`；`GET/PUT .../plans/{id}`（仅未发布）；`POST .../plans/{id}/publish`、`/copy`、`/pause`、`/disable`；节点 `PUT .../plans/{id}/nodes`；计划患者 `GET .../plans/{id}/enrollments`（E14-T08 已实现）；变更记录 `GET .../plans/{id}/logs`（E14-T08 已实现）；入组 `POST .../plans/{id}/enrollments/batch`；C 映射 `GET/PUT .../plans/device-mapping`（未标注的为推断，待确认） |
 
 ```text
 ┌ 随访计划 ─────────────────────────────────────────────────────────── [+ 新建计划] ┐

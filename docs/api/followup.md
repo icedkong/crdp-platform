@@ -17,11 +17,13 @@
 | POST | `/api/hospital/followup/plans/{id}/publish` | `plan:publish` / `plan:edit` | 发布后不可改（A-FU-019） |
 | POST | `/api/hospital/followup/plans/{id}/copy` | `plan:edit` | 复制出新版本（A-FU-019） |
 | POST | `/api/hospital/followup/plans/{id}/pause` · `/resume` · `/disable` | `plan:publish` / `plan:edit` | 计划状态（A-FU-018），写计划变更审计（A-FU-021） |
-| GET | `/api/hospital/followup/plans/{id}/enrollments` | `plan:view` / `plan:edit` | 计划患者列表（A-FU-022） |
+| GET | `/api/hospital/followup/plans/{id}/enrollments` | `plan:view` / `plan:edit` | **E14-T08 已实现**。计划患者列表（A-FU-022）：`?pageNo=1&pageSize=20`（上限 100）→ `{ items, total, pageNo, pageSize }`；行 `{ id, patientId, name, mrn(脱敏), legacyNo, gender, wardName, mode, status(ACTIVE\|PAUSED\|REMOVED), pauseReason, removeReason, enrolledAt, completedCount }`，按加入时间倒序；姓名 / 病案号只含脱敏值，按当前用户数据范围出行（`@DataScope`，范围为空返回空列表）；`completedCount` = fu_task COMPLETED 聚合（E15-T01 流转后累计）；计划不存在 40400 |
 | POST | `/api/hospital/followup/plans/{id}/enrollments/batch` | `plan:enroll` / `plan:edit` | 批量入组 `{ patientIds[], startDateField: 'dischargeDate'|..., doctorId? }`（A-PAT-016）；返回成功 / 跳过明细 |
-| GET | `/api/hospital/followup/plans/{id}/logs` | `plan:view` / `plan:edit` | 计划变更审计 |
+| GET | `/api/hospital/followup/plans/{id}/logs` | `plan:view` / `plan:edit` | **E14-T08 已实现**。计划变更审计（A-FU-021）：倒序最近 100 条 `{ items: [{ id, planId, planCode, action, description, beforeJson, afterJson, operatorId, operatorName(联查 sys_user), createdAt }] }`；action ∈ `PLAN_CREATE/PLAN_UPDATE/PLAN_NODE_SAVE/PLAN_PUBLISH/PLAN_COPY/PLAN_PAUSE/PLAN_RESUME/PLAN_DISABLE`；计划不存在 40400 |
 
-E14-T01 已实现（OQ-76 暂行口径）：每个版本一行 `fu_plan`（`code` 跨版本不变、`version` 递增）；「随访中 / RUNNING」为派生态（PUBLISHED 且有在组入组，不入库）；发布新版本时同族旧已发布 / 已暂停版本自动转 DISABLED（不再允许入组 → 新入组必然用新版本；在组患者沿用原版本，A-FU-020 迁移延后）；停用为终态（恢复 40901）；基本信息与节点共用乐观锁 `lockVersion`（保存带 `baseVersion`，冲突 40900）；节点两层共表 `fu_plan_node`，`PUT .../nodes` body `{ baseVersion, nodes[] }`（节点行带 `key` / `parentKey` 请求内引用，整体替换，仅未发布）；发布前置至少一个子计划与一个节点。入组领域入口 `PlanEnrollmentService.enroll(patientId, planId, mode)`（批量入组 E13-T07、自动入组 E14-T05 复用；入组只允许 PUBLISHED，同一计划族至多一条在组入组；患者列表 / 变更记录 / 批量接口随 E14-T08、暂停恢复移出随 E14-T06）。权限「任一码命中即放行」由 `@RequiresPermission` 多值实现（OQ-13）。
+E14-T01 已实现（OQ-76 暂行口径）：每个版本一行 `fu_plan`（`code` 跨版本不变、`version` 递增）；「随访中 / RUNNING」为派生态（PUBLISHED 且有在组入组，不入库）；发布新版本时同族旧已发布 / 已暂停版本自动转 DISABLED（不再允许入组 → 新入组必然用新版本；在组患者沿用原版本，A-FU-020 迁移延后）；停用为终态（恢复 40901）；基本信息与节点共用乐观锁 `lockVersion`（保存带 `baseVersion`，冲突 40900）；节点两层共表 `fu_plan_node`，`PUT .../nodes` body `{ baseVersion, nodes[] }`（节点行带 `key` / `parentKey` 请求内引用，整体替换，仅未发布）；发布前置至少一个子计划与一个节点。入组领域入口 `PlanEnrollmentService.enroll(patientId, planId, mode)`（批量入组 E13-T07、自动入组 E14-T05 复用；入组只允许 PUBLISHED，同一计划族至多一条在组入组；批量接口随 E13-T07、暂停恢复移出随 E14-T06）。权限「任一码命中即放行」由 `@RequiresPermission` 多值实现（OQ-13）。
+
+E14-T08 已实现（A-FU-021「计划改动全记审计」、A-FU-022 计划患者列表）：每次成功改动（新建 / 编辑 / 保存节点 / 发布 / 复制 / 暂停 / 恢复 / 停用）双写 aud_log 审计与 `fu_plan_log` 变更记录（followup V49，只追加）——审计只追加且缺 `(object_type, object_id)` 索引，`GET .../logs` 从 fu_plan_log 出（口径同 `fe_field_dict_log`，OQ-69③）；前后内容：基本信息为摘要对象（含备注）、节点保存为替换前后节点数组、复制含 `copiedFromVersion`；发布新版本时同族旧版本的自动停用在旧版本自己的记录里落 `PLAN_DISABLE`（逐版本留痕）；被拒操作只写审计 DENIED、不落变更记录。患者列表（`GET .../enrollments`）行含加入时间、随访完成次数、状态三态（已启动 / 已暂停 / 已移除，原因随 E14-T06 的操作写入）；单个患者的暂停 / 恢复 / 移出操作与批量入组入口随 E14-T06 / E13-T07。
 
 不做：迁移到计划新版本（A-FU-020，延后）。预置计划（A-FU-017、C-FU-002）通过 Flyway 种子写入，**种子只含配置，不含任何真实患者数据**。
 

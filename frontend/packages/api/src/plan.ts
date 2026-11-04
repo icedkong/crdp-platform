@@ -239,3 +239,100 @@ export interface PlanSaveNodesRequest {
   baseVersion: number;
   nodes: PlanNodeInput[];
 }
+
+// ---------------------------------------------------------------- 计划患者列表（E14-T08 / A-FU-022）
+
+/** 入组状态（fu_enrollment.status：已启动 / 已暂停 / 已移除）。 */
+export type PlanEnrollmentStatus = 'ACTIVE' | 'PAUSED' | 'REMOVED';
+
+export const PLAN_ENROLLMENT_STATUS_TEXT: Record<string, string> = {
+  ACTIVE: '已启动',
+  PAUSED: '已暂停',
+  REMOVED: '已移除',
+};
+
+export function planEnrollmentStatusText(
+  status: null | string | undefined,
+): string {
+  if (!status) return '—';
+  return PLAN_ENROLLMENT_STATUS_TEXT[status] ?? status;
+}
+
+/**
+ * 计划患者列表行（GET /plans/{id}/enrollments）：加入时间、随访完成次数、状态。
+ * name / mrn 只含脱敏值（AGENTS §5.3，明文走专用接口）；列表按当前用户数据范围出行。
+ */
+export interface PlanEnrollmentPatientView {
+  completedCount: number;
+  enrolledAt: null | string;
+  gender: null | string;
+  id: string;
+  legacyNo: null | string;
+  mode: null | string;
+  mrn: string;
+  name: string;
+  patientId: string;
+  pauseReason: null | string;
+  removeReason: null | string;
+  status: PlanEnrollmentStatus | string;
+  wardName: null | string;
+}
+
+/** 计划患者列表分页响应（{ items, total, pageNo, pageSize }）。 */
+export interface PlanEnrollmentPage {
+  items: PlanEnrollmentPatientView[];
+  pageNo: number;
+  pageSize: number;
+  total: number;
+}
+
+// ---------------------------------------------------------------- 计划变更记录（E14-T08 / A-FU-021）
+
+/** 变更动作（fu_plan_log.action；被拒操作不落记录）。 */
+export type PlanLogAction =
+  | 'PLAN_COPY'
+  | 'PLAN_CREATE'
+  | 'PLAN_DISABLE'
+  | 'PLAN_NODE_SAVE'
+  | 'PLAN_PAUSE'
+  | 'PLAN_PUBLISH'
+  | 'PLAN_RESUME'
+  | 'PLAN_UPDATE';
+
+export const PLAN_LOG_ACTION_TEXT: Record<string, string> = {
+  PLAN_COPY: '复制为新版本',
+  PLAN_CREATE: '新建计划',
+  PLAN_DISABLE: '停用计划',
+  PLAN_NODE_SAVE: '保存节点',
+  PLAN_PAUSE: '暂停计划',
+  PLAN_PUBLISH: '发布计划',
+  PLAN_RESUME: '恢复计划',
+  PLAN_UPDATE: '编辑计划',
+};
+
+export function planLogActionText(action: null | string | undefined): string {
+  if (!action) return '—';
+  return PLAN_LOG_ACTION_TEXT[action] ?? action;
+}
+
+/**
+ * 变更记录行（GET /plans/{id}/logs，倒序最近 100 条）：操作人、时间与前后内容
+ * （基本信息为摘要对象、节点保存为节点数组 JSON）；与审计双写。
+ */
+export interface PlanLogView {
+  action: PlanLogAction | string;
+  afterJson: null | string;
+  beforeJson: null | string;
+  createdAt: string;
+  description: null | string;
+  id: string;
+  operatorId: null | string;
+  operatorName: null | string;
+  planCode: string;
+  planId: string;
+}
+
+/** 变更记录响应。 */
+export interface PlanLogsView {
+  items: PlanLogView[];
+}

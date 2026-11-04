@@ -430,6 +430,8 @@ export type {
 // E14-T02 随访计划配置（docs/api/followup.md §1；页面 pages.md §8）
 export {
   PLAN_ENROLL_MODE_TEXT,
+  PLAN_ENROLLMENT_STATUS_TEXT,
+  PLAN_LOG_ACTION_TEXT,
   PLAN_NODE_BASIS_TEXT,
   PLAN_OFFSET_UNIT_TEXT,
   PLAN_OWNER_TYPE_TEXT,
@@ -440,6 +442,8 @@ export {
   PLAN_START_DATE_FIELD_TEXT,
   PLAN_TASK_TYPE_TEXT,
   planCycleText,
+  planEnrollmentStatusText,
+  planLogActionText,
   planStartDateFieldText,
 } from './plan';
 
@@ -447,7 +451,13 @@ export type {
   PlanCreateRequest,
   PlanCycleType,
   PlanDetailView,
+  PlanEnrollmentPage,
+  PlanEnrollmentPatientView,
+  PlanEnrollmentStatus,
   PlanEnrollMode,
+  PlanLogAction,
+  PlanLogsView,
+  PlanLogView,
   PlanNodeBasis,
   PlanNodeInput,
   PlanNodeView,

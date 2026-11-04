@@ -1,5 +1,6 @@
 package com.crdp.followup.plan.api;
 
+import com.crdp.followup.plan.app.PlanEnrollmentService;
 import com.crdp.followup.plan.app.PlanService;
 import com.crdp.followup.plan.domain.PlanNodeRule;
 import com.crdp.framework.security.RequireModule;
@@ -15,6 +16,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -23,7 +25,7 @@ import org.springframework.web.bind.annotation.RestController;
  *
  * <p>权限码按 OQ-13 声明双候选（任一命中即放行）：查看类 {@code followup:plan:view}（A）或 {@code followup:plan:edit}（C
  * 只有此码）；发布 / 暂停 / 停用 {@code followup:plan:publish} 或 {@code followup:plan:edit}。 菜单与按钮在平台库 V42（24 /
- * 25 / 219 / 220 / 221）。计划患者列表与批量入组接口随 E14-T08 / E13-T07。
+ * 25 / 219 / 220 / 221）。计划患者列表与变更记录随 E14-T08（本任务）；批量入组随 E13-T07。
  */
 @Tag(name = "医院端随访计划")
 @RestController
@@ -32,8 +34,11 @@ public class PlanController {
 
     private final PlanService service;
 
-    public PlanController(PlanService service) {
+    private final PlanEnrollmentService enrollmentsService;
+
+    public PlanController(PlanService service, PlanEnrollmentService enrollmentsService) {
         this.service = service;
+        this.enrollmentsService = enrollmentsService;
     }
 
     @Operation(summary = "计划列表（A-FU-016/018）：名称、编码、版本、状态（含派生「随访中」RUNNING）、" + "在组人数；每族最新版本在前")
@@ -154,6 +159,32 @@ public class PlanController {
     @RequiresPermission({"followup:plan:publish", "followup:plan:edit"})
     public ApiResponse<PlanService.PlanView> disable(@PathVariable long id) {
         return ApiResponse.ok(service.disable(id));
+    }
+
+    @Operation(
+            summary =
+                    "计划患者列表（E14-T08 / A-FU-022）：加入时间、随访完成次数、状态"
+                            + "（ACTIVE 已启动 / PAUSED 已暂停 / REMOVED 已移除）；姓名与病案号只含脱敏值，"
+                            + "按当前用户数据范围出行；分页 { items, total, pageNo, pageSize }")
+    @GetMapping("/{id}/enrollments")
+    @RequireModule("followup")
+    @RequiresPermission({"followup:plan:view", "followup:plan:edit"})
+    public ApiResponse<PlanEnrollmentService.EnrollmentPatientPage> enrollments(
+            @PathVariable long id,
+            @RequestParam(value = "pageNo", defaultValue = "1") int pageNo,
+            @RequestParam(value = "pageSize", defaultValue = "20") int pageSize) {
+        return ApiResponse.ok(enrollmentsService.patients(id, pageNo, pageSize));
+    }
+
+    @Operation(
+            summary =
+                    "计划变更记录（E14-T08 / A-FU-021）：倒序最近 100 条——操作人、时间与前后内容"
+                            + "（基本信息为摘要对象、节点保存为节点数组）；与审计双写，被拒操作不落记录")
+    @GetMapping("/{id}/logs")
+    @RequireModule("followup")
+    @RequiresPermission({"followup:plan:view", "followup:plan:edit"})
+    public ApiResponse<PlanService.PlanLogsView> logs(@PathVariable long id) {
+        return ApiResponse.ok(service.logs(id));
     }
 
     /** 新建请求体。 */
