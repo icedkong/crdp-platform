@@ -31,7 +31,7 @@ import org.springframework.stereotype.Service;
  * 每日 00:10 的任务按需创建作业体（E14-T04 / A-FU-001、C-FU-004、A-NFR-006、C-NFR-007；验收：任务在提醒开始日与 窗口开始日较早一天创建）、
  * 入组即建入口（E14-T05 / Q44，验收：已结束窗口照常建任务并标补录）与恢复补偿入口（E14-T06 / A 的 Q32、A-FU-008）。
  *
- * <p>结构（tech-plan §8「每日调度」流程图）：
+ * <p>结构（tech-plan §8「每日调度」流程图；E15-T01 起创建循环后并做逾期刷新）：
  *
  * <ul>
  *   <li>扇出、执行记录与补跑区间（上次成功日 + 1 至逻辑日）由 E02-T06 的 {@link JobScheduler} 承担（job_tenant_run， jobCode =
@@ -42,6 +42,9 @@ import org.springframework.stereotype.Service;
  *       逐次创建 PENDING 任务——幂等由 uk（入组 + 节点 + 第 N 次）保证，重复执行与停机补跑重放不重复创建；
  *   <li>停用补偿（E14-T06 / PLT-TEN-017、tech-plan §8）：补跑时窗口已在本次运行目标逻辑日前结束、 又未被按时创建的次数（租户停用 /
  *       作业未执行期间本应执行）补建为「停用期间未执行」（DISABLED_SKIPPED + SKIPPED_SUSPENDED）， 不发通知，由人工选择补做或关闭；
+ *   <li>逾期刷新（E15-T01 / A-FU-010，tech-plan §8 步骤 W「刷新状态：逾期」）：创建循环结束后按本次运行目标逻辑日调 {@link
+ *       FollowupTaskStatusService#refreshOverdue}——窗口结束日次日仍未完成（待随访 / 进行中，补录豁免）的任务置 OVERDUE 并写
+ *       TASK_OVERDUE 事件（通知规则引擎 E09-T04 消费）；
  *   <li>新建任务写 {@code TaskOpened} 事件到租户库 outbox（消费方随 E15 通知落地，无人订阅保持 PENDING，OQ-60③）；
  *   <li>刷新入组的下次计划日期 / 开启日缓存（fu_enrollment.next_plan_date / next_open_date，V46 预留）。
  * </ul>
@@ -79,6 +82,7 @@ public class FollowupTaskCreationService {
     private final OutboxPublisher outbox;
     private final AuditLogger audit;
     private final JdbcTemplate jdbc;
+    private final FollowupTaskStatusService statusService;
 
     public FollowupTaskCreationService(
             JobScheduler jobScheduler,
@@ -86,13 +90,15 @@ public class FollowupTaskCreationService {
             PlanMapper planMapper,
             OutboxPublisher outbox,
             AuditLogger audit,
-            JdbcTemplate jdbc) {
+            JdbcTemplate jdbc,
+            FollowupTaskStatusService statusService) {
         this.jobScheduler = jobScheduler;
         this.taskMapper = taskMapper;
         this.planMapper = planMapper;
         this.outbox = outbox;
         this.audit = audit;
         this.jdbc = jdbc;
+        this.statusService = statusService;
     }
 
     // ---------------------------------------------------------------- 作业入口（定时注册在 crdp-server）
@@ -125,12 +131,16 @@ public class FollowupTaskCreationService {
         for (LocalDate date = from; !date.isAfter(logicalDate); date = date.plusDays(1)) {
             created += createForDate(date, logicalDate);
         }
+        // 逾期刷新（E15-T01 / A-FU-010，tech-plan §8 步骤 W）：按本次运行目标逻辑日一次刷完（补跑逐日推进后统一按最终日判定，
+        // 晚标记同样只发一次 TASK_OVERDUE 事件——状态守卫幂等）
+        int overdueMarked = statusService.refreshOverdue(logicalDate);
         log.info(
-                "任务创建完成 tenant={} from={} to={} created={}",
+                "任务创建完成 tenant={} from={} to={} created={} overdueMarked={}",
                 tenant.tenantCode(),
                 from,
                 logicalDate,
-                created);
+                created,
+                overdueMarked);
         if (created > 0) {
             audit.append(
                     AuditEntry.operation("followup", "TASK_CREATE")

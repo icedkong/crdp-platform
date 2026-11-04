@@ -110,6 +110,10 @@ class EnrollmentLifecycleIT {
                                         + " AND JSON_EXTRACT(payload, '$.patientId') = ?",
                                 patientId);
                         jdbc.update(
+                                "DELETE FROM sys_outbox WHERE event_type = 'TASK_OVERDUE'"
+                                        + " AND JSON_EXTRACT(payload, '$.patientId') = ?",
+                                patientId);
+                        jdbc.update(
                                 "DELETE FROM pt_status_history WHERE patient_id = ?", patientId);
                     }
                     jdbc.update(
@@ -528,6 +532,10 @@ class EnrollmentLifecycleIT {
                     jdbc.update("DELETE FROM fu_task WHERE enrollment_id = ?", enrollmentId);
                     jdbc.update(
                             "DELETE FROM sys_outbox WHERE event_type = 'TaskOpened'"
+                                    + " AND JSON_EXTRACT(payload, '$.patientId') = ?",
+                            patientId);
+                    jdbc.update(
+                            "DELETE FROM sys_outbox WHERE event_type = 'TASK_OVERDUE'"
                                     + " AND JSON_EXTRACT(payload, '$.patientId') = ?",
                             patientId);
                     return enrollmentId;

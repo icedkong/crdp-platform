@@ -252,6 +252,169 @@ public interface FollowupTaskMapper {
             @Param("terminatedAt") java.time.LocalDateTime terminatedAt,
             @Param("terminatedBy") Long terminatedBy);
 
+    // ---------------------------------------------------------------- 状态流转（E15-T01 /
+    // A-FU-003、A-FU-010）
+
+    /**
+     * 单条任务行（流转写入口的读取面）：id、归属（入组 / 患者 / 计划 / 节点 / 第 N 次）、创建方式、当前状态与窗口日期组
+     * （完成方式判定用）。只取流转所需列，不输出患者明细；调用方（提交流程 / 沟通流程）先做任务对应患者的数据范围校验（40400）。
+     */
+    record TaskRow(
+            long id,
+            long enrollmentId,
+            long patientId,
+            long planId,
+            long nodeId,
+            int occurrence,
+            String createType,
+            String status,
+            LocalDate windowStart,
+            LocalDate windowEnd) {}
+
+    @IgnoreScope(reason = "状态流转写入口（E15-T01）读取任务行（id 与日期组，不输出患者明细）；" + "调用方先做任务对应患者的数据范围校验（40400）")
+    @Select(
+            """
+            SELECT id, enrollment_id AS enrollmentId, patient_id AS patientId, plan_id AS planId,
+                   node_id AS nodeId, occurrence, create_type AS createType, status,
+                   window_start AS windowStart, window_end AS windowEnd
+            FROM fu_task
+            WHERE id = #{id}
+            """)
+    TaskRow findTaskById(@Param("id") long id);
+
+    /** 入组起算日期快照（完成「直接录入期」判定要算下一次数开启日，E15-T07 重算同源）。 */
+    @IgnoreScope(reason = "状态流转（E15-T01）读取入组起算快照（单列）：调用方已做患者数据范围校验（40400）")
+    @Select("SELECT start_date FROM fu_enrollment WHERE id = #{id}")
+    LocalDate findEnrollmentStartDate(@Param("id") long id);
+
+    /**
+     * 待逾期刷新候选（A-FU-010「窗口结束仍未完成即逾期」，窗口结束日次日由 asOf 判定：window_end 早于 asOf）： 未完成（待随访 /
+     * 进行中）且非补录——补录任务（create_type = BACKFILL，E14-T05）建任务时窗口就已结束， 语义是补录历史，不进逾期与逾期通知（followup.md §1
+     * 已定口径）；跟进 / 临时任务（E15-T05 / T06）落地后按各自窗口同口径参与。 只取逾期标记与 TASK_OVERDUE 事件所需列（负责人复核锚点 wardId、站内信密文名
+     * patientNameCipher、文案 nodeName）。
+     */
+    record OverdueCandidateRow(
+            long id,
+            long patientId,
+            Long assigneeId,
+            Long wardId,
+            String patientNameCipher,
+            String nodeName,
+            LocalDate windowStart,
+            LocalDate windowEnd) {}
+
+    @IgnoreScope(
+            reason =
+                    "每日逾期刷新（E15-T01，00:10 调度内）无用户上下文：只取逾期标记与通知事件所需列"
+                            + "（患者姓名为密文，明文经 CryptoService 解密后只进站内信密文列，不落日志）；"
+                            + "任务查询侧（E15-T02 列表）按 @DataScope 出行")
+    @Select(
+            """
+            SELECT t.id, t.patient_id AS patientId, t.assignee_id AS assigneeId,
+                   pt.ward_id AS wardId, pt.name_cipher AS patientNameCipher,
+                   n.name AS nodeName, t.window_start AS windowStart, t.window_end AS windowEnd
+            FROM fu_task t
+            JOIN pt_patient pt ON pt.id = t.patient_id
+            LEFT JOIN fu_plan_node n ON n.id = t.node_id
+            WHERE t.status IN ('PENDING', 'IN_PROGRESS')
+              AND t.create_type <> 'BACKFILL'
+              AND t.window_end < #{asOf}
+            ORDER BY t.id
+            """)
+    List<OverdueCandidateRow> findOverdueCandidates(@Param("asOf") LocalDate asOf);
+
+    /**
+     * 单条置逾期（A-FU-010；进入时间 = 窗口结束日次日，由调用方按 asOf 选出候选）：状态守卫待随访 / 进行中—— 并发完成 / 终止 / 失访后本 UPDATE 落空（返回
+     * 0），调用方按未标计且不发事件。幂等：已 OVERDUE 不在守卫集，重放落空。
+     */
+    @IgnoreScope(
+            reason =
+                    "每日逾期刷新（E15-T01）：按任务 id 定向 UPDATE（状态守卫），同一事务内随后写 TASK_OVERDUE 事件；"
+                            + "无 SELECT 输出")
+    @Update(
+            """
+            UPDATE fu_task
+            SET status = 'OVERDUE', lock_version = lock_version + 1
+            WHERE id = #{id} AND status IN ('PENDING', 'IN_PROGRESS')
+            """)
+    int markOverdue(@Param("id") long id);
+
+    /**
+     * 待随访 → 进行中（A 规格任务状态表「记录第一次联系或暂存」；第一次联系随 E15-T04、暂存草稿随提交流程 E15-T02 接入）： 状态守卫 PENDING——逾期 / 已完成
+     * / 已终止等一律不动（逾期不退回进行中，OQ-82①），返回 0 由调用方按未流转计。
+     */
+    @IgnoreScope(
+            reason =
+                    "任务进入进行中（E15-T01 第一次联系 / 暂存草稿触发）：按任务 id 定向 UPDATE（状态守卫 PENDING），"
+                            + "调用方已做患者数据范围校验（40400）；无 SELECT 输出")
+    @Update(
+            """
+            UPDATE fu_task
+            SET status = 'IN_PROGRESS', lock_version = lock_version + 1
+            WHERE id = #{id} AND status = 'PENDING'
+            """)
+    int startProgress(@Param("id") long id);
+
+    /**
+     * → 已完成（随访记录提交，A 规格任务状态表；complete_kind 见 followup V53）：状态守卫未完成三态， 并发已终态时落空（返回
+     * 0）由调用方按冲突处理（40900）；终态任务（已完成 / 失访 / 已终止 / 期间未执行）不经本入口（服务层先校验，40901）。
+     */
+    @IgnoreScope(
+            reason =
+                    "任务完成（E15-T01 / A-FU-005 提交联动）：按任务 id 定向 UPDATE（状态守卫未完成三态），"
+                            + "调用方已做患者数据范围校验（40400）；无 SELECT 输出")
+    @Update(
+            """
+            UPDATE fu_task
+            SET status = 'COMPLETED', complete_kind = #{completeKind},
+                completed_at = #{completedAt}, completed_by = #{completedBy},
+                lock_version = lock_version + 1
+            WHERE id = #{id} AND status IN ('PENDING', 'IN_PROGRESS', 'OVERDUE')
+            """)
+    int completeTask(
+            @Param("id") long id,
+            @Param("completeKind") String completeKind,
+            @Param("completedAt") java.time.LocalDateTime completedAt,
+            @Param("completedBy") Long completedBy);
+
+    /**
+     * 「停用 / 暂停期间未执行」补做（PLT-TEN-017、A 的 Q32）：状态守卫 SKIPPED_SUSPENDED，目标状态由服务层按窗口是否已结束定 （PENDING /
+     * OVERDUE，OQ-82②）；返回 0 = 并发已被处理。
+     */
+    @IgnoreScope(
+            reason =
+                    "期间未执行任务补做（E15-T01 / PLT-TEN-017）：按任务 id 定向 UPDATE（状态守卫 SKIPPED_SUSPENDED），"
+                            + "调用方已做患者数据范围校验（40400）；无 SELECT 输出")
+    @Update(
+            """
+            UPDATE fu_task
+            SET status = #{targetStatus}, lock_version = lock_version + 1
+            WHERE id = #{id} AND status = 'SKIPPED_SUSPENDED'
+            """)
+    int redoSkippedTask(@Param("id") long id, @Param("targetStatus") String targetStatus);
+
+    /**
+     * 「停用 / 暂停期间未执行」关闭（PLT-TEN-017、A 的 Q32「由医生选择补做或关闭」）：置 TERMINATED 并落终止三列（复用 E14-T06 的终止列，关闭 =
+     * 人工停止该次随访）；状态守卫 SKIPPED_SUSPENDED。
+     */
+    @IgnoreScope(
+            reason =
+                    "期间未执行任务关闭（E15-T01 / PLT-TEN-017）：按任务 id 定向 UPDATE（状态守卫 SKIPPED_SUSPENDED），"
+                            + "调用方已做患者数据范围校验（40400）；无 SELECT 输出")
+    @Update(
+            """
+            UPDATE fu_task
+            SET status = 'TERMINATED', terminate_reason = #{reason},
+                terminated_at = #{terminatedAt}, terminated_by = #{terminatedBy},
+                lock_version = lock_version + 1
+            WHERE id = #{id} AND status = 'SKIPPED_SUSPENDED'
+            """)
+    int closeSkippedTask(
+            @Param("id") long id,
+            @Param("reason") String reason,
+            @Param("terminatedAt") java.time.LocalDateTime terminatedAt,
+            @Param("terminatedBy") Long terminatedBy);
+
     /**
      * 终止一位患者全部入组的未完成任务（死亡自动终止，A-FU-007 / tasks.csv 验收「告知已故后未开始任务全部终止」）。 返回终止条数。
      * 数据范围前置校验由调用方（FollowupTerminationService，经 PatientContactGateway 40400）完成。

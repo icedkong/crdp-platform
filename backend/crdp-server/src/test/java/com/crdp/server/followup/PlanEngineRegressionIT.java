@@ -31,14 +31,15 @@ import org.springframework.test.context.ActiveProfiles;
  *
  * <ol>
  *   <li>长期年度（A-FU-001「N 从 1 起逐年递增、不设上限」、A-FU-017 年度预置、Q21 随访不设 10 年上限）： 2016 年出院的患者逐年随访 12
- *       年——每年开启日照常创建该年度任务（未来年度不预生成），12 次任务日期组逐次正确、 幂等，TaskOpened 事件与下次缓存指向第 13 年；
+ *       年——每年开启日照常创建该年度任务（未来年度不预生成），12 次任务日期组逐次正确、 幂等，TaskOpened 事件与下次缓存指向第 13 年； E15-T01
+ *       起逐年运行还会把历年未完成任务置逾期（OVERDUE + TASK_OVERDUE 事件，仅当年任务保持待随访，A-FU-010）；
  *   <li>多计划（A 规格第 5 章「可同时加入不同计划」）：同一患者同时在年度计划与两年一次（如专病）计划， 两计划任务互不干扰、各自入组的 next 缓存独立，uk（入组 + 节点 + 第
  *       N 次）无跨计划冲突。
  * </ol>
  *
  * <p>门控 CRDP_IT_MYSQL_PORT（CI 起 docker compose 注入端口）。自建自清（计划编码 PLAN-IT-E14T09 前缀、病案号 IT-E14T09-
- * 前缀、job_tenant_run 本作业行、TaskOpened 事件与 TASK_CREATE 审计）。全部虚构数据。 12 年逐日循环过慢：每个执行日在 job_tenant_run
- * 预置前一日 SUCCESS 台账（虚构「中间日期作业已成功执行」的稳态，与 E02-T06 补跑口径一致）， 使每次 runForDate 只处理一个逻辑日。
+ * 前缀、job_tenant_run 本作业行、TaskOpened / TASK_OVERDUE 事件与 TASK_CREATE 审计）。全部虚构数据。 12 年逐日循环过慢：每个执行日在
+ * job_tenant_run 预置前一日 SUCCESS 台账（虚构「中间日期作业已成功执行」的稳态，与 E02-T06 补跑口径一致）， 使每次 runForDate 只处理一个逻辑日。
  */
 @ActiveProfiles("local")
 @SpringBootTest(
@@ -90,6 +91,10 @@ class PlanEngineRegressionIT {
                         for (Long patientId : patientIds) {
                             jdbc.update(
                                     "DELETE FROM sys_outbox WHERE event_type = 'TaskOpened'"
+                                            + " AND JSON_EXTRACT(payload, '$.patientId') = ?",
+                                    patientId);
+                            jdbc.update(
+                                    "DELETE FROM sys_outbox WHERE event_type = 'TASK_OVERDUE'"
                                             + " AND JSON_EXTRACT(payload, '$.patientId') = ?",
                                     patientId);
                         }
@@ -153,7 +158,12 @@ class PlanEngineRegressionIT {
                     date(task.get("created_logical_date")),
                     "补跑口径：创建事实落在该次自己的开启日");
             assertEquals("NORMAL", task.get("create_type"));
-            assertEquals("PENDING", task.get("status"), "12 年后创建的任务仍为待随访");
+            // E15-T01 / A-FU-010：历年未完成的任务在下一年调度刷新中置逾期；仅当年（第 12 次）保持待随访
+            if (occurrence < 12) {
+                assertEquals("OVERDUE", task.get("status"), "历年窗口已结束未完成 → 逾期");
+            } else {
+                assertEquals("PENDING", task.get("status"), "当年任务仍为待随访");
+            }
         }
 
         // 长期随访继续：下次缓存指向第 13 年（2029-03-15 / 03-08）
@@ -161,11 +171,13 @@ class PlanEngineRegressionIT {
         assertEquals(LocalDate.of(2029, 3, 15), date(cache.get("next_plan_date")));
         assertEquals(LocalDate.of(2029, 3, 8), date(cache.get("next_open_date")));
 
-        // 12 个年度各发一条 TaskOpened；重复执行幂等（任务与事件都不重复）
+        // 12 个年度各发一条 TaskOpened；历年 11 条已逾期（TASK_OVERDUE，E15-T01）；重复执行幂等（任务与事件都不重复）
         assertEquals(12, taskOpenedCount("demoa", patientId));
+        assertEquals(11, taskOverdueCount("demoa", patientId), "历年未完成各发一次逾期事件（当年未逾期）");
         runOneLogicalDay(LocalDate.of(2028, 3, 8));
         assertEquals(12, taskCount("demoa", patientId, planId), "重复执行不重复创建（uk 幂等）");
         assertEquals(12, taskOpenedCount("demoa", patientId), "重复执行不重复发事件");
+        assertEquals(11, taskOverdueCount("demoa", patientId), "逾期刷新重放不重发事件（状态守卫幂等）");
     }
 
     // ---------------------------------------------------------------- 多计划：同患者不同计划并行
@@ -411,6 +423,17 @@ class PlanEngineRegressionIT {
                 () ->
                         jdbc.queryForObject(
                                 "SELECT COUNT(*) FROM sys_outbox WHERE event_type = 'TaskOpened'"
+                                        + " AND JSON_EXTRACT(payload, '$.patientId') = ?",
+                                Integer.class,
+                                patientId));
+    }
+
+    private int taskOverdueCount(String tenant, long patientId) {
+        return runInTenant(
+                tenant,
+                () ->
+                        jdbc.queryForObject(
+                                "SELECT COUNT(*) FROM sys_outbox WHERE event_type = 'TASK_OVERDUE'"
                                         + " AND JSON_EXTRACT(payload, '$.patientId') = ?",
                                 Integer.class,
                                 patientId));

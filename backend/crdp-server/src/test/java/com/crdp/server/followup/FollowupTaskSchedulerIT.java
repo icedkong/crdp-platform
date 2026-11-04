@@ -99,6 +99,10 @@ class FollowupTaskSchedulerIT {
                                     "DELETE FROM sys_outbox WHERE event_type = 'TaskOpened'"
                                             + " AND JSON_EXTRACT(payload, '$.patientId') = ?",
                                     patientId);
+                            jdbc.update(
+                                    "DELETE FROM sys_outbox WHERE event_type = 'TASK_OVERDUE'"
+                                            + " AND JSON_EXTRACT(payload, '$.patientId') = ?",
+                                    patientId);
                         }
                         jdbc.update(
                                 "DELETE t FROM fu_task t JOIN pt_patient p ON p.id = t.patient_id"
@@ -466,6 +470,10 @@ class FollowupTaskSchedulerIT {
                         jdbc.update("DELETE FROM fu_task WHERE enrollment_id = ?", enrollmentId);
                         jdbc.update(
                                 "DELETE FROM sys_outbox WHERE event_type = 'TaskOpened'"
+                                        + " AND JSON_EXTRACT(payload, '$.patientId') = ?",
+                                patientId);
+                        jdbc.update(
+                                "DELETE FROM sys_outbox WHERE event_type = 'TASK_OVERDUE'"
                                         + " AND JSON_EXTRACT(payload, '$.patientId') = ?",
                                 patientId);
                     }
