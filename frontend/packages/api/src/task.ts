@@ -128,7 +128,15 @@ export interface RecordTaskContext {
   windowStart: string;
 }
 
-/** 记录详情（followup.md §3 的 E15-T02 子集；previous / history 随后续任务）。 */
+/** 补录 / 计划外记录的患者摘要（context 为 null 时表单页头幅用；姓名 / 病案号为脱敏值）。 */
+export interface RecordPatientBrief {
+  mrn: string;
+  patientId: string;
+  patientName: string;
+  wardName?: null | string;
+}
+
+/** 记录详情（followup.md §3；E15-T07 起附 source 与 visitDate，taskless 记录附 patient 摘要）。 */
 export interface RecordDetailView {
   context?: null | RecordTaskContext;
   data: Record<string, unknown>;
@@ -136,8 +144,25 @@ export interface RecordDetailView {
   formCode: string;
   formVersion: number;
   id: string;
+  patient?: null | RecordPatientBrief;
+  source?: null | string;
   status: 'DRAFT' | 'SUBMITTED';
   version: number;
+  visitDate?: null | string;
+}
+
+/** 历史补录创建结果（recordId 即随访表单路由，pages.md §5）。 */
+export interface BackfillCreateView {
+  formCode: string;
+  patientId: string;
+  recordId: string;
+  visitDate: string;
+}
+
+/** 历史补录创建请求（A-FU-014 / C-FU-013：过去日期 + 实际随访日期；计划外 / 远程监测随后续任务）。 */
+export interface BackfillCreateRequest {
+  source: 'BACKFILL';
+  visitDate: string;
 }
 
 /** 提交结果（「提交后任务完成」验收位；无关联任务时 taskId / taskStatus 为空）。 */

@@ -19,6 +19,7 @@ import {
   missingRequiredText,
   nextVisitText,
   readonlyBanner,
+  submitConfirmText,
   submitSuccessMessage,
 } from './logic';
 
@@ -168,6 +169,27 @@ describe('顶栏与下次随访行', () => {
       '第4年随访 · 计划 2026-11-05 · 窗口 2026-10-29 ~ 2026-11-12',
     );
     expect(headerTitle(null)).toBe('随访录入');
+    expect(headerTitle(null, { patientName: '周*（示例）' })).toBe(
+      '历史补录 · 周*（示例）',
+    );
+    expect(headerSummary(null)).toBe('');
+    expect(headerSummary(null, '2025-06-01')).toBe(
+      '补录 · 实际随访日期 2025-06-01',
+    );
+  });
+
+  it('提交文案：补录记录不联动任务完成（A-FU-014）', () => {
+    expect(submitSuccessMessage(false)).toBe('已提交；按计划生成下次任务');
+    expect(submitSuccessMessage(false, false)).toBe('已提交补录记录');
+    expect(submitSuccessMessage(true, false)).toBe(
+      '已提交补录记录；随访计划终止，不再创建后续任务',
+    );
+    expect(submitConfirmText(true)).toBe(
+      '提交后任务完成，按计划生成下次随访任务。',
+    );
+    expect(submitConfirmText(false)).toBe(
+      '提交后补录记录生效（不占用年度任务，A-FU-014）。',
+    );
   });
 
   it('下次随访只读行（按计划自动生成）；无缓存为空', () => {

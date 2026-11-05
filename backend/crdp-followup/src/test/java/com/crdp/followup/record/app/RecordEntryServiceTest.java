@@ -38,6 +38,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class RecordEntryServiceTest {
 
     private final FormService formService = mock(FormService.class);
+    private final FollowupRecordService recordService = mock(FollowupRecordService.class);
     private final FieldHistoryService fieldHistory = mock(FieldHistoryService.class);
     private final FollowupTaskStatusService statusService = mock(FollowupTaskStatusService.class);
     private final FollowupTerminationService terminationService =
@@ -48,6 +49,7 @@ class RecordEntryServiceTest {
 
     private final RecordEntryService service =
             new RecordEntryService(
+                    recordService,
                     formService,
                     fieldHistory,
                     statusService,
@@ -81,9 +83,19 @@ class RecordEntryServiceTest {
                 LocalDate.of(2027, 11, 5));
     }
 
-    private static FormService.RecordView record(String status, Map<String, Object> data) {
-        return new FormService.RecordView(
+    private static FollowupRecordService.RecordView record(
+            String status, Map<String, Object> data) {
+        return record(status, data, 301L);
+    }
+
+    private static FollowupRecordService.RecordView record(
+            String status, Map<String, Object> data, long patientId) {
+        return new FollowupRecordService.RecordView(
                 701L,
+                patientId,
+                null,
+                "TASK",
+                null,
                 "A_ANNUAL_FU",
                 1,
                 status,
@@ -96,7 +108,7 @@ class RecordEntryServiceTest {
 
     @Test
     void detailMasksPatientAndCarriesTaskContext() {
-        when(formService.record(701L)).thenReturn(record("DRAFT", Map.of("f214", "2026-11-05")));
+        when(recordService.record(701L)).thenReturn(record("DRAFT", Map.of("f214", "2026-11-05")));
         when(taskQueryMapper.taskContextByRecordId(701L)).thenReturn(taskRow("IN_PROGRESS"));
         when(crypto.decrypt("cipher-name")).thenReturn("周随访（示例）");
         when(crypto.decrypt("cipher-mrn")).thenReturn("MRN-0001");
@@ -115,28 +127,53 @@ class RecordEntryServiceTest {
     }
 
     @Test
-    void detailWithoutTaskContextIsNull() {
-        when(formService.record(702L)).thenReturn(record("DRAFT", Map.of()));
+    void detailWithoutTaskContextCarriesPatientBrief() {
+        FollowupRecordService.RecordView backfill =
+                new FollowupRecordService.RecordView(
+                        702L,
+                        301L,
+                        null,
+                        "BACKFILL",
+                        LocalDate.of(2025, 6, 1),
+                        "A_ANNUAL_FU",
+                        1,
+                        "DRAFT",
+                        2,
+                        Map.of(),
+                        Map.of(),
+                        null,
+                        "2026-11-05T09:00:00+08:00");
+        when(recordService.record(702L)).thenReturn(backfill);
         when(taskQueryMapper.taskContextByRecordId(702L)).thenReturn(null);
+        when(taskQueryMapper.patientBrief(301L))
+                .thenReturn(
+                        new FollowupTaskQueryMapper.PatientBriefRow(
+                                301L, "cipher-name", "cipher-mrn", "示例病区一"));
+        when(crypto.decrypt("cipher-name")).thenReturn("周随访（示例）");
+        when(crypto.decrypt("cipher-mrn")).thenReturn("MRN-0001");
 
         RecordEntryService.RecordDetailView view = service.detail(702L);
 
         assertNull(view.context(), "未关联任务 / 越范围的记录无任务上下文");
+        assertEquals("BACKFILL", view.source(), "补录记录带来源标识（A-FU-014 标记为补录）");
+        assertEquals(LocalDate.of(2025, 6, 1), view.visitDate(), "补录带实际随访日期");
+        assertEquals("301", view.patient().patientId());
+        assertTrue(view.patient().patientName().contains("*"), "摘要姓名脱敏");
     }
 
     @Test
     void submitCompletesTaskAndWritesFieldHistoryAndAudit() {
         Map<String, Object> data = Map.of("f214", "2026-11-05", "f215", 0);
-        when(formService.submitRecord(eq(701L), eq(2), eq(data), any()))
+        when(recordService.submit(eq(701L), eq(2), eq(data), any()))
                 .thenReturn(
-                        new FormService.SubmitOutcome(
+                        new FollowupRecordService.SubmitOutcome(
                                 record("SUBMITTED", data),
                                 Map.of("f214", "2026-11-05"),
                                 List.of(),
                                 List.of()));
         when(taskQueryMapper.taskContextByRecordId(701L)).thenReturn(taskRow("IN_PROGRESS"));
         when(fieldHistory.logChanges(
-                        eq(FieldHistoryService.FORM_RECORD),
+                        eq(FieldHistoryService.FU_RECORD),
                         eq(701L),
                         eq("A_ANNUAL_FU"),
                         eq(1),
@@ -184,9 +221,9 @@ class RecordEntryServiceTest {
     @Test
     void submitWithDeathRecordedTerminatesPatientTasks() {
         Map<String, Object> data = Map.of("f214", "2026-11-05", "f215", 1);
-        when(formService.submitRecord(eq(701L), eq(2), eq(data), any()))
+        when(recordService.submit(eq(701L), eq(2), eq(data), any()))
                 .thenReturn(
-                        new FormService.SubmitOutcome(
+                        new FollowupRecordService.SubmitOutcome(
                                 record("SUBMITTED", data), Map.of(), List.of(), List.of()));
         when(taskQueryMapper.taskContextByRecordId(701L)).thenReturn(taskRow("IN_PROGRESS"));
         when(fieldHistory.logChanges(any(), anyLong(), any(), eq(1), any(), any(), any(), any()))
@@ -224,9 +261,9 @@ class RecordEntryServiceTest {
     @Test
     void submitWithoutLinkedTaskSkipsTaskCompletion() {
         Map<String, Object> data = Map.of("f214", "2026-11-05");
-        when(formService.submitRecord(eq(701L), eq(2), eq(data), any()))
+        when(recordService.submit(eq(701L), eq(2), eq(data), any()))
                 .thenReturn(
-                        new FormService.SubmitOutcome(
+                        new FollowupRecordService.SubmitOutcome(
                                 record("SUBMITTED", data), Map.of(), List.of(), List.of()));
         when(taskQueryMapper.taskContextByRecordId(701L)).thenReturn(null);
         when(fieldHistory.logChanges(any(), anyLong(), any(), eq(1), any(), any(), any(), any()))
@@ -253,6 +290,6 @@ class RecordEntryServiceTest {
                                                         null, Map.of(), null)))
                         .code(),
                 "baseVersion 必填（乐观锁）");
-        verify(formService, never()).submitRecord(anyLong(), any(), any(), any());
+        verify(recordService, never()).submit(anyLong(), any(), any(), any());
     }
 }

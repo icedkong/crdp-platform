@@ -7,7 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.crdp.followup.plan.app.PlanEnrollmentService;
-import com.crdp.form.record.app.FormService;
+import com.crdp.followup.record.app.FollowupRecordService;
 import com.crdp.framework.security.ScopeSnapshot;
 import com.crdp.framework.security.SessionPrincipal;
 import com.crdp.framework.tenant.TenantContext;
@@ -61,7 +61,7 @@ class FollowupWorkbenchIT {
     @Autowired private JdbcTemplate jdbc;
     @Autowired private TenantModuleService moduleService;
     @Autowired private PlanEnrollmentService enrollmentService;
-    @Autowired private FormService formService;
+    @Autowired private FollowupRecordService recordService;
 
     @BeforeEach
     @AfterEach
@@ -81,10 +81,11 @@ class FollowupWorkbenchIT {
                                         + " WHERE p.legacy_no LIKE '"
                                         + LEGACY
                                         + "-%'))"
-                                        + " OR (event_type = 'RECORD_SUBMIT'"
-                                        + " AND target IN (SELECT CONCAT('FORM_RECORD:', r.id)"
-                                        + " FROM fe_record r JOIN fu_task t ON t.record_id = r.id"
-                                        + " JOIN pt_patient p ON p.id = t.patient_id"
+                                        + " OR ((event_type = 'RECORD_SUBMIT'"
+                                        + " OR event_type = 'RECORD_BACKFILL_CREATE')"
+                                        + " AND target IN (SELECT CONCAT('FU_RECORD:', r.id)"
+                                        + " FROM fu_record r LEFT JOIN fu_task t ON t.id = r.task_id"
+                                        + " JOIN pt_patient p ON p.id = r.patient_id"
                                         + " WHERE p.legacy_no LIKE '"
                                         + LEGACY
                                         + "-%'))"
@@ -102,14 +103,14 @@ class FollowupWorkbenchIT {
                                         + " AND access_method = 'BATCH_QUERY' AND object_type = 'TASK'");
                         jdbc.update(
                                 "DELETE fh FROM fe_field_history fh"
-                                        + " JOIN fu_task t ON fh.record_id = t.record_id"
-                                        + " JOIN pt_patient p ON p.id = t.patient_id"
-                                        + " WHERE fh.record_type = 'FE_RECORD'"
+                                        + " JOIN fu_record fr ON fr.id = fh.record_id"
+                                        + " JOIN pt_patient p ON p.id = fr.patient_id"
+                                        + " WHERE fh.record_type = 'FU_RECORD'"
                                         + " AND p.legacy_no LIKE ?",
                                 LEGACY + "-%");
                         jdbc.update(
-                                "DELETE r FROM fe_record r JOIN fu_task t ON t.record_id = r.id"
-                                        + " JOIN pt_patient p ON p.id = t.patient_id"
+                                "DELETE fr FROM fu_record fr JOIN pt_patient p"
+                                        + " ON p.id = fr.patient_id"
                                         + " WHERE p.legacy_no LIKE ?",
                                 LEGACY + "-%");
                         jdbc.update(
@@ -291,7 +292,7 @@ class FollowupWorkbenchIT {
         String recordId = String.valueOf(data(started).get("recordId"));
         assertFalse(recordId.isBlank(), "统一用 recordId 路由（pages.md §5）");
         assertEquals("IN_PROGRESS", taskStatusOf("demoa", taskId), "任务进入进行中");
-        assertEquals("DRAFT", recordStatusOf("demoa", recordId), "草稿记录已创建（fe_record）");
+        assertEquals("DRAFT", recordStatusOf("demoa", recordId), "草稿记录已创建（fu_record，E15-T07 载体）");
 
         Map<?, ?> again =
                 post("/api/hospital/followup/tasks/" + taskId + "/start", doctor, Map.of());
@@ -301,7 +302,7 @@ class FollowupWorkbenchIT {
                 1,
                 jdbcQuery(
                         "demoa",
-                        "SELECT COUNT(*) FROM fe_record WHERE id = ?",
+                        "SELECT COUNT(*) FROM fu_record WHERE id = ?",
                         Long.class,
                         recordId),
                 "不重复创建记录");
@@ -419,7 +420,7 @@ class FollowupWorkbenchIT {
                 jdbcQuery(
                                 "demoa",
                                 "SELECT COUNT(*) FROM fe_field_history WHERE record_type ="
-                                        + " 'FE_RECORD' AND record_id = ?",
+                                        + " 'FU_RECORD' AND record_id = ?",
                                 Long.class,
                                 recordId)
                         > 0,
@@ -431,8 +432,8 @@ class FollowupWorkbenchIT {
                         "SELECT COUNT(*) FROM aud_log WHERE event_type = 'RECORD_SUBMIT'"
                                 + " AND target = ?",
                         Long.class,
-                        "FORM_RECORD:" + recordId),
-                "RECORD_SUBMIT 审计");
+                        "FU_RECORD:" + recordId),
+                "RECORD_SUBMIT 审计（E15-T07 起载体 fu_record）");
 
         assertEquals(
                 40901,
@@ -776,8 +777,16 @@ class FollowupWorkbenchIT {
                                     "SELECT form_code FROM fu_task WHERE id = ?",
                                     String.class,
                                     taskId);
-                    FormService.RecordView created =
-                            formService.createRecord(formCode, Map.of(), Map.of("it", LEGACY));
+                    FollowupRecordService.RecordView created =
+                            recordService.createDraft(
+                                    new FollowupRecordService.CreateCommand(
+                                            patientIdOfTask(taskId),
+                                            taskId,
+                                            FollowupRecordService.SOURCE_TASK,
+                                            null,
+                                            formCode,
+                                            Map.of(),
+                                            Map.of("it", LEGACY)));
                     jdbc.update(
                             "UPDATE fu_task SET record_id = ? WHERE id = ? AND record_id IS NULL",
                             created.id(),
@@ -786,7 +795,12 @@ class FollowupWorkbenchIT {
                 });
     }
 
-    /** 服务层直调的医院会话（IT 线程无 HTTP 过滤器链，手动装配；记录创建经 FormService，OQ-63①）。 */
+    private long patientIdOfTask(long taskId) {
+        return jdbc.queryForObject(
+                "SELECT patient_id FROM fu_task WHERE id = ?", Long.class, taskId);
+    }
+
+    /** 服务层直调的医院会话（IT 线程无 HTTP 过滤器链，手动装配；记录创建经 FollowupRecordService，OQ-83①）。 */
     private static SessionPrincipal servicePrincipal() {
         return new SessionPrincipal(
                 "token",
@@ -887,7 +901,7 @@ class FollowupWorkbenchIT {
 
     private String recordStatusOf(String tenant, String recordId) {
         return jdbcQuery(
-                tenant, "SELECT status FROM fe_record WHERE id = ?", String.class, recordId);
+                tenant, "SELECT status FROM fu_record WHERE id = ?", String.class, recordId);
     }
 
     private long userIdOf(String tenant, String username) {

@@ -1,8 +1,8 @@
 package com.crdp.followup.task.app;
 
 import com.crdp.followup.patient.app.PatientContactGateway;
+import com.crdp.followup.record.app.FollowupRecordService;
 import com.crdp.followup.task.infra.mapper.FollowupTaskMapper;
-import com.crdp.form.record.app.FormService;
 import com.crdp.framework.audit.AuditEntry;
 import com.crdp.framework.audit.AuditLogger;
 import com.crdp.framework.audit.AuditResult;
@@ -16,8 +16,9 @@ import org.springframework.transaction.annotation.Transactional;
  * 开始录入（E15-T02 / A-FU-005「从任务进入，可暂存草稿」；docs/api/followup.md §2 {@code POST
  * /tasks/{id}/start}，pages.md §5 随访整页表单）。
  *
- * <p>一次事务内：患者数据范围校验（越范围 40400，不暴露任务存在）→ 无记录则创建 DRAFT 草稿（fe_record，经 FormService.createRecord，OQ-77①
- * / OQ-83① 载体口径）→ 回填 fu_task.record_id（followup V54，幂等：已有记录直接返回） → 任务进入「进行中」（{@link
+ * <p>一次事务内：患者数据范围校验（越范围 40400，不暴露任务存在）→ 无记录则创建 DRAFT 草稿（fu_record，经 {@link
+ * FollowupRecordService#createDraft}，E15-T07 起 source = TASK；OQ-77① / OQ-83① 载体迁移）→ 回填
+ * fu_task.record_id（followup V54 + V58，幂等：已有记录直接返回）→ 任务进入「进行中」（{@link
  * FollowupTaskStatusService#markInProgress}，只从 PENDING 进、逾期不退回，OQ-82①）。
  *
  * <p>REMINDER 站内提醒类任务无表单（A-FU-026），40901（录入入口只对 FORM 任务开放，页面隐藏入口随 E15-T06）。
@@ -34,19 +35,19 @@ public class FollowupTaskStartService {
     private final FollowupTaskMapper taskMapper;
     private final FollowupTaskStatusService statusService;
     private final PatientContactGateway patientScope;
-    private final FormService formService;
+    private final FollowupRecordService recordService;
     private final AuditLogger audit;
 
     public FollowupTaskStartService(
             FollowupTaskMapper taskMapper,
             FollowupTaskStatusService statusService,
             PatientContactGateway patientScope,
-            FormService formService,
+            FollowupRecordService recordService,
             AuditLogger audit) {
         this.taskMapper = taskMapper;
         this.statusService = statusService;
         this.patientScope = patientScope;
-        this.formService = formService;
+        this.recordService = recordService;
         this.audit = audit;
     }
 
@@ -70,9 +71,16 @@ public class FollowupTaskStartService {
         if (task.recordId() != null) {
             return new StartView(String.valueOf(taskId), String.valueOf(task.recordId()), false);
         }
-        FormService.RecordView created =
-                formService.createRecord(
-                        task.formCode(), Map.of(), Map.of(META_TASK_ID, String.valueOf(taskId)));
+        FollowupRecordService.RecordView created =
+                recordService.createDraft(
+                        new FollowupRecordService.CreateCommand(
+                                task.patientId(),
+                                taskId,
+                                FollowupRecordService.SOURCE_TASK,
+                                null,
+                                task.formCode(),
+                                Map.of(),
+                                Map.of(META_TASK_ID, String.valueOf(taskId))));
         if (taskMapper.linkRecord(taskId, created.id()) == 0) {
             // 并发重复开始：已有记录胜出（uk_fu_task_record 兜底），返回已关联的那条
             FollowupTaskMapper.StartTaskRow current = taskMapper.findStartTaskById(taskId);

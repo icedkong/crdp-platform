@@ -13,7 +13,6 @@ import static org.mockito.Mockito.when;
 
 import com.crdp.followup.task.app.FollowupTaskStatusService;
 import com.crdp.followup.task.infra.mapper.FollowupTaskMapper;
-import com.crdp.form.record.app.FormService;
 import com.crdp.framework.audit.AuditEntry;
 import com.crdp.framework.audit.AuditLogger;
 import com.crdp.framework.web.ApiException;
@@ -37,27 +36,34 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class RecordDraftServiceTest {
 
-    private final FormService formService = mock(FormService.class);
+    private final FollowupRecordService recordService = mock(FollowupRecordService.class);
     private final FollowupTaskMapper taskMapper = mock(FollowupTaskMapper.class);
     private final FollowupTaskStatusService statusService = mock(FollowupTaskStatusService.class);
     private final AuditLogger audit = mock(AuditLogger.class);
     private final RecordDraftService service =
-            new RecordDraftService(formService, taskMapper, statusService, audit);
+            new RecordDraftService(recordService, taskMapper, statusService, audit);
+
+    private static FollowupRecordService.RecordView fuRecord(int version) {
+        return new FollowupRecordService.RecordView(
+                101L,
+                301L,
+                9001L,
+                "TASK",
+                null,
+                "A_ANNUAL_FU",
+                1,
+                "DRAFT",
+                version,
+                Map.of("f214", "2026-03-10"),
+                Map.of(),
+                null,
+                "2026-03-10T10:15:00+08:00");
+    }
 
     @Test
     void savesDraftWithoutAuditByDefault() {
-        when(formService.saveDraft(101L, 2, Map.of("f214", "2026-03-10")))
-                .thenReturn(
-                        new FormService.RecordView(
-                                101L,
-                                "A_ANNUAL_FU",
-                                1,
-                                "DRAFT",
-                                3,
-                                Map.of("f214", "2026-03-10"),
-                                Map.of(),
-                                null,
-                                "2026-03-10T10:15:00+08:00"));
+        when(recordService.saveDraft(101L, 2, Map.of("f214", "2026-03-10")))
+                .thenReturn(fuRecord(3));
 
         RecordDraftService.DraftSavedView view =
                 service.saveDraft(
@@ -71,18 +77,8 @@ class RecordDraftServiceTest {
 
     @Test
     void overwriteWritesAuditWithFieldKeysOnly() {
-        when(formService.saveDraft(101L, 7, Map.of("f214", "2026-03-10")))
-                .thenReturn(
-                        new FormService.RecordView(
-                                101L,
-                                "A_ANNUAL_FU",
-                                1,
-                                "DRAFT",
-                                8,
-                                Map.of("f214", "2026-03-10"),
-                                Map.of(),
-                                null,
-                                "2026-03-10T10:15:00+08:00"));
+        when(recordService.saveDraft(101L, 7, Map.of("f214", "2026-03-10")))
+                .thenReturn(fuRecord(8));
 
         service.saveDraft(
                 101L, new RecordDraftService.DraftCommand(7, Map.of("f214", "2026-03-10"), true));
@@ -92,7 +88,7 @@ class RecordDraftServiceTest {
         AuditEntry entry = captor.getValue();
         assertEquals("followup", entry.module());
         assertEquals("RECORD_DRAFT_OVERWRITE", entry.action());
-        assertEquals("FORM_RECORD", entry.objectType());
+        assertEquals("FU_RECORD", entry.objectType());
         assertEquals("101", entry.objectId());
         assertTrue(entry.description().contains("覆盖"), "描述点明覆盖他人版本：" + entry.description());
         assertTrue(entry.afterJson().contains("f214"), "审计记变更字段键");
@@ -135,7 +131,7 @@ class RecordDraftServiceTest {
                                                         2, Map.of(), null)))
                         .code(),
                 "只在有新改动时发送（空 changes 是客户端缺陷）");
-        verify(formService, never()).saveDraft(anyLong(), any(), any());
+        verify(recordService, never()).saveDraft(anyLong(), any(), any());
     }
 
     @Test
@@ -145,9 +141,9 @@ class RecordDraftServiceTest {
                         409,
                         40900,
                         "该记录已被他人更新",
-                        new FormService.DraftConflictView(
+                        new FollowupRecordService.DraftConflictView(
                                 7, "张医生（示例）", "2026-10-31T10:12:00+08:00", List.of()));
-        when(formService.saveDraft(101L, 2, Map.of("f214", "2026-03-10"))).thenThrow(conflict);
+        when(recordService.saveDraft(101L, 2, Map.of("f214", "2026-03-10"))).thenThrow(conflict);
 
         ApiException thrown =
                 assertThrows(
@@ -164,18 +160,8 @@ class RecordDraftServiceTest {
 
     @Test
     void linkedPendingTaskMovesToInProgressOnFirstDraftSave() {
-        when(formService.saveDraft(101L, 2, Map.of("f214", "2026-03-10")))
-                .thenReturn(
-                        new FormService.RecordView(
-                                101L,
-                                "A_ANNUAL_FU",
-                                1,
-                                "DRAFT",
-                                3,
-                                Map.of("f214", "2026-03-10"),
-                                Map.of(),
-                                null,
-                                "2026-03-10T10:15:00+08:00"));
+        when(recordService.saveDraft(101L, 2, Map.of("f214", "2026-03-10")))
+                .thenReturn(fuRecord(3));
         when(taskMapper.findTaskByRecordId(101L))
                 .thenReturn(new FollowupTaskMapper.RecordLinkedTaskRow(9001L, "PENDING"));
 
@@ -188,18 +174,8 @@ class RecordDraftServiceTest {
 
     @Test
     void unlinkedRecordDoesNotTouchTasks() {
-        when(formService.saveDraft(101L, 2, Map.of("f214", "2026-03-10")))
-                .thenReturn(
-                        new FormService.RecordView(
-                                101L,
-                                "A_ANNUAL_FU",
-                                1,
-                                "DRAFT",
-                                3,
-                                Map.of("f214", "2026-03-10"),
-                                Map.of(),
-                                null,
-                                "2026-03-10T10:15:00+08:00"));
+        when(recordService.saveDraft(101L, 2, Map.of("f214", "2026-03-10")))
+                .thenReturn(fuRecord(3));
         when(taskMapper.findTaskByRecordId(101L)).thenReturn(null);
 
         service.saveDraft(

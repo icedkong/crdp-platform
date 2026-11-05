@@ -9,6 +9,8 @@
  * 不可见，直接访问 40400）；行内姓名 / 病案号只含脱敏值。
  */
 import type {
+  BackfillCreateRequest,
+  BackfillCreateView,
   RecordDetailView,
   RecordSubmitResult,
   TaskAssignRequest,
@@ -105,5 +107,16 @@ export function submitRecord(
   return requestClient.post<RecordSubmitResult>(
     apiPath(`/followup/records/${recordId}/submit`),
     body,
+  );
+}
+
+/** 历史补录（E15-T07 / A-FU-014、C-FU-013）：过去日期 + 实际随访日期新建记录，返回 recordId 进表单页。 */
+export function createBackfillRecord(
+  patientId: number | string,
+  data: BackfillCreateRequest,
+): Promise<BackfillCreateView> {
+  return requestClient.post(
+    apiPath(`/followup/patients/${patientId}/records`),
+    data,
   );
 }

@@ -27,12 +27,13 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>验收口径（A-FU-005「从任务进入，填写随访表单；可暂存草稿，提交后任务完成」）：
  *
  * <ul>
- *   <li>详情：记录经 {@link FormService#record}（40400）+ 任务上下文（fu_task.record_id 反查，@DataScope 出行——越范围 /
- *       未关联任务的记录 context 为 null）；姓名 / 病案号只输出脱敏值；
- *   <li>提交：完整校验与落库经 {@link FormService#submitRecord}（42200 / 40900 / 40901），同一事务内写 DRAFT→SUBMITTED
- *       字段历史（E11-T06）并联动任务完成（{@link FollowupTaskStatusService#complete}， followup V53 的
- *       complete_kind / completed_at / completed_by 即在此写入；已过直接录入期 40901 只能历史补录 E15-T07）；写
- *       RECORD_SUBMIT 审计；
+ *   <li>详情：记录经 {@link FollowupRecordService#record}（40400）+ 任务上下文（fu_task.record_id 反查，@DataScope
+ *       出行——越范围 / 未关联任务的记录 context 为 null，此时附 patient 摘要（补录记录的表单页头幅）与 visitDate / source）；姓名 /
+ *       病案号只输出脱敏值；
+ *   <li>提交：完整校验与落库经 {@link FollowupRecordService#submit}（42200 / 40900 / 40901，E15-T07 起载体
+ *       fu_record），同一事务内写 DRAFT→SUBMITTED 字段历史（E11-T06，record_type = FU_RECORD）并联动任务完成（{@link
+ *       FollowupTaskStatusService#complete}， followup V53 的 complete_kind / completed_at /
+ *       completed_by 即在此写入；已过直接录入期 40901 只能历史补录 E15-T07）；写 RECORD_SUBMIT 审计；
  *   <li>死亡联动（OQ-79②）：模板字段编码 {@code death}（是否死亡）= 1 时经 {@link
  *       FollowupTerminationService#terminateOnDeath} 终止患者全部未开始任务（幂等；「失访」只是失访候选，判定随
  *       E15-T05，本流程不置失访）；
@@ -47,6 +48,7 @@ public class RecordEntryService {
 
     private static final int DEATH_YES = 1;
 
+    private final FollowupRecordService recordService;
     private final FormService formService;
     private final FieldHistoryService fieldHistory;
     private final FollowupTaskStatusService statusService;
@@ -56,6 +58,7 @@ public class RecordEntryService {
     private final AuditLogger audit;
 
     public RecordEntryService(
+            FollowupRecordService recordService,
             FormService formService,
             FieldHistoryService fieldHistory,
             FollowupTaskStatusService statusService,
@@ -63,6 +66,7 @@ public class RecordEntryService {
             FollowupTaskQueryMapper taskQueryMapper,
             CryptoService crypto,
             AuditLogger audit) {
+        this.recordService = recordService;
         this.formService = formService;
         this.fieldHistory = fieldHistory;
         this.statusService = statusService;
@@ -94,16 +98,26 @@ public class RecordEntryService {
             String assigneeName,
             LocalDate nextPlanDate) {}
 
-    /** 记录详情（followup.md §3 的 E15-T02 子集：previous / history / visitDate 随 E15-T07）。 */
+    /**
+     * 记录详情（followup.md §3；E15-T07 起附 source（TASK / BACKFILL）与 visitDate（补录的实际随访日期，A-FU-014）。
+     * taskless 记录（补录）context 为 null、附 patient 摘要（表单页头幅：脱敏姓名 / 病案号 / 病区）。
+     */
     public record RecordDetailView(
             String id,
             String formCode,
             int formVersion,
             String status,
             int version,
+            String source,
+            LocalDate visitDate,
+            PatientBriefView patient,
             Map<String, Object> data,
             Map<String, Object> dataMeta,
             TaskContextView context) {}
+
+    /** 患者摘要（补录记录的表单页头幅；姓名 / 病案号只输出脱敏值）。 */
+    public record PatientBriefView(
+            String patientId, String patientName, String mrn, String wardName) {}
 
     /** 提交结果：任务终态与完成方式（「提交后任务完成」验收位）+ 字段历史条数与软校验警告。 */
     public record SubmitResultView(
@@ -119,18 +133,22 @@ public class RecordEntryService {
 
     // ---------------------------------------------------------------- 详情（表单页装配）
 
-    /** 记录详情（40400：记录不存在；context 为 null = 记录未关联任务或越范围不可见）。 */
+    /** 记录详情（40400：记录不存在；context 为 null = 记录未关联任务或越范围不可见，此时附 patient 摘要）。 */
     public RecordDetailView detail(long recordId) {
-        FormService.RecordView record = formService.record(recordId);
+        FollowupRecordService.RecordView record = recordService.record(recordId);
+        TaskContextView context = contextOf(recordId);
         return new RecordDetailView(
                 String.valueOf(record.id()),
                 record.formCode(),
                 record.templateVersion(),
                 record.status(),
                 record.version(),
+                record.source(),
+                record.visitDate(),
+                context == null ? patientBriefOf(record.patientId()) : null,
                 record.data(),
                 record.dataMeta(),
-                contextOf(recordId));
+                context);
     }
 
     // ---------------------------------------------------------------- 提交（A-FU-005「提交后任务完成」）
@@ -141,13 +159,14 @@ public class RecordEntryService {
         if (command == null || command.baseVersion() == null) {
             throw new ApiException(400, 40001, "提交必须携带 baseVersion（乐观锁）");
         }
-        FormService.SubmitOutcome outcome =
-                formService.submitRecord(
+        FollowupRecordService.SubmitOutcome outcome =
+                recordService.submit(
                         recordId, command.baseVersion(), command.data(), command.dataMeta());
-        // 字段历史（E11-T06：提交时比较 DRAFT→SUBMITTED 逐字段留痕；隐藏字段清空同样落 diff）
+        // 字段历史（E11-T06：提交时比较 DRAFT→SUBMITTED 逐字段留痕；隐藏字段清空同样落 diff；E15-T07 起
+        // 载体 fu_record，record_type = FU_RECORD）
         List<FieldHistoryService.FieldChange> changes =
                 fieldHistory.logChanges(
-                        FieldHistoryService.FORM_RECORD,
+                        FieldHistoryService.FU_RECORD,
                         recordId,
                         outcome.view().formCode(),
                         outcome.view().templateVersion(),
@@ -159,20 +178,24 @@ public class RecordEntryService {
         String taskStatus = null;
         String completeKind = null;
         Long operator = CurrentSession.current().map(item -> item.userId()).orElse(null);
+        Long patientIdForDeath = null;
         if (context != null) {
             FollowupTaskStatusService.CompletionView completion =
                     statusService.complete(context.id(), operator);
             taskStatus = completion.status();
             completeKind = completion.completeKind();
-            // 死亡联动（OQ-79②：随访记录「是否死亡=是」→ 死亡登记，未开始任务全部终止）
-            if (isDeathRecorded(outcome.view(), context)) {
-                terminationService.terminateOnDeath(
-                        context.patientId(), "随访记录提交：是否死亡 = 是", operator);
-            }
+            patientIdForDeath = context.patientId();
+        } else {
+            // 补录 / 计划外记录无任务：死亡联动以记录自身的患者为准（E15-T07，A-FU-014 补录同样终止未开始任务）
+            patientIdForDeath = outcome.view().patientId();
+        }
+        // 死亡联动（OQ-79②：随访记录「是否死亡=是」→ 死亡登记，未开始任务全部终止）
+        if (isDeathRecorded(outcome.view()) && patientIdForDeath != null) {
+            terminationService.terminateOnDeath(patientIdForDeath, "随访记录提交：是否死亡 = 是", operator);
         }
         audit.append(
                 AuditEntry.operation("followup", "RECORD_SUBMIT")
-                        .objectType("FORM_RECORD")
+                        .objectType("FU_RECORD")
                         .objectId(String.valueOf(recordId))
                         .description(
                                 "提交随访记录（任务 "
@@ -233,16 +256,33 @@ public class RecordEntryService {
                 row.nextPlanDate());
     }
 
+    /** 补录 / 计划外记录的患者摘要（表单页头幅；越范围 null——不暴露存在）。 */
+    private PatientBriefView patientBriefOf(long patientId) {
+        FollowupTaskQueryMapper.PatientBriefRow row = taskQueryMapper.patientBrief(patientId);
+        if (row == null) {
+            return null;
+        }
+        String name = decrypt(row.nameCipher());
+        String mrn = decrypt(row.mrnCipher());
+        return new PatientBriefView(
+                String.valueOf(row.id()),
+                name == null ? "" : SensitiveValueMasker.mask("name", name),
+                mrn == null ? "" : SensitiveValueMasker.mask("medicalRecordNo", mrn),
+                row.wardName());
+    }
+
     /** 按记录找任务行（@DataScope 出行：越范围 null；提交联动与上下文共用）。 */
     private FollowupTaskQueryMapper.TaskRowRaw taskRowByRecordId(long recordId) {
         return taskQueryMapper.taskContextByRecordId(recordId);
     }
 
     /** 「是否死亡 = 是」判定：按模板字段编码 death 定位稳定键（不硬编码键名），值 = 1（yesno）。 */
-    private boolean isDeathRecorded(
-            FormService.RecordView submitted, FollowupTaskQueryMapper.TaskRowRaw context) {
+    private boolean isDeathRecorded(FollowupRecordService.RecordView submitted) {
         FormService.SchemaView schema =
                 formService.schema(submitted.formCode(), submitted.templateVersion());
+        if (schema == null) {
+            return false;
+        }
         String deathKey = null;
         for (FormService.CategoryView category : schema.categories()) {
             for (FormService.FieldView field : category.fields()) {

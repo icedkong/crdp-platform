@@ -3,7 +3,13 @@ import type { PatientTimelineEntry } from '@crdp/api';
 
 import { computed, onMounted, ref } from 'vue';
 
-import { PATIENT_STATUS_TEXT, timelineEntryLabel } from '@crdp/api';
+import {
+  PATIENT_STATUS_TEXT,
+  taskDisplayStatus,
+  TIMELINE_PLANNED_TEXT,
+  timelineEntryLabel,
+  timelineProgressText,
+} from '@crdp/api';
 import { StatusTag } from '@crdp/status-tag';
 import { colors } from '@crdp/tokens';
 import {
@@ -19,16 +25,27 @@ import {
 import { useBreakpoint } from '#/reference/use-breakpoint';
 
 /**
- * E13-T05 / A-PAT-013（components.md §9）：患者详情「随访记录」页签右侧内容。
- * 当前节点：出院（DISCHARGE）与状态变更事件（STATUS，含死亡），按时间顺序
- * （旧 → 新）；每年随访 / 计划外随访 / 终点事件节点随 E15 随访记录接入
- * （届时补计划日期 / 窗口 / 完成日期 / 标红列与展开查看），C 器械事件随 E21。
+ * E15-T07 / A-FU-023、C-FU-023（components.md §9）：患者详情「随访记录」页签右侧内容。
+ *
+ * 节点：出院（DISCHARGE）、状态变更（STATUS）、每年随访（FOLLOWUP，带计划日期 / 窗口 / 完成日期 /
+ * 完成进度 x/y）、历史补录（BACKFILL，单独标识）、下次计划日期（PLANNED「计划中」，canOpen=false
+ * 置灰：任务开启日才创建）；计划外随访随 E15-T06、终点事件随 E17、C 器械事件随 E21。
+ * 点节点卡片 canOpen 时 emit open（有 recordId 直接开表单页；未开始任务先 start 再开，由父页处理）。
  * 视图切换记住用户上次选择（localStorage crdp:fu-view，只存视图名，不含患者信息）。
  */
 const props = defineProps<{
   entries: PatientTimelineEntry[];
   patientId: string;
 }>();
+
+const emit = defineEmits<{
+  (event: 'open', entry: PatientTimelineEntry): void;
+}>();
+
+/** 颜色全部取自 tokens（不写魔法数）；stylelint 不认 v-bind()，走 CSS 变量注入。 */
+const cssVars = {
+  '--tl-primary': colors.primary,
+};
 
 const VIEW_KEY = 'crdp:fu-view';
 const view = ref<'table' | 'timeline'>('timeline');
@@ -44,9 +61,83 @@ function setView(next: 'table' | 'timeline') {
   localStorage.setItem(VIEW_KEY, next);
 }
 
+/** 是否随访类节点（任务 / 补录 / 计划中——图例与状态列按任务状态口径展示）。 */
+function isFollowupKind(entry: PatientTimelineEntry): boolean {
+  return entry.kind === 'FOLLOWUP' || entry.kind === 'BACKFILL';
+}
+
+/** 节点显示状态（StatusTag 文案）：FOLLOWUP 用任务状态派生（含补录 / 逾期完成细分）、PLANNED 固定「计划中」。 */
+function nodeStatusText(entry: PatientTimelineEntry): string {
+  if (entry.kind === 'PLANNED') return TIMELINE_PLANNED_TEXT;
+  if (isFollowupKind(entry) && entry.status) {
+    return taskDisplayStatus({
+      completeKind: (entry.completeKind ?? undefined) as
+        | 'BEFORE_WINDOW'
+        | 'ON_TIME'
+        | 'OVERDUE'
+        | undefined,
+      createType: entry.createType,
+      status: entry.status as Parameters<typeof taskDisplayStatus>[0]['status'],
+    });
+  }
+  if (entry.kind === 'STATUS' && entry.status) {
+    return PATIENT_STATUS_TEXT[entry.status] ?? entry.status;
+  }
+  return '';
+}
+
+/** 可点击（canOpen=true 的随访类节点；出院 / 状态事件是信息节点，不可点）。 */
+function isClickable(entry: PatientTimelineEntry): boolean {
+  return (
+    entry.canOpen === true &&
+    entry.kind !== 'DISCHARGE' &&
+    entry.kind !== 'STATUS'
+  );
+}
+
+/** 置灰（计划中：任务开启日才创建，components.md §9 置灰 + 提示）。 */
+function isDimmed(entry: PatientTimelineEntry): boolean {
+  return entry.canOpen === false;
+}
+
+/** 节点主日期显示：随访节点用计划日期（补录用随访日期），其余用 date。 */
+function nodeDate(entry: PatientTimelineEntry): string {
+  return entry.planDate ?? entry.date;
+}
+
+/** 窗口文案（无窗口的节点为空）。 */
+function windowText(entry: PatientTimelineEntry): string {
+  if (!entry.windowStart || !entry.windowEnd) return '';
+  return `${entry.windowStart} ~ ${entry.windowEnd}`;
+}
+
+function nodeDetail(entry: PatientTimelineEntry): string {
+  const parts: string[] = [];
+  if (entry.kind === 'FOLLOWUP' || entry.kind === 'PLANNED') {
+    parts.push(`计划 ${nodeDate(entry)}`);
+  } else if (entry.kind === 'BACKFILL') {
+    parts.push(`随访日期 ${nodeDate(entry)}`);
+  } else {
+    parts.push(entry.date);
+  }
+  const window = windowText(entry);
+  if (window) parts.push(`窗口 ${window}`);
+  if (entry.doneDate) parts.push(`完成 ${entry.doneDate}`);
+  const progress = timelineProgressText(entry);
+  if (progress) parts.push(progress);
+  if (entry.highlightCount !== null && entry.highlightCount !== undefined) {
+    parts.push(`标红 ${entry.highlightCount}`);
+  }
+  return parts.join(' · ');
+}
+
+function onNodeClick(entry: PatientTimelineEntry) {
+  if (isClickable(entry)) emit('open', entry);
+}
+
 const jumpOptions = computed(() =>
   props.entries.map((entry, index) => ({
-    label: `${timelineEntryLabel(entry)}（${entry.date}）`,
+    label: `${timelineEntryLabel(entry)}（${nodeDate(entry)}）`,
     value: index,
   })),
 );
@@ -58,40 +149,48 @@ function jumpTo(index: number) {
     ?.scrollIntoView({ block: 'start' });
 }
 
-/** 图例只列时间轴上实际出现的状态（当前为患者随访状态；任务状态随 E15）。 */
+/** 图例只列时间轴上实际出现的显示状态。 */
 const legendStatuses = computed(() => {
   const seen: string[] = [];
   for (const entry of props.entries) {
-    const text = entry.status ? PATIENT_STATUS_TEXT[entry.status] : undefined;
-    if (entry.kind === 'STATUS' && text && !seen.includes(text)) {
-      seen.push(text);
-    }
+    const text = nodeStatusText(entry);
+    if (text && !seen.includes(text)) seen.push(text);
   }
   return seen;
 });
 
 const tableColumns = [
   { dataIndex: 'label', title: '节点' },
-  { dataIndex: 'status', title: '状态' },
-  { dataIndex: 'date', title: '日期' },
+  { dataIndex: 'statusText', title: '状态' },
+  { dataIndex: 'planDate', title: '计划日期' },
+  { dataIndex: 'windowText', title: '窗口' },
+  { dataIndex: 'doneDate', title: '完成日期' },
+  { dataIndex: 'progress', title: '进度' },
   { dataIndex: 'note', title: '备注' },
+  { dataIndex: 'action', title: '操作' },
 ];
 
 const tableRows = computed(() =>
   props.entries.map((entry, index) => ({
-    date: entry.date,
+    action: entry.canOpen ? '打开' : '—',
+    doneDate: entry.doneDate ?? '—',
     key: `${entry.kind}-${entry.date}-${index}`,
     label: timelineEntryLabel(entry),
     note: entry.note ?? '—',
-    status: entry.status
-      ? (PATIENT_STATUS_TEXT[entry.status] ?? entry.status)
-      : '',
+    planDate: entry.planDate ?? '—',
+    progress: timelineProgressText(entry) || '—',
+    statusText: nodeStatusText(entry) || '—',
+    windowText: windowText(entry) || '—',
   })),
 );
 </script>
 
 <template>
-  <div :data-patient-id="patientId" data-testid="followup-timeline">
+  <div
+    :data-patient-id="patientId"
+    :style="cssVars"
+    data-testid="followup-timeline"
+  >
     <div class="toolbar">
       <Segmented
         :options="[
@@ -121,7 +220,7 @@ const tableRows = computed(() =>
 
     <Empty
       v-if="entries.length === 0"
-      description="暂无时间轴节点：出院登记与状态变更会显示在这里，随访记录随随访业务开放"
+      description="暂无时间轴节点：出院登记、状态变更与随访记录会显示在这里"
     />
 
     <div v-else-if="view === 'table' && !isMobile" class="table">
@@ -133,12 +232,13 @@ const tableRows = computed(() =>
       >
         <template #bodyCell="{ column, record }">
           <StatusTag
-            v-if="column.dataIndex === 'status' && record.status"
-            :status="record.status"
+            v-if="
+              column.dataIndex === 'statusText' && record.statusText !== '—'
+            "
+            :status="record.statusText"
             variant="dot"
           />
-
-          <span v-else-if="column.dataIndex === 'status'">—</span>
+          <span v-else-if="column.dataIndex === 'statusText'">—</span>
         </template>
       </Table>
     </div>
@@ -148,23 +248,44 @@ const tableRows = computed(() =>
         <TimelineItem
           v-for="(entry, index) in entries"
           :key="index"
-          color="primary"
+          :color="entry.kind === 'PLANNED' ? 'gray' : 'primary'"
         >
-          <Card :id="`timeline-item-${index}`" size="small">
+          <Card
+            :id="`timeline-item-${index}`"
+            class="node"
+            :class="{
+              clickable: isClickable(entry),
+              disabled: isDimmed(entry),
+            }"
+            :data-testid="`timeline-node-${entry.kind}`"
+            size="small"
+            @click="onNodeClick(entry)"
+          >
             <div class="node-head">
               <strong>{{ timelineEntryLabel(entry) }}</strong>
               <StatusTag
-                v-if="entry.kind === 'STATUS'"
-                :status="
-                  PATIENT_STATUS_TEXT[entry.status ?? ''] ?? entry.status ?? ''
-                "
+                v-if="nodeStatusText(entry)"
+                :status="nodeStatusText(entry)"
                 variant="tag"
               />
-              <span v-else class="kind" :style="{ color: colors.primary }">
-                出院节点
+              <span
+                v-if="entry.kind !== 'STATUS'"
+                class="kind"
+                :style="{ color: colors.primary }"
+              >
+                {{
+                  entry.kind === 'DISCHARGE'
+                    ? '出院节点'
+                    : entry.kind === 'PLANNED'
+                      ? '下次计划日期'
+                      : entry.kind === 'BACKFILL'
+                        ? '补录'
+                        : '随访节点'
+                }}
               </span>
-              <span class="date">{{ entry.date }}</span>
+              <span class="date">{{ nodeDate(entry) }}</span>
             </div>
+            <p class="detail">{{ nodeDetail(entry) }}</p>
             <p v-if="entry.note" class="note">{{ entry.note }}</p>
           </Card>
         </TimelineItem>
@@ -197,6 +318,11 @@ const tableRows = computed(() =>
   color: #8c8c8c;
 }
 
+.detail {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
 .node-head {
   display: flex;
   flex-wrap: wrap;
@@ -211,5 +337,22 @@ const tableRows = computed(() =>
 
 .kind {
   font-size: 12px;
+}
+
+.node {
+  cursor: default;
+}
+
+.node.clickable {
+  cursor: pointer;
+}
+
+.node.clickable:hover {
+  border-color: var(--tl-primary);
+}
+
+.node.disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 </style>

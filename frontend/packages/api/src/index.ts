@@ -381,7 +381,9 @@ export {
   latestFollowupText,
   nextVisitText,
   statusSourceText,
+  TIMELINE_PLANNED_TEXT,
   timelineEntryLabel,
+  timelineProgressText,
 } from './patient-overview';
 export type {
   PatientContactInfo,
