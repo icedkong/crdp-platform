@@ -47,8 +47,9 @@ public interface FollowupTaskQueryMapper {
 
     /**
      * 检索条件（除 scope 外全部可空 = 不过滤）。scope：MINE / WARD / ALL（页签语义，userId 由服务层填）； nameBlind / mrnBlind
-     * 同源于一个检索词，OR 匹配；status 为空时 MINE 页签默认未完成四态（PENDING / IN_PROGRESS / OVERDUE /
-     * SKIPPED_SUSPENDED）；unassigned 只看待认领（assignee NULL，病区公共池，A-FU-009 / E15-T03）。
+     * 同源于一个检索词，OR 匹配；status 为空时 MINE 页签默认未完成五态（PENDING / IN_PROGRESS / OVERDUE / LOST_CANDIDATE /
+     * SKIPPED_SUSPENDED——失访候选仍需医生确认，E15-T05）；unassigned 只看待认领（assignee NULL，病区公共池，A-FU-009 /
+     * E15-T03）。
      */
     record TaskCriteria(
             String scope,
@@ -99,7 +100,7 @@ public interface FollowupTaskQueryMapper {
               AND pt.ward_id IN (SELECT uw.ward_id FROM sys_user_ward uw WHERE uw.user_id = #{c.userId})
             </if>
             <if test="c.openOnly">
-              AND t.status IN ('PENDING', 'IN_PROGRESS', 'OVERDUE', 'SKIPPED_SUSPENDED')
+              AND t.status IN ('PENDING', 'IN_PROGRESS', 'OVERDUE', 'LOST_CANDIDATE', 'SKIPPED_SUSPENDED')
             </if>
             <if test="c.status != null">
               AND t.status IN
@@ -145,7 +146,7 @@ public interface FollowupTaskQueryMapper {
               AND pt.ward_id IN (SELECT uw.ward_id FROM sys_user_ward uw WHERE uw.user_id = #{c.userId})
             </if>
             <if test="c.openOnly">
-              AND t.status IN ('PENDING', 'IN_PROGRESS', 'OVERDUE', 'SKIPPED_SUSPENDED')
+              AND t.status IN ('PENDING', 'IN_PROGRESS', 'OVERDUE', 'LOST_CANDIDATE', 'SKIPPED_SUSPENDED')
             </if>
             <if test="c.status != null">
               AND t.status IN
@@ -173,7 +174,7 @@ public interface FollowupTaskQueryMapper {
             <script>
             SELECT
               SUM(CASE WHEN (t.assignee_id = #{c.userId} OR pt.responsible_user_id = #{c.userId})
-                        AND t.status IN ('PENDING', 'IN_PROGRESS', 'OVERDUE', 'SKIPPED_SUSPENDED')
+                        AND t.status IN ('PENDING', 'IN_PROGRESS', 'OVERDUE', 'LOST_CANDIDATE', 'SKIPPED_SUSPENDED')
                    THEN 1 ELSE 0 END) AS mine,
               SUM(CASE WHEN pt.ward_id IN
                         (SELECT uw.ward_id FROM sys_user_ward uw WHERE uw.user_id = #{c.userId})
@@ -278,7 +279,7 @@ public interface FollowupTaskQueryMapper {
               AND pt.ward_id IN (SELECT uw.ward_id FROM sys_user_ward uw WHERE uw.user_id = #{c.userId})
             </if>
             <if test="c.openOnly">
-              AND t.status IN ('PENDING', 'IN_PROGRESS', 'OVERDUE', 'SKIPPED_SUSPENDED')
+              AND t.status IN ('PENDING', 'IN_PROGRESS', 'OVERDUE', 'LOST_CANDIDATE', 'SKIPPED_SUSPENDED')
             </if>
             <if test="c.status != null">
               AND t.status IN

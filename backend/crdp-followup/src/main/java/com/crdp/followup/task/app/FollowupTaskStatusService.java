@@ -1,5 +1,6 @@
 package com.crdp.followup.task.app;
 
+import com.crdp.followup.contact.domain.ContactResult;
 import com.crdp.followup.plan.domain.PlanDateCalculator;
 import com.crdp.followup.plan.infra.mapper.PlanMapper;
 import com.crdp.followup.task.domain.TaskCreationPlanner;
@@ -14,7 +15,9 @@ import com.crdp.framework.web.ApiException;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -35,6 +38,11 @@ import org.springframework.transaction.annotation.Transactional;
  *   <li>{@link #markInProgress}：第一次联系或暂存草稿 → 进行中（只从待随访进，逾期不退回，OQ-82①）；
  *   <li>{@link #complete}：随访记录提交 → 已完成，按完成日与窗口的相对关系落完成方式（窗口前 / 窗口内 / 逾期完成，V53）；
  *       逾期后的「直接录入期」到下一节点任务开启日为止（A-FU-010 / Q09，A 两者同日），之后只能历史补录（E15-T07）；
+ *       跟进任务（FOLLOWUP，A-FU-024）完成时 同窗口主任务一并完成、其余跟进终止（窗口口径的完成传播，OQ-86⑤）；
+ *   <li>{@link #refreshLostCandidates}（E15-T05 / A-FU-012）：每日 00:10 调度在逾期刷新后判定—— 窗口内不同日期连续 N 次「未联系到
+ *       / 号码错误」（N = 平台参数 + 租户覆盖，默认 3；「拒访」等其它结果断开连续段，不计入） 且窗口已结束 → 失访候选 + LOST_CANDIDATE 事件；
+ *   <li>{@link #confirmLost}（E15-T05 / A-FU-012）：医生确认失访候选 → 失访，同窗口未完成跟进任务终止； 连续 2 个窗口（A
+ *       语境「年度」）失访时返回提示位，由前端提示把患者状态改为失访；
  *   <li>{@link #redoSkipped} / {@link #closeSkipped}：「停用 / 暂停期间未执行」（PLT-TEN-017、A 的
  *       Q32）由人工选择补做或关闭—— 补做按窗口是否已结束重回 PENDING / OVERDUE（OQ-82②），关闭置 TERMINATED 并落终止原因（须填）。
  * </ul>
@@ -49,6 +57,18 @@ public class FollowupTaskStatusService {
     /** 已逾期 outbox 事件类型（= NotifyEventType.TASK_OVERDUE.name()，通知规则引擎按它订阅；窗口结束次日）。 */
     static final String EVENT_TASK_OVERDUE = "TASK_OVERDUE";
 
+    /** 失访候选 outbox 事件类型（= NotifyEventType.LOST_CANDIDATE.name()；窗口结束次日随每日刷新）。 */
+    static final String EVENT_LOST_CANDIDATE = "LOST_CANDIDATE";
+
+    /** 确认失访后同窗口未完成跟进任务的终止原因（窗口工作已结束，A-FU-024）。 */
+    static final String FOLLOWUP_CLOSE_ON_LOST = "窗口任务已确认失访，跟进任务关闭";
+
+    /** 主任务完成后同窗口未完成跟进任务的终止原因（A-FU-024：跟进是同一窗口的继续）。 */
+    static final String FOLLOWUP_CLOSE_ON_COMPLETE = "窗口任务已完成，跟进任务关闭";
+
+    /** 「连续 2 个年度失访」提示口径（A-FU-012 / tech-plan §9）：同入组主任务窗口序连续 LOST ≥ 2。 */
+    static final int CONSECUTIVE_LOST_YEARS_PROMPT = 2;
+
     private static final Logger log = LoggerFactory.getLogger(FollowupTaskStatusService.class);
 
     private final FollowupTaskMapper taskMapper;
@@ -56,18 +76,21 @@ public class FollowupTaskStatusService {
     private final OutboxPublisher outbox;
     private final AuditLogger audit;
     private final CryptoService crypto;
+    private final FollowupPolicyService policy;
 
     public FollowupTaskStatusService(
             FollowupTaskMapper taskMapper,
             PlanMapper planMapper,
             OutboxPublisher outbox,
             AuditLogger audit,
-            CryptoService crypto) {
+            CryptoService crypto,
+            FollowupPolicyService policy) {
         this.taskMapper = taskMapper;
         this.planMapper = planMapper;
         this.outbox = outbox;
         this.audit = audit;
         this.crypto = crypto;
+        this.policy = policy;
     }
 
     /** 完成结果（complete_kind 为完成方式：窗口前 / 窗口内 / 逾期完成，followup V53）。 */
@@ -168,6 +191,206 @@ public class FollowupTaskStatusService {
         return true;
     }
 
+    // ---------------------------------------------------------------- 失访候选刷新（每日 00:10 调度内；
+    // A-FU-012，E15-T05）
+
+    /**
+     * 失访候选刷新（A-FU-012「窗口内不同日期连续 N 次『未联系到 / 号码错误』且窗口已结束」；tech-plan §9「每日状态刷新时判定」）：
+     * 在租户上下文内由每日任务作业于逾期刷新后调用，asOf = 本次运行目标逻辑日。同一事务：逐条置 LOST_CANDIDATE（状态守卫）+ 写 LOST_CANDIDATE 事件 +
+     * 一条汇总审计；无命中时幂等返回 0（不写审计）。候选集合由 {@code findLostCandidates} 先行筛出
+     * （窗口已结束、未完成、非补录、主任务、窗口内有未接通联系），这里再按连续段计数复核。
+     */
+    @Transactional
+    public int refreshLostCandidates(LocalDate asOf) {
+        int threshold = policy.policy().lostCandidateAttempts();
+        List<FollowupTaskMapper.OverdueCandidateRow> candidates =
+                taskMapper.findLostCandidates(asOf);
+        int marked = 0;
+        for (FollowupTaskMapper.OverdueCandidateRow candidate : candidates) {
+            if (!unreachedStreakReached(candidate, threshold)) {
+                continue; // 连续段不足（含「拒访」等结果断开、同日多次只计一日）：不标不发
+            }
+            if (taskMapper.markLostCandidate(candidate.id()) == 0) {
+                continue; // 并发完成 / 终止 / 确认失访 / 重放：不覆盖、不重发事件
+            }
+            marked++;
+            publishLostCandidate(candidate);
+        }
+        if (marked == 0) {
+            return 0;
+        }
+        audit.append(
+                AuditEntry.operation("followup", "TASK_LOST_CANDIDATE_MARK")
+                        .objectType("TASK")
+                        .description(
+                                "每日失访候选刷新：窗口已结束且连续未联系到的任务置失访候选 "
+                                        + marked
+                                        + " 条（asOf "
+                                        + asOf
+                                        + "，连续 "
+                                        + threshold
+                                        + " 次「未联系到 / 号码错误」，拒访不计，A-FU-012）")
+                        .afterJson(
+                                "{\"marked\":"
+                                        + marked
+                                        + ",\"asOf\":\""
+                                        + asOf
+                                        + "\",\"attempts\":"
+                                        + threshold
+                                        + "}")
+                        .result(AuditResult.SUCCESS)
+                        .build());
+        log.info("失访候选刷新完成 asOf={} attempts={} marked={}", asOf, threshold, marked);
+        return marked;
+    }
+
+    /**
+     * 窗口内「未联系到 / 号码错误」连续段是否达到阈值：从最新一条往前走，遇其他结果（已联系 / 家属代答 / 拒访〔不计入失访〕/ 告知已故）
+     * 即断；按<b>不同日期</b>计数（同日多次尝试只计一日，Q02「不同日期连续 3 次」）。
+     */
+    private boolean unreachedStreakReached(
+            FollowupTaskMapper.OverdueCandidateRow candidate, int threshold) {
+        List<FollowupTaskMapper.ContactAttemptRow> attempts =
+                taskMapper.contactsOfPatientInWindow(
+                        candidate.patientId(), candidate.windowStart(), candidate.windowEnd());
+        Set<LocalDate> distinctDates = new HashSet<>();
+        for (FollowupTaskMapper.ContactAttemptRow attempt : attempts) {
+            boolean unreached =
+                    ContactResult.of(attempt.result())
+                            .map(ContactResult::countsTowardLost)
+                            .orElse(false);
+            if (!unreached) {
+                break;
+            }
+            distinctDates.add(attempt.contactTime().toLocalDate());
+            if (distinctDates.size() >= threshold) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** LOST_CANDIDATE 事件（负载契约 NotifyEventPayload；患者姓名解密后只进站内信密文列，同 TASK_OVERDUE 口径）。 */
+    private void publishLostCandidate(FollowupTaskMapper.OverdueCandidateRow candidate) {
+        String patientName =
+                candidate.patientNameCipher() == null
+                        ? null
+                        : crypto.decrypt(candidate.patientNameCipher());
+        outbox.publish(
+                EVENT_LOST_CANDIDATE,
+                "{\"taskId\":"
+                        + candidate.id()
+                        + ",\"ownerId\":"
+                        + candidate.assigneeId()
+                        + ",\"wardId\":"
+                        + candidate.wardId()
+                        + ",\"patientId\":"
+                        + candidate.patientId()
+                        + ",\"patientName\":"
+                        + jsonText(patientName)
+                        + ",\"nodeName\":"
+                        + jsonText(candidate.nodeName())
+                        + ",\"windowStartDate\":\""
+                        + candidate.windowStart()
+                        + "\",\"windowEndDate\":\""
+                        + candidate.windowEnd()
+                        + "\"}");
+    }
+
+    // ---------------------------------------------------------------- 确认失访（医生确认，A-FU-012；E15-T05）
+
+    /** 确认失访结果（terminatedFollowups = 同窗口关闭的未完成跟进任务数；patientLostPrompt = 连续 2 个窗口失访，提示把患者状态改为失访）。 */
+    public record LostConfirmView(
+            String taskId, String status, int terminatedFollowups, boolean patientLostPrompt) {}
+
+    /**
+     * 失访候选 → 失访（A-FU-012「医生确认后标为失访」；POST /tasks/{id}/confirm-lost，E15-T05）：
+     *
+     * <ul>
+     *   <li>只接受失访候选（其它状态 40901，含已失访重复确认）；并发已被处理 40900；
+     *   <li>同窗口未完成跟进任务（A-FU-024）终止留痕（窗口工作已结束）；
+     *   <li>连续 2 个窗口（A 语境「年度」，同入组主任务窗口序连续 LOST）失访 → patientLostPrompt = true， 由前端提示医生把患者状态改为失访（A 规格
+     *       §390 行「系统提示后由医生改为失访」，不自动改）。
+     * </ul>
+     */
+    @Transactional
+    public LostConfirmView confirmLost(long taskId, Long operatorId) {
+        FollowupTaskMapper.TaskRow task = requireTask(taskId);
+        if (!TaskStatusFlow.LOST_CANDIDATE.equals(task.status())) {
+            throw new ApiException(409, 40901, "只有「失访候选」的任务能确认失访（A-FU-012，窗口结束且连续未联系到后自动标记）");
+        }
+        LocalDateTime lostAt = LocalDateTime.now();
+        if (taskMapper.confirmLostTask(taskId) == 0) {
+            throw new ApiException(409, 40900, "任务状态已变化，请刷新后重试");
+        }
+        int terminatedFollowups =
+                taskMapper.terminateWindowFollowups(
+                        task.enrollmentId(),
+                        task.nodeId(),
+                        task.occurrence(),
+                        taskId,
+                        FOLLOWUP_CLOSE_ON_LOST,
+                        lostAt,
+                        operatorId);
+        boolean patientLostPrompt =
+                consecutiveLostWindows(task.enrollmentId()) >= CONSECUTIVE_LOST_YEARS_PROMPT;
+        audit.append(
+                AuditEntry.operation("followup", "TASK_LOST_CONFIRM")
+                        .objectType("TASK")
+                        .objectId(String.valueOf(taskId))
+                        .description(
+                                "确认失访（失访候选 → 失访"
+                                        + (terminatedFollowups > 0
+                                                ? "；同窗口跟进任务关闭 " + terminatedFollowups + " 条"
+                                                : "")
+                                        + (patientLostPrompt ? "；连续 " : "")
+                                        + (patientLostPrompt
+                                                ? CONSECUTIVE_LOST_YEARS_PROMPT + " 个窗口失访，提示修改患者状态"
+                                                : "")
+                                        + "，A-FU-012）")
+                        .beforeJson(
+                                "{\"status\":\""
+                                        + TaskStatusFlow.LOST_CANDIDATE
+                                        + "\",\"windowStart\":\""
+                                        + task.windowStart()
+                                        + "\",\"windowEnd\":\""
+                                        + task.windowEnd()
+                                        + "\"}")
+                        .afterJson(
+                                "{\"status\":\""
+                                        + TaskStatusFlow.LOST
+                                        + "\",\"terminatedFollowups\":"
+                                        + terminatedFollowups
+                                        + ",\"patientLostPrompt\":"
+                                        + patientLostPrompt
+                                        + "}")
+                        .result(AuditResult.SUCCESS)
+                        .build());
+        log.info(
+                "确认失访 taskId={} operator={} closedFollowups={} patientLostPrompt={}",
+                taskId,
+                operatorId,
+                terminatedFollowups,
+                patientLostPrompt);
+        return new LostConfirmView(
+                String.valueOf(taskId),
+                TaskStatusFlow.LOST,
+                terminatedFollowups,
+                patientLostPrompt);
+    }
+
+    /** 同入组主任务窗口序（新→旧）从最新一条起的连续失访窗口数（刚确认的任务已是 LOST，含在计数内）； A 语境「连续 2 个年度失访」按窗口序推广，不按日历年。 */
+    private int consecutiveLostWindows(long enrollmentId) {
+        int consecutive = 0;
+        for (FollowupTaskMapper.WindowStatusRow row : taskMapper.findWindowStatuses(enrollmentId)) {
+            if (!TaskStatusFlow.LOST.equals(row.status())) {
+                break;
+            }
+            consecutive++;
+        }
+        return consecutive;
+    }
+
     // ---------------------------------------------------------------- 完成（随访记录提交联动）
 
     /**
@@ -198,11 +421,37 @@ public class FollowupTaskStatusService {
         if (taskMapper.completeTask(taskId, completeKind, completedAt, operatorId) == 0) {
             throw new ApiException(409, 40900, "任务状态已变化，请刷新后重试");
         }
+        // 窗口口径的完成传播（A-FU-024 / OQ-86⑤）：跟进任务完成 ⇒ 主任务一并完成（同完成方式）；
+        // 主任务或跟进任务完成 ⇒ 同窗口其余未完成跟进任务终止——窗口工作已结束，不留悬挂待办。
+        // 常规窗口无兄弟任务（主任务恒一条、无跟进），两条 UPDATE 天然 0 行。
+        taskMapper.completeWindowMainTask(
+                task.enrollmentId(),
+                task.nodeId(),
+                task.occurrence(),
+                taskId,
+                completeKind,
+                completedAt,
+                operatorId);
+        int closedFollowups =
+                taskMapper.terminateWindowFollowups(
+                        task.enrollmentId(),
+                        task.nodeId(),
+                        task.occurrence(),
+                        taskId,
+                        FOLLOWUP_CLOSE_ON_COMPLETE,
+                        completedAt,
+                        operatorId);
         audit.append(
                 AuditEntry.operation("followup", "TASK_COMPLETE")
                         .objectType("TASK")
                         .objectId(String.valueOf(taskId))
-                        .description("任务完成（完成方式 " + completeKindLabel(completeKind) + "）")
+                        .description(
+                                "任务完成（完成方式 "
+                                        + completeKindLabel(completeKind)
+                                        + (closedFollowups > 0
+                                                ? "；同窗口跟进任务关闭 " + closedFollowups + " 条（A-FU-024）"
+                                                : "")
+                                        + "）")
                         .beforeJson(
                                 "{\"status\":\""
                                         + task.status()
@@ -218,16 +467,19 @@ public class FollowupTaskStatusService {
                                         + completeKind
                                         + "\",\"completedOn\":\""
                                         + completedOn
-                                        + "\"}")
+                                        + "\",\"closedFollowups\":"
+                                        + closedFollowups
+                                        + "}")
                         .result(AuditResult.SUCCESS)
                         .build());
         log.info(
-                "任务完成 taskId={} kind={} operator={} window=[{},{}]",
+                "任务完成 taskId={} kind={} operator={} window=[{},{}] closedFollowups={}",
                 taskId,
                 completeKind,
                 operatorId,
                 task.windowStart(),
-                task.windowEnd());
+                task.windowEnd(),
+                closedFollowups);
         return new CompletionView(String.valueOf(taskId), TaskStatusFlow.COMPLETED, completeKind);
     }
 
@@ -241,7 +493,8 @@ public class FollowupTaskStatusService {
                     throw new ApiException(
                             409, 40901, "「停用或暂停期间未执行」的任务须先补做（redo）才能完成（Q32 / PLT-TEN-017）");
             default -> {
-                // PENDING / IN_PROGRESS / OVERDUE：可完成
+                // PENDING / IN_PROGRESS / OVERDUE / LOST_CANDIDATE：可完成（失访候选在直接录入期内
+                // 联系上患者照常完成，A-FU-010 / A-FU-012，OQ-86①）
             }
         }
     }

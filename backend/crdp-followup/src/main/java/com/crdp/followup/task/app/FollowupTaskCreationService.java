@@ -134,13 +134,17 @@ public class FollowupTaskCreationService {
         // 逾期刷新（E15-T01 / A-FU-010，tech-plan §8 步骤 W）：按本次运行目标逻辑日一次刷完（补跑逐日推进后统一按最终日判定，
         // 晚标记同样只发一次 TASK_OVERDUE 事件——状态守卫幂等）
         int overdueMarked = statusService.refreshOverdue(logicalDate);
+        // 失访候选刷新（E15-T05 / A-FU-012，tech-plan §8 步骤 W「刷新状态：逾期 · 失访候选 · 跟进任务 · 统计事实表」）：
+        // 窗口内不同日期连续 N 次「未联系到 / 号码错误」且窗口已结束 → 失访候选 + LOST_CANDIDATE 事件（状态守卫幂等）
+        int lostMarked = statusService.refreshLostCandidates(logicalDate);
         log.info(
-                "任务创建完成 tenant={} from={} to={} created={} overdueMarked={}",
+                "任务创建完成 tenant={} from={} to={} created={} overdueMarked={} lostMarked={}",
                 tenant.tenantCode(),
                 from,
                 logicalDate,
                 created,
-                overdueMarked);
+                overdueMarked,
+                lostMarked);
         if (created > 0) {
             audit.append(
                     AuditEntry.operation("followup", "TASK_CREATE")
@@ -360,6 +364,7 @@ public class FollowupTaskCreationService {
                             task.openDate(),
                             createType,
                             status,
+                            0, // followup_seq：调度创建的都是常规任务（未联系到跟进随 E15-T05 写沟通记录时创建）
                             logicalDate);
             try {
                 taskMapper.insertTask(row);

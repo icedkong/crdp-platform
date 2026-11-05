@@ -114,17 +114,19 @@ public interface FollowupTaskMapper {
      * {@code ON DUPLICATE KEY UPDATE} 的 no-op 也会返回 1，不能当幂等信号；已存在由 {@link #findTaskId} 前置排除， 并发撞 uk
      * 由服务层捕 {@code DuplicateKeyException} 当已存在处理。
      */
-    @IgnoreScope(reason = "调度写入任务行（E14-T04 本体）：无用户上下文，创建即 PENDING 待随访（A-FU-003）")
+    @IgnoreScope(
+            reason =
+                    "调度写入任务行（E14-T04 本体；跟进任务随 E15-T05 写沟通记录事务内创建）：无用户上下文，创建即 PENDING 待随访（A-FU-003）")
     @Insert(
             """
             INSERT INTO fu_task
               (enrollment_id, patient_id, plan_id, node_id, occurrence, task_type, form_code,
                owner_type, assignee_id, plan_date, remind_start, window_start, window_end,
-               open_date, create_type, status, created_logical_date)
+               open_date, create_type, status, followup_seq, created_logical_date)
             VALUES
               (#{enrollmentId}, #{patientId}, #{planId}, #{nodeId}, #{occurrence}, #{taskType},
                #{formCode}, #{ownerType}, #{assigneeId}, #{planDate}, #{remindStart}, #{windowStart},
-               #{windowEnd}, #{openDate}, #{createType}, #{status}, #{createdLogicalDate})
+               #{windowEnd}, #{openDate}, #{createType}, #{status}, #{followupSeq}, #{createdLogicalDate})
             """)
     @Options(useGeneratedKeys = true, keyProperty = "id")
     int insertTask(FollowupTaskInsertRow row);
@@ -172,7 +174,8 @@ public interface FollowupTaskMapper {
 
     /**
      * 该入组「已创建但尚无联系记录」的任务（A-FU-011 重算口径）：status = PENDING 待随访（fu_contact_log 随 E15 落地前以状态位判定，
-     * OQ-81②；进行中 / 已完成 / 逾期 / 失访 / 已终止 / 期间未执行均不重算）。只取重算所需列。
+     * OQ-81②；进行中 / 已完成 / 逾期 / 失访 / 已终止 / 期间未执行均不重算）。 只重排常规任务（NORMAL / BACKFILL）——未联系到自动跟进任务
+     * （FOLLOWUP，E15-T05）由沟通记录产生、窗口继承源任务，不按节点排期重排（OQ-86④）。只取重算所需列。
      */
     record UnstartedTaskRow(long id, long nodeId, int occurrence, String createType) {}
 
@@ -182,6 +185,7 @@ public interface FollowupTaskMapper {
             SELECT id, node_id AS nodeId, occurrence, create_type AS createType
             FROM fu_task
             WHERE enrollment_id = #{enrollmentId} AND status = 'PENDING'
+              AND create_type IN ('NORMAL', 'BACKFILL')
             ORDER BY node_id, occurrence
             """)
     List<UnstartedTaskRow> findUnstartedTasks(@Param("enrollmentId") long enrollmentId);
@@ -232,9 +236,9 @@ public interface FollowupTaskMapper {
     // A-FU-007、A-FU-008）
 
     /**
-     * 终止一条入组的全部未完成任务（移出计划，A-FU-008 / A-PAT-011）：未完成 = 尚未终止且未完成（含待随访、 进行中、逾期、暂停 /
-     * 停用期间未执行）；已完成与已失访保留原状（历史事实）。返回终止条数。 数据范围前置校验由调用方 （PlanEnrollmentService.remove，经
-     * PatientContactGateway 40400）完成。
+     * 终止一条入组的全部未完成任务（移出计划，A-FU-008 / A-PAT-011）：未完成 = 尚未终止且未完成（含待随访、 进行中、逾期、失访候选
+     * 〔E15-T05，待医生确认的失访同样随计划移出关闭〕、 暂停 / 停用期间未执行）；已完成与已失访保留原状（历史事实）。返回终止条数。 数据范围前置校验由调用方
+     * （PlanEnrollmentService.remove，经 PatientContactGateway 40400）完成。
      */
     @IgnoreScope(
             reason = "移出计划终止未完成任务（E14-T06）：按入组 id 定向 UPDATE，调用方已做患者数据范围校验" + "（40400）；无 SELECT 输出")
@@ -244,7 +248,7 @@ public interface FollowupTaskMapper {
             SET status = 'TERMINATED', terminate_reason = #{reason},
                 terminated_at = #{terminatedAt}, terminated_by = #{terminatedBy}
             WHERE enrollment_id = #{enrollmentId}
-              AND status IN ('PENDING', 'IN_PROGRESS', 'OVERDUE', 'SKIPPED_SUSPENDED')
+              AND status IN ('PENDING', 'IN_PROGRESS', 'OVERDUE', 'LOST_CANDIDATE', 'SKIPPED_SUSPENDED')
             """)
     int terminateUnfinishedByEnrollment(
             @Param("enrollmentId") long enrollmentId,
@@ -256,7 +260,7 @@ public interface FollowupTaskMapper {
     // A-FU-003、A-FU-010）
 
     /**
-     * 单条任务行（流转写入口的读取面）：id、归属（入组 / 患者 / 计划 / 节点 / 第 N 次）、创建方式、当前状态与窗口日期组
+     * 单条任务行（流转写入口的读取面）：id、归属（入组 / 患者 / 计划 / 节点 / 第 N 次）、创建方式、跟进序号（E15-T05）、 当前状态与窗口日期组
      * （完成方式判定用）。只取流转所需列，不输出患者明细；调用方（提交流程 / 沟通流程）先做任务对应患者的数据范围校验（40400）。
      */
     record TaskRow(
@@ -268,15 +272,19 @@ public interface FollowupTaskMapper {
             int occurrence,
             String createType,
             String status,
+            int followupSeq,
             LocalDate windowStart,
             LocalDate windowEnd) {}
 
-    @IgnoreScope(reason = "状态流转写入口（E15-T01）读取任务行（id 与日期组，不输出患者明细）；" + "调用方先做任务对应患者的数据范围校验（40400）")
+    @IgnoreScope(
+            reason =
+                    "状态流转写入口（E15-T01 / E15-T05）读取任务行（id 与日期组，不输出患者明细）；"
+                            + "调用方先做任务对应患者的数据范围校验（40400）")
     @Select(
             """
             SELECT id, enrollment_id AS enrollmentId, patient_id AS patientId, plan_id AS planId,
                    node_id AS nodeId, occurrence, create_type AS createType, status,
-                   window_start AS windowStart, window_end AS windowEnd
+                   followup_seq AS followupSeq, window_start AS windowStart, window_end AS windowEnd
             FROM fu_task
             WHERE id = #{id}
             """)
@@ -356,20 +364,21 @@ public interface FollowupTaskMapper {
     int startProgress(@Param("id") long id);
 
     /**
-     * → 已完成（随访记录提交，A 规格任务状态表；complete_kind 见 followup V53）：状态守卫未完成三态， 并发已终态时落空（返回
-     * 0）由调用方按冲突处理（40900）；终态任务（已完成 / 失访 / 已终止 / 期间未执行）不经本入口（服务层先校验，40901）。
+     * → 已完成（随访记录提交，A 规格任务状态表；complete_kind 见 followup V53）：状态守卫未完成三态 + 失访候选
+     * （E15-T05：直接录入期内联系上患者，候选照常完成），并发已终态时落空（返回 0）由调用方按冲突处理（40900）； 终态任务（已完成 / 失访 / 已终止 /
+     * 期间未执行）不经本入口（服务层先校验，40901）。
      */
     @IgnoreScope(
             reason =
-                    "任务完成（E15-T01 / A-FU-005 提交联动）：按任务 id 定向 UPDATE（状态守卫未完成三态），"
-                            + "调用方已做患者数据范围校验（40400）；无 SELECT 输出")
+                    "任务完成（E15-T01 / A-FU-005 提交联动；E15-T05 起含失访候选）：按任务 id 定向 UPDATE"
+                            + "（状态守卫），调用方已做患者数据范围校验（40400）；无 SELECT 输出")
     @Update(
             """
             UPDATE fu_task
             SET status = 'COMPLETED', complete_kind = #{completeKind},
                 completed_at = #{completedAt}, completed_by = #{completedBy},
                 lock_version = lock_version + 1
-            WHERE id = #{id} AND status IN ('PENDING', 'IN_PROGRESS', 'OVERDUE')
+            WHERE id = #{id} AND status IN ('PENDING', 'IN_PROGRESS', 'OVERDUE', 'LOST_CANDIDATE')
             """)
     int completeTask(
             @Param("id") long id,
@@ -421,21 +430,234 @@ public interface FollowupTaskMapper {
      */
     @IgnoreScope(
             reason =
-                    "死亡自动终止未完成任务（E14-T06 / A-FU-007）：按患者 id 定向 UPDATE，调用方已做患者数据"
-                            + "范围校验（40400）；无 SELECT 输出")
+                    "死亡自动终止未完成任务（E14-T06 / A-FU-007；含失访候选，E15-T05）：按患者 id 定向 UPDATE，"
+                            + "调用方已做患者数据范围校验（40400）；无 SELECT 输出")
     @Update(
             """
             UPDATE fu_task
             SET status = 'TERMINATED', terminate_reason = #{reason},
                 terminated_at = #{terminatedAt}, terminated_by = #{terminatedBy}
             WHERE patient_id = #{patientId}
-              AND status IN ('PENDING', 'IN_PROGRESS', 'OVERDUE', 'SKIPPED_SUSPENDED')
+              AND status IN ('PENDING', 'IN_PROGRESS', 'OVERDUE', 'LOST_CANDIDATE', 'SKIPPED_SUSPENDED')
             """)
     int terminateUnfinishedByPatient(
             @Param("patientId") long patientId,
             @Param("reason") String reason,
             @Param("terminatedAt") java.time.LocalDateTime terminatedAt,
             @Param("terminatedBy") Long terminatedBy);
+
+    // ---------------------------------------------------------------- 失访判定与未联系到跟进（E15-T05 /
+    // A-FU-012、A-FU-024）
+
+    /**
+     * 窗口（入组 + 节点 + 第 N 次）已建的跟进序号最大值（A-FU-024「计数存任务上」：常规任务恒 0， 跟进任务 1–5）。达到 {@code
+     * FollowupPolicyService.MAX_FOLLOWUPS_PER_WINDOW} 即不再创建。
+     */
+    @IgnoreScope(
+            reason =
+                    "未联系到跟进计数（E15-T05 / A-FU-024）：只取窗口内跟进序号最大值，不输出患者数据；"
+                            + "调用方（沟通记录写入口）已做患者数据范围校验（40400）")
+    @Select(
+            """
+            SELECT COALESCE(MAX(followup_seq), 0) FROM fu_task
+            WHERE enrollment_id = #{enrollmentId} AND node_id = #{nodeId}
+              AND occurrence = #{occurrence} AND followup_seq > 0
+            """)
+    int findMaxFollowupSeq(
+            @Param("enrollmentId") long enrollmentId,
+            @Param("nodeId") long nodeId,
+            @Param("occurrence") int occurrence);
+
+    /**
+     * 失访候选判定候选行（A-FU-012，每日 00:10 调度在逾期刷新后执行；tech-plan §9）：窗口已结束（asOf 晚于 window_end） 仍未完成（待随访 / 进行中
+     * / 逾期 / 失访候选重放落空）且非补录（BACKFILL 豁免，E14-T05 口径——建任务时窗口已过， 语义是补录历史）的<b>主任务</b>（followup_seq =
+     * 0；跟进任务不重复标候选）；EXISTS 预过滤 至少有一条窗口内「未联系到 / 号码错误」，零联系的任务（从未尝试）不进候选， 减少逐行计数查询。 只取标记与
+     * LOST_CANDIDATE 事件所需列（同 {@link OverdueCandidateRow} 口径）。
+     */
+    @IgnoreScope(
+            reason =
+                    "每日失访候选刷新（E15-T05 / A-FU-012，00:10 调度内）无用户上下文：只取候选标记与通知事件"
+                            + "所需列（患者姓名为密文，明文经 CryptoService 解密后只进站内信密文列，不落日志）；"
+                            + "任务查询侧（E15-T02 列表）按 @DataScope 出行")
+    @Select(
+            """
+            SELECT t.id, t.patient_id AS patientId, t.assignee_id AS assigneeId,
+                   pt.ward_id AS wardId, pt.name_cipher AS patientNameCipher,
+                   n.name AS nodeName, t.window_start AS windowStart, t.window_end AS windowEnd
+            FROM fu_task t
+            JOIN pt_patient pt ON pt.id = t.patient_id
+            LEFT JOIN fu_plan_node n ON n.id = t.node_id
+            WHERE t.status IN ('PENDING', 'IN_PROGRESS', 'OVERDUE')
+              AND t.create_type <> 'BACKFILL'
+              AND t.followup_seq = 0
+              AND t.window_end < #{asOf}
+              AND EXISTS (
+                SELECT 1 FROM fu_contact_log c
+                WHERE c.patient_id = t.patient_id
+                  AND DATE(c.contact_time) BETWEEN t.window_start AND t.window_end
+                  AND c.result IN ('NOT_REACHED', 'WRONG_NUMBER'))
+            ORDER BY t.id
+            """)
+    List<OverdueCandidateRow> findLostCandidates(@Param("asOf") LocalDate asOf);
+
+    /**
+     * 窗口内沟通记录（新→旧；连续未联系到的计数口径，A-FU-012「窗口内不同日期连续 3 次」）： 调用方从最新往前走「未联系到 / 号码错误」连续段，遇到其他结果（已联系 / 家属代答
+     * / 拒访〔不计入失访〕/ 告知已故）即断。
+     */
+    record ContactAttemptRow(long id, String result, java.time.LocalDateTime contactTime) {}
+
+    /**
+     * 窗口内沟通记录（新→旧）。fu_contact_log 属沟通子域，本查询是失访判定的计数读取（联表只取 id / 结果 / 时间， 不输出患者明细，与
+     * OverdueCandidateRow 联查 pt_patient 同口径，OQ-86①）。
+     */
+    @IgnoreScope(
+            reason =
+                    "失访候选判定的窗口内沟通计数（E15-T05 / A-FU-012）：只取结果与时间（新→旧），"
+                            + "不输出患者数据；候选行来自每日调度（无用户上下文）")
+    @Select(
+            """
+            SELECT id, result, contact_time AS contactTime
+            FROM fu_contact_log
+            WHERE patient_id = #{patientId}
+              AND DATE(contact_time) BETWEEN #{from} AND #{to}
+            ORDER BY contact_time DESC, id DESC
+            """)
+    List<ContactAttemptRow> contactsOfPatientInWindow(
+            @Param("patientId") long patientId,
+            @Param("from") LocalDate from,
+            @Param("to") LocalDate to);
+
+    /**
+     * 单条置失访候选（A-FU-012；窗口结束次日由每日刷新调用）：状态守卫待随访 / 进行中 / 逾期—— 并发完成 / 终止 / 确认失访后本 UPDATE 落空（返回
+     * 0），调用方按未标计且不发事件。幂等：已 LOST_CANDIDATE / LOST 不在守卫集，重放落空。
+     */
+    @IgnoreScope(
+            reason =
+                    "每日失访候选刷新（E15-T05）：按任务 id 定向 UPDATE（状态守卫），同一事务内随后写"
+                            + " LOST_CANDIDATE 事件；无 SELECT 输出")
+    @Update(
+            """
+            UPDATE fu_task
+            SET status = 'LOST_CANDIDATE', lock_version = lock_version + 1
+            WHERE id = #{id} AND status IN ('PENDING', 'IN_PROGRESS', 'OVERDUE')
+            """)
+    int markLostCandidate(@Param("id") long id);
+
+    /**
+     * 失访候选 → 失访（医生确认，A-FU-012；HTTP 随 E15-T05 confirm-lost）：状态守卫 LOST_CANDIDATE， 并发已被处理（确认 / 完成 /
+     * 终止）返回 0 由调用方按冲突处理（40900 / 40901）。
+     */
+    @IgnoreScope(
+            reason =
+                    "确认失访（E15-T05 / A-FU-012）：按任务 id 定向 UPDATE（状态守卫 LOST_CANDIDATE），"
+                            + "调用方已做任务对应患者的数据范围校验（40400）；无 SELECT 输出")
+    @Update(
+            "UPDATE fu_task SET status = 'LOST', lock_version = lock_version + 1 WHERE id = #{id} AND status = 'LOST_CANDIDATE'")
+    int confirmLostTask(@Param("id") long id);
+
+    /**
+     * 窗口内主任务（followup_seq = 0）随跟进任务完成（A-FU-024：跟进是同一窗口的继续，完成传播—— 医生经跟进任务联系上患者并提交，
+     * 主任务同步完成，统计〔E19〕按主任务口径不漏计；完成方式与触发任务同日同窗口取同值）。 状态守卫同 {@link #completeTask}；excludeTaskId =
+     * 触发完成的任务本身。
+     */
+    @IgnoreScope(
+            reason =
+                    "窗口完成传播（E15-T05 / A-FU-024）：按窗口定向 UPDATE 主任务（状态守卫），"
+                            + "调用方已做患者数据范围校验（40400）；无 SELECT 输出")
+    @Update(
+            """
+            UPDATE fu_task
+            SET status = 'COMPLETED', complete_kind = #{completeKind},
+                completed_at = #{completedAt}, completed_by = #{completedBy},
+                lock_version = lock_version + 1
+            WHERE enrollment_id = #{enrollmentId} AND node_id = #{nodeId}
+              AND occurrence = #{occurrence} AND id <> #{excludeTaskId} AND followup_seq = 0
+              AND status IN ('PENDING', 'IN_PROGRESS', 'OVERDUE', 'LOST_CANDIDATE')
+            """)
+    int completeWindowMainTask(
+            @Param("enrollmentId") long enrollmentId,
+            @Param("nodeId") long nodeId,
+            @Param("occurrence") int occurrence,
+            @Param("excludeTaskId") long excludeTaskId,
+            @Param("completeKind") String completeKind,
+            @Param("completedAt") java.time.LocalDateTime completedAt,
+            @Param("completedBy") Long completedBy);
+
+    /** 关闭窗口内其余未完成跟进任务（followup_seq &gt; 0）：主任务完成或确认失访后，窗口工作结束， 其余跟进任务终止留痕（原因随调用方传入）。 */
+    @IgnoreScope(
+            reason =
+                    "窗口跟进任务关闭（E15-T05 / A-FU-024）：按窗口定向 UPDATE（状态守卫），"
+                            + "调用方已做患者数据范围校验（40400）；无 SELECT 输出")
+    @Update(
+            """
+            UPDATE fu_task
+            SET status = 'TERMINATED', terminate_reason = #{reason},
+                terminated_at = #{terminatedAt}, terminated_by = #{terminatedBy},
+                lock_version = lock_version + 1
+            WHERE enrollment_id = #{enrollmentId} AND node_id = #{nodeId}
+              AND occurrence = #{occurrence} AND id <> #{excludeTaskId} AND followup_seq > 0
+              AND status IN ('PENDING', 'IN_PROGRESS', 'OVERDUE', 'LOST_CANDIDATE')
+            """)
+    int terminateWindowFollowups(
+            @Param("enrollmentId") long enrollmentId,
+            @Param("nodeId") long nodeId,
+            @Param("occurrence") int occurrence,
+            @Param("excludeTaskId") long excludeTaskId,
+            @Param("reason") String reason,
+            @Param("terminatedAt") java.time.LocalDateTime terminatedAt,
+            @Param("terminatedBy") Long terminatedBy);
+
+    /**
+     * 入组主任务窗口序（新→旧，含跟进序号 0 的全部次数；「连续 2 个年度失访」按窗口顺序数连续 LOST， A-FU-012 / tech-plan
+     * §9「确认失访时检查」）。只取窗口与状态两列。
+     */
+    record WindowStatusRow(LocalDate windowStart, String status) {}
+
+    @IgnoreScope(
+            reason =
+                    "连续失访年度检查（E15-T05 / A-FU-012）：只取入组主任务的窗口与状态位，不输出患者数据；" + "调用方已做患者数据范围校验（40400）")
+    @Select(
+            """
+            SELECT window_start AS windowStart, status
+            FROM fu_task
+            WHERE enrollment_id = #{enrollmentId} AND followup_seq = 0
+            ORDER BY window_start DESC, id DESC
+            """)
+    List<WindowStatusRow> findWindowStatuses(@Param("enrollmentId") long enrollmentId);
+
+    /**
+     * 任务的通知上下文（E15-T05：跟进任务创建时发 UNREACHED_FOLLOWUP 事件用）：同 {@link OverdueCandidateRow} 口径的投影视图
+     * （负责人复核锚点 wardId、站内信密文名 patientNameCipher、文案 nodeName / 窗口）。
+     */
+    @IgnoreScope(reason = "通知事件负载拼装（E15-T05）：只取事件所需列（患者姓名为密文），" + "调用方已做患者数据范围校验（40400）")
+    @Select(
+            """
+            SELECT t.id, t.patient_id AS patientId, t.assignee_id AS assigneeId,
+                   pt.ward_id AS wardId, pt.name_cipher AS patientNameCipher,
+                   n.name AS nodeName, t.window_start AS windowStart, t.window_end AS windowEnd
+            FROM fu_task t
+            JOIN pt_patient pt ON pt.id = t.patient_id
+            LEFT JOIN fu_plan_node n ON n.id = t.node_id
+            WHERE t.id = #{id}
+            """)
+    OverdueCandidateRow findTaskNotifyRow(@Param("id") long id);
+
+    /** 跟进任务继承的任务形态与负责人（E15-T05 / A-FU-024：跟进是同一窗口随访的继续——任务类型、表单、 负责人类型与当前负责人都随源任务走，不重新解析回落链）。 */
+    record FollowupTemplateRow(
+            String taskType, String formCode, String ownerType, Long assigneeId) {}
+
+    @IgnoreScope(
+            reason =
+                    "未联系到跟进任务继承源任务形态（E15-T05）：只取任务类型 / 表单 / 负责人四列，"
+                            + "不输出患者数据；调用方已做患者数据范围校验（40400）")
+    @Select(
+            """
+            SELECT task_type AS taskType, form_code AS formCode,
+                   owner_type AS ownerType, assignee_id AS assigneeId
+            FROM fu_task
+            WHERE id = #{id}
+            """)
+    FollowupTemplateRow findFollowupTemplate(@Param("id") long id);
 
     // ---------------------------------------------------------------- 工作台（E15-T02 /
     // A-FU-005、C-FU-020）

@@ -3,8 +3,8 @@ package com.crdp.followup.task.infra.mapper;
 import java.time.LocalDate;
 
 /**
- * 随访任务新建行（E14-T04；useGeneratedKeys 回写 id，仅新增时有效——幂等命中 uk（入组 + 节点 + 第 N 次）时 affected = 0，id
- * 不回填）。创建方式固定 NORMAL（补录随 E14-T05、暂停 / 停用补偿随 E14-T06、跟进 / 临时随 E15）。
+ * 随访任务新建行（E14-T04；useGeneratedKeys 回写 id，仅新增时有效——幂等命中 uk（入组 + 节点 + 第 N 次 + 跟进序号）时 affected = 0，id
+ * 不回填）。创建方式固定 NORMAL（补录随 E14-T05、暂停 / 停用补偿随 E14-T06、跟进 FOLLOWUP 随 E15-T05、临时随 E15-T06）。
  */
 public class FollowupTaskInsertRow {
 
@@ -25,6 +25,7 @@ public class FollowupTaskInsertRow {
     private final LocalDate openDate;
     private final String createType;
     private final String status;
+    private final Integer followupSeq;
     private final LocalDate createdLogicalDate;
 
     public FollowupTaskInsertRow(
@@ -44,6 +45,7 @@ public class FollowupTaskInsertRow {
             LocalDate openDate,
             String createType,
             String status,
+            Integer followupSeq,
             LocalDate createdLogicalDate) {
         this.enrollmentId = enrollmentId;
         this.patientId = patientId;
@@ -61,6 +63,7 @@ public class FollowupTaskInsertRow {
         this.openDate = openDate;
         this.createType = createType;
         this.status = status;
+        this.followupSeq = followupSeq;
         this.createdLogicalDate = createdLogicalDate;
     }
 
@@ -134,6 +137,11 @@ public class FollowupTaskInsertRow {
 
     public String getStatus() {
         return status;
+    }
+
+    /** 窗口内跟进序号（0 = 常规任务；1–5 = 未联系到自动跟进，A-FU-024，followup V57）。 */
+    public Integer getFollowupSeq() {
+        return followupSeq;
     }
 
     public LocalDate getCreatedLogicalDate() {

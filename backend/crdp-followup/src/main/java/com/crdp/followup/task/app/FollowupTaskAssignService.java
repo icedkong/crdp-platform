@@ -57,9 +57,9 @@ public class FollowupTaskAssignService {
     /** 改派原因上限（与移出计划等原因字段同口径）。 */
     private static final int REASON_MAX_LENGTH = 255;
 
-    /** 未完成四态（可改派 / 可认领；E15-T01 状态机「我的待办」同集合）。 */
+    /** 未完成五态（可改派 / 可认领；E15-T01 状态机「我的待办」同集合——失访候选仍需医生确认，E15-T05 / OQ-86①）。 */
     private static final List<String> OPEN_STATUSES =
-            List.of("PENDING", "IN_PROGRESS", "OVERDUE", "SKIPPED_SUSPENDED");
+            List.of("PENDING", "IN_PROGRESS", "OVERDUE", "LOST_CANDIDATE", "SKIPPED_SUSPENDED");
 
     /** 逐条结果码：成功。 */
     public static final String OUTCOME_SUCCESS = "SUCCESS";

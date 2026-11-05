@@ -23,6 +23,9 @@ class TaskStatusFlowTest {
         assertTrue(TaskStatusFlow.canTransition("PENDING", "IN_PROGRESS"), "第一次联系或暂存 → 进行中");
         assertTrue(TaskStatusFlow.canTransition("PENDING", "OVERDUE"), "窗口结束日次日 → 逾期");
         assertTrue(TaskStatusFlow.canTransition("PENDING", "COMPLETED"), "提交 → 已完成");
+        assertTrue(
+                TaskStatusFlow.canTransition("PENDING", "LOST_CANDIDATE"),
+                "每日刷新 → 失访候选（A-FU-012 / E15-T05）");
         assertTrue(TaskStatusFlow.canTransition("PENDING", "LOST"), "医生确认 → 失访（E15-T05）");
         assertTrue(TaskStatusFlow.canTransition("PENDING", "TERMINATED"), "死亡 / 人工停止 → 已终止");
     }
@@ -31,6 +34,7 @@ class TaskStatusFlowTest {
     void inProgressTransitionsToOverdueCompleteLostOrTerminated() {
         assertTrue(TaskStatusFlow.canTransition("IN_PROGRESS", "OVERDUE"), "已联系仍可逾期");
         assertTrue(TaskStatusFlow.canTransition("IN_PROGRESS", "COMPLETED"));
+        assertTrue(TaskStatusFlow.canTransition("IN_PROGRESS", "LOST_CANDIDATE"), "已联系仍可失访候选");
         assertTrue(TaskStatusFlow.canTransition("IN_PROGRESS", "LOST"));
         assertTrue(TaskStatusFlow.canTransition("IN_PROGRESS", "TERMINATED"));
         assertFalse(TaskStatusFlow.canTransition("IN_PROGRESS", "PENDING"), "不退回待随访");
@@ -39,12 +43,27 @@ class TaskStatusFlowTest {
     @Test
     void overdueCompletesButNeverFallsBackToInProgress() {
         assertTrue(TaskStatusFlow.canTransition("OVERDUE", "COMPLETED"), "逾期后完成 = 逾期完成（A-FU-010）");
+        assertTrue(TaskStatusFlow.canTransition("OVERDUE", "LOST_CANDIDATE"), "逾期任务可失访候选（E15-T05）");
         assertTrue(TaskStatusFlow.canTransition("OVERDUE", "LOST"));
         assertTrue(TaskStatusFlow.canTransition("OVERDUE", "TERMINATED"));
         assertFalse(
                 TaskStatusFlow.canTransition("OVERDUE", "IN_PROGRESS"),
                 "逾期是窗口事实，联系 / 录入不退回进行中（OQ-82①）");
         assertFalse(TaskStatusFlow.canTransition("OVERDUE", "PENDING"));
+    }
+
+    @Test
+    void lostCandidateConfirmsToLostCompletesOrTerminates() {
+        assertTrue(TaskStatusFlow.canTransition("LOST_CANDIDATE", "LOST"), "医生确认 → 失访（A-FU-012）");
+        assertTrue(
+                TaskStatusFlow.canTransition("LOST_CANDIDATE", "COMPLETED"),
+                "直接录入期内联系上患者照常完成（A-FU-010 / OQ-86①）");
+        assertTrue(TaskStatusFlow.canTransition("LOST_CANDIDATE", "TERMINATED"), "死亡 / 移出计划终止候选");
+        assertFalse(TaskStatusFlow.canTransition("LOST_CANDIDATE", "PENDING"), "判定是窗口事实，不退回");
+        assertFalse(TaskStatusFlow.canTransition("LOST_CANDIDATE", "OVERDUE"));
+        assertFalse(TaskStatusFlow.canTransition("LOST_CANDIDATE", "IN_PROGRESS"));
+        assertFalse(TaskStatusFlow.isTerminal("LOST_CANDIDATE"), "候选等待医生决策，不是终态");
+        assertTrue(TaskStatusFlow.known("LOST_CANDIDATE"));
     }
 
     @Test

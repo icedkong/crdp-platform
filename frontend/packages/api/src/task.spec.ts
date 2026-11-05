@@ -99,13 +99,15 @@ describe('isTaskEnterable（「工作台可直接录入随访表单」入口判�
     expect(isTaskEnterable({ ...base, taskType: 'REMINDER' })).toBe(false);
   });
 
-  it('未完成四态口径（「我的待办」默认筛选）', () => {
+  it('未完成五态口径（「我的待办」默认筛选；失访候选仍需医生确认，E15-T05）', () => {
     expect(TASK_OPEN_STATUSES).toEqual([
       'PENDING',
       'IN_PROGRESS',
       'OVERDUE',
+      'LOST_CANDIDATE',
       'SKIPPED_SUSPENDED',
     ]);
+    expect(isTaskEnterable({ ...base, status: 'LOST_CANDIDATE' })).toBe(true);
   });
 });
 
