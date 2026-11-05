@@ -5,9 +5,12 @@
  * 后端状态为 fu_task 原始枚举（E15-T01 状态机）+ completeKind（followup V53）+ createType
  * （E14-T04 / E14-T05），展示文案按 components.md §2 task 域派生：已完成按完成方式细分
  * 「已完成 / 已完成（窗口前完成）/ 已完成（逾期完成）」，补录任务派生「已完成（补录）」。
- * 认领 / 改派（followup:task:assign）随 E15-T03；最近联系随 E15-T04（fu_contact_log）；
- * C 的器械类型 / 随访时间点 / 上次标红项数三列随 E21 / E17。
+ * 认领与改派（E15-T03 / A-FU-009）已实现：待认领行可认领（followup:task:view，
+ * 认领人 = 当前登录用户），单个与批量改派走 batch-assign（followup:task:assign，
+ * 改派后新负责人收 TASK_REASSIGNED 站内信）；最近联系随 E15-T04（fu_contact_log）；
+ * C 的器械类型 / 随访时间点 / 上次标红项数随 E21 / E17。
  */
+import { BATCH_SKIP_REASON_TEXT } from './batch-operation';
 
 /** fu_task.status（E15-T01 状态机，components.md §2 task 域的展示派生见 {@link taskDisplayStatus}）。 */
 export type TaskStatus =
@@ -86,6 +89,8 @@ export interface TaskSearchRequest {
   /** 页签：MINE 我的待办（默认）/ WARD 本病区 / ALL 全部。 */
   scope?: TaskScope;
   status?: null | TaskStatus[];
+  /** 只看待认领（assignee NULL，病区公共池，A-FU-009 / E15-T03）。 */
+  unassigned?: boolean;
   wardIds?: null | number[];
 }
 
@@ -213,6 +218,78 @@ export function taskStatusTooltip(display: string): string {
 /** 任务是否可进入录入（未完成四态且 FORM 任务；站内提醒类任务无需填表，A-FU-026）。 */
 export function isTaskEnterable(task: TaskRow): boolean {
   return task.taskType === 'FORM' && TASK_OPEN_STATUSES.includes(task.status);
+}
+
+// ---------------------------------------------------------------- 认领与改派（E15-T03 / A-FU-009）
+
+/** 改派逐条结果（patientName / mrn 只含脱敏值；TASK_NOT_FOUND 行不带摘要，不暴露存在）。 */
+export interface TaskAssignItem {
+  mrn: null | string;
+  nodeName: null | string;
+  outcome: 'SKIP' | 'SUCCESS';
+  /** 越范围 / 不存在时 null（不暴露存在）。 */
+  patientId: null | string;
+  patientName: null | string;
+  reason: null | string;
+  taskId: string;
+  wardName: null | string;
+}
+
+/** 批量改派结果（items 与请求顺序一致，逐条可查）。 */
+export interface TaskAssignResult {
+  items: TaskAssignItem[];
+  skipped: number;
+  succeeded: number;
+}
+
+/** 批量改派请求（单个改派 = 传一条；reason 可选、≤255 字）。 */
+export interface TaskAssignRequest {
+  assigneeId: number | string;
+  reason?: string;
+  taskIds: Array<number | string>;
+}
+
+/** 认领结果。 */
+export interface TaskClaimView {
+  status: TaskStatus;
+  taskId: string;
+}
+
+/** 任务是否可认领（待认领 = 负责人为空，且未完成四态，A-FU-009「从公共池认领」）。 */
+export function isTaskClaimable(task: TaskRow): boolean {
+  return !task.assigneeName && TASK_OPEN_STATUSES.includes(task.status);
+}
+
+/** 任务是否可改派（未完成四态；终态任务的随访已执行完，无可再派的人）。 */
+export function isTaskReassignable(task: { status: TaskStatus }): boolean {
+  return TASK_OPEN_STATUSES.includes(task.status);
+}
+
+/** 改派结果逐条文案（成功「已改派」；跳过按原因码，码未知时原样显示）。 */
+export function taskAssignOutcomeText(item: {
+  outcome: string;
+  reason: null | string;
+}): string {
+  if (item.outcome === 'SUCCESS') return '已改派';
+  return item.reason
+    ? (BATCH_SKIP_REASON_TEXT[item.reason] ?? item.reason)
+    : '跳过';
+}
+
+/** 改派结果行定位文案（患者脱敏名 + 节点；越范围行不暴露存在）。 */
+export function taskAssignItemLabel(item: {
+  nodeName: null | string;
+  patientName: null | string;
+}): string {
+  if (!item.patientName) return '（不在您的数据范围内）';
+  return item.nodeName
+    ? `${item.patientName} · ${item.nodeName}`
+    : item.patientName;
+}
+
+/** 改派结果计数文案（「已改派 3、跳过 2」）。 */
+export function taskAssignSummary(result: TaskAssignResult): string {
+  return `已改派 ${result.succeeded}、跳过 ${result.skipped}`;
 }
 
 /** 窗口列文案（「10-29 ~ 11-12」，同月省略月份：pages.md §7 列样例）。 */

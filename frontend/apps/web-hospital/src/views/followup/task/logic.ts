@@ -1,12 +1,14 @@
 /**
- * E15-T02 / A-FU-004、C-FU-020：我的任务页（pages.md §7）的纯逻辑。
+ * E15-T02 / A-FU-004、C-FU-020 · E15-T03 A-FU-009：我的任务页（pages.md §7）的纯逻辑。
  *
  * - 路由 query（tab=mine|ward|all、status=）与筛选状态互转（分享链接与页签切换）；
  * - 看板分组（按状态分列：待随访 / 进行中 / 逾期 / 已完成；不支持拖拽改状态——状态由业务流转决定）；
  * - 录入入口：未完成 FORM 任务经 POST /tasks/{id}/start 换 recordId 后新标签页打开
  *   /followup/record/:recordId（pages.md §5「任务开启时已创建草稿记录，统一用 recordId」）；
  *   已关联草稿（recordId 有值）直接打开；
- * - 检索请求装配（MINE 页签默认不强制未完成状态——显式选状态时可回看已完成）。
+ * - 检索请求装配（MINE 页签默认不强制未完成状态——显式选状态时可回看已完成）；
+ * - 认领与改派（E15-T03）：待认领筛选（unassigned，负责人下拉「全部 / 待认领」）、
+ *   可改派行判定（未完成四态）、改派结果逐条文案。
  */
 import type {
   TaskRow,
@@ -63,8 +65,17 @@ export function statusOfQuery(
   return parsed.length === 0 ? undefined : parsed;
 }
 
-/** 检索请求装配（页签 + 状态 / 病区 / 计划日期窗口筛选；MINE 未显式选状态时不传 status——后端按未完成四态取）。 */
+/** 负责人筛选（A-FU-004 负责人维度的最小面：全部 / 待认领，E15-T03 公共池入口）。 */
+export const ASSIGNEE_FILTER_OPTIONS = [
+  { label: '全部', value: 'ALL' },
+  { label: '待认领', value: 'UNASSIGNED' },
+] as const;
+
+export type AssigneeFilter = (typeof ASSIGNEE_FILTER_OPTIONS)[number]['value'];
+
+/** 检索请求装配（页签 + 状态 / 病区 / 计划日期窗口 / 负责人筛选；MINE 未显式选状态时不传 status——后端按未完成四态取）。 */
 export function buildSearchPayload(input: {
+  assignee: AssigneeFilter;
   dueRange?: [string, string] | null;
   scope: TaskScope;
   status: null | TaskStatus[];
@@ -80,6 +91,9 @@ export function buildSearchPayload(input: {
   if (input.dueRange && input.dueRange[0] && input.dueRange[1]) {
     payload.dueFrom = input.dueRange[0];
     payload.dueTo = input.dueRange[1];
+  }
+  if (input.assignee === 'UNASSIGNED') {
+    payload.unassigned = true;
   }
   return payload;
 }
@@ -133,6 +147,7 @@ export function recordFormPath(
   }
   if (filter.dueFrom) params.set('dueFrom', filter.dueFrom);
   if (filter.dueTo) params.set('dueTo', filter.dueTo);
+  if (filter.unassigned) params.set('unassigned', '1');
   return `/followup/record/${recordId}?${params.toString()}`;
 }
 
@@ -140,6 +155,7 @@ export function recordFormPath(
 export function queueFilterOfQuery(query: Record<string, unknown>): {
   scope: TaskScope;
   status?: TaskStatus[];
+  unassigned?: boolean;
   wardIds?: number[];
 } {
   const scopeRaw =
@@ -158,6 +174,7 @@ export function queueFilterOfQuery(query: Record<string, unknown>): {
   return {
     scope,
     status,
+    unassigned: query.unassigned === '1' || query.unassigned === 'true',
     wardIds: wardIds.length > 0 ? wardIds : undefined,
   };
 }

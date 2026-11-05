@@ -863,11 +863,16 @@ export type { ReauthFlowDeps, ReauthResult } from './reauth';
 export type { OnlineSessionView } from './session';
 // E15-T02 / A-FU-004、A-FU-005、C-FU-020：我的任务、任务列表与随访工作台
 export {
+  isTaskClaimable,
   isTaskEnterable,
+  isTaskReassignable,
   TASK_OPEN_STATUSES,
   TASK_STATUS_OPTIONS,
   TASK_STATUS_TEXT,
   TASK_TABS,
+  taskAssignItemLabel,
+  taskAssignOutcomeText,
+  taskAssignSummary,
   taskDisplayStatus,
   taskStatusTooltip,
   taskWindowText,
@@ -877,6 +882,10 @@ export type {
   RecordDetailView,
   RecordSubmitResult,
   RecordTaskContext,
+  TaskAssignItem,
+  TaskAssignRequest,
+  TaskAssignResult,
+  TaskClaimView,
   TaskCompleteKind,
   TaskPage,
   TaskQueueView,

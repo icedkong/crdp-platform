@@ -42,6 +42,10 @@ export const BATCH_SKIP_REASON_TEXT: Record<string, string> = {
   DOCTOR_NOT_IN_WARD: '该医生不负责患者所在病区',
   NOT_FOUND: '患者不存在或不在您的数据范围内',
   REMOVED: '已从该计划移除',
+  TASK_CONFLICT: '任务刚被他人处理，请刷新后重试',
+  TASK_NOT_FOUND: '任务不存在或不在您的数据范围内',
+  TASK_NOT_OPEN: '任务已完成或已终止，无需改派',
+  TASK_UNCHANGED: '负责人已是所选医生',
   TERMINATED: '已终止随访',
   WARD_CHANGED: '患者病区刚发生变化，请刷新后重试',
 };

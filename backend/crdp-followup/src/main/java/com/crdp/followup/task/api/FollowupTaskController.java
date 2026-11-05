@@ -1,5 +1,6 @@
 package com.crdp.followup.task.api;
 
+import com.crdp.followup.task.app.FollowupTaskAssignService;
 import com.crdp.followup.task.app.FollowupTaskQueryService;
 import com.crdp.followup.task.app.FollowupTaskStartService;
 import com.crdp.framework.security.RequireModule;
@@ -22,9 +23,11 @@ import org.springframework.web.bind.annotation.RestController;
  * 与 /followup/record/:recordId，pages.md §5、§7）。
  *
  * <p>权限：列表与队列 {@code followup:task:view}（菜单 plt_menu 22「我的任务」）；开始录入 {@code followup:record:edit}（按钮
- * 222，平台库 V43）。数据范围由 Mapper 语句上的 {@code @DataScope} 出行（越范围任务不可见，直接访问 40400）；接口资源由启动扫描登记（SCAN）。
+ * 222，平台库 V43）；改派 {@code followup:task:assign}（与患者批量指定责任医生同码，OQ-18）；认领 {@code
+ * followup:task:view}（docs/api/followup.md §2：从公共池认领是随访员 / 医生的日常自助操作，不设改派权限门槛，行可见性由数据范围承担）。数据范围由
+ * Mapper 语句上的 {@code @DataScope} 出行（越范围任务不可见，直接访问 40400）；接口资源由启动扫描登记（SCAN）。
  *
- * <p>认领 / 改派（A-FU-009）随 E15-T03；临时任务（A-FU-013）与失访确认（A-FU-012）随 E15-T06 / E15-T05。
+ * <p>临时任务（A-FU-013）与失访确认（A-FU-012）随 E15-T06 / E15-T05。
  */
 @Tag(name = "医院端随访任务")
 @RestController
@@ -33,17 +36,22 @@ public class FollowupTaskController {
 
     private final FollowupTaskQueryService queryService;
     private final FollowupTaskStartService startService;
+    private final FollowupTaskAssignService assignService;
 
     public FollowupTaskController(
-            FollowupTaskQueryService queryService, FollowupTaskStartService startService) {
+            FollowupTaskQueryService queryService,
+            FollowupTaskStartService startService,
+            FollowupTaskAssignService assignService) {
         this.queryService = queryService;
         this.startService = startService;
+        this.assignService = assignService;
     }
 
     @Operation(
             summary =
                     "任务列表检索（A-FU-004、C-FU-020）：页签 scope = MINE 我的待办（默认，未完成四态）"
-                            + "/ WARD 本病区 / ALL 全部；按状态、病区、负责人、计划日期窗口筛选；"
+                            + "/ WARD 本病区 / ALL 全部；按状态、病区、负责人、计划日期窗口筛选，"
+                            + "unassigned = true 只看待认领（病区公共池，A-FU-009）；"
                             + "keyword 按姓名 / 病案号盲索引精确匹配；行含患者脱敏信息、节点、窗口、"
                             + "计划日期、状态与完成方式、责任人；页签徽标计数与病区候选随页返回；"
                             + "批量查询写数据访问审计")
@@ -68,6 +76,36 @@ public class FollowupTaskController {
 
     @Operation(
             summary =
+                    "改派（A-FU-009「支持单个与批量改派」；单个 = 传一条）：新负责人须启用且负责患者病区"
+                            + "（或全院范围）；只有未完成任务可改派；每次实际改派同事务写 TASK_REASSIGNED"
+                            + " 事件（新负责人收站内信，验收「改派后新责任人收到通知」）；"
+                            + "逐条结果 SUCCESS / SKIP + 原因码；写 TASK_ASSIGN 汇总审计")
+    @PostMapping("/batch-assign")
+    @RequireModule("followup")
+    @RequiresPermission("followup:task:assign")
+    public ApiResponse<FollowupTaskAssignService.AssignResultView> batchAssign(
+            @RequestBody(required = false) BatchAssignBody body) {
+        return ApiResponse.ok(
+                assignService.batchAssign(
+                        body == null ? null : body.taskIds(),
+                        body == null ? null : body.assigneeId(),
+                        body == null ? null : body.reason()));
+    }
+
+    @Operation(
+            summary =
+                    "从公共池认领（A-FU-009）：待认领（负责人为空）且未完成的任务认领给当前登录用户；"
+                            + "已有负责人 40901（走改派）、越范围 / 不存在 40400、并发被抢 40900；"
+                            + "写 TASK_CLAIM 审计；本人自取不发通知")
+    @PostMapping("/{id}/claim")
+    @RequireModule("followup")
+    @RequiresPermission("followup:task:view")
+    public ApiResponse<FollowupTaskAssignService.ClaimView> claim(@PathVariable("id") long id) {
+        return ApiResponse.ok(assignService.claim(id));
+    }
+
+    @Operation(
+            summary =
                     "表单页「上一条 / 下一条」队列（pages.md §5）：按当前列表筛选的顺序返回 cursor "
                             + "任务的前一条 / 后一条任务 id（尽头 null）；filter 参数与检索接口同构")
     @GetMapping("/queue")
@@ -82,13 +120,23 @@ public class FollowupTaskController {
             @RequestParam(value = "dueFrom", required = false) LocalDate dueFrom,
             @RequestParam(value = "dueTo", required = false) LocalDate dueTo,
             @RequestParam(value = "nodeName", required = false) String nodeName,
-            @RequestParam(value = "keyword", required = false) String keyword) {
+            @RequestParam(value = "keyword", required = false) String keyword,
+            @RequestParam(value = "unassigned", required = false) Boolean unassigned) {
         return ApiResponse.ok(
                 queryService.queue(
                         cursor,
                         new FollowupTaskQueryService.SearchRequest(
-                                scope, status, wardIds, doctorId, dueFrom, dueTo, nodeName, keyword,
-                                null, null)));
+                                scope,
+                                status,
+                                wardIds,
+                                doctorId,
+                                dueFrom,
+                                dueTo,
+                                nodeName,
+                                keyword,
+                                unassigned,
+                                null,
+                                null)));
     }
 
     /** 检索请求体（docs/api/followup.md §2；字段全部可空）。 */
@@ -101,8 +149,12 @@ public class FollowupTaskController {
             LocalDate dueTo,
             String nodeName,
             String keyword,
+            Boolean unassigned,
             Integer pageNo,
             Integer pageSize) {}
+
+    /** 批量改派请求体（docs/api/followup.md §2；单个改派 = 传一条）。 */
+    public record BatchAssignBody(List<Long> taskIds, Long assigneeId, String reason) {}
 
     private static FollowupTaskQueryService.SearchRequest toRequest(SearchBody body) {
         if (body == null) {
@@ -117,6 +169,7 @@ public class FollowupTaskController {
                 body.dueTo(),
                 body.nodeName(),
                 body.keyword(),
+                body.unassigned(),
                 body.pageNo(),
                 body.pageSize());
     }

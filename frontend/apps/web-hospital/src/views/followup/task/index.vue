@@ -1,11 +1,15 @@
 <script lang="ts" setup>
 import type { TaskRow, TaskScope, TaskStatus } from '@crdp/api';
 
+import type { AssigneeFilter } from './logic';
+
 import { computed, onMounted, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import {
+  isTaskClaimable,
   isTaskEnterable,
+  isTaskReassignable,
   TASK_STATUS_OPTIONS,
   TASK_TABS,
   taskDisplayStatus,
@@ -31,11 +35,13 @@ import {
   Tabs,
 } from 'ant-design-vue';
 
-import { searchTasks, startTask } from '#/api/core/task';
+import { claimTask, searchTasks, startTask } from '#/api/core/task';
+import TaskAssignModal from '#/components/followup/task-assign-modal.vue';
 import { useBreakpoint } from '#/reference/use-breakpoint';
 import { usePermission } from '#/reference/use-permission';
 
 import {
+  ASSIGNEE_FILTER_OPTIONS,
   boardGroups,
   buildSearchPayload,
   queryOfScope,
@@ -49,8 +55,8 @@ import {
 defineOptions({ name: 'FollowupTask' });
 
 /**
- * E15-T02 / A-FU-004、C-FU-020 · 我的任务（pages.md §7）：
- * 页签（我的待办〔默认〕/ 本病区 / 全部）+ 状态 / 病区 / 计划日期筛选 +
+ * E15-T02 / A-FU-004、C-FU-020 · E15-T03 A-FU-009 · 我的任务（pages.md §7）：
+ * 页签（我的待办〔默认〕/ 本病区 / 全部）+ 状态 / 病区 / 计划日期 / 负责人（待认领）筛选 +
  * 列表 | 看板（按状态分列，不支持拖拽——状态由业务流转决定）。
  *
  * 病区隔离由后端数据范围承担（越范围患者的任务不可见）；姓名 / 病案号只显示
@@ -58,14 +64,19 @@ defineOptions({ name: 'FollowupTask' });
  * 新标签页打开随访工作台（A-FU-005「从任务进入」）；链接携带当前筛选，
  * 工作台「上一条 / 下一条」顺当前列表走。
  *
+ * 认领与改派（E15-T03）：待认领行（负责人为空且未完成）「认领」给当前登录用户
+ * （followup:task:view，公共池自助）；行内「改派」与勾选批量改派走
+ * POST /tasks/batch-assign（followup:task:assign），改派成功后新负责人收站内信。
+ *
  * 「最近联系」列随 E15-T04 沟通记录（fu_contact_log）接入；C 的器械类型 /
- * 随访时间点 / 上次标红项数三列随 E21 / E17 开放；认领 / 改派（A-FU-009）随 E15-T03；
+ * 随访时间点 / 上次标红项数三列随 E21 / E17 开放；
  * 临时任务（+ 临时任务按钮）随 E15-T06；任务卡片手机响应式随 E24-T05。
  */
 const route = useRoute();
 const router = useRouter();
 const { hasPermission } = usePermission();
 const canEditRecord = computed(() => hasPermission('followup:record:edit'));
+const canAssign = computed(() => hasPermission('followup:task:assign'));
 const canCreatePlan = computed(() => hasPermission('followup:plan:edit'));
 const { isMobile } = useBreakpoint();
 
@@ -75,11 +86,17 @@ const RangePicker = DatePicker.RangePicker;
 
 const scope = ref<TaskScope>(scopeOfQuery(route.query.tab));
 const filters = reactive({
+  assignee: 'ALL' as AssigneeFilter,
   dueRange: null as [string, string] | null,
   status: undefined as null | TaskStatus[],
   wardIds: [] as number[],
 });
-const applied = ref({ dueRange: null, status: null, wardIds: [] });
+const applied = ref({
+  assignee: 'ALL' as AssigneeFilter,
+  dueRange: null,
+  status: null,
+  wardIds: [],
+});
 const pageNo = ref(1);
 const pageSize = ref(sizes.tablePageSize);
 
@@ -148,6 +165,7 @@ function handleSearch() {
 }
 
 function handleReset() {
+  filters.assignee = 'ALL';
   filters.dueRange = null;
   filters.status = null;
   filters.wardIds = [];
@@ -201,6 +219,53 @@ function openReadonly(row: TaskRow) {
   window.open(recordFormPath(row.recordId, payload.value), '_blank');
 }
 
+// ---------------------------------------------------------------- 认领与改派（E15-T03 / A-FU-009）
+
+const claimingId = ref('');
+const selectedIds = ref<string[]>([]);
+const assignOpen = ref(false);
+const assignTargetIds = ref<Array<number | string>>([]);
+
+/** 从公共池认领（A-FU-009）：待认领任务认领给当前登录用户；成功后刷新列表。 */
+async function handleClaim(row: TaskRow) {
+  claimingId.value = row.id;
+  try {
+    await claimTask(row.id);
+    message.success('认领成功，任务已加入我的待办');
+    selectedIds.value = selectedIds.value.filter((id) => id !== row.id);
+    void load();
+  } catch (error) {
+    const body = error as { message?: string };
+    message.error(body?.message || '认领失败，请稍后重试');
+  } finally {
+    claimingId.value = '';
+  }
+}
+
+/** 打开改派弹窗（单个改派 = 传一条）。 */
+function openAssign(ids: Array<number | string>) {
+  if (ids.length === 0) return;
+  assignTargetIds.value = ids;
+  assignOpen.value = true;
+}
+
+/** 改派弹窗提交成功：清空勾选并刷新（负责人列与页签徽标随之更新）。 */
+function handleAssignSuccess() {
+  selectedIds.value = [];
+  void load();
+}
+
+const rowSelection = computed(() => ({
+  selectedRowKeys: selectedIds.value,
+  onChange: (keys: (number | string)[]) => {
+    selectedIds.value = keys.map(String);
+  },
+  // 只有未完成任务可改派（A-FU-009）；待认领行同时支持勾选改派
+  getCheckboxProps: (record: TaskRow) => ({
+    disabled: !isTaskReassignable(record),
+  }),
+}));
+
 // ---------------------------------------------------------------- 列定义（pages.md §7）
 
 const columns = computed(() => [
@@ -213,7 +278,7 @@ const columns = computed(() => [
   { dataIndex: 'status', title: '状态', width: 150 },
   { dataIndex: 'assigneeName', title: '负责人', width: 110 },
   { dataIndex: 'lastContact', title: '最近联系', width: 96 },
-  { dataIndex: 'action', fixed: 'right' as const, title: '操作', width: 96 },
+  { dataIndex: 'action', fixed: 'right' as const, title: '操作', width: 168 },
 ]);
 
 const dataSource = computed(() =>
@@ -233,7 +298,8 @@ const hasActiveFilters = computed(
   () =>
     (applied.value.status?.length ?? 0) > 0 ||
     (applied.value.wardIds?.length ?? 0) > 0 ||
-    Boolean(applied.value.dueRange),
+    Boolean(applied.value.dueRange) ||
+    applied.value.assignee !== 'ALL',
 );
 
 const emptyInfo = computed(() => ({
@@ -310,6 +376,13 @@ function handleEmptyAction() {
             value-format="YYYY-MM-DD"
           />
         </FormItem>
+        <FormItem label="负责人">
+          <Select
+            v-model:value="filters.assignee"
+            :options="ASSIGNEE_FILTER_OPTIONS"
+            style="width: 120px"
+          />
+        </FormItem>
         <FormItem>
           <Space>
             <Button
@@ -339,6 +412,16 @@ function handleEmptyAction() {
         >
           看板
         </Button>
+        <Button
+          v-if="canAssign"
+          data-testid="task-batch-assign"
+          :disabled="selectedIds.length === 0"
+          size="small"
+          type="primary"
+          @click="openAssign(selectedIds)"
+        >
+          批量改派（{{ selectedIds.length }}）
+        </Button>
       </div>
 
       <div v-if="viewMode === 'list'" class="table-wrap">
@@ -354,6 +437,7 @@ function handleEmptyAction() {
             onChange: handleTableChange,
             showTotal: (count: number) => `共 ${count} 条`,
           }"
+          :row-selection="canAssign ? rowSelection : undefined"
           row-key="id"
           size="middle"
         >
@@ -368,6 +452,10 @@ function handleEmptyAction() {
                 :tooltip="taskStatusTooltip(record.statusText)"
                 variant="dot"
               />
+            </template>
+            <template v-else-if="column.dataIndex === 'assigneeName'">
+              <span v-if="record.assigneeName">{{ record.assigneeName }}</span>
+              <span v-else class="pool-tag">待认领</span>
             </template>
             <template v-else-if="column.dataIndex === 'action'">
               <Button
@@ -388,7 +476,36 @@ function handleEmptyAction() {
               >
                 查看
               </Button>
-              <span v-else class="sub-text">—</span>
+              <Button
+                v-if="isTaskClaimable(record as TaskRow)"
+                :data-testid="`task-claim-${record.id}`"
+                :loading="claimingId === record.id"
+                size="small"
+                type="link"
+                @click="handleClaim(record as TaskRow)"
+              >
+                认领
+              </Button>
+              <Button
+                v-if="isTaskReassignable(record as TaskRow) && canAssign"
+                :data-testid="`task-assign-${record.id}`"
+                size="small"
+                type="link"
+                @click="openAssign([record.id])"
+              >
+                改派
+              </Button>
+              <span
+                v-if="
+                  !isTaskEnterable(record as TaskRow) &&
+                  !record.recordId &&
+                  !isTaskClaimable(record as TaskRow) &&
+                  !(isTaskReassignable(record as TaskRow) && canAssign)
+                "
+                class="sub-text"
+              >
+                —
+              </span>
             </template>
           </template>
           <template #emptyText>
@@ -449,6 +566,14 @@ function handleEmptyAction() {
         </Spin>
       </div>
     </Card>
+
+    <!-- 改派弹窗（单个与批量共用 batch-assign；改派后新负责人收站内信） -->
+    <TaskAssignModal
+      v-model:open="assignOpen"
+      :count="assignTargetIds.length"
+      :task-ids="assignTargetIds"
+      @success="handleAssignSuccess"
+    />
   </div>
 </template>
 
@@ -478,6 +603,12 @@ function handleEmptyAction() {
 .sub-text {
   font-size: 12px;
   color: rgb(0 0 0 / 45%);
+}
+
+/* 待认领（病区公共池，A-FU-009）：负责人为空的行 */
+.pool-tag {
+  font-size: 12px;
+  color: rgb(250 140 22);
 }
 
 .board-columns {

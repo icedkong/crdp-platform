@@ -48,7 +48,7 @@ public interface FollowupTaskQueryMapper {
     /**
      * 检索条件（除 scope 外全部可空 = 不过滤）。scope：MINE / WARD / ALL（页签语义，userId 由服务层填）； nameBlind / mrnBlind
      * 同源于一个检索词，OR 匹配；status 为空时 MINE 页签默认未完成四态（PENDING / IN_PROGRESS / OVERDUE /
-     * SKIPPED_SUSPENDED）。
+     * SKIPPED_SUSPENDED）；unassigned 只看待认领（assignee NULL，病区公共池，A-FU-009 / E15-T03）。
      */
     record TaskCriteria(
             String scope,
@@ -61,7 +61,8 @@ public interface FollowupTaskQueryMapper {
             LocalDate dueTo,
             String nodeName,
             String nameBlind,
-            String mrnBlind) {}
+            String mrnBlind,
+            boolean unassigned) {}
 
     /** 页签计数（MINE / WARD / ALL 三态一次算完，非 scope 过滤共用；空表 SUM 为 null，由服务层归零）。 */
     record TabCountRow(Long mine, Long ward, Long total) {}
@@ -111,6 +112,7 @@ public interface FollowupTaskQueryMapper {
             <if test="c.doctorId != null">
               AND (t.assignee_id = #{c.doctorId} OR pt.responsible_user_id = #{c.doctorId})
             </if>
+            <if test="c.unassigned">AND t.assignee_id IS NULL</if>
             <if test="c.dueFrom != null">AND t.plan_date &gt;= #{c.dueFrom}</if>
             <if test="c.dueTo != null">AND t.plan_date &lt;= #{c.dueTo}</if>
             <if test="c.nodeName != null">AND n.name LIKE CONCAT('%', #{c.nodeName}, '%')</if>
@@ -156,6 +158,7 @@ public interface FollowupTaskQueryMapper {
             <if test="c.doctorId != null">
               AND (t.assignee_id = #{c.doctorId} OR pt.responsible_user_id = #{c.doctorId})
             </if>
+            <if test="c.unassigned">AND t.assignee_id IS NULL</if>
             <if test="c.dueFrom != null">AND t.plan_date &gt;= #{c.dueFrom}</if>
             <if test="c.dueTo != null">AND t.plan_date &lt;= #{c.dueTo}</if>
             <if test="c.nodeName != null">AND n.name LIKE CONCAT('%', #{c.nodeName}, '%')</if>
@@ -194,6 +197,7 @@ public interface FollowupTaskQueryMapper {
             <if test="c.doctorId != null">
               AND (t.assignee_id = #{c.doctorId} OR pt.responsible_user_id = #{c.doctorId})
             </if>
+            <if test="c.unassigned">AND t.assignee_id IS NULL</if>
             <if test="c.dueFrom != null">AND t.plan_date &gt;= #{c.dueFrom}</if>
             <if test="c.dueTo != null">AND t.plan_date &lt;= #{c.dueTo}</if>
             <if test="c.nodeName != null">AND n.name LIKE CONCAT('%', #{c.nodeName}, '%')</if>
@@ -287,6 +291,7 @@ public interface FollowupTaskQueryMapper {
             <if test="c.doctorId != null">
               AND (t.assignee_id = #{c.doctorId} OR pt.responsible_user_id = #{c.doctorId})
             </if>
+            <if test="c.unassigned">AND t.assignee_id IS NULL</if>
             <if test="c.dueFrom != null">AND t.plan_date &gt;= #{c.dueFrom}</if>
             <if test="c.dueTo != null">AND t.plan_date &lt;= #{c.dueTo}</if>
             <if test="c.nodeName != null">AND n.name LIKE CONCAT('%', #{c.nodeName}, '%')</if>
