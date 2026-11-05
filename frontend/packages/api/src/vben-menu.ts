@@ -10,6 +10,8 @@ export interface VbenMenuRoute {
     hideInMenu?: boolean;
     icon?: string;
     order?: number;
+    /** E24：手机（<768）响应式放行名单内为 true（守卫不重定向 /mobile）。 */
+    responsive?: boolean;
     title: string;
   };
   name: string;
@@ -30,9 +32,10 @@ export function toIconifyIcon(icon?: null | string) {
 export function menuNodeToRoute(
   node: MenuNode,
   parentPath?: string,
+  responsiveNames?: ReadonlySet<string>,
 ): VbenMenuRoute {
   const children = (node.children ?? []).map((child) =>
-    menuNodeToRoute(child, node.path),
+    menuNodeToRoute(child, node.path, responsiveNames),
   );
   const hideInMenu = Boolean(node.meta?.hideInMenu);
   const route: VbenMenuRoute = {
@@ -51,12 +54,20 @@ export function menuNodeToRoute(
   if (hideInMenu && parentPath && parentPath !== '/') {
     route.meta.activePath = parentPath;
   }
+  // E24-T02 / NFR-RESP-002：已做手机适配的页面（路由名登记，逐页打开）——
+  // meta.responsive !== true 的路由在手机上被响应式守卫整页替换为 MobileBlocker。
+  if (responsiveNames?.has(node.name)) {
+    route.meta.responsive = true;
+  }
   if (children.length > 0) {
     route.children = children;
   }
   return route;
 }
 
-export function menuNodesToRoutes(nodes: MenuNode[]) {
-  return nodes.map((node) => menuNodeToRoute(node));
+export function menuNodesToRoutes(
+  nodes: MenuNode[],
+  responsiveNames?: ReadonlySet<string>,
+) {
+  return nodes.map((node) => menuNodeToRoute(node, undefined, responsiveNames));
 }
