@@ -19,6 +19,7 @@ import {
   FormRenderer,
   useAutoSave,
 } from '@crdp/form-engine';
+import { useKeyboardSafeBottom } from '@crdp/responsive';
 import { StatusTag } from '@crdp/status-tag';
 import {
   Alert,
@@ -82,15 +83,22 @@ defineOptions({ name: 'FollowupRecordForm' });
  *   刷新 / 关标签页走 beforeunload；
  * - 只读：无 followup:record:edit 或记录已提交（整体只读，修改随后续任务）；
  * - 横幅：逾期 / 窗口外 / 补录（pages.md §5.1 文案照抄）。
+ * - E24-T02 / NFR-RESP-001、002（pages.md §5.2）：平板去掉左侧锚点列，分组条
+ *   吸顶横向滚动、底部栏同桌面；手机「跳到分组」下拉 + 底部抽屉（CategoryBar
+ *   select 形态）、顶栏左侧「返回」、底部固定操作栏（上一条 / 下一条、暂存、
+ *   提交，随 visualViewport 跟随键盘），路由已登记响应式名单（手机不再被
+ *   MobileBlocker 拦下）。
  *
- * 对照分屏与报告单带入（A-ATT-019 / C-FU-017）随 E16 / E17；平板 / 手机响应式随 E24-T02。
+ * 对照分屏与报告单带入（A-ATT-019 / C-FU-017）随 E16 / E17。
  */
 const route = useRoute();
 const router = useRouter();
 const userStore = useUserStore();
 const { hasPermission } = usePermission();
 const canEdit = computed(() => hasPermission('followup:record:edit'));
-const { isMobile } = useBreakpoint();
+const { isDesktop, isMobile, isTouch } = useBreakpoint();
+/** 手机底部固定操作栏距视口底部的偏移（键盘弹出时跟随可视区域，E24-T02）。 */
+const keyboardSafeBottom = useKeyboardSafeBottom();
 
 // ---------------------------------------------------------------- 状态
 
@@ -458,15 +466,8 @@ function handleJump(key: string) {
 </script>
 
 <template>
-  <Result v-if="isMobile" status="info" title="请在电脑或平板上操作">
-    <template #extra>
-      <Button type="primary" @click="router.push('/dashboard')">
-        返回首页
-      </Button>
-    </template>
-  </Result>
   <Result
-    v-else-if="submitted"
+    v-if="submitted"
     data-testid="record-submitted"
     status="success"
     :sub-title="submitSuccessMessage(deathSelected, context !== null)"
@@ -485,9 +486,23 @@ function handleJump(key: string) {
       </Space>
     </template>
   </Result>
-  <div v-else class="page" data-testid="record-form">
+  <div
+    v-else
+    class="page"
+    :class="{ 'page-mobile': isMobile }"
+    data-testid="record-form"
+  >
     <Card :bordered="false" class="crdp-card">
       <div class="title-row">
+        <!-- 手机顶栏左侧为「返回」（pages.md §5.2） -->
+        <Button
+          v-if="isMobile"
+          class="back-button"
+          data-testid="record-back"
+          @click="backToList"
+        >
+          ← 返回
+        </Button>
         <div>
           <h1 class="crdp-page-title">
             {{ headerTitle(context, patient) }}
@@ -527,8 +542,10 @@ function handleJump(key: string) {
       />
 
       <Spin :spinning="loading">
-        <div v-if="schema" class="workbench">
-          <div class="anchors">
+        <div v-if="schema" class="workbench" :class="{ stacked: !isDesktop }">
+          <!-- 桌面：左侧分组锚点列；平板 / 手机收起左列（分组条吸顶横向滚动 /
+               「跳到分组」下拉 + 底部抽屉，pages.md §5.2） -->
+          <div v-if="isDesktop" class="anchors">
             <CategoryBar
               :active-key="activeKey"
               :items="progressItems"
@@ -538,6 +555,14 @@ function handleJump(key: string) {
             />
           </div>
           <div class="form-area">
+            <CategoryBar
+              v-if="!isDesktop"
+              :active-key="activeKey"
+              :items="progressItems"
+              :mode="isMobile ? 'select' : 'bar'"
+              show-highlight-count
+              @jump="handleJump"
+            />
             <FormRenderer
               ref="renderer"
               v-model="data"
@@ -555,7 +580,8 @@ function handleJump(key: string) {
         </div>
       </Spin>
 
-      <div class="footer-bar">
+      <!-- 手机改为底部固定操作栏（见 .mobile-footer）；平板 / 桌面底部栏同桌面 -->
+      <div v-if="!isMobile" class="footer-bar">
         <Space>
           <Button :disabled="!queue.prevId" @click="gotoNeighbor(queue.prevId)">
             ← 上一条
@@ -572,7 +598,10 @@ function handleJump(key: string) {
           >
             暂存
           </Button>
-          <Tooltip :title="submitBlocked ? submitBlockedTooltip : ''">
+          <Tooltip
+            :title="submitBlocked ? submitBlockedTooltip : ''"
+            :trigger="isTouch ? 'click' : 'hover'"
+          >
             <Button
               :disabled="submitBlocked"
               :loading="submitting"
@@ -586,6 +615,44 @@ function handleJump(key: string) {
         </Space>
       </div>
     </Card>
+
+    <!-- 手机底部固定操作栏：上一条 / 下一条、暂存、提交；随 visualViewport 跟随键盘 -->
+    <div
+      v-if="isMobile"
+      class="mobile-footer"
+      :style="{ bottom: `${keyboardSafeBottom}px` }"
+      data-testid="mobile-footer"
+    >
+      <Button :disabled="!queue.prevId" @click="gotoNeighbor(queue.prevId)">
+        ← 上一条
+      </Button>
+      <Button :disabled="!queue.nextId" @click="gotoNeighbor(queue.nextId)">
+        下一条 →
+      </Button>
+      <template v-if="!readonly">
+        <Button
+          :loading="saving"
+          data-testid="record-save-draft"
+          @click="handleSaveDraft"
+        >
+          暂存
+        </Button>
+        <Tooltip
+          :title="submitBlocked ? submitBlockedTooltip : ''"
+          trigger="click"
+        >
+          <Button
+            :disabled="submitBlocked"
+            :loading="submitting"
+            data-testid="record-submit"
+            type="primary"
+            @click="handleSubmit"
+          >
+            提交
+          </Button>
+        </Tooltip>
+      </template>
+    </div>
 
     <Modal
       v-model:open="leaveConfirm.open"
@@ -609,11 +676,21 @@ function handleJump(key: string) {
   padding: 16px;
 }
 
+/* 手机：底部固定操作栏不遮内容（40px 触控 + 留白 + 安全区） */
+.page-mobile {
+  padding-bottom: calc(76px + env(safe-area-inset-bottom));
+}
+
 .title-row {
   display: flex;
+  gap: 8px;
   align-items: flex-start;
   justify-content: space-between;
   margin-bottom: 8px;
+}
+
+.back-button {
+  flex: none;
 }
 
 .sub-text {
@@ -624,6 +701,12 @@ function handleJump(key: string) {
 .workbench {
   display: flex;
   gap: 16px;
+}
+
+/* 平板 / 手机：去掉左侧锚点列，分组导航收进表单区顶部（吸顶横向滚动 / 抽屉） */
+.workbench.stacked {
+  flex-direction: column;
+  gap: 0;
 }
 
 .anchors {
@@ -650,5 +733,27 @@ function handleJump(key: string) {
   padding-top: 12px;
   margin-top: 16px;
   border-top: 1px solid rgb(0 0 0 / 6%);
+}
+
+/* 手机底部固定操作栏（pages.md §5.2）：上一条 / 下一条、暂存、提交；
+   bottom 由 useKeyboardSafeBottom 内联控制（键盘弹出跟随可视区域） */
+.mobile-footer {
+  position: fixed;
+  right: 0;
+  left: 0;
+  z-index: 20;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
+  background: #fff;
+  border-top: 1px solid rgb(0 0 0 / 6%);
+  box-shadow: 0 -2px 8px rgb(0 0 0 / 4%);
+}
+
+/* 手机按钮均分一行（只读时只渲染上一条 / 下一条，§5.1 只读角色） */
+.mobile-footer :deep(.ant-btn) {
+  flex: 1 1 0;
+  min-width: 0;
 }
 </style>

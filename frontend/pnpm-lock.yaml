@@ -1666,6 +1666,9 @@ importers:
       '@crdp/api':
         specifier: workspace:*
         version: link:../api
+      '@crdp/responsive':
+        specifier: workspace:*
+        version: link:../responsive
       '@crdp/rules':
         specifier: workspace:*
         version: link:../rules

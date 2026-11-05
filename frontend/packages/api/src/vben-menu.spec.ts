@@ -76,3 +76,42 @@ describe('menuNodeToRoute 基础转换不回归', () => {
     expect(route.meta.hideInMenu).toBe(true);
   });
 });
+
+/**
+ * E24-T02 / NFR-RESP-002：响应式路由放行名单。手机（<768）访问 meta
+ * responsive !== true 的路由会被响应式守卫整页替换为 MobileBlocker
+ * （E24-T01）；已适配的页面（E24-T02 起逐页打开）按路由名登记，转换时
+ * 写入 meta.responsive = true。
+ */
+describe('menuNodesToRoutes 响应式名单（E24-T02）', () => {
+  it('名单内的路由 meta.responsive = true（手机可进入）', () => {
+    const routes = menuNodesToRoutes(
+      [
+        node({ children: [detailNode] }),
+        node({
+          id: 223,
+          component: 'followup/record/form',
+          meta: { hideInMenu: true, order: 30, title: '随访录入' },
+          name: 'FollowupRecordForm',
+          path: '/followup/record/:recordId',
+        }),
+      ],
+      new Set(['FollowupRecordForm']),
+    );
+    const record = routes[1];
+    expect(record?.meta.responsive).toBe(true);
+    // 名单外（含隐藏路由）保持 undefined → 手机仍被守卫拦下
+    expect(routes[0]?.meta.responsive).toBeUndefined();
+    expect(routes[0]?.children?.[0]?.meta.responsive).toBeUndefined();
+  });
+
+  it('不传名单时全部保持默认（不响应式，行为不回归）', () => {
+    const routes = menuNodesToRoutes([
+      node({
+        name: 'FollowupRecordForm',
+        path: '/followup/record/:recordId',
+      }),
+    ]);
+    expect(routes[0]?.meta.responsive).toBeUndefined();
+  });
+});

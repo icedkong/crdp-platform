@@ -3,7 +3,9 @@ import 'vue-router';
 /**
  * E24-T01 / NFR-RESP-002：页面是否做了手机（<768）响应式。
  * 默认（不写或 false）手机上由响应式守卫整页替换为 MobileBlocker；
- * 已适配的页面（E24-T02～T06 的 5 个页面）置 true。
+ * 已适配的页面（E24-T02～T06 的 5 个页面）置 true——后端菜单路由由应用端
+ * 的响应式名单登记（如医院端 api/core/menu.ts 的 responsiveRouteNames，
+ * menuNodeToRoute 按路由名写入本标记）。
  */
 declare module 'vue-router' {
   interface RouteMeta {

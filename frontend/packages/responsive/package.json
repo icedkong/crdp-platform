@@ -3,7 +3,9 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./use-breakpoint": "./src/use-breakpoint.ts",
+    "./use-keyboard-safe-bottom": "./src/use-keyboard-safe-bottom.ts"
   },
   "dependencies": {
     "@crdp/tokens": "workspace:*",

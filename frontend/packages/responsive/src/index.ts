@@ -8,4 +8,5 @@ export {
   setupResponsiveGuard,
 } from './responsive-guard';
 export { useBreakpoint } from './use-breakpoint';
+export { useKeyboardSafeBottom } from './use-keyboard-safe-bottom';
 export { useResponsiveShell } from './use-responsive-shell';

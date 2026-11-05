@@ -21,8 +21,13 @@
  *   的字段不计入、派生与加密列不计入（与后端 FormProgressEngine 同口径，共享用例锁定）；
  *   `anchors()` 输出每个分类的稳定锚点键与模板版本（报告单位置 E16-T13 用）。
  * - Enter 不提交（本组件只阻止默认行为；Ctrl/⌘+S、Ctrl/⌘+Enter 由页面监听）。
- * 不在本组件（后续任务）：对比标红（E17）、附件条（E16）、自动保存（E25）、
- * 平板 / 手机深度响应式（E24-T02）。
+ * - 响应式（E24-T02 / NFR-RESP-001、002，pages.md §5.2、design-system §12）：
+ *   断点统一走 @crdp/responsive 的 useBreakpoint（全站唯一断点来源）——
+ *   桌面字段按类型定宽流动排布、标签右对齐 140；平板 / 手机字段单列（平板标签
+ *   右对齐 120）；手机标签在上、输入框占满宽（高 36 / 字号 16 由根节点
+ *   crdp-form 命中 globalCss 手机媒体查询提供）、数值弹数字键盘
+ *   （inputmode="decimal"）。
+ * 不在本组件（后续任务）：对比标红（E17）、附件条（E16）。
  */
 import type { FormSchema } from '@crdp/api';
 import type { CategoryProgress, DerivedOutcome, FieldIssue } from '@crdp/rules';
@@ -37,8 +42,9 @@ import type {
 import type { FieldMetaValue } from './multiselect';
 import type { RendererValidateResult } from './types';
 
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 
+import { useBreakpoint } from '@crdp/responsive/use-breakpoint';
 import {
   computeCategoryProgress,
   computeDerivedValues,
@@ -50,7 +56,7 @@ import {
   stripHiddenFieldValues,
   validateFormData,
 } from '@crdp/rules';
-import { breakpoints, colors, sizes } from '@crdp/tokens';
+import { colors, sizes } from '@crdp/tokens';
 import {
   Checkbox,
   CheckboxGroup,
@@ -143,44 +149,19 @@ const carriedKeys = ref(new Set<string>());
 
 const root = ref<HTMLElement>();
 
-/** 断点（tokens.breakpoints）：auto 布局用；监听 window.matchMedia。 */
-const deviceKind = ref<'desktop' | 'mobile' | 'tablet'>('desktop');
-let mediaMobile: MediaQueryList | undefined;
-let mediaTablet: MediaQueryList | undefined;
+/** 断点（E24-T02）：统一走 @crdp/responsive 的 useBreakpoint（全站唯一断点来源）。 */
+const { device: deviceKind, isMobile } = useBreakpoint();
 
-function syncDevice(): void {
-  if (mediaMobile?.matches) {
-    deviceKind.value = 'mobile';
-  } else if (mediaTablet?.matches) {
-    deviceKind.value = 'tablet';
-  } else {
-    deviceKind.value = 'desktop';
-  }
-}
-
-onMounted(() => {
-  if (typeof window.matchMedia !== 'function') return;
-  mediaMobile = window.matchMedia(`(max-width: ${breakpoints.tablet - 1}px)`);
-  mediaTablet = window.matchMedia(
-    `(min-width: ${breakpoints.tablet}px) and (max-width: ${breakpoints.desktop - 1}px)`,
-  );
-  mediaMobile.addEventListener('change', syncDevice);
-  mediaTablet.addEventListener('change', syncDevice);
-  syncDevice();
-});
-
-onBeforeUnmount(() => {
-  mediaMobile?.removeEventListener('change', syncDevice);
-  mediaTablet?.removeEventListener('change', syncDevice);
-});
-
-/** 只读固定 120（detailLabelWidth）；auto 按断点；手机标签在上（E24-T02 做深度适配）。 */
+/** 只读固定 120（detailLabelWidth）；auto 按断点；手机标签在上。 */
 const resolvedLayout = computed(() => {
   if (isReadonly.value) return 'horizontal';
   if (props.layout === 'vertical') return 'vertical';
   if (props.layout === 'horizontal') return 'horizontal';
-  return deviceKind.value === 'mobile' ? 'vertical' : 'horizontal';
+  return isMobile.value ? 'vertical' : 'horizontal';
 });
+
+/** 平板 / 手机字段单列（每字段占满一行）；桌面保持流动排布（pages.md §5.2）。 */
+const singleColumn = computed(() => deviceKind.value !== 'desktop');
 
 const labelWidth = computed(() => {
   if (resolvedLayout.value === 'vertical') return undefined;
@@ -232,9 +213,14 @@ function valueOf(field: RendererField): unknown {
   return props.modelValue[field.key];
 }
 
-/** 控件宽度（按类型定宽，不随屏幕拉伸；长文本 / 选项组占满一行）。 */
+/**
+ * 控件宽度（按类型定宽，不随屏幕拉伸；长文本 / 选项组占满一行）。
+ * 手机（<768）输入框占满宽（design-system §12）——高 36 / 字号 16 由根节点
+ * crdp-form 命中 globalCss 手机媒体查询提供。
+ */
 function fieldControlStyle(field: RendererField): Record<string, string> {
   const kind = kindOf(field);
+  if (isMobile.value) return { width: '100%' };
   if (kind === 'number') return { width: 'var(--form-field-number)' };
   if (kind === 'date' || kind === 'datetime')
     return { width: 'var(--form-field-date)' };
@@ -599,7 +585,8 @@ defineExpose({ anchors, focusFirstError, scrollTo, validate });
 <template>
   <div
     ref="root"
-    class="form-renderer"
+    class="form-renderer crdp-form"
+    :class="`form-${deviceKind}`"
     :style="cssVars"
     @keydown.enter="onKeydownEnter"
   >
@@ -623,7 +610,7 @@ defineExpose({ anchors, focusFirstError, scrollTo, validate });
       data-testid="form-category"
     >
       <h4 class="category-title">{{ category.label }}</h4>
-      <div class="category-fields">
+      <div class="category-fields" :class="{ 'single-column': singleColumn }">
         <div
           v-for="field in visibleFieldsOf(category)"
           :key="field.key"
@@ -703,6 +690,7 @@ defineExpose({ anchors, focusFirstError, scrollTo, validate });
                   :controls="false"
                   inputmode="decimal"
                   placeholder="长"
+                  :style="fieldControlStyle(field)"
                   :value="
                     (valueOf(field) as Record<string, number> | undefined)
                       ?.length
@@ -720,6 +708,7 @@ defineExpose({ anchors, focusFirstError, scrollTo, validate });
                   :controls="false"
                   inputmode="decimal"
                   placeholder="宽"
+                  :style="fieldControlStyle(field)"
                   :value="
                     (valueOf(field) as Record<string, number> | undefined)
                       ?.width
@@ -919,6 +908,11 @@ defineExpose({ anchors, focusFirstError, scrollTo, validate });
   gap: var(--form-gutter);
 }
 
+/* 平板 / 手机：字段单列（每字段占满一行，pages.md §5.2） */
+.category-fields.single-column .form-field {
+  flex-basis: 100%;
+}
+
 .form-field {
   display: flex;
   flex-wrap: wrap;
@@ -987,12 +981,27 @@ defineExpose({ anchors, focusFirstError, scrollTo, validate });
   align-items: center;
 }
 
+/* 手机：长 × 宽占满一行、两框均分（inputmode=decimal 弹数字键盘） */
+.form-mobile .pair-number {
+  width: 100%;
+}
+
+.form-mobile .pair-number :deep(.ant-input-number) {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
 .pair-separator {
   color: var(--form-text-secondary);
 }
 
 .option-detail {
   width: var(--form-field-short-text);
+}
+
+/* 手机：「其他」补充说明占满宽（与输入框占满宽同口径） */
+.form-mobile .option-detail {
+  width: 100%;
 }
 
 .previous-value {

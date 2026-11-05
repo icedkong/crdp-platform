@@ -7,6 +7,7 @@
   },
   "dependencies": {
     "@crdp/api": "workspace:*",
+    "@crdp/responsive": "workspace:*",
     "@crdp/rules": "workspace:*",
     "@crdp/tokens": "workspace:*",
     "ant-design-vue": "catalog:",
