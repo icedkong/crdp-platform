@@ -7,6 +7,7 @@ import { computed, onMounted, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import {
+  contactResultText,
   isTaskClaimable,
   isTaskEnterable,
   isTaskReassignable,
@@ -68,7 +69,8 @@ defineOptions({ name: 'FollowupTask' });
  * （followup:task:view，公共池自助）；行内「改派」与勾选批量改派走
  * POST /tasks/batch-assign（followup:task:assign），改派成功后新负责人收站内信。
  *
- * 「最近联系」列随 E15-T04 沟通记录（fu_contact_log）接入；C 的器械类型 /
+ * 「最近联系」列已随 E15-T04 沟通记录接入（该患者最新一条结果，中文由
+ * packages/api contactResultText 映射，无联系显示「—」）；C 的器械类型 /
  * 随访时间点 / 上次标红项数三列随 E21 / E17 开放；
  * 临时任务（+ 临时任务按钮）随 E15-T06；任务卡片手机响应式随 E24-T05。
  */
@@ -286,7 +288,7 @@ const dataSource = computed(() =>
     ...item,
     index: (pageNo.value - 1) * pageSize.value + index + 1,
     key: item.id,
-    lastContact: item.lastContactResult ?? '—',
+    lastContact: contactResultText(item.lastContactResult),
     statusText: taskDisplayStatus(item),
     window: taskWindowText(item.windowStart, item.windowEnd),
   })),

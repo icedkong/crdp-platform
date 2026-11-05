@@ -27,3 +27,17 @@ export function previewGrantExpired(
 ): boolean {
   return grant.expiresAt * 1000 <= now;
 }
+
+/**
+ * POST /api/hospital/files/{fileId}/download-url 的返回（E10-T05，followup:scan:download
+ * 敏感权限；5 分钟 HMAC 签名链接，每次签发写 DOWNLOAD 审计）。AMR 录音与 XLSX 只走下载。
+ */
+export interface FileDownloadGrant {
+  expiresAtEpochSecond: number;
+  format: string;
+  mime: string;
+  originalName: string;
+  sizeBytes: number;
+  /** 签名下载路径（相对路径，拼 API 基地址后 window.location 打开）。 */
+  url: string;
+}
