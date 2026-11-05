@@ -2,6 +2,7 @@ package com.crdp.server.notify;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -46,6 +47,24 @@ class WebhookConfigIT {
 
     @Autowired private TestRestTemplate rest;
     @Autowired private JdbcTemplate jdbc;
+
+    /**
+     * 普通测试上下文的 Webhook 投递轮询默认关闭（测试 classpath 初始化器注入
+     * crdp.webhook.delivery.scheduler-enabled=false）：多缓存上下文共享租户库， 未开联调开关的轮询会把别的上下文指向 127.0.0.1
+     * 的投递行按生产口径 SSRF「内网拒绝」定格 FAILED（WebhookDeliveryIT 曾因此 flaky）。 显式 opt-in 的装配见
+     * WebhookDeliveryIT（scheduler-enabled=true 时 bean 必须在）。
+     */
+    @Autowired(required = false)
+    private org.springframework.context.ApplicationContext context;
+
+    @Autowired(required = false)
+    private WebhookDeliveryScheduler webhookDeliveryScheduler;
+
+    @Test
+    void webhookDeliverySchedulerIsOffByDefaultInOrdinaryTestContexts() {
+        assertNotNull(context, "上下文应正常注入");
+        assertNull(webhookDeliveryScheduler, "未显式开启时轮询作业不应装配（生产 / 本地开发不受影响，matchIfMissing=true）");
+    }
 
     @BeforeEach
     void cleanState() {

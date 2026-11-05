@@ -54,6 +54,9 @@ import org.springframework.test.context.ActiveProfiles;
             "server.port=0",
             "crdp.outbox.dispatch.interval-ms=3600000",
             "crdp.webhook.allow-private-addresses=true",
+            // 本上下文显式保留真实轮询作业（测试 classpath 初始化器对其他 IT 上下文默认关闭：
+            // 多缓存上下文共享租户库，未开联调开关的轮询会把 127.0.0.1 投递行按内网拒绝定格 FAILED）
+            "crdp.webhook.delivery.scheduler-enabled=true",
             "crdp.webhook.delivery.tick-ms=3600000",
             "crdp.webhook.retry-base-ms=1000"
         })
@@ -81,6 +84,9 @@ class WebhookDeliveryIT {
     @Autowired private JdbcTemplate jdbc;
     @Autowired private OutboxDispatcher dispatcher;
     @Autowired private WebhookDeliveryService delivery;
+
+    /** 生产装配回归锁：本上下文显式 scheduler-enabled=true，轮询作业必须在（其余 IT 上下文默认关，见 WebhookConfigIT）。 */
+    @Autowired private WebhookDeliveryScheduler schedulerBean;
 
     @BeforeEach
     void startClean() throws IOException {

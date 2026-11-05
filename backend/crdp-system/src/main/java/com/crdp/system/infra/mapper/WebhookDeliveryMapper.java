@@ -24,8 +24,9 @@ public interface WebhookDeliveryMapper {
                     + " responseStatus, error, sent_at AS sentAt, created_at AS createdAt";
 
     /**
-     * 待投递行（轮询作业入口）。<b>到点过滤在 Java 侧做</b>：next_attempt_at 由 JVM 时钟写入， MySQL 容器时区可能与 JVM 不同（本地 / CI 是
-     * UTC vs Asia/Shanghai），SQL 里与 NOW(3) 比较会错位 8 小时； 服务用同一 JVM 时钟筛选后投递。
+     * 待投递行（轮询作业入口）。<b>到点过滤在 Java 侧做</b>：next_attempt_at 全程由 JVM 时钟写入（入队 / 重排 / 重试都是 {@code
+     * LocalDateTime.now(clock)} 参数，不用 MySQL NOW(3)——容器时钟与 JVM 有毫秒级偏差、且 MySQL 会话时区不保证与 JVM 一致，
+     * 混用会让新行「生在未来」被首轮轮询跳过），SQL 里与 NOW(3) 比较会错位 8 小时；服务用同一 JVM 时钟筛选后投递。
      */
     @Select(
             """
@@ -55,11 +56,11 @@ public interface WebhookDeliveryMapper {
               (webhook_id, outbox_event_id, event_type, object_type, object_id, payload,
                status, attempt, next_attempt_at)
             VALUES
-              (#{webhookId}, #{outboxEventId}, #{eventType}, #{objectType}, #{objectId},
-               #{payload}, 'PENDING', 0, NOW(3))
+              (#{row.webhookId}, #{row.outboxEventId}, #{row.eventType}, #{row.objectType},
+               #{row.objectId}, #{row.payload}, 'PENDING', 0, #{nextAttemptAt})
             """)
-    @Options(useGeneratedKeys = true, keyProperty = "id")
-    void insert(WebhookDeliveryInsert row);
+    @Options(useGeneratedKeys = true, keyProperty = "row.id")
+    void insert(WebhookDeliveryInsert row, @Param("nextAttemptAt") LocalDateTime nextAttemptAt);
 
     /** 投递成功：SENT + 响应码 + 时间。 */
     @Update(
@@ -99,14 +100,14 @@ public interface WebhookDeliveryMapper {
             @Param("responseStatus") Integer responseStatus,
             @Param("error") String error);
 
-    /** 手动重投（PLT-CFG-007）：FAILED → PENDING，从第 1 次重新计退避。 */
+    /** 手动重投（PLT-CFG-007）：FAILED → PENDING，从第 1 次重新计退避。 next_attempt_at 同样由调用方按 JVM 时钟传入（不入队即到期）。 */
     @Update(
             """
             UPDATE sys_webhook_delivery
-            SET status = 'PENDING', attempt = 0, next_attempt_at = NOW(3)
+            SET status = 'PENDING', attempt = 0, next_attempt_at = #{nextAttemptAt}
             WHERE id = #{id} AND status = 'FAILED'
             """)
-    int requeue(@Param("id") long id);
+    int requeue(@Param("id") long id, @Param("nextAttemptAt") LocalDateTime nextAttemptAt);
 
     /** 某 Webhook 的投递记录（配置页「投递记录」视图，按状态过滤）。 */
     @Select(

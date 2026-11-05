@@ -167,7 +167,7 @@ class WebhookDeliveryServiceTest {
                                             insert.getPayload(),
                                             "PENDING",
                                             0,
-                                            LocalDateTime.ofInstant(NOW, ZoneOffset.UTC),
+                                            inv.getArgument(1), // 服务侧 JVM 时钟传入（入队即到期）
                                             null,
                                             null,
                                             null,
@@ -175,7 +175,7 @@ class WebhookDeliveryServiceTest {
                             return null;
                         })
                 .when(deliveries)
-                .insert(any(WebhookDeliveryInsert.class));
+                .insert(any(WebhookDeliveryInsert.class), any(LocalDateTime.class));
         lenient()
                 .when(deliveries.listPending(anyInt()))
                 .thenAnswer(
@@ -265,7 +265,7 @@ class WebhookDeliveryServiceTest {
                             return 1;
                         });
         lenient()
-                .when(deliveries.requeue(anyLong()))
+                .when(deliveries.requeue(anyLong(), any(LocalDateTime.class)))
                 .thenAnswer(
                         inv -> {
                             replace(
@@ -281,7 +281,7 @@ class WebhookDeliveryServiceTest {
                                                     row.payload(),
                                                     "PENDING",
                                                     0,
-                                                    LocalDateTime.ofInstant(NOW, ZoneOffset.UTC),
+                                                    inv.getArgument(1), // 同上，JVM 时钟
                                                     row.responseStatus(),
                                                     null,
                                                     row.sentAt(),

@@ -205,7 +205,8 @@ public class WebhookDeliveryService {
                             type.name(),
                             type.objectType(),
                             objectId,
-                            body));
+                            body),
+                    LocalDateTime.now(clock)); // 入队即到期（JVM 时钟，与轮询判定同钟，见 mapper 注释）
         }
     }
 
@@ -328,7 +329,8 @@ public class WebhookDeliveryService {
                         WebhookEventType.WEBHOOK_TEST.objectType(),
                         String.valueOf(webhookId),
                         body);
-        deliveries.insert(insert); // useGeneratedKeys 回填投递号（X-CRDP-Delivery）
+        deliveries.insert(
+                insert, LocalDateTime.now(clock)); // useGeneratedKeys 回填投递号（X-CRDP-Delivery）
         WebhookDeliveryRow row =
                 new WebhookDeliveryRow(
                         insert.getId(),
@@ -389,7 +391,7 @@ public class WebhookDeliveryService {
         if (!STATUS_FAILED.equals(delivery.status())) {
             throw new ApiException(400, 40001, "只有失败的投递可以重投");
         }
-        boolean requeued = deliveries.requeue(deliveryId) > 0;
+        boolean requeued = deliveries.requeue(deliveryId, LocalDateTime.now(clock)) > 0;
         return new RedeliverResult(DeliveryView.of(deliveries.find(deliveryId)), requeued);
     }
 
