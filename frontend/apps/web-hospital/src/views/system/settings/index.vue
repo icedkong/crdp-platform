@@ -11,14 +11,16 @@ import { usePermission } from '#/reference/use-permission';
 import BrandPanel from './brand-panel.vue';
 import DictPanel from './dict-panel.vue';
 import ParamPanel from './param-panel.vue';
+import WebhookPanel from './webhook-panel.vue';
 
 defineOptions({ name: 'HospitalSettings' });
 
 /**
- * E06-T11 / E06-T10 · pages.md §10「机构设置」（/system/settings）：按权限展示页签——
+ * E06-T11 / E06-T10 / E09-T06 · pages.md §10「机构设置」（/system/settings）：按权限展示页签——
  * 个性化（tenant:brand:edit）、租户参数（tenant:param:edit，PLT-CFG-004）、
- * 租户字典（tenant:dict:edit，PLT-CFG-002）；无对应权限的页签隐藏（前端隐藏不能代替后端校验）。
- * 通知模板 / Webhook / 安全设置页签随后续任务扩展。仅桌面 / 平板。
+ * 租户字典（tenant:dict:edit，PLT-CFG-002）、Webhook（tenant:webhook:edit，PLT-CFG-007）；
+ * 无对应权限的页签隐藏（前端隐藏不能代替后端校验）。
+ * 通知模板 / 安全设置页签随后续任务扩展。仅桌面 / 平板。
  */
 const { isMobile } = useBreakpoint();
 const { hasPermission } = usePermission();
@@ -28,13 +30,22 @@ const activeTab = ref('brand');
 const canBrand = hasPermission('tenant:brand:edit');
 const canParam = hasPermission('tenant:param:edit');
 const canDict = hasPermission('tenant:dict:edit');
+const canWebhook = hasPermission('tenant:webhook:edit');
 
 // 默认落在第一个有权限的页签（菜单本身按 tenant:brand:edit 下发，但按钮权限可能只有部分）
 if (!canBrand) {
-  activeTab.value = canParam ? 'param' : 'dict';
+  if (canParam) {
+    activeTab.value = 'param';
+  } else if (canDict) {
+    activeTab.value = 'dict';
+  } else {
+    activeTab.value = 'webhook';
+  }
 }
 
-const noPermission = computed(() => !canBrand && !canParam && !canDict);
+const noPermission = computed(
+  () => !canBrand && !canParam && !canDict && !canWebhook,
+);
 </script>
 
 <template>
@@ -48,7 +59,7 @@ const noPermission = computed(() => !canBrand && !canParam && !canDict);
   <Page
     v-else-if="!noPermission"
     title="机构设置"
-    description="本院在登录页与系统内的呈现、租户参数与租户字典。保存后即时生效并记录操作日志。"
+    description="本院在登录页与系统内的呈现、租户参数、租户字典与 Webhook。保存后即时生效并记录操作日志。"
   >
     <Tabs v-model:active-key="activeTab">
       <TabPane v-if="canBrand" key="brand" tab="个性化">
@@ -59,6 +70,9 @@ const noPermission = computed(() => !canBrand && !canParam && !canDict);
       </TabPane>
       <TabPane v-if="canDict" key="dict" tab="字典">
         <DictPanel />
+      </TabPane>
+      <TabPane v-if="canWebhook" key="webhook" tab="Webhook">
+        <WebhookPanel />
       </TabPane>
     </Tabs>
   </Page>

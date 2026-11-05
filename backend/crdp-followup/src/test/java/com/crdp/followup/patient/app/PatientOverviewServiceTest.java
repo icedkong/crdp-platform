@@ -471,6 +471,25 @@ class PatientOverviewServiceTest {
         verify(statusGateway, never()).historyOf(anyLong());
     }
 
+    /**
+     * 完成日期按北京业务日（AGENTS.md §6）：锚定「北京 2026-11-06 03:32」（= UTC 2026-11-05 19:32，两时区日历日不同），
+     * 无论服务器时区是什么， completed_at 换算后都必须给北京日。UTC 服务器（CI 容器）上旧实现 toLocalDate() 会给 11-05——正是
+     * BackfillTimelineIT 在 CI 16:00–24:00 UTC 时段的 flaky 根因。
+     */
+    @Test
+    void beijingDoneDateUsesBusinessZoneNotServerWallClock() {
+        java.time.Instant beijingEarlyMorning =
+                LocalDateTime.of(2026, 11, 6, 3, 32)
+                        .atZone(java.time.ZoneId.of("Asia/Shanghai"))
+                        .toInstant();
+        LocalDateTime serverWallClock =
+                LocalDateTime.ofInstant(beijingEarlyMorning, java.time.ZoneId.systemDefault());
+
+        assertEquals(
+                LocalDate.of(2026, 11, 6), PatientOverviewService.beijingDoneDate(serverWallClock));
+        assertNull(PatientOverviewService.beijingDoneDate(null), "未完成任务无完成日期");
+    }
+
     // ---------------------------------------------------------------- 夹具
 
     private static PatientOverviewMapper.OverviewRow row(String status) {

@@ -12,6 +12,8 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -55,6 +57,12 @@ public class PatientOverviewService {
 
     /** 转病区（A-WARD-005，E13-T08）：管理动作，不受随访状态限制（终止患者的病区归属仍可调整）。 */
     private static final String PERM_PATIENT_TRANSFER = "followup:patient:transfer";
+
+    /**
+     * 业务日期按北京时间（AGENTS.md §6）：时间轴「完成日期」从 completed_at（服务器墙钟）换算北京业务日， 与窗口 / 计划日期同口径——CI 容器是 UTC，直接
+     * toLocalDate() 在北京时间跨日时段（每天 00:00–08:00 北京）会差一天。
+     */
+    private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Shanghai");
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -251,7 +259,7 @@ public class PatientOverviewService {
                             task.planDate(),
                             task.windowStart(),
                             task.windowEnd(),
-                            task.completedAt() == null ? null : task.completedAt().toLocalDate(),
+                            beijingDoneDate(task.completedAt()),
                             cell[0],
                             cell[1],
                             canOpen(task),
@@ -469,6 +477,17 @@ public class PatientOverviewService {
     /** 时间轴同类节点稳定次序：出院在状态事件之前（登记日同时有状态变更时）。 */
     private static int kindRank(TimelineEntryView entry) {
         return "DISCHARGE".equals(entry.kind()) ? 0 : 1;
+    }
+
+    /**
+     * 完成日期 = completed_at（服务器墙钟）对应的北京业务日（AGENTS.md §6 业务日期按 Asia/Shanghai）。 服务器在 UTC 容器里时（CI /
+     * 部署不保证时区），直接 {@code toLocalDate()} 在北京 00:00–08:00 时段会早一天。
+     */
+    static LocalDate beijingDoneDate(LocalDateTime completedAt) {
+        return completedAt == null
+                ? null
+                : LocalDate.ofInstant(
+                        completedAt.atZone(ZoneId.systemDefault()).toInstant(), BUSINESS_ZONE);
     }
 
     private String decrypt(String cipher) {

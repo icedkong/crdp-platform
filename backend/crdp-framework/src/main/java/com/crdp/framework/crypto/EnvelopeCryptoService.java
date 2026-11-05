@@ -82,6 +82,28 @@ public class EnvelopeCryptoService implements CryptoService {
         }
     }
 
+    /** 外部共享密钥（Webhook secret 等）的 HMAC-SHA256：小写十六进制，不依赖租户上下文（见接口注释）。 */
+    @Override
+    public String hmacSha256Hex(byte[] key, String data) {
+        if (key == null || key.length == 0) {
+            throw new ApiException(400, 40002, "HMAC 密钥不能为空");
+        }
+        try {
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new javax.crypto.spec.SecretKeySpec(key, "HmacSHA256"));
+            byte[] digest =
+                    mac.doFinal((data == null ? "" : data).getBytes(StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder(digest.length * 2);
+            for (byte b : digest) {
+                hex.append(Character.forDigit((b >> 4) & 0xF, 16));
+                hex.append(Character.forDigit(b & 0xF, 16));
+            }
+            return hex.toString();
+        } catch (GeneralSecurityException ex) {
+            throw new ApiException(500, 50000, "系统繁忙，请稍后再试");
+        }
+    }
+
     private static void requirePurpose(String purpose) {
         if (purpose == null || !PURPOSE.matcher(purpose).matches()) {
             throw new ApiException(400, 40002, "加密用途不合法");

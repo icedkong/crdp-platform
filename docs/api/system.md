@@ -106,7 +106,7 @@ E06-T02 已实现（院区与科室树；病区字典属 `crdp-followup`，科�
 |---|---|---|
 | 个性化 | `/api/hospital/system/brand`（`cfg_brand`，E06-T11 已实现，见 §4.1） | `tenant:brand:edit` |
 | 安全设置 | `/api/hospital/system/security-policy`（不得低于平台下限） | `tenant:security:edit` |
-| Webhook | `/api/hospital/system/webhooks`（`cfg_webhook`，见 `notify.md`） | `tenant:webhook:edit` |
+| Webhook | `/api/hospital/system/webhooks`（`sys_webhook`，E09-T06 已实现，见 `notify.md` §6） | `tenant:webhook:edit` |
 
 ### 4.1 个性化（E06-T11 / PLT-CFG-008 已实现）
 
