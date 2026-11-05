@@ -155,3 +155,16 @@ export function headerSummary(
   if (!context) return visitDate ? `补录 · 实际随访日期 ${visitDate}` : '';
   return `${context.nodeName ?? ''} · 计划 ${context.planDate} · 窗口 ${context.windowStart} ~ ${context.windowEnd}`;
 }
+
+/**
+ * 本地草稿键（E25-T02 / NFR-SAVE-002，design-system §13）：
+ * `${tenantId}:${userId}:${kind}:${id}` —— 键含租户、用户、记录 ID，跨租户 / 跨用户
+ * 互不可见；租户标识取会话 tenantCode（医院端登录会话即租户内用户）。
+ */
+export function draftRecordKey(
+  tenantCode: null | string | undefined,
+  userId: null | number | string | undefined,
+  recordId: string,
+): string {
+  return `${tenantCode ?? ''}:${userId ?? ''}:followup:${recordId}`;
+}

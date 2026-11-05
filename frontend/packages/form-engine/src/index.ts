@@ -1,3 +1,23 @@
+/**
+ * E25-T02 / NFR-SAVE-001/002/003 · 自动保存（components.md §1.4 useAutoSave）：
+ * 服务器草稿每 2 分钟（仅有改动）、本地草稿每 30 秒 + blur 写 IndexedDB、
+ * 离线暂存与恢复网络立即同步、409 冲突暂停并进入冲突流程（不做字段级合并）。
+ */
+export {
+  asDraftConflictDetail,
+  type AutoSaveApi,
+  type AutoSaveConflict,
+  type AutoSaveOptions,
+  type AutoSaveSavedView,
+  type AutoSaveStatus,
+  autoSaveStatusText,
+  type AutoSaveTrigger,
+  type DraftConflictDetail,
+  DraftConflictError,
+  type DraftDiffField,
+  hhmmOf,
+  useAutoSave,
+} from './auto-save';
 export {
   applyCarryOver,
   canCarryOver,
@@ -21,7 +41,6 @@ export {
   previousValueText,
   readonlyFieldValue,
 } from './format-value';
-
 export {
   anchorId,
   type CategoryAnchor,
@@ -35,6 +54,14 @@ export {
   type RendererCategory,
   type RendererField,
 } from './layout';
+
+export {
+  clearAllLocalDrafts,
+  createIndexedDbDraftStorage,
+  createMemoryDraftStorage,
+  type LocalDraftSnapshot,
+  type LocalDraftStorage,
+} from './local-draft-store';
 export {
   applyMultiselectChange,
   exclusiveCodes,
