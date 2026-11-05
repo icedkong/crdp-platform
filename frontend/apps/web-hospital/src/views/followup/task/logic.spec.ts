@@ -63,16 +63,19 @@ describe('statusOfQuery（status= 逗号分隔枚举）', () => {
 describe('buildSearchPayload（检索请求装配）', () => {
   it('mINE 未显式选状态时不传 status（后端按未完成四态取）', () => {
     const payload = buildSearchPayload({
+      assignee: 'ALL',
       scope: 'MINE',
       status: null,
       wardIds: [],
     });
     expect(payload.status).toBeUndefined();
     expect(payload.scope).toBe('MINE');
+    expect(payload.unassigned).toBeUndefined();
   });
 
   it('显式筛选全部装配（状态 / 病区 / 计划日期窗口）', () => {
     const payload = buildSearchPayload({
+      assignee: 'ALL',
       scope: 'WARD',
       status: ['COMPLETED', 'OVERDUE'],
       wardIds: [3, 7],
@@ -85,6 +88,16 @@ describe('buildSearchPayload（检索请求装配）', () => {
       dueFrom: '2026-10-01',
       dueTo: '2026-11-30',
     });
+  });
+
+  it('负责人选「待认领」时带 unassigned（病区公共池，A-FU-009 / E15-T03）', () => {
+    const payload = buildSearchPayload({
+      assignee: 'UNASSIGNED',
+      scope: 'ALL',
+      status: null,
+      wardIds: [],
+    });
+    expect(payload.unassigned).toBe(true);
   });
 });
 
@@ -144,11 +157,28 @@ describe('recordFormPath / queueFilterOfQuery（筛选随链接往返）', () =>
     expect(queueFilterOfQuery(query)).toEqual({
       scope: 'WARD',
       status: ['PENDING', 'OVERDUE'],
+      unassigned: false,
       wardIds: [3, 7],
     });
   });
 
+  it('待认领筛选随链接往返（队列顺当前列表，E15-T03）', () => {
+    const path = recordFormPath('702', { scope: 'ALL', unassigned: true });
+    expect(path).toContain('unassigned=1');
+    const query: Record<string, unknown> = {};
+    for (const [key, value] of new URLSearchParams(path.split('?')[1])) {
+      query[key] = value;
+    }
+    expect(queueFilterOfQuery(query)).toEqual({
+      scope: 'ALL',
+      unassigned: true,
+    });
+  });
+
   it('无筛选时回落我的待办', () => {
-    expect(queueFilterOfQuery({})).toEqual({ scope: 'MINE' });
+    expect(queueFilterOfQuery({})).toEqual({
+      scope: 'MINE',
+      unassigned: false,
+    });
   });
 });

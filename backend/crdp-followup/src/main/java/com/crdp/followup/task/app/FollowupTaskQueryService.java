@@ -86,6 +86,7 @@ public class FollowupTaskQueryService {
             LocalDate dueTo,
             String nodeName,
             String keyword,
+            Boolean unassigned,
             Integer pageNo,
             Integer pageSize) {}
 
@@ -210,7 +211,7 @@ public class FollowupTaskQueryService {
     // ---------------------------------------------------------------- 内部
 
     private static SearchRequest emptyRequest() {
-        return new SearchRequest(null, null, null, null, null, null, null, null, null, null);
+        return new SearchRequest(null, null, null, null, null, null, null, null, null, null, null);
     }
 
     /** 条件装配（检索词盲索引、筛选校验；scope 与 userId 由调用方解析）。 */
@@ -235,7 +236,8 @@ public class FollowupTaskQueryService {
                 safe.dueTo(),
                 normalizeNodeName(safe.nodeName()),
                 nameBlind,
-                mrnBlind);
+                mrnBlind,
+                Boolean.TRUE.equals(safe.unassigned()));
     }
 
     /** cursor 任务的计划日期（keyset 队列定位）；越范围 / 不存在时 null（队列两头置空）。 */
@@ -381,6 +383,8 @@ public class FollowupTaskQueryService {
                 + ","
                 + safe.dueTo()
                 + "]"
+                + ",unassigned="
+                + Boolean.TRUE.equals(safe.unassigned())
                 + ",keyword="
                 + (safe.keyword() == null || safe.keyword().isBlank() ? "no" : "yes");
     }
