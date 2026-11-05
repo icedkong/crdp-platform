@@ -97,12 +97,19 @@ public interface FollowupTaskMapper {
             """)
     PatientOwnerRow findOwnerContext(long patientId);
 
-    /** 该次任务是否已存在（uk 口径：入组 + 节点 + 第 N 次；存在即跳过，重复执行 / 补跑重放不重复创建）。 */
+    /**
+     * 该次主任务是否已存在（存在即跳过，重复执行 / 补跑重放不重复创建）。
+     *
+     * <p>只看 {@code followup_seq = 0}：V57 起同窗口的未联系到跟进任务（E15-T05 / A-FU-024）共用 入组 + 节点 + 第 N 次（uk 加
+     * followup_seq 区分），若不过滤会一次命中 1 + N 行，selectOne 抛 TooManyResultsException 使整个入组被当日调度跳过
+     * ——同患者后续次数的任务建不出来（E15-T08 链路用例发现，A-FU-001 × A-FU-024 交互）。
+     */
     @IgnoreScope(reason = "调度幂等判定（uk 入组 + 节点 + 第 N 次的存在性）：只取任务 id 存在性，" + "不输出患者或任务明细")
     @Select(
             """
             SELECT id FROM fu_task
             WHERE enrollment_id = #{enrollmentId} AND node_id = #{nodeId} AND occurrence = #{occurrence}
+              AND followup_seq = 0
             """)
     Long findTaskId(
             @Param("enrollmentId") long enrollmentId,
