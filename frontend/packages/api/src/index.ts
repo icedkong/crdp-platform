@@ -181,6 +181,26 @@ export type {
   TenantParamView,
 } from './config';
 
+// E15-T04 沟通记录与录音（A-FU-006、A-FU-025、C-FU-019；pages.md §4.8）
+export {
+  CONTACT_METHOD_OPTIONS,
+  CONTACT_METHOD_TEXT,
+  CONTACT_RESULT_OPTIONS,
+  CONTACT_RESULT_TEXT,
+  contactFollowupHint,
+  contactMethodText,
+  contactResultText,
+} from './contact';
+export type {
+  ContactAudioFile,
+  ContactLogCreateRequest,
+  ContactLogCreateResult,
+  ContactLogPage,
+  ContactLogRow,
+  ContactLogUpdateRequest,
+  ContactMethod,
+  ContactResult,
+} from './contact';
 export {
   DEPT_IMPORT_COLUMNS,
   deptImportActionText,
@@ -214,7 +234,7 @@ export {
   tenantModuleStatusText,
   tenantStatusText,
 } from './enums';
-export type { FilePreviewGrant } from './file';
+export type { FileDownloadGrant, FilePreviewGrant } from './file';
 export { previewGrantExpired } from './file';
 // E11-T01 字段字典（A-FLD-001、A-FLD-002、C-FLD-001：显示名与编码分离，字段可启停）
 export {

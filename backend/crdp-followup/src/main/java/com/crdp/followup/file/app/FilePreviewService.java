@@ -47,6 +47,7 @@ public class FilePreviewService {
     private final AuditLogger audit;
     private final FilePreviewProperties properties;
     private final StringRedisTemplate redis;
+    private final ContactAudioScopePort contactScope;
 
     public FilePreviewService(
             SysFileMapper files,
@@ -54,13 +55,25 @@ public class FilePreviewService {
             FilePreviewTokenStore tokens,
             AuditLogger audit,
             FilePreviewProperties properties,
-            StringRedisTemplate redis) {
+            StringRedisTemplate redis,
+            ContactAudioScopePort contactScope) {
         this.files = files;
         this.storage = storage;
         this.tokens = tokens;
         this.audit = audit;
         this.properties = properties;
         this.redis = redis;
+        this.contactScope = contactScope;
+    }
+
+    /**
+     * 沟通录音的患者数据范围校验端口（E15-T04）：文件挂沟通记录时校验患者可见性， 未挂或不可见一律 40400（不暴露存在）。放在 file 子域的 app 层接口，避免 file →
+     * contact 的 反向编译依赖（依赖方向 contact → file）；实现由 contact 子域提供。
+     */
+    public interface ContactAudioScopePort {
+
+        /** 文件未挂沟通记录 → 直接放行；挂了 → 按患者数据范围校验，越范围 40400。 */
+        void requireAudioPlayable(long fileId);
     }
 
     /** 签发结果：短时链接 + 展示与播放判定所需字段（前端不缓存，用完即弃）。 */
@@ -82,6 +95,9 @@ public class FilePreviewService {
         if (row == null || "DELETED".equals(row.getStatus())) {
             throw notFound();
         }
+        // E15-T04：挂在沟通记录上的录音按患者数据范围校验（OQ-62① 的沟通录音部分提前收紧）；
+        // 未挂沟通记录的文件维持「登录 + 本院台账」口径，报告单文件的范围随 E16 报告单子域
+        contactScope.requireAudioPlayable(fileId);
         relativeKeyOf(row.getObjectKey(), principal.tenantCode());
         String token = tokens.issue(principal.tenantId(), principal.tenantCode(), fileId);
         audit.append(

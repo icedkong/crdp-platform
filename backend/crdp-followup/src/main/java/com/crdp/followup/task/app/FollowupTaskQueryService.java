@@ -1,5 +1,6 @@
 package com.crdp.followup.task.app;
 
+import com.crdp.followup.contact.app.ContactLogService;
 import com.crdp.followup.patient.app.PatientRegistrationService;
 import com.crdp.followup.patient.infra.mapper.PatientMapper;
 import com.crdp.followup.task.infra.mapper.FollowupTaskQueryMapper;
@@ -13,6 +14,7 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import org.springframework.stereotype.Service;
 
@@ -33,7 +35,8 @@ import org.springframework.stereotype.Service;
  * </ul>
  *
  * <p>C 侧（C-FU-020 沿用 A 的任务列表）：行结构同构；器械类型 / 随访时间点 / 上次标红项数三列随 E21 植入数据与 E17 对比标红落地（本任务先行返回 null
- * 位）。「最近联系」列随 E15-T04 沟通记录（fu_contact_log）接入。
+ * 位）。「最近联系」列已随 E15-T04 沟通记录接入：每患者最新一条 fu_contact_log 的结果编码， 中文映射在前端 packages/api（components.md §2
+ * contact 域）。
  */
 @Service
 public class FollowupTaskQueryService {
@@ -62,16 +65,19 @@ public class FollowupTaskQueryService {
     private final PatientMapper patientMapper;
     private final CryptoService crypto;
     private final AuditLogger audit;
+    private final ContactLogService contactLogs;
 
     public FollowupTaskQueryService(
             FollowupTaskQueryMapper mapper,
             PatientMapper patientMapper,
             CryptoService crypto,
-            AuditLogger audit) {
+            AuditLogger audit,
+            ContactLogService contactLogs) {
         this.mapper = mapper;
         this.patientMapper = patientMapper;
         this.crypto = crypto;
         this.audit = audit;
+        this.contactLogs = contactLogs;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -151,10 +157,14 @@ public class FollowupTaskQueryService {
         FollowupTaskQueryMapper.TaskCriteria criteria =
                 criteriaOf(scope, status, openOnly, safe, currentUserId());
 
+        List<FollowupTaskQueryMapper.TaskRowRaw> rows =
+                mapper.search(criteria, (pageNo - 1) * pageSize, pageSize);
+        // 「最近联系」列（E15-T04 接入，A 规格 §主要页面 1）：每患者最新一条沟通记录的结果，
+        // 与行查询同一数据范围（ContactLogMapper 语句上的 @DataScope 出行，越范围患者不可见）
+        Map<Long, String> latestContacts = contactLogs.latestResultByPatients(patientIdsOf(rows));
         List<TaskRowView> items = new ArrayList<>();
-        for (FollowupTaskQueryMapper.TaskRowRaw row :
-                mapper.search(criteria, (pageNo - 1) * pageSize, pageSize)) {
-            items.add(toView(row));
+        for (FollowupTaskQueryMapper.TaskRowRaw row : rows) {
+            items.add(toView(row, latestContacts.get(row.patientId())));
         }
         long total = mapper.count(criteria);
         FollowupTaskQueryMapper.TabCountRow counts = mapper.tabCounts(criteria);
@@ -249,7 +259,7 @@ public class FollowupTaskQueryService {
     }
 
     /** 行视图：姓名 / 病案号解密后脱敏（列表不提供逐行明文，明文走 E07-T05 专用接口）。 */
-    private TaskRowView toView(FollowupTaskQueryMapper.TaskRowRaw row) {
+    private TaskRowView toView(FollowupTaskQueryMapper.TaskRowRaw row, String lastContactResult) {
         String name = decrypt(row.nameCipher());
         String mrn = decrypt(row.mrnCipher());
         return new TaskRowView(
@@ -271,8 +281,13 @@ public class FollowupTaskQueryService {
                 row.recordId() == null ? null : String.valueOf(row.recordId()),
                 row.assigneeName(),
                 row.nextPlanDate(),
-                // E15-T04 沟通记录落地前无最近联系数据（列显示「—」）
-                null);
+                // E15-T04「最近联系」：该患者最新一条沟通记录的结果编码（前端映射中文），无联系时 null（列显示「—」）
+                lastContactResult);
+    }
+
+    /** 本页去重患者 id（「最近联系」批量取数）。 */
+    private static List<Long> patientIdsOf(List<FollowupTaskQueryMapper.TaskRowRaw> rows) {
+        return rows.stream().map(FollowupTaskQueryMapper.TaskRowRaw::patientId).distinct().toList();
     }
 
     private String decrypt(String cipher) {

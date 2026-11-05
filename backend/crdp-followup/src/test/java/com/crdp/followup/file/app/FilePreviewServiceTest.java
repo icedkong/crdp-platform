@@ -81,7 +81,15 @@ class FilePreviewServiceTest {
         properties.setTtlSeconds(300);
         properties.setIpHourlyLimit(600);
         tokens = new FilePreviewTokenStore(redis, new TokenGenerator(), properties);
-        service = new FilePreviewService(files, storage, tokens, audit, properties, redis);
+        service =
+                new FilePreviewService(
+                        files,
+                        storage,
+                        tokens,
+                        audit,
+                        properties,
+                        redis,
+                        (FilePreviewService.ContactAudioScopePort) fileId -> {});
         lenient().when(redis.opsForValue()).thenReturn(valueOps);
     }
 
@@ -170,7 +178,14 @@ class FilePreviewServiceTest {
         FilePreviewTokenStore cappedTokens =
                 new FilePreviewTokenStore(redis, new TokenGenerator(), loose);
         FilePreviewService capped =
-                new FilePreviewService(files, storage, cappedTokens, audit, loose, redis);
+                new FilePreviewService(
+                        files,
+                        storage,
+                        cappedTokens,
+                        audit,
+                        loose,
+                        redis,
+                        (FilePreviewService.ContactAudioScopePort) fileId -> {});
         stubRow(row("t/demoa/files/202611/x.pdf", "pdf", "application/pdf", "PENDING"));
         capped.previewUrl(FILE_ID);
         verify(valueOps)

@@ -87,7 +87,15 @@ class FileDownloadServiceTest {
         properties.setIpHourlyLimit(600);
         properties.setSigningKey(KEY);
         signer = new FileDownloadSigner(properties.getSigningKey());
-        service = new FileDownloadService(files, storage, signer, audit, properties, redis);
+        service =
+                new FileDownloadService(
+                        files,
+                        storage,
+                        signer,
+                        audit,
+                        properties,
+                        redis,
+                        (FilePreviewService.ContactAudioScopePort) fileId -> {});
         lenient().when(redis.opsForValue()).thenReturn(valueOps);
     }
 
@@ -170,7 +178,8 @@ class FileDownloadServiceTest {
                         new FileDownloadSigner(loose.getSigningKey()),
                         audit,
                         loose,
-                        redis);
+                        redis,
+                        (FilePreviewService.ContactAudioScopePort) fileId -> {});
         stubRow(row("t/demoa/files/202611/x.pdf", "pdf", "application/pdf", "PENDING"));
 
         FileDownloadService.DownloadGrant grant = capped.downloadUrl(FILE_ID);

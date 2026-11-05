@@ -216,6 +216,10 @@ export const statusTone: Record<string, StatusTone> = {
   失访候选: 'warning',
   未接通: 'warning',
   未联系到: 'warning',
+  号码错误: 'warning', // E15-T04 联系结果（components.md §2 contact 域）
+  拒访: 'warning', // 不计入失访，改走移出计划（A-FU-012）
+  家属代答: 'success',
+  告知已故: 'default', // 保存后触发死亡终止（A-FU-007）
   未发布: 'warning',
   待录入: 'warning',
   未指定位置: 'warning',

@@ -4,6 +4,7 @@ import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Options;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
 /**
  * 文件上传台账表 sys_file（E10-T01 / 租户库 followup V25）。调用前必须已在租户上下文。 sys_file 不在
@@ -39,4 +40,18 @@ public interface SysFileMapper {
     /** 按 SHA-256 数同哈希文件（C-SCAN-017 重复提示的口径；只统计未删除行）。 */
     @Select("SELECT COUNT(*) FROM sys_file WHERE sha256 = #{sha256} AND status <> 'DELETED'")
     int countBySha256(@org.apache.ibatis.annotations.Param("sha256") String sha256);
+
+    /**
+     * 关联沟通记录录音（E15-T04 / A-FU-025）：PENDING → ATTACHED（守卫更新，落空 0 = 已关联他处或已删除， 调用方按 40001
+     * 转译，防止同一文件挂两条沟通记录；报告单关联随 E16 复用同一状态机）。
+     */
+    @Update("UPDATE sys_file SET status = 'ATTACHED' WHERE id = #{id} AND status = 'PENDING'")
+    int markAttached(@org.apache.ibatis.annotations.Param("id") long id);
+
+    /**
+     * 删除沟通记录连带软删录音（E15-T04；A-ATT-017「在任一处删除即两处同时删除」）：非 DELETED → DELETED。对象本体清理策略随 E10-T05 /
+     * E16（当前软删即可，预览与下载都会按 DELETED 拒绝）。
+     */
+    @Update("UPDATE sys_file SET status = 'DELETED' WHERE id = #{id} AND status <> 'DELETED'")
+    int markDeleted(@org.apache.ibatis.annotations.Param("id") long id);
 }

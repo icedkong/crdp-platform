@@ -44,6 +44,7 @@ public class FileDownloadService {
     private final AuditLogger audit;
     private final FileDownloadProperties properties;
     private final StringRedisTemplate redis;
+    private final FilePreviewService.ContactAudioScopePort contactScope;
 
     public FileDownloadService(
             SysFileMapper files,
@@ -51,13 +52,15 @@ public class FileDownloadService {
             FileDownloadSigner signer,
             AuditLogger audit,
             FileDownloadProperties properties,
-            StringRedisTemplate redis) {
+            StringRedisTemplate redis,
+            FilePreviewService.ContactAudioScopePort contactScope) {
         this.files = files;
         this.storage = storage;
         this.signer = signer;
         this.audit = audit;
         this.properties = properties;
         this.redis = redis;
+        this.contactScope = contactScope;
     }
 
     /** 签发结果：短时签名链接 + 展示所需字段（前端不缓存，用完即弃）。 */
@@ -79,6 +82,8 @@ public class FileDownloadService {
         if (row == null || "DELETED".equals(row.getStatus())) {
             throw notFound();
         }
+        // E15-T04：挂在沟通记录上的录音按患者数据范围校验（A-FU-025 下载走敏感权限 + 患者范围双闸）
+        contactScope.requireAudioPlayable(fileId);
         relativeKeyOf(row.getObjectKey(), principal.tenantCode());
         Instant expiresAt = Instant.now().plusSeconds(properties.effectiveTtlSeconds());
         String token = signer.sign(principal.tenantId(), principal.tenantCode(), fileId, expiresAt);

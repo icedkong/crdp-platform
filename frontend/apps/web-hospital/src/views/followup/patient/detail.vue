@@ -1,5 +1,6 @@
 <script lang="ts" setup>
 import type {
+  ContactLogRow,
   PatientContactVersion,
   PatientOverview,
   PatientStatusHistoryRow,
@@ -7,11 +8,13 @@ import type {
   PatientWardHistoryItem,
 } from '@crdp/api';
 
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import {
   completenessText,
+  contactMethodText,
+  contactResultText,
   contactSlotText,
   contactSourceText,
   dischargeStatusText,
@@ -22,6 +25,7 @@ import {
   statusSourceText,
   survivalStatusText,
 } from '@crdp/api';
+import { StatusTag } from '@crdp/status-tag';
 import {
   Alert,
   Button,
@@ -29,23 +33,22 @@ import {
   DescriptionsItem,
   Drawer,
   message,
+  Modal,
   Result,
   Spin,
   Table,
   TabPane,
   Tabs,
+  Tooltip,
 } from 'ant-design-vue';
 
-import {
-  fetchPatientContactInfo,
-  fetchPatientStatusHistory,
-  fetchPatientSummary,
-  fetchPatientTimeline,
-  fetchPatientWardHistory,
-} from '#/api/core/patient';
+import { deleteContactLog, fetchPatientContacts } from '#/api/core/contact';
+import AudioPlayer from '#/components/followup/audio-player.vue';
+import ContactLogModal from '#/components/followup/contact-log-modal.vue';
 import FollowupTimeline from '#/components/followup/followup-timeline.vue';
 import PatientHeader from '#/components/followup/patient-header.vue';
 import TransferWardModal from '#/components/followup/transfer-ward-modal.vue';
+import { usePermission } from '#/reference/use-permission';
 
 defineOptions({ name: 'FollowupPatientDetail' });
 
@@ -140,6 +143,113 @@ function handleTransferred() {
   void router.replace('/followup/patient');
 }
 
+// ---------------------------------------------------------------- E15-T04 沟通记录页签（pages.md §4.8）
+
+const { hasPermission } = usePermission();
+const canEditRecord = computed(() => hasPermission('followup:record:edit'));
+const canDownload = computed(() => hasPermission('followup:scan:download'));
+
+const contactLogs = ref<ContactLogRow[]>([]);
+const contactLogsTotal = ref(0);
+const contactLogsPage = ref(1);
+const contactLogsLoading = ref(false);
+const contactModalOpen = ref(false);
+const editingRow = ref<ContactLogRow | null>(null);
+/** 患者已终止（死亡 / 停止 / 失访）时「记录沟通」置灰（pages.md §4.10，后端 terminated 口径）。 */
+const followupTerminated = computed(() => overview.value?.terminated ?? false);
+
+async function loadContactLogs(page = 1) {
+  contactLogsLoading.value = true;
+  try {
+    const pageResult = await fetchPatientContacts(patientId.value, {
+      pageNo: page,
+      pageSize: 20,
+    });
+    contactLogs.value = pageResult.items;
+    contactLogsTotal.value = pageResult.total;
+    contactLogsPage.value = pageResult.pageNo;
+  } catch {
+    contactLogs.value = [];
+    contactLogsTotal.value = 0;
+  } finally {
+    contactLogsLoading.value = false;
+  }
+}
+
+// 切到页签时加载（沟通记录属于患者档案的一部分，不随首屏拉取）
+watch([tab, loading], ([current, isLoading]) => {
+  if (current === 'contacts' && !isLoading && overview.value) {
+    void loadContactLogs(1);
+  }
+});
+
+const contactLogColumns = [
+  { dataIndex: 'contactTime', title: '时间', width: 160 },
+  { dataIndex: 'methodText', title: '方式', width: 90 },
+  { dataIndex: 'resultText', title: '结果', width: 110 },
+  { dataIndex: 'nextContact', title: '约定下次联系', width: 160 },
+  { dataIndex: 'note', title: '备注' },
+  { dataIndex: 'audios', title: '录音' },
+  { dataIndex: 'creatorName', title: '操作人', width: 110 },
+  { dataIndex: 'action', title: '操作', width: 120 },
+];
+
+const contactLogRows = computed(() =>
+  contactLogs.value.map((item) => ({
+    ...item,
+    contactTime: formatDateTime(item.contactTime),
+    creatorName: item.creatorName ?? '—',
+    key: item.id,
+    methodText: contactMethodText(item.method),
+    nextContact: item.nextContactTime
+      ? formatDateTime(item.nextContactTime)
+      : '—',
+    note: item.note ?? '—',
+    resultText: contactResultText(item.result),
+  })),
+);
+
+/** ISO 时间 →「YYYY-MM-DD HH:mm」（本地展示口径）。 */
+function formatDateTime(value: string): string {
+  const normalized = value.includes('T') ? value : `${value}T00:00:00`;
+  return normalized.slice(0, 16).replaceAll('T', ' ');
+}
+
+function openCreateContact() {
+  editingRow.value = null;
+  contactModalOpen.value = true;
+}
+
+function openEditContact(row: ContactLogRow) {
+  editingRow.value = row;
+  contactModalOpen.value = true;
+}
+
+function handleContactSaved() {
+  void loadContactLogs(contactLogsPage.value);
+}
+
+/** 删除确认要写明两处同时删除（pages.md §4.8 / A-ATT-017）。 */
+function handleDeleteContact(row: ContactLogRow) {
+  Modal.confirm({
+    cancelText: '取消',
+    content:
+      '录音与「通话记录」报告单是同一文件：删除后两处同时消失，且不可恢复。',
+    okButtonProps: { danger: true },
+    okText: '删除',
+    onOk: async () => {
+      try {
+        await deleteContactLog(row.id);
+        message.success('沟通记录已删除');
+        void loadContactLogs(contactLogsPage.value);
+      } catch {
+        // 提示由统一拦截器弹出
+      }
+    },
+    title: '删除这条沟通记录？',
+  });
+}
+
 const contactColumns = [
   { dataIndex: 'slot', title: '槽位' },
   { dataIndex: 'phoneMasked', title: '电话（脱敏）' },
@@ -225,6 +335,7 @@ const timelineLegendNote =
     <Tabs v-model:active-key="tab" class="tabs">
       <TabPane key="baseline" tab="基线资料" />
       <TabPane key="followup" tab="随访记录" />
+      <TabPane key="contacts" tab="沟通记录" />
     </Tabs>
 
     <div v-if="tab === 'baseline'" class="main" data-testid="baseline-panel">
@@ -309,7 +420,11 @@ const timelineLegendNote =
       </p>
     </div>
 
-    <div v-else class="main" data-testid="followup-panel">
+    <div
+      v-else-if="tab === 'followup'"
+      class="main"
+      data-testid="followup-panel"
+    >
       <Alert
         class="notice"
         :message="timelineLegendNote"
@@ -317,6 +432,72 @@ const timelineLegendNote =
         show-icon
       />
       <FollowupTimeline :entries="timeline" :patient-id="overview.id" />
+    </div>
+
+    <div v-else class="main" data-testid="contacts-panel">
+      <div class="toolbar">
+        <Tooltip v-if="followupTerminated" title="患者不在随访中">
+          <Button disabled>记录沟通</Button>
+        </Tooltip>
+        <Button
+          v-else-if="canEditRecord"
+          data-testid="contact-create"
+          type="primary"
+          @click="openCreateContact"
+        >
+          记录沟通
+        </Button>
+      </div>
+      <Table
+        :columns="contactLogColumns"
+        :data-source="contactLogRows"
+        :loading="contactLogsLoading"
+        :pagination="{
+          current: contactLogsPage,
+          pageSize: 20,
+          showSizeChanger: false,
+          total: contactLogsTotal,
+        }"
+        size="small"
+        data-testid="contact-log-table"
+        @change="(pag) => loadContactLogs(pag.current ?? 1)"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.dataIndex === 'resultText'">
+            <StatusTag :status="record.resultText" variant="dot" />
+          </template>
+          <template v-else-if="column.dataIndex === 'audios'">
+            <template v-if="record.audios.length === 0">—</template>
+            <AudioPlayer
+              v-for="audio in record.audios"
+              :key="audio.fileId"
+              :audio="audio"
+              :can-download="canDownload"
+            />
+          </template>
+          <template v-else-if="column.dataIndex === 'action'">
+            <template v-if="canEditRecord">
+              <Button size="small" type="link" @click="openEditContact(record)">
+                修改
+              </Button>
+              <Button
+                danger
+                size="small"
+                type="link"
+                @click="handleDeleteContact(record)"
+              >
+                删除
+              </Button>
+            </template>
+            <span v-else class="hint">—</span>
+          </template>
+        </template>
+        <template #emptyText> 暂无沟通记录 </template>
+      </Table>
+      <p class="hint">
+        录音与「通话记录」报告单是同一文件（A-ATT-017，报告单页签随 E16）；
+        删除任一处两处同时删除。
+      </p>
     </div>
 
     <Drawer v-model:open="contactsOpen" :width="640" title="联系方式与变更记录">
@@ -354,6 +535,13 @@ const timelineLegendNote =
       </p>
     </Drawer>
 
+    <ContactLogModal
+      v-model:open="contactModalOpen"
+      :patient-id="overview.id"
+      :row="editingRow"
+      @success="handleContactSaved"
+    />
+
     <TransferWardModal
       v-model:open="transferOpen"
       :current-ward-id="currentWardId"
@@ -383,6 +571,12 @@ const timelineLegendNote =
 }
 
 .notice {
+  margin-bottom: 12px;
+}
+
+.toolbar {
+  display: flex;
+  justify-content: flex-end;
   margin-bottom: 12px;
 }
 
