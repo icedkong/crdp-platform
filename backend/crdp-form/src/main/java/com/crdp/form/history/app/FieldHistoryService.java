@@ -45,8 +45,11 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class FieldHistoryService {
 
-    /** 引擎表单记录（fe_record）的记录类型常量；业务记录（PT_BASELINE_SECTION / FU_RECORD 等）随 E13 / E15 接入。 */
+    /** 引擎表单记录（fe_record）的记录类型常量；业务记录（PT_BASELINE_SECTION 等）随 E13 接入。 */
     public static final String FORM_RECORD = "FE_RECORD";
+
+    /** 随访业务记录（fu_record，E15-T07 / A-FU-014、C-FU-013 载体）的记录类型常量。 */
+    public static final String FU_RECORD = "FU_RECORD";
 
     /** 查询默认条数（变更记录页单页口径，超长历史按 id 倒序取最近一段）。 */
     public static final int DEFAULT_LIMIT = 200;

@@ -2,7 +2,6 @@ package com.crdp.followup.record.app;
 
 import com.crdp.followup.task.app.FollowupTaskStatusService;
 import com.crdp.followup.task.infra.mapper.FollowupTaskMapper;
-import com.crdp.form.record.app.FormService;
 import com.crdp.framework.audit.AuditEntry;
 import com.crdp.framework.audit.AuditLogger;
 import com.crdp.framework.security.CurrentSession;
@@ -15,9 +14,9 @@ import org.springframework.stereotype.Service;
  * E25-T01 / NFR-SAVE-001、NFR-SAVE-003：随访记录服务器自动保存草稿（tech-plan §6「服务器自动保存与版本冲突」；HTTP 端点 followup.md
  * §3 {@code PUT /api/hospital/followup/records/{id}/draft}）。
  *
- * <p>草稿语义（「草稿不触发提交逻辑」）：只经 {@link FormService#saveDraft} 过写入闸门（键 / 类型 / 派生重算 / 硬范围）合并变更字段；
+ * <p>草稿语义（「草稿不触发提交逻辑」）：只经 {@link FollowupRecordService#saveDraft} 过写入闸门（键 / 类型 / 派生重算 / 硬范围）合并变更字段；
  * 不执行提交校验（validateForSubmit 由 {@link RecordEntryService#submit}
- * 承担，E15-T02）、不写对比标红与统计、不生成下次任务、不写字段历史（提交 / 保存修改时才写，E11-T06）。 乐观锁由引擎承担：baseVersion 过期 40900
+ * 承担，E15-T02）、不写对比标红与统计、不生成下次任务、不写字段历史（提交 / 保存修改时才写，E11-T06）。 乐观锁由载体层承担：baseVersion 过期 40900
  * 并附冲突详情（patient.md §4.1：当前版本、更新人显示名、更新时间、两边不同字段），本层原样透传—— 前端（E25-T02
  * ConflictBanner）暂停自动保存，等用户选「保留我的并覆盖」或「载入服务器版本」。
  *
@@ -28,23 +27,23 @@ import org.springframework.stereotype.Service;
  * V54）仍在「待随访」时置「进行中」——A 规格任务状态表「记录第一次联系或暂存」；{@link FollowupTaskStatusService#markInProgress} 只从
  * PENDING 进、幂等（逾期不退回，OQ-82①）。无关联任务 的记录（未来的补录 / 计划外）不联动。
  *
- * <p>载体：fe_record（followup V29 预留 version 乐观锁给 E25 复用）；fu_record（患者 / 任务关联与数据范围）随 E15-T07 落地后由业务层复用
- * 同一 FormService 口径，不与 fe_record 双写（OQ-63①、OQ-83①）。
+ * <p>载体：fu_record（E15-T07 / OQ-83① 迁移点：患者 / 任务关联 + 数据范围 + JSON 列，复用 FormService 写入闸门口径， 不与
+ * fe_record 双写，OQ-63①）。
  */
 @Service
 public class RecordDraftService {
 
-    private final FormService formService;
+    private final FollowupRecordService recordService;
     private final FollowupTaskMapper taskMapper;
     private final FollowupTaskStatusService statusService;
     private final AuditLogger audit;
 
     public RecordDraftService(
-            FormService formService,
+            FollowupRecordService recordService,
             FollowupTaskMapper taskMapper,
             FollowupTaskStatusService statusService,
             AuditLogger audit) {
-        this.formService = formService;
+        this.recordService = recordService;
         this.taskMapper = taskMapper;
         this.statusService = statusService;
         this.audit = audit;
@@ -65,13 +64,13 @@ public class RecordDraftService {
         if (command.changes() == null || command.changes().isEmpty()) {
             throw new ApiException(400, 40001, "自动保存必须携带变更字段（只在有新改动时发送）");
         }
-        FormService.RecordView saved =
-                formService.saveDraft(recordId, command.baseVersion(), command.changes());
+        FollowupRecordService.RecordView saved =
+                recordService.saveDraft(recordId, command.baseVersion(), command.changes());
         markLinkedTaskInProgress(recordId);
         if (Boolean.TRUE.equals(command.overwrite())) {
             audit.append(
                     AuditEntry.operation("followup", "RECORD_DRAFT_OVERWRITE")
-                            .objectType("FORM_RECORD")
+                            .objectType("FU_RECORD")
                             .objectId(String.valueOf(recordId))
                             .description(
                                     "自动保存覆盖他人版本：记录 "

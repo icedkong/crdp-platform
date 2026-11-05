@@ -1,6 +1,8 @@
 package com.crdp.followup.patient.app;
 
 import com.crdp.followup.patient.infra.mapper.PatientOverviewMapper;
+import com.crdp.followup.record.infra.mapper.FollowupRecordMapper;
+import com.crdp.followup.task.infra.mapper.FollowupTaskQueryMapper;
 import com.crdp.framework.crypto.CryptoService;
 import com.crdp.framework.fieldpolicy.SensitiveValueMasker;
 import com.crdp.framework.security.CurrentSession;
@@ -30,8 +32,9 @@ import org.springframework.stereotype.Service;
  *   <li>最近随访——最近随访日期、生存状态、关键指标（EF 等）与终点事件（pt_patient_summary 派生列，E15 提交后重算写入）。
  * </ul>
  *
- * <p>时间轴（A-PAT-013「按时间顺序展示出院、每年随访、计划外随访、事件、死亡」）：当前数据源为出院登记（pt_patient）与状态变更事件
- * （pt_status_history，登记初始行不重复展示）；每年随访 / 计划外随访 / 终点事件节点随 E15 随访记录接入本入口，C 器械事件随 E21。
+ * <p>时间轴（A-PAT-013「按时间顺序展示出院、每年随访、计划外随访、事件、死亡」；A-FU-023 / C-FU-023）：数据源为出院登记（pt_patient）、状态变更事件
+ * （pt_status_history，登记初始行不重复展示）与随访节点（E15-T07 起并入本入口：fu_task 任务节点按子计划次数聚合完成进度 x / y、末尾按入组追加
+ * 「下次计划日期」计划中节点、无任务的历史补录记录单独标识）；计划外随访随 E15-T06、终点事件随 E17、C 器械事件随 E21。
  *
  * <p>姓名 / 病案号只输出脱敏值（AGENTS.md §5.3，明文走 E07-T05 专用接口）；越范围 / 不存在的患者一律 40400（§5.2，不暴露对象存在）。
  */
@@ -57,14 +60,20 @@ public class PatientOverviewService {
 
     private final PatientOverviewGateway gateway;
     private final PatientStatusGateway statusGateway;
+    private final FollowupTaskQueryMapper taskQueryMapper;
+    private final FollowupRecordMapper recordMapper;
     private final CryptoService crypto;
 
     public PatientOverviewService(
             PatientOverviewGateway gateway,
             PatientStatusGateway statusGateway,
+            FollowupTaskQueryMapper taskQueryMapper,
+            FollowupRecordMapper recordMapper,
             CryptoService crypto) {
         this.gateway = gateway;
         this.statusGateway = statusGateway;
+        this.taskQueryMapper = taskQueryMapper;
+        this.recordMapper = recordMapper;
         this.crypto = crypto;
     }
 
@@ -118,9 +127,17 @@ public class PatientOverviewService {
     /**
      * 时间轴节点（按时间顺序，旧 → 新）。
      *
-     * @param kind DISCHARGE 出院 / STATUS 状态变更（含死亡）；FOLLOWUP 每年随访、UNPLANNED 计划外随访、EVENT 终点事件随 E15 接入
-     * @param label 数据驱动的节点名（DISCHARGE「出院」；STATUS 为空，由前端按 status 映射文案）
-     * @param status STATUS = 患者随访状态码（components.md §2 patient 域）；FOLLOWUP = 任务状态
+     * @param kind DISCHARGE 出院 / STATUS 状态变更（含死亡）/ FOLLOWUP 每年随访（任务节点，E15-T07）/ BACKFILL 历史补录（无任务
+     *     的补录记录，A-FU-014、C-FU-013）/ PLANNED 下次计划日期（「计划中 / 待开始」，实时计算不落库，A-FU-001）；UNPLANNED 计划外随访随
+     *     E15-T06、EVENT 终点事件与 C 器械事件随 E17 / E21
+     * @param label 数据驱动的节点名（DISCHARGE「出院」；STATUS / PLANNED 为空，由前端映射文案；FOLLOWUP = 节点名）
+     * @param status STATUS = 患者随访状态码（components.md §2 patient 域）；FOLLOWUP = 任务状态（PENDING /
+     *     IN_PROGRESS / COMPLETED / OVERDUE / LOST_CANDIDATE / LOST / TERMINATED /
+     *     SKIPPED_SUSPENDED）；BACKFILL = COMPLETED（已提交） 或 IN_PROGRESS（草稿未提交）；PLANNED =
+     *     PLANNED（前端映射「计划中」）
+     * @param planDate FOLLOWUP / PLANNED 的计划日期；windowStart / windowEnd 窗口起止；doneDate
+     *     完成日期；progressDone / progressTotal 该子计划次数的完成进度 x / y（A-FU-023「完成进度 x/y」——主任务口径，跟进任务不单列）
+     * @param canOpen 节点可否进入录入 / 查看（计划中 false；任务节点 = FORM 任务未完成或已关联记录）
      */
     public record TimelineEntryView(
             String kind,
@@ -128,7 +145,27 @@ public class PatientOverviewService {
             String label,
             String status,
             String note,
-            String recordId) {}
+            String recordId,
+            String taskId,
+            String taskType,
+            String completeKind,
+            String createType,
+            LocalDate planDate,
+            LocalDate windowStart,
+            LocalDate windowEnd,
+            LocalDate doneDate,
+            Integer progressDone,
+            Integer progressTotal,
+            Boolean canOpen,
+            Integer highlightCount) {
+
+        /** E13-T05 兼容构造（出院 / 状态事件不带随访列）。 */
+        TimelineEntryView(String kind, LocalDate date, String label, String status, String note) {
+            this(
+                    kind, date, label, status, note, null, null, null, null, null, null, null, null,
+                    null, null, null, null, null);
+        }
+    }
 
     /** 时间轴响应。 */
     public record TimelineView(String patientId, List<TimelineEntryView> items) {}
@@ -141,17 +178,20 @@ public class PatientOverviewService {
         return toView(row);
     }
 
-    // ---------------------------------------------------------------- 时间轴（A-PAT-013）
+    // ----------------------------------------------------------------
+    // 时间轴（A-PAT-013、A-FU-023、C-FU-023）
 
-    /** 患者时间轴：出院节点 + 状态变更事件，按时间顺序（旧 → 新，components.md §9 线框口径）。 */
+    /**
+     * 患者时间轴：出院节点 + 状态变更事件 + 随访节点（任务 / 补录 / 下次计划日期），按时间顺序（旧 → 新，components.md §9 线框口径）。 E15-T07
+     * 起在同一入口并入随访记录数据（patient.md §7）：任务节点按（入组 × 节点 × 第 N 次）聚合显示完成进度 x / y；末尾按入组追加
+     * 「下次计划日期」节点（计划中，A-FU-001 实时计算——缓存由调度 / 起算日期重算维护）；无任务的历史补录记录单独成节点（补录标识）。
+     */
     public TimelineView timelineOf(long patientId) {
         PatientOverviewMapper.OverviewRow row = requireOverview(patientId);
         List<TimelineEntryView> items = new ArrayList<>();
         if (row.dischargeDate() != null) {
             // C-PAT-001 最小必填集不含出院日期：无出院日期不出该节点
-            items.add(
-                    new TimelineEntryView(
-                            "DISCHARGE", row.dischargeDate(), "出院", null, null, null));
+            items.add(new TimelineEntryView("DISCHARGE", row.dischargeDate(), "出院", null, null));
         }
         for (var history : statusGateway.historyOf(patientId)) {
             // 登记初始行（source=REGISTRATION，登记即随访中）与出院节点同源，不重复展示
@@ -164,16 +204,158 @@ public class PatientOverviewService {
                             history.effectiveDate(),
                             null,
                             history.status(),
-                            history.reason(),
-                            null));
+                            history.reason()));
         }
-        // 每年随访 / 计划外随访 / 终点事件节点（E15）与 C 器械事件（E21）在同一入口并入
+        appendFollowupNodes(patientId, items);
+        // 计划外随访（E15-T06）、终点事件（E17）与 C 器械事件（E21）在同一入口并入
         items.sort(
                 Comparator.comparing(
                                 TimelineEntryView::date,
                                 Comparator.nullsLast(Comparator.naturalOrder()))
                         .thenComparingInt(PatientOverviewService::kindRank));
         return new TimelineView(String.valueOf(patientId), List.copyOf(items));
+    }
+
+    /** 随访节点：任务（按子计划次数聚合进度）→ 无任务补录记录 → 各在组入组的「下次计划日期」。 */
+    private void appendFollowupNodes(long patientId, List<TimelineEntryView> items) {
+        List<FollowupTaskQueryMapper.TimelineTaskRow> tasks =
+                taskQueryMapper.timelineTasks(patientId);
+        // （入组 × 节点 × 第 N 次）一组 = 一个子计划次数（A-FU-023「完成进度 x/y」）：组内主任务数 = y、已完成数 = x
+        Map<String, int[]> progress = new LinkedHashMap<>();
+        for (FollowupTaskQueryMapper.TimelineTaskRow task : tasks) {
+            int[] cell =
+                    progress.computeIfAbsent(
+                            task.enrollmentId() + ":" + task.nodeId() + ":" + task.occurrence(),
+                            key -> new int[2]);
+            cell[1]++;
+            if ("COMPLETED".equals(task.status())) {
+                cell[0]++;
+            }
+        }
+        for (FollowupTaskQueryMapper.TimelineTaskRow task : tasks) {
+            int[] cell =
+                    progress.get(
+                            task.enrollmentId() + ":" + task.nodeId() + ":" + task.occurrence());
+            items.add(
+                    new TimelineEntryView(
+                            "FOLLOWUP",
+                            task.planDate(),
+                            task.nodeName(),
+                            task.status(),
+                            followupNote(task),
+                            task.recordId() == null ? null : String.valueOf(task.recordId()),
+                            String.valueOf(task.id()),
+                            task.taskType(),
+                            task.completeKind(),
+                            task.createType(),
+                            task.planDate(),
+                            task.windowStart(),
+                            task.windowEnd(),
+                            task.completedAt() == null ? null : task.completedAt().toLocalDate(),
+                            cell[0],
+                            cell[1],
+                            canOpen(task),
+                            null));
+        }
+        // 无任务的历史补录记录（A-FU-014 / C-FU-013：不需要任务、不受窗口限制）
+        for (FollowupRecordMapper.RecordRowRaw record :
+                recordMapper.findTasklessByPatient(patientId)) {
+            boolean submitted = "SUBMITTED".equals(record.status());
+            items.add(
+                    new TimelineEntryView(
+                            "BACKFILL",
+                            record.visitDate(),
+                            "历史补录",
+                            submitted ? "COMPLETED" : "IN_PROGRESS",
+                            backfillNote(record),
+                            String.valueOf(record.id()),
+                            null,
+                            null,
+                            null,
+                            "BACKFILL",
+                            null,
+                            null,
+                            null,
+                            record.visitDate(),
+                            submitted ? 1 : 0,
+                            1,
+                            true,
+                            null));
+        }
+        // 各在组入组的「下次计划日期」（A-FU-001：未来年度只在时间轴上显示，计划中 / 待开始，不落库）
+        for (FollowupTaskQueryMapper.TimelineEnrollmentRow enrollment :
+                taskQueryMapper.timelineEnrollments(patientId)) {
+            // 防御去重：缓存指向的次数已有任务（调度已建 / 起算重算后落库）时不重复出节点
+            boolean alreadyCreated =
+                    tasks.stream()
+                            .anyMatch(
+                                    task ->
+                                            task.enrollmentId() == enrollment.id()
+                                                    && task.planDate()
+                                                            .equals(enrollment.nextPlanDate()));
+            if (alreadyCreated) {
+                continue;
+            }
+            items.add(
+                    new TimelineEntryView(
+                            "PLANNED",
+                            enrollment.nextPlanDate(),
+                            null,
+                            "PLANNED",
+                            "计划中，任务开启日才创建",
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            enrollment.nextPlanDate(),
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            false,
+                            null));
+        }
+    }
+
+    /** 任务节点备注（components.md §9：补录 / 逾期完成 / 跟进等的展示口径由状态与标记派生）。 */
+    private static String followupNote(FollowupTaskQueryMapper.TimelineTaskRow task) {
+        if ("COMPLETED".equals(task.status()) && "OVERDUE".equals(task.completeKind())) {
+            return "窗口结束后完成，记逾期完成";
+        }
+        if ("COMPLETED".equals(task.status()) && "BEFORE_WINDOW".equals(task.completeKind())) {
+            return "窗口开启前提交，记窗口前完成";
+        }
+        if ("SKIPPED_SUSPENDED".equals(task.status())) {
+            return "期间未执行，待人工选择补做或关闭";
+        }
+        return null;
+    }
+
+    /** 历史补录备注：「补录，随访日期 X，Y 录入」（C-FU-023 各次随访含补录、单独标识）。 */
+    private static String backfillNote(FollowupRecordMapper.RecordRowRaw record) {
+        String entered =
+                record.createdAt() == null ? null : record.createdAt().toLocalDate().toString();
+        if (!"SUBMITTED".equals(record.status())) {
+            return "补录草稿（未提交）" + (entered == null ? "" : "，" + entered + " 录入");
+        }
+        return "补录"
+                + (record.visitDate() == null ? "" : "，随访日期 " + record.visitDate())
+                + (entered == null ? "" : "，" + entered + " 录入");
+    }
+
+    /** 任务节点可否进入录入 / 查看：FORM 任务未完成（可开始录入）或已关联记录（可查看）。 */
+    private static boolean canOpen(FollowupTaskQueryMapper.TimelineTaskRow task) {
+        if (task.recordId() != null) {
+            return true;
+        }
+        return "FORM".equals(task.taskType())
+                && ("PENDING".equals(task.status())
+                        || "IN_PROGRESS".equals(task.status())
+                        || "OVERDUE".equals(task.status())
+                        || "LOST_CANDIDATE".equals(task.status())
+                        || "SKIPPED_SUSPENDED".equals(task.status()));
     }
 
     // ---------------------------------------------------------------- 内部

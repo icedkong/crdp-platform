@@ -17,6 +17,7 @@ import {
   nextVisitText,
   statusSourceText,
   timelineEntryLabel,
+  timelineProgressText,
 } from './patient-overview';
 
 function overview(patch: Partial<PatientOverview> = {}): PatientOverview {
@@ -159,5 +160,63 @@ describe('联系方式与变更记录文案（A-PAT-004「从概览进入」）'
   it('状态来源映射（登记 / 人工流转）', () => {
     expect(statusSourceText('REGISTRATION')).toBe('登记');
     expect(statusSourceText('MANUAL')).toBe('人工流转');
+  });
+});
+
+// ---------------------------------------------------------------- E15-T07 随访节点（A-FU-023、C-FU-023）
+
+describe('timelineEntryLabel（E15-T07 随访节点名）', () => {
+  it('pLANNED 节点显示「下次随访」（A-FU-023 末尾下次计划日期）', () => {
+    const entry = {
+      date: '2027-11-05',
+      kind: 'PLANNED',
+      planDate: '2027-11-05',
+      status: 'PLANNED',
+    } as PatientTimelineEntry;
+    expect(timelineEntryLabel(entry)).toBe('下次随访');
+  });
+
+  it('fOLLOWUP / BACKFILL 节点用后端数据名（数据驱动，不写死年度）', () => {
+    expect(
+      timelineEntryLabel({
+        date: '2026-11-05',
+        kind: 'FOLLOWUP',
+        label: '年度随访（示例）',
+      } as PatientTimelineEntry),
+    ).toBe('年度随访（示例）');
+    expect(
+      timelineEntryLabel({
+        date: '2025-06-01',
+        kind: 'BACKFILL',
+        label: '历史补录',
+      } as PatientTimelineEntry),
+    ).toBe('历史补录');
+  });
+});
+
+describe('timelineProgressText（A-FU-023 完成进度 x/y）', () => {
+  it('随访节点显示进度 x/y', () => {
+    const entry = {
+      date: '2026-11-05',
+      kind: 'FOLLOWUP',
+      progressDone: 0,
+      progressTotal: 1,
+    } as PatientTimelineEntry;
+    expect(timelineProgressText(entry)).toBe('进度 0/1');
+  });
+
+  it('无进度列的节点（出院 / 状态 / 计划中）返回空串', () => {
+    expect(
+      timelineProgressText({
+        date: '2026-03-08',
+        kind: 'DISCHARGE',
+      } as PatientTimelineEntry),
+    ).toBe('');
+    expect(
+      timelineProgressText({
+        date: '2027-11-05',
+        kind: 'PLANNED',
+      } as PatientTimelineEntry),
+    ).toBe('');
   });
 });

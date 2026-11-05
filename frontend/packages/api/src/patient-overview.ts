@@ -53,23 +53,44 @@ export interface PatientOverview {
 }
 
 /**
- * 时间轴节点类型（A-PAT-013）：DISCHARGE 出院 / STATUS 状态变更（含死亡）当前下发；
- * FOLLOWUP 每年随访、UNPLANNED 计划外随访、EVENT 终点事件随 E15 接入。
+ * 时间轴节点类型（A-PAT-013、A-FU-023 / C-FU-023）：DISCHARGE 出院 / STATUS 状态变更（含死亡）/
+ * FOLLOWUP 每年随访（任务节点，E15-T07）/ BACKFILL 历史补录（无任务的补录记录，A-FU-014、C-FU-013）/
+ * PLANNED 下次计划日期（「计划中 / 待开始」，实时计算不落库，A-FU-001）；UNPLANNED 计划外随访随
+ * E15-T06、EVENT 终点事件随 E17 接入。
  */
 export type PatientTimelineKind =
+  | 'BACKFILL'
   | 'DISCHARGE'
   | 'EVENT'
   | 'FOLLOWUP'
+  | 'PLANNED'
   | 'STATUS'
   | 'UNPLANNED';
 
+/**
+ * 时间轴节点（E15-T07 起随访节点带任务列）：status 对 FOLLOWUP = 任务状态、BACKFILL = COMPLETED /
+ * IN_PROGRESS、PLANNED = PLANNED（前端映射「计划中」）；progressDone / progressTotal 为该子计划次数的
+ * 完成进度 x / y（A-FU-023「完成进度 x/y」）；canOpen = false 时节点置灰（计划中，任务开启日才创建）。
+ */
 export interface PatientTimelineEntry {
+  canOpen?: boolean | null;
+  completeKind?: null | string;
+  createType?: null | string;
   date: string;
+  doneDate?: null | string;
+  highlightCount?: null | number;
   kind: PatientTimelineKind;
   label?: null | string;
   note?: null | string;
+  planDate?: null | string;
+  progressDone?: null | number;
+  progressTotal?: null | number;
   recordId?: null | string;
   status?: null | string;
+  taskId?: null | string;
+  taskType?: null | string;
+  windowEnd?: null | string;
+  windowStart?: null | string;
 }
 
 export interface PatientTimeline {
@@ -77,13 +98,29 @@ export interface PatientTimeline {
   patientId: string;
 }
 
-/** 时间轴节点名（components.md §9）：STATUS 按状态码映射文案，其余用后端数据名。 */
+/** 时间轴节点名（components.md §9）：STATUS / PLANNED 按状态码映射文案，其余用后端数据名。 */
 export function timelineEntryLabel(entry: PatientTimelineEntry): string {
   if (entry.kind === 'STATUS') {
     const status = entry.status ?? '';
     return PATIENT_STATUS_TEXT[status] ?? status ?? '状态变更';
   }
+  if (entry.kind === 'PLANNED') return '下次随访';
   return entry.label ?? '';
+}
+
+/** PLANNED 节点的显示状态（A-FU-001「计划中 / 待开始」，不对应实际任务）。 */
+export const TIMELINE_PLANNED_TEXT = '计划中';
+
+/**
+ * 随访节点的完成进度文案（A-FU-023「完成进度 x/y」）：「进度 0/1」；无进度列的节点（出院 /
+ * 状态 / 无任务信息）返回空串。
+ */
+export function timelineProgressText(entry: PatientTimelineEntry): string {
+  if (entry.progressDone === null || entry.progressDone === undefined)
+    return '';
+  if (entry.progressTotal === null || entry.progressTotal === undefined)
+    return '';
+  return `进度 ${entry.progressDone}/${entry.progressTotal}`;
 }
 
 /**

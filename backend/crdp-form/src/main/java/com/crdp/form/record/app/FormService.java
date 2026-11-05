@@ -201,6 +201,44 @@ public class FormService {
         return buildSchema(form, snapshot, recordMapper.findVersionFields(formCode, resolved));
     }
 
+    // ---------------------------------------------------------------- 业务表复用口（E15-T07 /
+    // OQ-63①、OQ-83①）
+    // 患者域业务记录表（fu_record、后续 pt_baseline_section / rpt_report）自带 JSON 列、不与 fe_record 双写，
+    // 但写入闸门（键 / 类型 / 派生重算 / 硬范围）与版本口径必须与引擎一致——以下方法即业务表实现复用的口。
+
+    /** 表单当前发布版本号（业务表创建记录时固化 template_version 用；表单不存在 40400）。 */
+    public int publishedVersion(String formCode) {
+        return requireForm(formCode).currentVersion();
+    }
+
+    /**
+     * 写入闸门（业务表复用口，E15-T07）：键 / 类型检查（{@link FormDataValidator}）→ 派生重算（来源齐全以计算值为准、 结果无效 42200）→
+     * 硬范围拦截（超硬范围 42200）。与 {@link #createRecord} / {@link #saveRecord} / {@link #saveDraft} 落
+     * fe_record 前执行的<b>同一套</b>闸门；返回应持久化的 data（派生重算后的值）。按指定模板版本（记录保存时的版本）取字段口径。
+     */
+    public Map<String, Object> writeGateData(
+            String formCode, int templateVersion, Map<String, Object> data) {
+        FormVersionRow snapshot = requireVersion(requireForm(formCode), templateVersion);
+        List<VersionFieldRow> fields = recordMapper.findVersionFields(formCode, snapshot.version());
+        if (fields.isEmpty()) {
+            throw new ApiException(404, 40400, "记录的模板版本不存在（formCode=" + formCode + "）");
+        }
+        validator.validateData(data, fields);
+        Map<String, Object> persisted = applyDerived(fields, data);
+        enforceHardRange(persisted, fields);
+        return persisted;
+    }
+
+    /** 字段稳定键 → 显示名（按模板版本快照；业务表 40900 冲突详情的 diffFields 标签用，口径同 {@link DraftConflictView}）。 */
+    public Map<String, String> fieldLabels(String formCode, int templateVersion) {
+        FormVersionRow snapshot = requireVersion(requireForm(formCode), templateVersion);
+        Map<String, String> labels = new LinkedHashMap<>();
+        for (VersionFieldRow field : recordMapper.findVersionFields(formCode, snapshot.version())) {
+            labels.put(field.fieldKey(), field.label());
+        }
+        return labels;
+    }
+
     // ---------------------------------------------------------------- 已填 / 应填进度（E11-T11 /
     // A-PAT-021、C-PAT-018）
 

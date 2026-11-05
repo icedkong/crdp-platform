@@ -14,6 +14,8 @@ import static org.mockito.Mockito.when;
 
 import com.crdp.followup.patient.infra.mapper.PatientOverviewMapper;
 import com.crdp.followup.patient.infra.mapper.PatientStatusHistoryMapper;
+import com.crdp.followup.record.infra.mapper.FollowupRecordMapper;
+import com.crdp.followup.task.infra.mapper.FollowupTaskQueryMapper;
 import com.crdp.framework.crypto.CryptoService;
 import com.crdp.framework.security.ScopeSnapshot;
 import com.crdp.framework.security.SessionPrincipal;
@@ -45,10 +47,13 @@ class PatientOverviewServiceTest {
 
     private final PatientOverviewGateway gateway = mock(PatientOverviewGateway.class);
     private final PatientStatusGateway statusGateway = mock(PatientStatusGateway.class);
+    private final FollowupTaskQueryMapper taskQueryMapper = mock(FollowupTaskQueryMapper.class);
+    private final FollowupRecordMapper recordMapper = mock(FollowupRecordMapper.class);
     private final CryptoService crypto = mock(CryptoService.class);
 
     private final PatientOverviewService service =
-            new PatientOverviewService(gateway, statusGateway, crypto);
+            new PatientOverviewService(
+                    gateway, statusGateway, taskQueryMapper, recordMapper, crypto);
 
     @BeforeEach
     void login() {
@@ -64,6 +69,200 @@ class PatientOverviewServiceTest {
     @AfterEach
     void logout() {
         SecurityContextHolder.clearContext();
+    }
+
+    // ---------------------------------------------------------------- 随访节点（E15-T07 /
+    // A-FU-023、C-FU-023）
+
+    private static FollowupTaskQueryMapper.TimelineTaskRow taskRowOf(
+            long id,
+            int occurrence,
+            String status,
+            String completeKind,
+            LocalDate planDate,
+            Long recordId,
+            LocalDateTime completedAt) {
+        return new FollowupTaskQueryMapper.TimelineTaskRow(
+                id,
+                501L,
+                11L,
+                "年度随访（示例）",
+                "循环随访（示例）",
+                occurrence,
+                "FORM",
+                planDate,
+                planDate.minusDays(7),
+                planDate.plusDays(7),
+                status,
+                completeKind,
+                "NORMAL",
+                recordId,
+                completedAt);
+    }
+
+    @Test
+    void timelineShowsFollowupNodesWithProgressAndNextPlannedDate() {
+        // 验收位：时间轴显示子计划进度（x/y）与下次计划日期（计划中 / 待开始）
+        when(gateway.findOverview(PATIENT_ID)).thenReturn(row("ACTIVE"));
+        when(taskQueryMapper.timelineTasks(PATIENT_ID))
+                .thenReturn(
+                        List.of(
+                                taskRowOf(
+                                        9001L,
+                                        1,
+                                        "COMPLETED",
+                                        "ON_TIME",
+                                        LocalDate.of(2025, 11, 5),
+                                        701L,
+                                        LocalDateTime.of(2025, 11, 2, 10, 0)),
+                                taskRowOf(
+                                        9002L,
+                                        2,
+                                        "IN_PROGRESS",
+                                        null,
+                                        LocalDate.of(2026, 11, 5),
+                                        702L,
+                                        null)));
+        when(taskQueryMapper.timelineEnrollments(PATIENT_ID))
+                .thenReturn(
+                        List.of(
+                                new FollowupTaskQueryMapper.TimelineEnrollmentRow(
+                                        501L, "冠心病术后年度随访（示例）", LocalDate.of(2027, 11, 5))));
+
+        PatientOverviewService.TimelineView timeline = service.timelineOf(PATIENT_ID);
+
+        List<PatientOverviewService.TimelineEntryView> followups =
+                timeline.items().stream().filter(item -> "FOLLOWUP".equals(item.kind())).toList();
+        assertEquals(2, followups.size(), "任务节点按计划日期进时间轴");
+        PatientOverviewService.TimelineEntryView done = followups.get(0);
+        assertEquals("COMPLETED", done.status());
+        assertEquals(LocalDate.of(2025, 11, 2), done.doneDate(), "完成日期随节点返回");
+        assertEquals(1, done.progressDone(), "子计划完成进度 x/y（A-FU-023）");
+        assertEquals(1, done.progressTotal());
+        assertEquals(true, done.canOpen(), "已关联记录的节点可打开");
+        assertEquals("701", done.recordId());
+        PatientOverviewService.TimelineEntryView next = followups.get(1);
+        assertEquals(0, next.progressDone());
+        assertEquals(1, next.progressTotal());
+
+        PatientOverviewService.TimelineEntryView planned =
+                timeline.items().stream()
+                        .filter(item -> "PLANNED".equals(item.kind()))
+                        .findFirst()
+                        .orElseThrow();
+        assertEquals(LocalDate.of(2027, 11, 5), planned.planDate(), "下次计划日期（实时缓存）");
+        assertEquals("PLANNED", planned.status(), "「计划中 / 待开始」由前端映射文案");
+        assertEquals(false, planned.canOpen(), "计划中节点不可打开（任务开启日才创建）");
+        assertEquals("计划中，任务开启日才创建", planned.note());
+    }
+
+    @Test
+    void plannedNodeSkippedWhenTaskAlreadyCreatedForCacheDate() {
+        when(gateway.findOverview(PATIENT_ID)).thenReturn(row("ACTIVE"));
+        when(taskQueryMapper.timelineTasks(PATIENT_ID))
+                .thenReturn(
+                        List.of(
+                                taskRowOf(
+                                        9001L,
+                                        1,
+                                        "PENDING",
+                                        null,
+                                        LocalDate.of(2026, 11, 5),
+                                        null,
+                                        null)));
+        when(taskQueryMapper.timelineEnrollments(PATIENT_ID))
+                .thenReturn(
+                        List.of(
+                                new FollowupTaskQueryMapper.TimelineEnrollmentRow(
+                                        501L, "冠心病术后年度随访（示例）", LocalDate.of(2026, 11, 5))));
+
+        PatientOverviewService.TimelineView timeline = service.timelineOf(PATIENT_ID);
+
+        assertEquals(
+                0,
+                timeline.items().stream().filter(item -> "PLANNED".equals(item.kind())).count(),
+                "缓存指向的次数已有任务（调度已建）不重复出计划中节点");
+    }
+
+    @Test
+    void timelineShowsBackfillRecordsAsSeparateNodes() {
+        when(gateway.findOverview(PATIENT_ID)).thenReturn(row("ACTIVE"));
+        when(recordMapper.findTasklessByPatient(PATIENT_ID))
+                .thenReturn(
+                        List.of(
+                                new FollowupRecordMapper.RecordRowRaw(
+                                        801L,
+                                        PATIENT_ID,
+                                        null,
+                                        "BACKFILL",
+                                        LocalDate.of(2024, 5, 10),
+                                        "A_ANNUAL_FU",
+                                        1,
+                                        "SUBMITTED",
+                                        2,
+                                        "{}",
+                                        "{}",
+                                        7L,
+                                        LocalDateTime.of(2025, 1, 15, 9, 0),
+                                        7L,
+                                        LocalDateTime.of(2025, 1, 15, 9, 0)),
+                                new FollowupRecordMapper.RecordRowRaw(
+                                        802L,
+                                        PATIENT_ID,
+                                        null,
+                                        "BACKFILL",
+                                        LocalDate.of(2026, 1, 20),
+                                        "A_ANNUAL_FU",
+                                        1,
+                                        "DRAFT",
+                                        0,
+                                        "{}",
+                                        "{}",
+                                        7L,
+                                        LocalDateTime.of(2026, 2, 1, 9, 0),
+                                        7L,
+                                        LocalDateTime.of(2026, 2, 1, 9, 0))));
+
+        PatientOverviewService.TimelineView timeline = service.timelineOf(PATIENT_ID);
+
+        List<PatientOverviewService.TimelineEntryView> backfills =
+                timeline.items().stream().filter(item -> "BACKFILL".equals(item.kind())).toList();
+        assertEquals(2, backfills.size(), "补录记录单独成节点（含补录、单独标识，C-FU-023）");
+        PatientOverviewService.TimelineEntryView submitted = backfills.get(0);
+        assertEquals("COMPLETED", submitted.status(), "已提交补录按已完成展示");
+        assertEquals(LocalDate.of(2024, 5, 10), submitted.date(), "按实际随访日期排序定位");
+        assertTrue(submitted.note().contains("补录"), "补录标识：" + submitted.note());
+        assertTrue(submitted.note().contains("2025-01-15"), "录入日期：" + submitted.note());
+        PatientOverviewService.TimelineEntryView draft = backfills.get(1);
+        assertEquals("IN_PROGRESS", draft.status(), "补录草稿按进行中展示");
+        assertEquals("802", draft.recordId());
+        assertEquals(true, draft.canOpen(), "补录草稿可继续填写");
+    }
+
+    @Test
+    void overdueCompletedFollowupCarriesNote() {
+        when(gateway.findOverview(PATIENT_ID)).thenReturn(row("ACTIVE"));
+        when(taskQueryMapper.timelineTasks(PATIENT_ID))
+                .thenReturn(
+                        List.of(
+                                taskRowOf(
+                                        9003L,
+                                        1,
+                                        "COMPLETED",
+                                        "OVERDUE",
+                                        LocalDate.of(2025, 11, 5),
+                                        703L,
+                                        LocalDateTime.of(2025, 12, 1, 10, 0))));
+
+        PatientOverviewService.TimelineView timeline = service.timelineOf(PATIENT_ID);
+
+        PatientOverviewService.TimelineEntryView node =
+                timeline.items().stream()
+                        .filter(item -> "FOLLOWUP".equals(item.kind()))
+                        .findFirst()
+                        .orElseThrow();
+        assertEquals("OVERDUE", node.completeKind(), "完成方式随节点返回（前端派生「逾期完成」）");
+        assertEquals("窗口结束后完成，记逾期完成", node.note());
     }
 
     // ---------------------------------------------------------------- 概览（验收：显示基线、计划、最近随访）

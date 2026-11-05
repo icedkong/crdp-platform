@@ -1,5 +1,9 @@
 <script lang="ts" setup>
-import type { FormSchema, RecordTaskContext } from '@crdp/api';
+import type {
+  FormSchema,
+  RecordPatientBrief,
+  RecordTaskContext,
+} from '@crdp/api';
 import type { CategoryProgress } from '@crdp/rules';
 
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
@@ -83,6 +87,10 @@ const savedData = ref<Record<string, unknown>>({});
 const version = ref(0);
 const status = ref<'DRAFT' | 'SUBMITTED'>('DRAFT');
 const context = ref<null | RecordTaskContext>(null);
+/** 补录 / 计划外记录的患者摘要与来源（E15-T07：context 为 null 时的头幅与横幅）。 */
+const patient = ref<null | RecordPatientBrief>(null);
+const source = ref<null | string>(null);
+const recordVisitDate = ref<null | string>(null);
 const progressItems = ref<CategoryProgress[]>([]);
 const activeKey = ref('');
 const showErrors = ref(false);
@@ -141,6 +149,9 @@ async function load() {
     version.value = detail.version;
     status.value = detail.status;
     context.value = detail.context ?? null;
+    patient.value = detail.patient ?? null;
+    source.value = detail.source ?? null;
+    recordVisitDate.value = detail.visitDate ?? null;
     if (detail.context) {
       const queueView = await fetchTaskQueue(detail.context.taskId, {
         scope: filter.scope,
@@ -225,7 +236,9 @@ async function doSubmit() {
     });
     submitted.value = true;
     status.value = 'SUBMITTED';
-    message.success(submitSuccessMessage(deathSelected.value));
+    message.success(
+      submitSuccessMessage(deathSelected.value, context.value !== null),
+    );
   } catch (error) {
     message.error('提交失败，请稍后重试');
     console.error(error);
@@ -323,7 +336,7 @@ function handleJump(key: string) {
     v-else-if="submitted"
     data-testid="record-submitted"
     status="success"
-    :sub-title="submitSuccessMessage(deathSelected)"
+    :sub-title="submitSuccessMessage(deathSelected, context !== null)"
     title="已提交"
   >
     <template #extra>
@@ -343,8 +356,12 @@ function handleJump(key: string) {
     <Card :bordered="false" class="crdp-card">
       <div class="title-row">
         <div>
-          <h1 class="crdp-page-title">{{ headerTitle(context) }}</h1>
-          <div class="sub-text">{{ headerSummary(context) }}</div>
+          <h1 class="crdp-page-title">
+            {{ headerTitle(context, patient) }}
+          </h1>
+          <div class="sub-text">
+            {{ headerSummary(context, recordVisitDate) }}
+          </div>
         </div>
         <StatusTag
           v-if="context"

@@ -43,7 +43,16 @@ import {
 } from 'ant-design-vue';
 
 import { deleteContactLog, fetchPatientContacts } from '#/api/core/contact';
+import {
+  fetchPatientContactInfo,
+  fetchPatientStatusHistory,
+  fetchPatientSummary,
+  fetchPatientTimeline,
+  fetchPatientWardHistory,
+} from '#/api/core/patient';
+import { startTask } from '#/api/core/task';
 import AudioPlayer from '#/components/followup/audio-player.vue';
+import BackfillRecordModal from '#/components/followup/backfill-record-modal.vue';
 import ContactLogModal from '#/components/followup/contact-log-modal.vue';
 import FollowupTimeline from '#/components/followup/followup-timeline.vue';
 import PatientHeader from '#/components/followup/patient-header.vue';
@@ -79,12 +88,24 @@ const wardHistory = ref<PatientWardHistoryItem[]>([]);
 // E13-T08 / A-WARD-005：转病区（详情页入口，pages.md §6 页面 4）
 const transferOpen = ref(false);
 
+// E15-T07 / A-FU-014：历史补录弹窗（随访记录页签入口）
+const backfillOpen = ref(false);
+
 const patientId = computed(() => String(route.params.id ?? ''));
 
 /** 当前病区 id（E13-T08 随概览下发；转病区弹窗用它排除当前病区）。 */
 const currentWardId = computed<null | number>(
   () => overview.value?.wardId ?? null,
 );
+
+async function reloadTimeline() {
+  try {
+    const result = await fetchPatientTimeline(patientId.value);
+    timeline.value = result.items;
+  } catch {
+    // 时间轴刷新失败保留旧数据（详情页主体不受影响）
+  }
+}
 
 onMounted(async () => {
   try {
@@ -305,8 +326,30 @@ const historyRows = computed(() =>
   })),
 );
 
+/** 时间轴节点打开（components.md §9 open）：有 recordId 直达表单页；未开始任务先 start。 */
+async function openTimelineNode(entry: PatientTimelineEntry) {
+  if (entry.canOpen !== true) return;
+  if (entry.recordId) {
+    window.open(`/followup/record/${entry.recordId}`, '_blank');
+    return;
+  }
+  if (!entry.taskId) return;
+  try {
+    const started = await startTask(entry.taskId);
+    window.open(`/followup/record/${started.recordId}`, '_blank');
+  } catch {
+    message.error('打开随访表单失败，请稍后重试');
+  }
+}
+
+/** 补录创建成功：新标签页打开表单并刷新时间轴（补录草稿节点随建随显）。 */
+async function onBackfillCreated(recordId: string) {
+  window.open(`/followup/record/${recordId}`, '_blank');
+  await reloadTimeline();
+}
+
 const timelineLegendNote =
-  '随访记录节点（每年随访、计划外随访、终点事件）随随访业务（E15）接入；医院 C 的器械事件随植入模块（E21）。';
+  '时间轴含每年随访、历史补录与下次计划日期（计划中）；计划外随访随 E15-T06、终点事件随 E17、医院 C 的器械事件随 E21 接入。';
 </script>
 
 <template>
@@ -431,7 +474,28 @@ const timelineLegendNote =
         type="info"
         show-icon
       />
-      <FollowupTimeline :entries="timeline" :patient-id="overview.id" />
+      <div class="toolbar">
+        <Tooltip v-if="followupTerminated" title="患者不在随访中">
+          <Button disabled>历史补录</Button>
+        </Tooltip>
+        <Button
+          v-else-if="canEditRecord"
+          data-testid="backfill-create"
+          @click="backfillOpen = true"
+        >
+          历史补录
+        </Button>
+      </div>
+      <FollowupTimeline
+        :entries="timeline"
+        :patient-id="overview.id"
+        @open="openTimelineNode"
+      />
+      <BackfillRecordModal
+        v-model:open="backfillOpen"
+        :patient-id="overview.id"
+        @created="onBackfillCreated"
+      />
     </div>
 
     <div v-else class="main" data-testid="contacts-panel">

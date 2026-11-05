@@ -11,8 +11,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.crdp.followup.patient.app.PatientContactGateway;
+import com.crdp.followup.record.app.FollowupRecordService;
 import com.crdp.followup.task.infra.mapper.FollowupTaskMapper;
-import com.crdp.form.record.app.FormService;
 import com.crdp.framework.audit.AuditLogger;
 import com.crdp.framework.web.ApiException;
 import java.util.Map;
@@ -32,12 +32,12 @@ class FollowupTaskStartServiceTest {
     private final FollowupTaskMapper taskMapper = mock(FollowupTaskMapper.class);
     private final FollowupTaskStatusService statusService = mock(FollowupTaskStatusService.class);
     private final PatientContactGateway patientScope = mock(PatientContactGateway.class);
-    private final FormService formService = mock(FormService.class);
+    private final FollowupRecordService recordService = mock(FollowupRecordService.class);
     private final AuditLogger audit = mock(AuditLogger.class);
 
     private final FollowupTaskStartService service =
             new FollowupTaskStartService(
-                    taskMapper, statusService, patientScope, formService, audit);
+                    taskMapper, statusService, patientScope, recordService, audit);
 
     private static FollowupTaskMapper.StartTaskRow formTask(Long recordId) {
         return new FollowupTaskMapper.StartTaskRow(
@@ -48,10 +48,14 @@ class FollowupTaskStartServiceTest {
     void startCreatesDraftLinksAndMovesTaskToInProgress() {
         when(taskMapper.findStartTaskById(9001L)).thenReturn(formTask(null));
         when(patientScope.patientIdInScope(301L)).thenReturn(301L);
-        when(formService.createRecord(eq("A_ANNUAL_FU"), eq(Map.of()), any()))
+        when(recordService.createDraft(any()))
                 .thenReturn(
-                        new FormService.RecordView(
+                        new FollowupRecordService.RecordView(
                                 701L,
+                                301L,
+                                9001L,
+                                "TASK",
+                                null,
                                 "A_ANNUAL_FU",
                                 1,
                                 "DRAFT",
@@ -80,7 +84,7 @@ class FollowupTaskStartServiceTest {
 
         assertEquals("701", view.recordId());
         assertEquals(false, view.recordCreated());
-        verify(formService, never()).createRecord(any(), any(), any());
+        verify(recordService, never()).createDraft(any());
         verify(statusService, never()).markInProgress(anyLong(), any(), any());
         verify(audit, never()).append(any());
     }
@@ -97,7 +101,7 @@ class FollowupTaskStartServiceTest {
                 40901,
                 assertThrows(ApiException.class, () -> service.start(9002L)).code(),
                 "站内提醒类任务无需填表（A-FU-026）");
-        verify(formService, never()).createRecord(any(), any(), any());
+        verify(recordService, never()).createDraft(any());
     }
 
     @Test
@@ -109,7 +113,7 @@ class FollowupTaskStartServiceTest {
                 40400,
                 assertThrows(ApiException.class, () -> service.start(9001L)).code(),
                 "越范围患者不暴露任务存在（AGENTS §5.2）");
-        verify(formService, never()).createRecord(any(), any(), any());
+        verify(recordService, never()).createDraft(any());
     }
 
     @Test
@@ -123,10 +127,14 @@ class FollowupTaskStartServiceTest {
     void concurrentLinkMissReturnsWinnerRecord() {
         when(taskMapper.findStartTaskById(9001L)).thenReturn(formTask(null), formTask(701L));
         when(patientScope.patientIdInScope(301L)).thenReturn(301L);
-        when(formService.createRecord(eq("A_ANNUAL_FU"), eq(Map.of()), any()))
+        when(recordService.createDraft(any()))
                 .thenReturn(
-                        new FormService.RecordView(
+                        new FollowupRecordService.RecordView(
                                 702L,
+                                301L,
+                                9001L,
+                                "TASK",
+                                null,
                                 "A_ANNUAL_FU",
                                 1,
                                 "DRAFT",

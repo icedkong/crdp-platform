@@ -313,4 +313,82 @@ public interface FollowupTaskQueryMapper {
             @Param("cursorPlanDate") LocalDate cursorPlanDate,
             @Param("cursorId") long cursorId,
             @Param("after") boolean after);
+
+    /** 患者摘要行（补录记录的表单页头幅，E15-T07）：姓名 / 病案号为密文，应用层解密后脱敏输出；越范围 null。 */
+    record PatientBriefRow(long id, String nameCipher, String mrnCipher, String wardName) {}
+
+    /** 患者摘要（@DataScope 出行；越范围 / 不存在 null）。 */
+    @com.crdp.framework.datascope.DataScope(resource = "patient")
+    @Select(
+            """
+            SELECT pt.id, pt.name_cipher AS nameCipher, pt.mrn_cipher AS mrnCipher,
+                   w.name AS wardName
+            FROM pt_patient pt
+            LEFT JOIN ward w ON w.id = pt.ward_id
+            WHERE pt.id = #{patientId} AND pt.deleted = 0
+            """)
+    PatientBriefRow patientBrief(@Param("patientId") long patientId);
+
+    // ---------------------------------------------------------------- 患者时间轴（E15-T07 /
+    // A-FU-023、C-FU-023）
+
+    /**
+     * 时间轴任务行：某患者的全部<b>主任务</b>（create_type != FOLLOWUP——跟进任务不单列节点，窗口进度并入主任务口径），
+     * 按计划日期升序；子计划（fu_plan_node parent 行）名随行带出（A「第 N 年」的展示位，数据驱动不写死）。
+     */
+    record TimelineTaskRow(
+            long id,
+            long enrollmentId,
+            long nodeId,
+            String nodeName,
+            String subplanName,
+            int occurrence,
+            String taskType,
+            LocalDate planDate,
+            LocalDate windowStart,
+            LocalDate windowEnd,
+            String status,
+            String completeKind,
+            String createType,
+            Long recordId,
+            java.time.LocalDateTime completedAt) {}
+
+    /** 患者的主任务（@DataScope 出行；含全部状态——时间轴按时间顺序展示历史）。 */
+    @com.crdp.framework.datascope.DataScope(resource = "patient")
+    @Select(
+            """
+            SELECT t.id, t.enrollment_id AS enrollmentId, t.node_id AS nodeId,
+                   n.name AS nodeName, sn.name AS subplanName,
+                   t.occurrence, t.task_type AS taskType,
+                   t.plan_date AS planDate, t.window_start AS windowStart, t.window_end AS windowEnd,
+                   t.status, t.complete_kind AS completeKind, t.create_type AS createType,
+                   t.record_id AS recordId, t.completed_at AS completedAt
+            FROM fu_task t
+            JOIN pt_patient pt ON pt.id = t.patient_id AND pt.deleted = 0
+            LEFT JOIN fu_plan_node n ON n.id = t.node_id
+            LEFT JOIN fu_plan_node sn ON sn.id = n.parent_id
+            WHERE t.patient_id = #{patientId} AND t.create_type <> 'FOLLOWUP'
+            ORDER BY t.plan_date ASC, t.id ASC
+            """)
+    List<TimelineTaskRow> timelineTasks(@Param("patientId") long patientId);
+
+    /**
+     * 时间轴在组入组行：「计划中」节点（下次计划日期实时缓存，A-FU-001「未来年度只在时间轴上显示下次计划日期，按当前起算日期实时计算」；
+     * fu_enrollment.next_plan_date 由调度 / 起算日期重算维护，E14-T04 / E14-T07）。
+     */
+    record TimelineEnrollmentRow(long id, String planName, LocalDate nextPlanDate) {}
+
+    /** 在组（ACTIVE）且有下次计划日期缓存的入组（@DataScope 出行）。 */
+    @com.crdp.framework.datascope.DataScope(resource = "patient")
+    @Select(
+            """
+            SELECT e.id, p.name AS planName, e.next_plan_date AS nextPlanDate
+            FROM fu_enrollment e
+            JOIN pt_patient pt ON pt.id = e.patient_id AND pt.deleted = 0
+            LEFT JOIN fu_plan p ON p.id = e.plan_id
+            WHERE e.patient_id = #{patientId} AND e.status = 'ACTIVE'
+              AND e.next_plan_date IS NOT NULL
+            ORDER BY e.next_plan_date ASC, e.id ASC
+            """)
+    List<TimelineEnrollmentRow> timelineEnrollments(@Param("patientId") long patientId);
 }

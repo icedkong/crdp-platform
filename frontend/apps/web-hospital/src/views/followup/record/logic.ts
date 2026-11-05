@@ -104,11 +104,26 @@ export function deathFieldKey(schema: FormSchema | null): null | string {
   return null;
 }
 
-/** 提交成功文案（pages.md §5.1 提交确认：常规 / 死亡・失访两态）。 */
-export function submitSuccessMessage(deathSelected: boolean): string {
+/** 提交成功文案（pages.md §5.1 提交确认：常规 / 死亡・失访两态；补录记录无任务联动）。 */
+export function submitSuccessMessage(
+  deathSelected: boolean,
+  hasTask = true,
+): string {
+  if (!hasTask) {
+    return deathSelected
+      ? '已提交补录记录；随访计划终止，不再创建后续任务'
+      : '已提交补录记录';
+  }
   return deathSelected
     ? '已提交；随访计划终止，不再创建后续任务'
     : '已提交；按计划生成下次任务';
+}
+
+/** 提交确认弹窗文案（补录记录不联动任务完成）。 */
+export function submitConfirmText(hasTask: boolean): string {
+  return hasTask
+    ? '提交后任务完成，按计划生成下次随访任务。'
+    : '提交后补录记录生效（不占用年度任务，A-FU-014）。';
 }
 
 /** 必填缺失提示（照抄：「还有 n 个必填项未填写，已在左侧导航标出」）。 */
@@ -122,14 +137,21 @@ export function nextVisitText(context: null | RecordTaskContext): string {
   return `下次随访 · 计划 ${context.nextPlanDate}（按计划自动生成）`;
 }
 
-/** 顶栏标题：随访录入 · 患者（脱敏）。 */
-export function headerTitle(context: null | RecordTaskContext): string {
+/** 顶栏标题：随访录入 · 患者（脱敏）；补录记录（无任务上下文）显示「历史补录」。 */
+export function headerTitle(
+  context: null | RecordTaskContext,
+  patient?: null | { patientName: string },
+): string {
+  if (!context && patient) return `历史补录 · ${patient.patientName}`;
   if (!context) return '随访录入';
   return `随访录入 · ${context.patientName}`;
 }
 
-/** 顶栏摘要：节点 · 计划日期 · 窗口。 */
-export function headerSummary(context: null | RecordTaskContext): string {
-  if (!context) return '';
+/** 顶栏摘要：节点 · 计划日期 · 窗口；补录记录显示实际随访日期。 */
+export function headerSummary(
+  context: null | RecordTaskContext,
+  visitDate?: null | string,
+): string {
+  if (!context) return visitDate ? `补录 · 实际随访日期 ${visitDate}` : '';
   return `${context.nodeName ?? ''} · 计划 ${context.planDate} · 窗口 ${context.windowStart} ~ ${context.windowEnd}`;
 }

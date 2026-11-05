@@ -125,9 +125,9 @@ class PlatformModuleRegistryMySqlIT {
                                 + " FROM plt_module WHERE code = 'followup'");
         assertEquals("0.1.0", row.get("feature_version"));
         assertEquals(
-                "57",
+                "58",
                 row.get("migration_version").toString(),
-                "迁移版本取 db/tenant/followup 最大脚本版本 V57（E15-T05）");
+                "迁移版本取 db/tenant/followup 最大脚本版本 V58（E15-T07）");
         assertEquals("base", row.get("depends_on"));
         assertNotNull(row.get("synced_at"), "启动同步应刷新 synced_at");
         assertEquals("ON", row.get("status"), "注册后默认上架");
@@ -138,7 +138,7 @@ class PlatformModuleRegistryMySqlIT {
                                 + " plt_module_version WHERE module_code = 'followup'"
                                 + " ORDER BY id DESC LIMIT 1");
         assertEquals("0.1.0", version.get("feature_version"));
-        assertEquals("57", version.get("migration_version").toString());
+        assertEquals("58", version.get("migration_version").toString());
         assertTrue(
                 String.valueOf(version.get("change_note")).contains("随访"),
                 "版本记录含变更说明：" + version.get("change_note"));

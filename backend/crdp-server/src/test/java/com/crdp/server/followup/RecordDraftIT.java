@@ -5,7 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.crdp.form.record.app.FormService;
+import com.crdp.followup.record.app.FollowupRecordService;
 import com.crdp.framework.security.ScopeSnapshot;
 import com.crdp.framework.security.SessionPrincipal;
 import com.crdp.framework.tenant.TenantContext;
@@ -60,7 +60,7 @@ class RecordDraftIT {
     @Autowired private TestRestTemplate rest;
     @Autowired private JdbcTemplate jdbc;
     @Autowired private TenantModuleService moduleService;
-    @Autowired private FormService formService;
+    @Autowired private FollowupRecordService recordService;
 
     @BeforeEach
     @AfterEach
@@ -73,14 +73,15 @@ class RecordDraftIT {
                         AuditTableMaintenance.delete(
                                 jdbc,
                                 "DELETE FROM aud_log WHERE action = 'RECORD_DRAFT_OVERWRITE'"
-                                        + " AND object_id IN (SELECT CAST(id AS CHAR) FROM fe_record"
+                                        + " AND object_id IN (SELECT CAST(id AS CHAR) FROM fu_record"
                                         + " WHERE data_meta LIKE '%\""
                                         + MARKER
                                         + "\"%')");
                         jdbc.update(
-                                "DELETE FROM fe_record WHERE data_meta LIKE '%\""
+                                "DELETE FROM fu_record WHERE data_meta LIKE '%\""
                                         + MARKER
                                         + "\"%'");
+                        jdbc.update("DELETE FROM pt_patient WHERE legacy_no LIKE 'IT-E25T01-%'");
                         jdbc.update(
                                 "DELETE ur FROM sys_user_role ur JOIN sys_user u ON u.id = ur.user_id"
                                         + " WHERE u.username = 'IT-U-NOR'");
@@ -136,7 +137,7 @@ class RecordDraftIT {
                     Map<String, Object> row =
                             jdbc.queryForMap(
                                     "SELECT data, data_meta AS dataMeta, version, updated_by"
-                                            + " FROM fe_record WHERE id = ?",
+                                            + " FROM fu_record WHERE id = ?",
                                     recordId);
                     assertEquals(2, ((Number) row.get("version")).intValue(), "落库版本号 = 2");
                     // MySQL JSON 显示带空格（{"f213": 1}），比较前去掉空白
@@ -158,7 +159,7 @@ class RecordDraftIT {
                             0,
                             jdbc.queryForObject(
                                             "SELECT COUNT(*) FROM fe_field_history"
-                                                    + " WHERE record_type = 'FE_RECORD' AND record_id = ?",
+                                                    + " WHERE record_type = 'FU_RECORD' AND record_id = ?",
                                             Long.class,
                                             recordId)
                                     .longValue(),
@@ -186,7 +187,7 @@ class RecordDraftIT {
                 "demoa",
                 () -> {
                     jdbc.update(
-                            "UPDATE fe_record SET data = ?, version = version + 1, updated_by = ?"
+                            "UPDATE fu_record SET data = ?, version = version + 1, updated_by = ?"
                                     + " WHERE id = ?",
                             "{\"f213\":1,\"f214\":\"2026-02-14\",\"f215\":1}",
                             userIdOf("nurse.demo"),
@@ -224,7 +225,7 @@ class RecordDraftIT {
                 "demoa",
                 () ->
                         jdbc.update(
-                                "UPDATE fe_record SET data = ?, version = version + 1,"
+                                "UPDATE fu_record SET data = ?, version = version + 1,"
                                         + " updated_by = ? WHERE id = ?",
                                 "{\"f213\":1,\"f214\":\"2026-02-14\"}",
                                 userIdOf("nurse.demo"),
@@ -270,7 +271,7 @@ class RecordDraftIT {
                 "demoa",
                 () ->
                         jdbc.update(
-                                "UPDATE fe_record SET status = 'SUBMITTED' WHERE id = ?",
+                                "UPDATE fu_record SET status = 'SUBMITTED' WHERE id = ?",
                                 recordId));
 
         assertEquals(
@@ -427,7 +428,7 @@ class RecordDraftIT {
                         "demob",
                         () ->
                                 jdbc.queryForObject(
-                                                "SELECT COUNT(*) FROM fe_record WHERE id = ?",
+                                                "SELECT COUNT(*) FROM fu_record WHERE id = ?",
                                                 Long.class,
                                                 recordId)
                                         .longValue()),
@@ -436,13 +437,54 @@ class RecordDraftIT {
 
     // ---------------------------------------------------------------- 造数与工具
 
-    /** 服务层造数（E15 前无 HTTP 建记录端点；A_ANNUAL_FU v1 快照，data_meta 打 E25T01 标记自清）。 */
+    /** 服务层造数（E15-T07 起载体 fu_record：登记一名虚构患者后建 BACKFILL 草稿；data_meta 打 E25T01 标记自清）。 */
     private long createRecord(Map<String, Object> data) {
+        long patientId = registerItPatient();
         loginServicePrincipal();
         Map<String, Object> dataMeta = Map.of("it", MARKER);
-        FormService.RecordView created =
-                callInTenant("demoa", () -> formService.createRecord(FORM, data, dataMeta));
+        FollowupRecordService.RecordView created =
+                callInTenant(
+                        "demoa",
+                        () ->
+                                recordService.createDraft(
+                                        new FollowupRecordService.CreateCommand(
+                                                patientId,
+                                                null,
+                                                FollowupRecordService.SOURCE_BACKFILL,
+                                                java.time.LocalDate.now().minusDays(10),
+                                                FORM,
+                                                data,
+                                                dataMeta)));
         return created.id();
+    }
+
+    /** 登记 IT 虚构患者（HTTP，默认病区；legacy_no 打标记自清）。 */
+    private long registerItPatient() {
+        String legacy = "IT-E25T01-" + (System.nanoTime() % 100000);
+        Map<String, Object> body =
+                new java.util.LinkedHashMap<>(
+                        Map.ofEntries(
+                                Map.entry("medicalRecordNo", legacy),
+                                Map.entry("name", "周草稿（示例）"),
+                                Map.entry("gender", "F"),
+                                Map.entry("birthDate", "1950-01-01"),
+                                Map.entry("admissionDate", "2026-01-01"),
+                                Map.entry("surgeryDate", "2026-01-02"),
+                                Map.entry("dischargeDate", "2026-01-05"),
+                                Map.entry("dischargeStatus", 1),
+                                Map.entry("legacyNo", legacy)));
+        body.put(
+                "wardId",
+                callInTenant(
+                        "demoa",
+                        () ->
+                                jdbc.queryForObject(
+                                                "SELECT id FROM ward ORDER BY id LIMIT 1",
+                                                Long.class)
+                                        .longValue()));
+        Map<?, ?> created = post("/api/hospital/followup/patients", adminToken(), body);
+        assertEquals(0, code(created), "登记 IT 患者失败：" + created);
+        return Long.parseLong((String) data(created).get("id"));
     }
 
     private static String draftPath(long recordId) {
