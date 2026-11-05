@@ -84,10 +84,14 @@ export function fetchRecordDetail(recordId: string) {
   );
 }
 
-/** 暂存草稿（E25-T01 已实现；changes 只带变更字段，成功后任务变进行中 OQ-77②）。 */
+/** 暂存 / 自动保存草稿（E25-T01 已实现；changes 只带变更字段，成功后任务变进行中 OQ-77②；overwrite = 冲突流程「保留我的并覆盖」，后端写覆盖审计）。 */
 export function saveRecordDraft(
   recordId: string,
-  body: { baseVersion: number; changes: Record<string, unknown> },
+  body: {
+    baseVersion: number;
+    changes: Record<string, unknown>;
+    overwrite?: boolean;
+  },
 ) {
   return requestClient.put<{ savedAt: string; version: number }>(
     apiPath(`/followup/records/${recordId}/draft`),

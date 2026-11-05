@@ -4,13 +4,21 @@ import type {
   RecordPatientBrief,
   RecordTaskContext,
 } from '@crdp/api';
+import type { AutoSaveTrigger } from '@crdp/form-engine';
 import type { CategoryProgress } from '@crdp/rules';
 
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
+import { useUserStore } from '@vben/stores';
+
 import { taskDisplayStatus } from '@crdp/api';
-import { FormRenderer } from '@crdp/form-engine';
+import {
+  asDraftConflictDetail,
+  DraftConflictError,
+  FormRenderer,
+  useAutoSave,
+} from '@crdp/form-engine';
 import { StatusTag } from '@crdp/status-tag';
 import {
   Alert,
@@ -21,6 +29,7 @@ import {
   Result,
   Space,
   Spin,
+  Tooltip,
 } from 'ant-design-vue';
 
 import { fetchFormSchema } from '#/api/core/form';
@@ -32,6 +41,8 @@ import {
   submitRecord,
 } from '#/api/core/task';
 import CategoryBar from '#/components/followup/category-bar.vue';
+import ConflictBanner from '#/components/followup/conflict-banner.vue';
+import FormStatusBar from '#/components/followup/form-status-bar.vue';
 import { useBreakpoint } from '#/reference/use-breakpoint';
 import { usePermission } from '#/reference/use-permission';
 
@@ -40,6 +51,7 @@ import {
   bannersOf,
   deathFieldKey,
   diffChanges,
+  draftRecordKey,
   hasChanges,
   headerSummary,
   headerTitle,
@@ -61,16 +73,21 @@ defineOptions({ name: 'FollowupRecordForm' });
  *   「已暂存到服务器（草稿），任务变为进行中」（OQ-77②）；提交（Ctrl/⌘+Enter）→
  *   渲染器硬校验闸门 → 确认弹窗 → POST /records/{id}/submit，成功后任务完成
  *   （A-FU-005 验收「提交后任务完成」）；Enter 不提交；
+ * - E25-T02 / NFR-SAVE-001/002/003 useAutoSave：每 2 分钟有改动才存服务器草稿，
+ *   状态条「已自动保存 HH:mm」等四态；本地草稿每 30 秒 + blur 写 IndexedDB
+ *   （断网不丢数据，恢复网络立即同步，离线不能提交）；409 → ConflictBanner 暂停
+ *   并二选一（保留我的并覆盖 / 载入服务器版本）；打开时有本地草稿提示恢复；
  * - 上一条 / 下一条顺当前列表（GET /tasks/queue，筛选由列表页随链接带出）；
- *   dirty 时弹「有未保存的修改，离开前怎么处理？」（暂存并离开 / 放弃修改 / 取消）；
+ *   dirty 时弹「有未保存的修改，离开前怎么处理？」（暂存并离开 / 放弃修改 / 取消），
+ *   刷新 / 关标签页走 beforeunload；
  * - 只读：无 followup:record:edit 或记录已提交（整体只读，修改随后续任务）；
  * - 横幅：逾期 / 窗口外 / 补录（pages.md §5.1 文案照抄）。
  *
- * 每 2 分钟自动保存与离线本机草稿（IndexedDB）随 E25-T02；对照分屏与报告单带入
- * （A-ATT-019 / C-FU-017）随 E16 / E17；平板 / 手机响应式随 E24-T02。
+ * 对照分屏与报告单带入（A-ATT-019 / C-FU-017）随 E16 / E17；平板 / 手机响应式随 E24-T02。
  */
 const route = useRoute();
 const router = useRouter();
+const userStore = useUserStore();
 const { hasPermission } = usePermission();
 const canEdit = computed(() => hasPermission('followup:record:edit'));
 const { isMobile } = useBreakpoint();
@@ -114,6 +131,95 @@ const banners = computed(() =>
   readonly.value
     ? [readonlyBanner(status.value), ...bannersOf(context.value, visitDate())]
     : bannersOf(context.value, visitDate()),
+);
+const dirty = computed(() => hasChanges(savedData.value, data.value));
+
+// ---------------------------------------------------------------- 自动保存（E25-T02 / NFR-SAVE-001/002/003）
+
+/** 本地草稿键：`${tenantId}:${userId}:${kind}:${id}`（design-system §13；租户取会话 tenantCode）。 */
+const recordKey = computed(() =>
+  draftRecordKey(
+    userStore.userInfo?.tenantCode,
+    userStore.userInfo?.userId,
+    recordId.value,
+  ),
+);
+
+/** 40900 响应 → DraftConflictError（useAutoSave 冲突流程），其余错误原样抛出。 */
+async function saveDraftToServer(body: {
+  baseVersion: number;
+  changes: Record<string, unknown>;
+  overwrite?: boolean;
+}) {
+  try {
+    return await saveRecordDraft(recordId.value, body);
+  } catch (error) {
+    const detail = asDraftConflictDetail(error);
+    if (detail) throw new DraftConflictError(detail);
+    throw error;
+  }
+}
+
+const autosave = useAutoSave({
+  enabled: computed(() => !readonly.value && !submitted.value),
+  getBaseVersion: () => version.value,
+  getChanges: () => diffChanges(savedData.value, data.value),
+  getSnapshot: () => ({
+    baseVersion: version.value,
+    data: { ...data.value },
+    meta: { ...meta.value },
+  }),
+  isDirty: dirty,
+  kind: 'followup',
+  async onSaved(_result, trigger: AutoSaveTrigger) {
+    version.value = _result.version;
+    savedData.value = { ...data.value };
+    if (trigger === 'manual') {
+      message.success('已暂存到服务器（草稿），任务变为进行中');
+    }
+    if (trigger === 'keepMine') {
+      message.success('已用你的版本覆盖服务器草稿，覆盖记入操作日志');
+    }
+  },
+  recordKey,
+  async restoreServer() {
+    await load();
+  },
+  saveDraft: saveDraftToServer,
+});
+
+/** 冲突处理中标志（ConflictBanner 按钮 loading）。 */
+const resolving = ref<'keepMine' | 'loadServer' | null>(null);
+
+async function handleKeepMine() {
+  if (resolving.value) return;
+  resolving.value = 'keepMine';
+  try {
+    await autosave.keepMine();
+  } finally {
+    resolving.value = null;
+  }
+}
+
+async function handleLoadServer() {
+  if (resolving.value) return;
+  resolving.value = 'loadServer';
+  try {
+    await autosave.loadServer();
+    message.info('已载入服务器最新草稿；你的改动另存一份本地副本，可对照');
+  } finally {
+    resolving.value = null;
+  }
+}
+
+/** 提交闸门：离线 / 冲突中不能提交（pages.md §5.1 文案照抄）。 */
+const submitBlocked = computed(
+  () => autosave.status.value === 'offline' || autosave.conflict.value !== null,
+);
+const submitBlockedTooltip = computed(() =>
+  autosave.conflict.value
+    ? '请先处理版本冲突再提交'
+    : '离线时不能提交：改动已存本地草稿，恢复网络后再提交',
 );
 
 /** 随访日期（窗口外横幅判定用；字段编码 followup_date，与后端口径一致）。 */
@@ -163,6 +269,7 @@ async function load() {
         prevId: queueView.prevId ?? null,
       };
     }
+    await offerLocalDraftRestore();
   } catch {
     message.error('随访记录加载失败，请稍后重试');
   } finally {
@@ -170,34 +277,54 @@ async function load() {
   }
 }
 
+/** 打开时如有本地草稿（上次断网 / 未同步），提示「发现未提交的草稿，是否恢复」。 */
+async function offerLocalDraftRestore() {
+  if (readonly.value || !(await autosave.hasLocalDraft())) return;
+  Modal.confirm({
+    title: '发现未提交的草稿',
+    content: '本机有一份未同步到服务器的草稿，是否恢复？',
+    okText: '恢复草稿',
+    cancelText: '不恢复',
+    onOk: async () => {
+      const draft = await autosave.restoreLocalDraft();
+      if (!draft) return;
+      data.value = { ...draft.data };
+      meta.value = { ...draft.meta };
+      message.success('已恢复本机草稿，改动会在下次保存时同步');
+    },
+  });
+}
+
 onMounted(() => {
   void load();
   window.addEventListener('keydown', handleKeydown);
+  window.addEventListener('beforeunload', handleBeforeUnload);
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleKeydown);
+  window.removeEventListener('beforeunload', handleBeforeUnload);
 });
+
+/** 有改动时刷新 / 关标签页提醒（浏览器原生确认；本应用内离开走 leaveConfirm 弹窗）。 */
+function handleBeforeUnload(event: BeforeUnloadEvent) {
+  if (!dirty.value || submitted.value) return;
+  event.preventDefault();
+  event.returnValue = '';
+}
 
 // ---------------------------------------------------------------- 暂存与提交
 
 async function handleSaveDraft() {
   if (readonly.value || saving.value) return false;
-  const changes = diffChanges(savedData.value, data.value);
-  if (Object.keys(changes).length === 0) {
+  if (!dirty.value) {
     message.info('没有需要暂存的修改');
     return true;
   }
   saving.value = true;
   try {
-    const saved = await saveRecordDraft(recordId.value, {
-      baseVersion: version.value,
-      changes,
-    });
-    version.value = saved.version;
-    savedData.value = { ...data.value };
-    message.success('已暂存到服务器（草稿），任务变为进行中');
-    return true;
+    // 409 由 useAutoSave 进入冲突流程（不再当作普通失败提示）
+    return await autosave.saveNow();
   } catch (error) {
     message.error('暂存失败，请稍后重试');
     console.error(error);
@@ -209,6 +336,10 @@ async function handleSaveDraft() {
 
 async function handleSubmit() {
   if (readonly.value || submitting.value || submitted.value) return;
+  if (submitBlocked.value) {
+    message.warning(submitBlockedTooltip.value);
+    return;
+  }
   const result: RendererValidateResult | undefined =
     await renderer.value?.validate();
   if (result && !result.ok) {
@@ -236,6 +367,8 @@ async function doSubmit() {
     });
     submitted.value = true;
     status.value = 'SUBMITTED';
+    // 服务器已收到全量数据：丢弃本机草稿，重开不再提示恢复
+    void autosave.discardLocalDraft();
     message.success(
       submitSuccessMessage(deathSelected.value, context.value !== null),
     );
@@ -370,6 +503,20 @@ function handleJump(key: string) {
         />
       </div>
 
+      <FormStatusBar
+        v-if="!readonly"
+        :last-saved-at="autosave.lastSavedAt.value"
+        :status="autosave.status.value"
+      />
+
+      <ConflictBanner
+        v-if="autosave.conflict.value"
+        :conflict="autosave.conflict.value"
+        :pending="resolving"
+        @keep-mine="handleKeepMine"
+        @load-server="handleLoadServer"
+      />
+
       <Alert
         v-for="banner in banners"
         :key="banner.key"
@@ -398,6 +545,7 @@ function handleJump(key: string) {
               :mode="readonly ? 'readonly' : 'edit'"
               :schema="schema"
               :show-errors="showErrors"
+              @field-blur="autosave.noteBlur()"
               @progress="progressItems = $event"
             />
             <div v-if="nextVisitText(context)" class="next-visit">
@@ -424,14 +572,17 @@ function handleJump(key: string) {
           >
             暂存
           </Button>
-          <Button
-            :loading="submitting"
-            data-testid="record-submit"
-            type="primary"
-            @click="handleSubmit"
-          >
-            提交
-          </Button>
+          <Tooltip :title="submitBlocked ? submitBlockedTooltip : ''">
+            <Button
+              :disabled="submitBlocked"
+              :loading="submitting"
+              data-testid="record-submit"
+              type="primary"
+              @click="handleSubmit"
+            >
+              提交
+            </Button>
+          </Tooltip>
         </Space>
       </div>
     </Card>

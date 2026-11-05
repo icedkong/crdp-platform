@@ -10,6 +10,7 @@ import { preferences } from '@vben/preferences';
 import { resetAllStores, useAccessStore, useUserStore } from '@vben/stores';
 
 import { pickTwoFactorChallenge } from '@crdp/api';
+import { clearAllLocalDrafts } from '@crdp/form-engine';
 import { permissionVersionChanged } from '@crdp/rules';
 import { notification } from 'ant-design-vue';
 import { defineStore } from 'pinia';
@@ -197,6 +198,8 @@ export const useAuthStore = defineStore('auth', () => {
     }
     resetAllStores();
     accessStore.setLoginExpired(false);
+    // E25-T02 / NFR-SAVE-002：退出登录清空本机全部草稿（design-system §13）
+    void clearAllLocalDrafts();
 
     // 回登录页带上当前路由地址
     await router.replace({

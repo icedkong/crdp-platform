@@ -13,6 +13,7 @@ import {
   bannersOf,
   deathFieldKey,
   diffChanges,
+  draftRecordKey,
   hasChanges,
   headerSummary,
   headerTitle,
@@ -198,5 +199,18 @@ describe('顶栏与下次随访行', () => {
     );
     expect(nextVisitText(context({ nextPlanDate: null }))).toBe('');
     expect(nextVisitText(null)).toBe('');
+  });
+});
+
+describe('draftRecordKey（E25-T02 本地草稿键：租户 + 用户 + 记录隔离）', () => {
+  it('键含租户、用户、kind 与记录 ID', () => {
+    expect(draftRecordKey('hosp-a', '101', '701')).toBe(
+      'hosp-a:101:followup:701',
+    );
+  });
+
+  it('会话信息缺失时各段为空串，仍保持四段结构', () => {
+    expect(draftRecordKey(undefined, undefined, '701')).toBe('::followup:701');
+    expect(draftRecordKey('hosp-a', 2024, '9')).toBe('hosp-a:2024:followup:9');
   });
 });
