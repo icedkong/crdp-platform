@@ -41,7 +41,7 @@
 - 免打扰时段内产生的短信推迟到 08:00 后；超出每日上限的并入次日汇总（A-NTF-005、C-NTF-005）。
 - 无负责人时按 A-NTF-004 / C-NTF-004 扩大接收人（病区成员兜底，§2）。
 - **每日汇总作业（E09-T05 已落地）**：`NotifyDigestService` + `NotifyDigestScheduler`（每分钟级 tick `crdp.notify.digest.tick-ms`，默认 60 秒）。逐租户读本院 DAILY_DIGEST 规则的 `send_time`（默认 08:30，容差 5 分钟，每日只触发一次——内存标记、重启清零，每日上限是持久兜底）执行一轮：① 按人把 `ntf_send_log` 全部 QUEUED 短信行合并成**一条**汇总短信（模板 NOTIFY_DAILY_SUMMARY、参数只有待办总数，5 项待随访 + 2 项逾期 = 「您有 7 项…」）；② 免打扰（`ntf_setting`，默认 21:00–08:00，起点含终点不含）时段内短信一律不发、行保持 QUEUED 并入次轮，**站内信汇总不受免打扰约束**；③ 每人每日上限（默认 3）：当日 SENT 短信数已满则本轮并入次日；④ 手机号取 `sys_user.phone` 密文经 CryptoService 解密（未绑定 / 解密失败记 FAILED，接收人停用记 SKIPPED）；⑤ 成功并入行整体记 SENT（带 sent_at），服务商失败记 FAILED（detail 只含失败类别，走 §4 重试）；⑥ 每人补投一条「每日汇总」站内信（dedup `digest:{日期}:{接收人}:INBOX`，当日事件侧已投过 DAILY_DIGEST 站内信则不重复）。今日待办口径暂为「该接收人的 QUEUED 短信台账行」；E14 任务域落地后可改为按 fu_task 统计（负载 `recipientIds` 随事件下发的通道已就绪，§2）。租户停用不执行（TenantDirectory 只列启用 / 试用 / 宽限期）；触发即先标记后执行，作业中断当日不补跑（QUEUED 行不丢，次日带上）。
-- 事件经框架 outbox 分发器（E09-T01，`sys_outbox` PENDING → SENT / FAILED）进入通知子域：投递失败指数退避重试，超限转死信 `FAILED`。**站内信通道已随 E09-T02 落地**（`NoticeInboxService.deliver`，dedup_key 幂等）；**规则引擎（事件 → 规则 → 接收人 → 渠道）已随 E09-T04 落地**（`NotifyEventSubscriber`，§2）；**短信通道已随 E09-T03 落地**（`TencentSmsChannel`，E09-T05 汇总作业消费 `ntf_send_log` 的 QUEUED 行）；Webhook 随 E09-T06。
+- 事件经框架 outbox 分发器（E09-T01，`sys_outbox` PENDING → SENT / FAILED）进入通知子域：投递失败指数退避重试，超限转死信 `FAILED`。**站内信通道已随 E09-T02 落地**（`NoticeInboxService.deliver`，dedup_key 幂等）；**规则引擎（事件 → 规则 → 接收人 → 渠道）已随 E09-T04 落地**（`NotifyEventSubscriber`，§2）；**短信通道已随 E09-T03 落地**（`TencentSmsChannel`，E09-T05 汇总作业消费 `ntf_send_log` 的 QUEUED 行）；**Webhook 已随 E09-T06 落地**（§6）。
 - 每条通知写 `ntf_send_log`（E09-T04 落表）：事件、接收人、渠道、时间、结果、失败原因；查询 / 重试随 E09-T07。
 - 租户停用、模块关闭时不发送。
 
@@ -78,10 +78,27 @@ send_status 口径：`QUEUED`（短信待 E09-T05 汇总发送）/ `SENT`（站�
 | GET | `/api/hospital/profile/notify-pref` | 登录 | `{ smsOff: eventType[], overdueSmsOffAllowed, options: [{ eventType, label, closeable }] }`；options 只列本院规则含短信渠道的事件（缺行回落默认值，与 §2 同口径），closeable=非逾期类或租户允许 |
 | PUT | `/api/hospital/profile/notify-pref` | 登录 | body `{ smsOff: eventType[] }` 全量覆盖（只认已知编码）；本院不允许关闭逾期类时含 `TASK_OVERDUE` → **40001**；写 `NOTICE_PREF_UPDATE` 审计（本人） |
 
-## 6. Webhook（A-NTF-008、C-NTF-008，P1；`tenant:webhook:edit`）
+## 6. Webhook（A-NTF-008、C-NTF-008、PLT-CFG-007；`tenant:webhook:edit`；E09-T06 已实现）
 
-`GET/POST/PUT/DELETE /api/hospital/system/webhooks`：`{ url, secret（只写不读）, events: [TASK_OPENED, TASK_OVERDUE, RECORD_SUBMITTED, PATIENT_DEAD(A)] , enabled }`；`POST .../{id}/test`。
-负载只含 `{ eventType, objectType, objectId, tenantCode, occurredAt }`，**不含患者信息**；HMAC-SHA256 签名头 `X-CRDP-Signature`；失败指数退避重试，记发送记录。
+表：租户库 `sys_webhook`（配置）+ `sys_webhook_delivery`（投递队列 / 台账，重试进度持久化）——迁移 followup V59；按钮（plt_menu 343）平台库 V47、TENANT_ADMIN 授予种子 V121。后端 `com.crdp.system.webhook`（crdp-system）+ `HospitalWebhookController` / `WebhookDeliveryScheduler`（crdp-server）。页面：`/system/settings`「Webhook」页签（pages.md §10）。**平台级 Webhook（platform:webhook:edit，/platform/webhook）不在本任务**（随平台配置页任务落地）。
+
+- **配置面**：`{ name, url, secret?, events, enabled }`；secret 只写不读——新建留空系统生成 32 字节 Base64URL，PUT 传 null/空白保持、传新值即更换，**只在生成 / 更换的响应回显一次**（secretShownOnce），库里只存 CryptoService 密文（purpose=`webhook-secret`）；events 目录 `TASK_OPENED / TASK_OVERDUE / RECORD_SUBMITTED / PATIENT_DEAD`（A / C 差异由本院勾选体现——C 不勾患者死亡；RECORD_SUBMITTED / PATIENT_DEAD 的事件产生方随 E15 / 患者域上线自动接入）；数量上限 20 个；增删改写 `WEBHOOK_CREATE / UPDATE / DELETE` 审计（secret 明文不落审计），删除连投递台账一起清。
+- **SSRF 防护（验收「内网地址拒绝」）**：`WebhookSsrfGuard` 在**保存时**与**每次投递前**双重校验——仅 HTTPS；主机名解析出的全部地址必须是公网（回环 127/8 与 ::1、任意本地 0/8、链路本地 169.254 与 fe80::/10（云元数据）、站点本地 10/8、172.16/12、192.168/16、IPv6 唯一本地 fc00::/7、IPv4 映射 IPv6、组播、100.64/10、198.18/15 任一命中即 40001）；解析失败拒绝；不允许 userinfo；出站 **禁跟随重定向**（防公网 302 → 内网）。`crdp.webhook.allow-private-addresses=true`（默认关）仅供本机联调 / 集成测试把接收方起在 127.0.0.1（同时放行明文 http——本地 HttpServer 起不了 TLS），生产不得打开。
+- **投递链路**：sys_outbox 订阅方 `WebhookEventSubscriber` 只入队（(webhook_id, outbox_event_id) 唯一，分发器重放不重排）；HTTP 出站在 `WebhookDeliveryScheduler` 轮询（`crdp.webhook.delivery.tick-ms` 默认 15 秒）逐租户执行，不阻塞 outbox 分发线程。负载只含 `{ eventType, objectType, objectId, tenantCode, occurredAt(+08:00) }`，**不含患者信息**（对象 ID 字符串序列化，taskId / recordId / patientId 按事件映射 TASK / RECORD / PATIENT）。
+- **签名（验收「签名可校验」）**：请求头 `X-CRDP-Timestamp`（Unix 秒）+ `X-CRDP-Signature: v1=hex(HMAC-SHA256(secret, 时间戳 + "." + 请求体))`（经 CryptoService.hmacSha256Hex，业务代码不直接调算法库）+ `X-CRDP-Event` / `X-CRDP-Delivery`（接收方幂等键，同一投递的重试共用）；接收方建议同时校验 ±5 分钟时钟偏差防重放；`v1=` 为算法版本前缀（换国密升 v2）。
+- **重试（tech-plan「失败重试 3 次（退避）」）**：非 2xx / 网络异常 → 指数退避（`crdp.webhook.retry-base-ms` 默认 60 秒，逐次翻倍封顶 `max-backoff-ms` 默认 30 分钟）重试 `crdp.webhook.max-retries`（默认 3）次，共 1+3 次尝试，耗尽转 FAILED；attempt / next_attempt_at 落库（重启不丢退避进度；到点判定用 JVM 时钟，不与 MySQL NOW() 比较——容器时区与 JVM 不同时不错位）；地址复核不过（保存后 DNS 改指内网）直接 FAILED 不重试。
+- **投递记录（PLT-CFG-007）**：按状态筛选、payload 与响应码 / 失败类别可见（失败类别不含 URL 与响应体），FAILED 可手动重投（退避从第 1 次重计）。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/hospital/system/webhooks` | 清单（不含 secret）；行 `{ id, name, url, events, enabled, lastDeliveryAt?, updatedAt? }` |
+| GET | `/api/hospital/system/webhooks/events` | 可订阅事件目录 `{code, label}` |
+| POST | `/api/hospital/system/webhooks` | 新建 → `{ webhook, secretShownOnce }`（密钥只回显这一次）；内网 / 非 HTTPS 地址 40001 |
+| PUT | `/api/hospital/system/webhooks/{id}` | 修改（字段可空 = 保持；secret 传新值即更换并回显一次）；不存在 40400 |
+| DELETE | `/api/hospital/system/webhooks/{id}` | 删除（队列与台账一并清除，写审计） |
+| POST | `/api/hospital/system/webhooks/{id}/test` | 同步推一条 WEBHOOK_TEST（一次性，失败不进重试队列），响应 `{ status, responseStatus?, error?, timestamp, signature, signatureAlgorithm }`——回显签名头值供与接收方对账 |
+| GET | `/api/hospital/system/webhooks/{id}/deliveries?status=&pageNo=&pageSize=` | 投递记录分页；行含 payload / attempt / responseStatus / error / sentAt |
+| POST | `/api/hospital/system/webhooks/{id}/deliveries/{deliveryId}/redeliver` | FAILED → PENDING 重投；非 FAILED 40001、不存在 40400 |
 
 ## 7. 测试要点
 
@@ -91,3 +108,4 @@ send_status 口径：`QUEUED`（短信待 E09-T05 汇总发送）/ `SENT`（站�
 - 接收人失去病区权限后，旧站内信打开 → 40400，列表里姓名改为脱敏。
 - 发送记录按事件 / 渠道 / 结果 / 日期 / 接收人可查（E09-T07 `NotifySendLogsIT`）；失败重试回 QUEUED 且保留原失败原因。
 - 个人关闭非逾期类短信后：该事件 SMS 记 SKIPPED、站内信照发；逾期类在租户不允许时 PUT 含 TASK_OVERDUE → 40001。
+- Webhook（E09-T06 `WebhookSsrfGuardTest` / `WebhookAdminServiceTest` / `WebhookDeliveryServiceTest` / `WebhookEventSubscriberTest` + `WebhookConfigIT` / `WebhookDeliveryIT`）：内网 / 回环 / 链路本地 / 非 HTTPS / userinfo 保存即 40001（公网用字面量 IP 不依赖 DNS）；签名头在测试里用独立 JCE 实现验签（RFC 4231 向量锁 CryptoService.hmacSha256Hex）；负载无患者字段；退避 1×/2×/4×、耗尽 FAILED、重投重新计数；投递前地址复核不过不出网；test 接口回显签名与实际请求一致。

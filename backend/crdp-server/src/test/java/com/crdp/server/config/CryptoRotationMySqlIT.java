@@ -282,5 +282,10 @@ class CryptoRotationMySqlIT {
         public String blindIndex(String purpose, String value) {
             return delegate.blindIndex(purpose, value);
         }
+
+        @Override
+        public String hmacSha256Hex(byte[] key, String data) {
+            return delegate.hmacSha256Hex(key, data);
+        }
     }
 }

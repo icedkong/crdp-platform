@@ -14,3 +14,4 @@ export * from './profile';
 export * from './task';
 export * from './user';
 export * from './ward';
+export * from './webhook';

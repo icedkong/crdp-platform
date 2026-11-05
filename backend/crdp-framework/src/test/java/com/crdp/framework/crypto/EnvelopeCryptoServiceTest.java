@@ -205,4 +205,26 @@ class EnvelopeCryptoServiceTest {
         assertEquals("13800138000", crypto.decrypt(first));
         assertEquals("13800138000", crypto.decrypt(second));
     }
+
+    /**
+     * E09-T06 Webhook 签名：外部共享密钥的 HMAC-SHA256（RFC 4231 测试向量 2，key="Jefe"）。 与加解密字段不同——密钥由调用方提供
+     * （Webhook secret），不取租户数据密钥，因此不需要租户上下文。
+     */
+    @Test
+    void computesHmacSha256WithExternalKey() {
+        byte[] jefe = "Jefe".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        assertEquals(
+                "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843",
+                crypto.hmacSha256Hex(jefe, "what do ya want for nothing?"));
+        assertNotEquals(
+                crypto.hmacSha256Hex(jefe, "what do ya want for nothing?"),
+                crypto.hmacSha256Hex(jefe, "what do ya want for nothing!"),
+                "同密钥不同数据必须得到不同签名");
+        assertNotEquals(
+                crypto.hmacSha256Hex(jefe, "what do ya want for nothing?"),
+                crypto.hmacSha256Hex(
+                        "Ana".getBytes(java.nio.charset.StandardCharsets.US_ASCII),
+                        "what do ya want for nothing?"),
+                "不同密钥同数据必须得到不同签名");
+    }
 }
