@@ -18,9 +18,15 @@ import { preferences, usePreferences } from '@vben/preferences';
 import { useAccessStore, useUserStore } from '@vben/stores';
 import { openWindow } from '@vben/utils';
 
+import { useResponsiveShell } from '@crdp/responsive';
+
 import { $t } from '#/locales';
 import { useAuthStore } from '#/store';
 import LoginForm from '#/views/_core/authentication/login.vue';
+
+// E24-T01 / NFR-RESP-001 三档外壳布局：平板菜单收成图标栏、手机菜单进抽屉并
+// 关闭多标签页（design-system §12）。
+useResponsiveShell();
 
 const notifications = ref<NotificationItem[]>([
   {

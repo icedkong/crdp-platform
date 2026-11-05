@@ -17,6 +17,7 @@
   "dependencies": {
     "@crdp/api": "workspace:*",
     "@crdp/form-engine": "workspace:*",
+    "@crdp/responsive": "workspace:*",
     "@crdp/rules": "workspace:*",
     "@crdp/status-tag": "workspace:*",
     "@crdp/tokens": "workspace:*",

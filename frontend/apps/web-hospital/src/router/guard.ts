@@ -5,6 +5,8 @@ import { preferences } from '@vben/preferences';
 import { useAccessStore, useUserStore } from '@vben/stores';
 import { startProgress, stopProgress } from '@vben/utils';
 
+import { setupResponsiveGuard } from '@crdp/responsive';
+
 import { accessRoutes, coreRouteNames } from '#/router/routes';
 import { useAuthStore } from '#/store';
 
@@ -141,6 +143,8 @@ function createRouterGuard(router: Router) {
   setupCommonGuard(router);
   /** 权限访问 */
   setupAccessGuard(router);
+  /** E24-T01：手机端非响应式页面整页替换（pages.md §0.2） */
+  setupResponsiveGuard(router);
 }
 
 export { createRouterGuard };
