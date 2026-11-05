@@ -46,7 +46,7 @@ function mountAutosave(over: Partial<AutoSaveOptions> = {}) {
       baseVersion: number;
       changes: Record<string, unknown>;
     }): Promise<AutoSaveSavedView> => ({
-      savedAt: '2026-11-05T14:02:00+08:00',
+      savedAt: SAVED_AT_ISO,
       version: body.baseVersion + 1,
     }),
   );
@@ -93,10 +93,18 @@ function setOnline(online: boolean) {
   vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(online);
 }
 
+// HH:mm 口径为浏览器本地时区（与站内信 noticeTimeText 一致）：所有时间常量用
+// 本地时区构造（notice-bell-logic.spec 同款），CI 任意时区（如 UTC）断言等价
 beforeEach(() => {
   vi.useFakeTimers();
   setOnline(true);
 });
+
+/** 本地时区 2026-11-05 14:02 的 ISO 串（HH:mm 断言值 14:02 在任意时区等价）。 */
+const SAVED_AT_ISO = new Date(2026, 10, 5, 14, 2).toISOString();
+
+/** 本地时区 2026-11-05 13:58（冲突更新时间，ConflictBanner 显示到分钟）。 */
+const CONFLICT_AT_ISO = new Date(2026, 10, 5, 13, 58).toISOString();
 
 afterEach(() => {
   vi.useRealTimers();
@@ -123,7 +131,7 @@ describe('服务器草稿：每 2 分钟，有改动才保存（NFR-SAVE-001）'
     expect(api.status.value).toBe('saved');
     expect(api.lastSavedAt.value).toBe('14:02');
     expect(onSaved).toHaveBeenCalledWith(
-      { savedAt: '2026-11-05T14:02:00+08:00', version: 3 },
+      { savedAt: SAVED_AT_ISO, version: 3 },
       'auto',
     );
     // 保存成功后页面以服务器版本为新基准 → 不再 dirty，下一个周期不再请求
@@ -257,7 +265,7 @@ describe('版本冲突：409 暂停自动保存并提示（NFR-SAVE-003）', () 
         { key: 'q01_ef', label: 'EF 射血分数', mine: 45, server: 52 },
         { key: 'q03_la', label: null, mine: 40, server: 44 },
       ],
-      updatedAt: '2026-11-05T13:58:00+08:00',
+      updatedAt: CONFLICT_AT_ISO,
       updatedBy: '王医生（示例）',
     });
   }
@@ -280,7 +288,7 @@ describe('版本冲突：409 暂停自动保存并提示（NFR-SAVE-003）', () 
     expect(api.conflict.value).toEqual({
       fields: ['EF 射血分数', 'q03_la'],
       serverVersion: 9,
-      updatedAt: '2026-11-05T13:58:00+08:00',
+      updatedAt: CONFLICT_AT_ISO,
       updatedBy: '王医生（示例）',
     });
   });
@@ -308,7 +316,10 @@ describe('版本冲突：409 暂停自动保存并提示（NFR-SAVE-003）', () 
     const saveDraft = vi.fn(
       async (_body: { baseVersion: number; overwrite?: boolean }) => {
         if (fail) throw conflictError();
-        return { savedAt: '2026-11-05T14:10:00+08:00', version: 10 };
+        return {
+          savedAt: new Date(2026, 10, 5, 14, 10).toISOString(),
+          version: 10,
+        };
       },
     );
     const { api, form } = mountAutosave({
@@ -399,9 +410,10 @@ describe('状态文案与时间口径（design-system §13 照抄）', () => {
     expect(autoSaveStatusText('idle', null)).toBe('');
   });
 
-  it('hhmmOf：ISO 带时区取北京时间口径的本地 HH:mm，非法值空串', () => {
-    expect(hhmmOf('2026-11-05T14:02:00+08:00')).toBe('14:02');
+  it('hhmmOf：ISO 带时区按本地时区取 HH:mm（本地构造，任意时区等价），非法值空串', () => {
+    expect(hhmmOf(new Date(2026, 10, 5, 14, 2).toISOString())).toBe('14:02');
     expect(hhmmOf('bad')).toBe('');
+    expect(hhmmOf(null)).toBe('');
   });
 });
 

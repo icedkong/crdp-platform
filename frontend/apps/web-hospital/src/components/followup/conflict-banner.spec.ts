@@ -15,10 +15,13 @@ import ConflictBanner from './conflict-banner.vue';
 const conflict = (over: Partial<AutoSaveConflict> = {}): AutoSaveConflict => ({
   fields: ['EF 射血分数', 'q03_la'],
   serverVersion: 9,
-  updatedAt: '2026-11-05T13:58:00+08:00',
+  updatedAt: UPDATED_AT_ISO,
   updatedBy: '王医生（示例）',
   ...over,
 });
+
+/** 本地时区 2026-11-05 13:58（时间显示到分钟；本地构造，任意时区断言等价）。 */
+const UPDATED_AT_ISO = new Date(2026, 10, 5, 13, 58).toISOString();
 
 function mountBanner(props: {
   conflict: AutoSaveConflict;
