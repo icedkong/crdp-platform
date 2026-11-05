@@ -278,10 +278,14 @@ export const globalCss = `
 .crdp-field-flag .ant-input-number, .crdp-field-flag .ant-input, .crdp-field-flag .ant-select-selector { background: #FFF1F0 !important; }
 /* 报告单带入字段 */
 .crdp-field-from-report .ant-input-number, .crdp-field-from-report .ant-input, .crdp-field-from-report .ant-select-selector { background: ${colors.primaryBg} !important; }
-/* 手机输入框 36px / 16px，避免 iOS 聚焦放大 */
+/* 手机输入框 36px / 16px，避免 iOS 聚焦放大；触控可点区域 ≥ 40px（NFR-RESP、E24-T01） */
 @media (max-width: ${breakpoints.tablet - 1}px) {
   .crdp-form .ant-input, .crdp-form .ant-input-number-input, .crdp-form .ant-select-selector, .crdp-form .ant-picker-input > input { font-size: ${sizes.mobileInputFontSize}px !important; }
   .crdp-form .ant-input, .crdp-form .ant-input-number, .crdp-form .ant-select-selector, .crdp-form .ant-picker { min-height: ${sizes.mobileInputHeight}px; width: 100% !important; }
   .crdp-touch { min-width: ${sizes.touchTarget}px; min-height: ${sizes.touchTarget}px; }
+  .ant-btn { min-height: ${sizes.touchTarget}px; }
+  .ant-btn.ant-btn-icon-only { min-width: ${sizes.touchTarget}px; }
+  .ant-pagination .ant-pagination-item { min-width: ${sizes.touchTarget}px; min-height: ${sizes.touchTarget}px; }
+  .ant-pagination .ant-pagination-prev, .ant-pagination .ant-pagination-next { min-width: ${sizes.touchTarget}px; min-height: ${sizes.touchTarget}px; }
 }
 `;

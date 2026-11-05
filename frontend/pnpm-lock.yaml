@@ -619,6 +619,9 @@ importers:
       '@crdp/form-engine':
         specifier: workspace:*
         version: link:../../packages/form-engine
+      '@crdp/responsive':
+        specifier: workspace:*
+        version: link:../../packages/responsive
       '@crdp/rules':
         specifier: workspace:*
         version: link:../../packages/rules
@@ -698,6 +701,9 @@ importers:
       '@crdp/api':
         specifier: workspace:*
         version: link:../../packages/api
+      '@crdp/responsive':
+        specifier: workspace:*
+        version: link:../../packages/responsive
       '@crdp/rules':
         specifier: workspace:*
         version: link:../../packages/rules
@@ -1706,6 +1712,28 @@ importers:
       '@vben-core/typings':
         specifier: workspace:*
         version: link:../@core/base/typings
+
+  packages/responsive:
+    dependencies:
+      '@crdp/tokens':
+        specifier: workspace:*
+        version: link:../tokens
+      '@vben/preferences':
+        specifier: workspace:*
+        version: link:../preferences
+      ant-design-vue:
+        specifier: 'catalog:'
+        version: 4.2.6(vue@3.5.44(typescript@6.0.3))
+      vue:
+        specifier: ^3.5.34
+        version: 3.5.44(typescript@6.0.3)
+      vue-router:
+        specifier: 'catalog:'
+        version: 5.4.0(@vue/compiler-sfc@3.5.44)(esbuild@0.28.2)(pinia@3.0.4(typescript@6.0.3)(vue@3.5.44(typescript@6.0.3)))(rolldown@1.2.16)(rollup@4.67.2)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(sass-embedded@1.107.1)(sass@1.107.1)(terser@5.51.2)(yaml@2.9.1))(vue@3.5.44(typescript@6.0.3))
+    devDependencies:
+      '@vue/test-utils':
+        specifier: 'catalog:'
+        version: 2.5.1(@vue/compiler-dom@3.5.44)(@vue/server-renderer@3.5.44)(vue@3.5.44(typescript@6.0.3))
 
   packages/rules:
     devDependencies:

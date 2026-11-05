@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@crdp/api": "workspace:*",
+    "@crdp/responsive": "workspace:*",
     "@crdp/rules": "workspace:*",
     "@crdp/status-tag": "workspace:*",
     "@crdp/tokens": "workspace:*",

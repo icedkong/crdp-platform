@@ -1,0 +1,18 @@
+{
+  "name": "@crdp/responsive",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@crdp/tokens": "workspace:*",
+    "@vben/preferences": "workspace:*",
+    "ant-design-vue": "catalog:",
+    "vue": "catalog:",
+    "vue-router": "catalog:"
+  },
+  "devDependencies": {
+    "@vue/test-utils": "catalog:"
+  }
+}

@@ -3,6 +3,8 @@ import type { RouteRecordRaw } from 'vue-router';
 import { LOGIN_PATH } from '@vben/constants';
 import { preferences } from '@vben/preferences';
 
+import { createMobileBlockedRoute } from '@crdp/responsive';
+
 const BasicLayout = () => import('#/layouts/basic.vue');
 const AuthPageLayout = () => import('#/layouts/auth.vue');
 
@@ -48,6 +50,9 @@ const coreRoutes: RouteRecordRaw[] = [
     children: [],
   },
   fallbackForbiddenRoute,
+  // E24-T01 / NFR-RESP-002：平台端全部页面仅桌面 / 平板（pages.md §11），
+  // 手机访问一律整页替换为 MobileBlocker（无 responsive: true 的路由）。
+  createMobileBlockedRoute(BasicLayout),
   {
     component: AuthPageLayout,
     meta: {
