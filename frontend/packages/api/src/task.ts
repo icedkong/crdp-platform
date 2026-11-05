@@ -12,11 +12,12 @@
  */
 import { BATCH_SKIP_REASON_TEXT } from './batch-operation';
 
-/** fu_task.status（E15-T01 状态机，components.md §2 task 域的展示派生见 {@link taskDisplayStatus}）。 */
+/** fu_task.status（E15-T01 状态机 + E15-T05 失访候选，components.md §2 task 域的展示派生见 {@link taskDisplayStatus}）。 */
 export type TaskStatus =
   | 'COMPLETED'
   | 'IN_PROGRESS'
   | 'LOST'
+  | 'LOST_CANDIDATE'
   | 'OVERDUE'
   | 'PENDING'
   | 'SKIPPED_SUSPENDED'
@@ -155,6 +156,7 @@ export const TASK_STATUS_TEXT: Record<TaskStatus, string> = {
   IN_PROGRESS: '进行中',
   COMPLETED: '已完成',
   OVERDUE: '逾期',
+  LOST_CANDIDATE: '失访候选',
   LOST: '失访',
   TERMINATED: '停止',
   SKIPPED_SUSPENDED: '期间未执行',
@@ -167,6 +169,7 @@ export const TASK_STATUS_OPTIONS: Array<{ label: string; value: TaskStatus }> =
       'PENDING',
       'IN_PROGRESS',
       'OVERDUE',
+      'LOST_CANDIDATE',
       'COMPLETED',
       'LOST',
       'TERMINATED',
@@ -174,11 +177,12 @@ export const TASK_STATUS_OPTIONS: Array<{ label: string; value: TaskStatus }> =
     ] as const
   ).map((value) => ({ label: TASK_STATUS_TEXT[value], value }));
 
-/** 未完成四态（「我的待办」口径：PENDING / IN_PROGRESS / OVERDUE / SKIPPED_SUSPENDED）。 */
+/** 未完成五态（「我的待办」口径：PENDING / IN_PROGRESS / OVERDUE / LOST_CANDIDATE / SKIPPED_SUSPENDED——失访候选仍需医生确认，E15-T05）。 */
 export const TASK_OPEN_STATUSES: TaskStatus[] = [
   'PENDING',
   'IN_PROGRESS',
   'OVERDUE',
+  'LOST_CANDIDATE',
   'SKIPPED_SUSPENDED',
 ];
 
@@ -200,6 +204,9 @@ export function taskDisplayStatus(task: {
     if (task.completeKind === 'BEFORE_WINDOW') return '已完成（窗口前完成）';
     if (task.completeKind === 'OVERDUE') return '已完成（逾期完成）';
     return '已完成';
+  }
+  if (task.status === 'PENDING' && task.createType === 'FOLLOWUP') {
+    return '待随访（跟进）';
   }
   return TASK_STATUS_TEXT[task.status];
 }

@@ -20,6 +20,7 @@ import com.crdp.followup.file.infra.mapper.SysFileRow;
 import com.crdp.followup.patient.app.PatientContactGateway;
 import com.crdp.followup.plan.app.FollowupTerminationService;
 import com.crdp.followup.task.app.FollowupTaskStatusService;
+import com.crdp.followup.task.app.UnreachedFollowupService;
 import com.crdp.followup.task.infra.mapper.FollowupTaskMapper;
 import com.crdp.framework.audit.AuditLogger;
 import com.crdp.framework.security.ScopeSnapshot;
@@ -52,6 +53,8 @@ class ContactLogServiceTest {
     private final PatientContactGateway patientScope = mock(PatientContactGateway.class);
     private final FollowupTaskMapper taskMapper = mock(FollowupTaskMapper.class);
     private final FollowupTaskStatusService taskStatus = mock(FollowupTaskStatusService.class);
+    private final UnreachedFollowupService unreachedFollowups =
+            mock(UnreachedFollowupService.class);
     private final FollowupTerminationService termination = mock(FollowupTerminationService.class);
     private final FilePolicyService filePolicy = mock(FilePolicyService.class);
     private final AuditLogger audit = mock(AuditLogger.class);
@@ -63,6 +66,7 @@ class ContactLogServiceTest {
                     patientScope,
                     taskMapper,
                     taskStatus,
+                    unreachedFollowups,
                     termination,
                     filePolicy,
                     audit);
@@ -123,6 +127,107 @@ class ContactLogServiceTest {
         verify(taskStatus).markInProgress(TASK, OPERATOR, "记录沟通");
         verify(termination, never()).terminateOnDeath(anyLong(), any(), any());
         verify(audit).append(any());
+    }
+
+    // ---------------------------------------------------------------- 未联系到自动跟进（A-FU-024，E15-T05）
+
+    @Test
+    void createWithUnreachedResultTriggersFollowupTask() {
+        inScope();
+        taskOfPatient();
+        when(mapper.insert(any(ContactLogMapper.ContactLogInsert.class)))
+                .thenAnswer(
+                        invocation -> {
+                            invocation
+                                    .getArgument(0, ContactLogMapper.ContactLogInsert.class)
+                                    .setId(5011L);
+                            return 1;
+                        });
+        stubRowView(5011L);
+        when(unreachedFollowups.createForUnreachedContact(
+                        eq(TASK), any(LocalDateTime.class), eq(OPERATOR)))
+                .thenReturn(9001L);
+
+        ContactLogService.CreateResult result =
+                service.create(
+                        PATIENT,
+                        new ContactLogService.SaveBody(
+                                TASK,
+                                "PHONE",
+                                "NOT_REACHED",
+                                LocalDateTime.of(2026, 11, 5, 16, 0),
+                                null,
+                                null,
+                                "无人接听（示例）",
+                                null));
+
+        assertEquals(
+                Long.valueOf(9001L), result.followupTaskId(), "未联系到 → 自动跟进任务 id 随响应返回（E15-T05）");
+        verify(unreachedFollowups)
+                .createForUnreachedContact(
+                        eq(TASK), eq(LocalDateTime.of(2026, 11, 5, 16, 0)), eq(OPERATOR));
+    }
+
+    @Test
+    void followupOnlyForUnreachedResultsOnLinkedTasks() {
+        inScope();
+        taskOfPatient();
+        when(mapper.insert(any(ContactLogMapper.ContactLogInsert.class)))
+                .thenAnswer(
+                        invocation -> {
+                            invocation
+                                    .getArgument(0, ContactLogMapper.ContactLogInsert.class)
+                                    .setId(5012L);
+                            return 1;
+                        });
+        stubRowView(5012L);
+
+        lenient()
+                .when(termination.terminateOnDeath(eq(PATIENT), any(), eq(OPERATOR)))
+                .thenReturn(
+                        new FollowupTerminationService.DeathTerminationView(
+                                String.valueOf(PATIENT), "DEAD", 0));
+        // 挂任务但已联系 / 家属代答 / 告知已故：不生成跟进
+        for (String reached : List.of("REACHED", "FAMILY", "DECEASED")) {
+            service.create(
+                    PATIENT,
+                    new ContactLogService.SaveBody(
+                            TASK, "PHONE", reached, null, null, null, null, null));
+        }
+        // 未联系到但不挂任务（患者页签直记）：无窗口锚点，不生成（OQ-86⑧）
+        service.create(
+                PATIENT,
+                new ContactLogService.SaveBody(
+                        null, "PHONE", "NOT_REACHED", null, null, null, null, null));
+
+        verify(unreachedFollowups, never()).createForUnreachedContact(anyLong(), any(), any());
+    }
+
+    @Test
+    void createReturnsNullFollowupWhenWindowOrCapBlocksGeneration() {
+        inScope();
+        taskOfPatient();
+        when(mapper.insert(any(ContactLogMapper.ContactLogInsert.class)))
+                .thenAnswer(
+                        invocation -> {
+                            invocation
+                                    .getArgument(0, ContactLogMapper.ContactLogInsert.class)
+                                    .setId(5013L);
+                            return 1;
+                        });
+        stubRowView(5013L);
+        when(unreachedFollowups.createForUnreachedContact(anyLong(), any(), any()))
+                .thenReturn(null); // 窗口已结束 / 已满 5 次：返回 null，不视作错误
+
+        ContactLogService.CreateResult result =
+                service.create(
+                        PATIENT,
+                        new ContactLogService.SaveBody(
+                                TASK, "PHONE", "WRONG_NUMBER", null, null, null, null, null));
+
+        assertEquals(null, result.followupTaskId(), "号码错误同样触发跟进（未接通口径，OQ-86②），窗口 / 次数不满足时静默不生成");
+        verify(unreachedFollowups)
+                .createForUnreachedContact(anyLong(), any(LocalDateTime.class), eq(OPERATOR));
     }
 
     @Test
@@ -215,6 +320,7 @@ class ContactLogServiceTest {
                                 1,
                                 "NORMAL",
                                 "PENDING",
+                                0,
                                 java.time.LocalDate.of(2026, 11, 5),
                                 java.time.LocalDate.of(2026, 10, 29)));
 
@@ -464,6 +570,7 @@ class ContactLogServiceTest {
                                 1,
                                 "NORMAL",
                                 "PENDING",
+                                0,
                                 java.time.LocalDate.of(2026, 11, 5),
                                 java.time.LocalDate.of(2026, 10, 29)));
     }

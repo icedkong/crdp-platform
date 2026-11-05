@@ -12,7 +12,9 @@ import java.util.Optional;
  *
  * <ul>
  *   <li>{@link #DECEASED} 触发死亡自动终止（A-FU-006 / A-FU-007，OQ-79②）；
- *   <li>{@link #NOT_REACHED} / {@link #WRONG_NUMBER} 计入失访判定（窗口内连续 3 次，A-FU-012，计数随 E15-T05）；
+ *   <li>{@link #NOT_REACHED} / {@link #WRONG_NUMBER} 计入失访判定（窗口内不同日期连续 3 次，A-FU-012，E15-T05），
+ *       并触发未联系到自动跟进（「未接通」＝ 两值，与 E15-T04 前端提示 {@code contactFollowupHint} 同口径， A-FU-024
+ *       文本只写「未联系到」，OQ-86②）；
  *   <li>{@link #REFUSED} 不计入失访，改走移出计划（A-FU-012）。
  * </ul>
  */
@@ -54,8 +56,17 @@ public enum ContactResult {
         return deathTermination;
     }
 
-    /** 是否计入失访判定（未联系到 / 号码错误，A-FU-012；计数随 E15-T05）。 */
+    /** 是否计入失访判定（未联系到 / 号码错误，A-FU-012；E15-T05 起按本口径计数）。 */
     public boolean countsTowardLost() {
+        return lostCounting;
+    }
+
+    /**
+     * 是否触发未联系到自动跟进（A-FU-024「次日自动生成一项跟进任务」；E15-T05）。 「未接通」＝ 未联系到 / 号码错误——与 E15-T04
+     * 前端提示（contactFollowupHint「系统次日自动生成跟进」）同口径，OQ-86②； 与 {@link #countsTowardLost()}
+     * 是两条规则，当前取值相同、不合并。
+     */
+    public boolean triggersUnreachedFollowup() {
         return lostCounting;
     }
 

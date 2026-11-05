@@ -3,6 +3,8 @@ package com.crdp.followup.task.api;
 import com.crdp.followup.task.app.FollowupTaskAssignService;
 import com.crdp.followup.task.app.FollowupTaskQueryService;
 import com.crdp.followup.task.app.FollowupTaskStartService;
+import com.crdp.followup.task.app.FollowupTaskStatusService;
+import com.crdp.framework.security.CurrentSession;
 import com.crdp.framework.security.RequireModule;
 import com.crdp.framework.security.RequiresPermission;
 import com.crdp.framework.web.ApiResponse;
@@ -27,7 +29,8 @@ import org.springframework.web.bind.annotation.RestController;
  * followup:task:view}（docs/api/followup.md §2：从公共池认领是随访员 / 医生的日常自助操作，不设改派权限门槛，行可见性由数据范围承担）。数据范围由
  * Mapper 语句上的 {@code @DataScope} 出行（越范围任务不可见，直接访问 40400）；接口资源由启动扫描登记（SCAN）。
  *
- * <p>临时任务（A-FU-013）与失访确认（A-FU-012）随 E15-T06 / E15-T05。
+ * <p>临时任务（A-FU-013）随 E15-T06；失访确认（A-FU-012）已随 E15-T05 落地（confirm-lost，权限沿用 {@code
+ * followup:record:edit}，followup.md §2「推断」定为该码）。
  */
 @Tag(name = "医院端随访任务")
 @RestController
@@ -37,14 +40,17 @@ public class FollowupTaskController {
     private final FollowupTaskQueryService queryService;
     private final FollowupTaskStartService startService;
     private final FollowupTaskAssignService assignService;
+    private final FollowupTaskStatusService statusService;
 
     public FollowupTaskController(
             FollowupTaskQueryService queryService,
             FollowupTaskStartService startService,
-            FollowupTaskAssignService assignService) {
+            FollowupTaskAssignService assignService,
+            FollowupTaskStatusService statusService) {
         this.queryService = queryService;
         this.startService = startService;
         this.assignService = assignService;
+        this.statusService = statusService;
     }
 
     @Operation(
@@ -102,6 +108,21 @@ public class FollowupTaskController {
     @RequiresPermission("followup:task:view")
     public ApiResponse<FollowupTaskAssignService.ClaimView> claim(@PathVariable("id") long id) {
         return ApiResponse.ok(assignService.claim(id));
+    }
+
+    @Operation(
+            summary =
+                    "确认失访（A-FU-012「医生确认后标为失访」，E15-T05）：失访候选 → 失访；"
+                            + "同窗口未完成跟进任务一并关闭；连续 2 个窗口（年度）失访时返回"
+                            + " patientLostPrompt = true（前端提示把患者状态改为失访，不自动改）；"
+                            + "非失访候选 40901、并发已被处理 40900；写 TASK_LOST_CONFIRM 审计")
+    @PostMapping("/{id}/confirm-lost")
+    @RequireModule("followup")
+    @RequiresPermission("followup:record:edit")
+    public ApiResponse<FollowupTaskStatusService.LostConfirmView> confirmLost(
+            @PathVariable("id") long id) {
+        return ApiResponse.ok(
+                statusService.confirmLost(id, CurrentSession.requireHospital().userId()));
     }
 
     @Operation(

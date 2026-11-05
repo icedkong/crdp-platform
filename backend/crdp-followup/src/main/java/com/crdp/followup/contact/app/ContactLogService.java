@@ -11,6 +11,7 @@ import com.crdp.followup.file.infra.mapper.SysFileRow;
 import com.crdp.followup.patient.app.PatientContactGateway;
 import com.crdp.followup.plan.app.FollowupTerminationService;
 import com.crdp.followup.task.app.FollowupTaskStatusService;
+import com.crdp.followup.task.app.UnreachedFollowupService;
 import com.crdp.followup.task.infra.mapper.FollowupTaskMapper;
 import com.crdp.framework.audit.AuditEntry;
 import com.crdp.framework.audit.AuditLogger;
@@ -41,6 +42,9 @@ import org.springframework.transaction.annotation.Transactional;
  * <ul>
  *   <li>第一次联系 → 任务进入「进行中」（{@link FollowupTaskStatusService#markInProgress}，只从待随访进、
  *       逾期不退回，OQ-82①；followup.md §4 预留的接入点）；
+ *   <li>结果 = 未联系到 / 号码错误（「未接通」，E15-T05 起）→ {@link UnreachedFollowupService} 自动生成跟进任务
+ *       （A-FU-024：次日〔间隔可配置〕开启、每窗口最多 5 次、窗口结束不再生成；不挂任务的联系无窗口锚点不生成，OQ-86⑧；
+ *       修改记录改结果不生成——与删除不回滚计数同口径，OQ-86⑥）；
  *   <li>结果 = 告知已故 → {@link FollowupTerminationService#terminateOnDeath}（患者 → 已死亡、未完成任务
  *       全部终止、之后不再创建任务，A-FU-007；OQ-79② 的 HTTP 触发接入，幂等）；
  *   <li>录音（MP3 / M4A / WAV / AMR，A-FU-025）：先经文件服务上传（真实类型与 50 MB 上限在 E10-T01 校验）， 这里校验类别为 AUDIO、状态
@@ -48,7 +52,8 @@ import org.springframework.transaction.annotation.Transactional;
  *       E16-T08）。
  * </ul>
  *
- * <p>失访判定（A-FU-012）与未联系到自动跟进（A-FU-024）按本表计数，随 E15-T05。写操作写审计（AGENTS §5.4）。
+ * <p>失访判定（A-FU-012，窗口内不同日期连续未接通且窗口已结束 → 失访候选，每日 00:10 刷新）按本表计数（E15-T05， {@link
+ * FollowupTaskStatusService#refreshLostCandidates}）。写操作写审计（AGENTS §5.4）。
  */
 @Service
 public class ContactLogService {
@@ -68,6 +73,7 @@ public class ContactLogService {
     private final PatientContactGateway patientScope;
     private final FollowupTaskMapper taskMapper;
     private final FollowupTaskStatusService taskStatus;
+    private final UnreachedFollowupService unreachedFollowups;
     private final FollowupTerminationService termination;
     private final FilePolicyService filePolicy;
     private final AuditLogger audit;
@@ -78,6 +84,7 @@ public class ContactLogService {
             PatientContactGateway patientScope,
             FollowupTaskMapper taskMapper,
             FollowupTaskStatusService taskStatus,
+            UnreachedFollowupService unreachedFollowups,
             FollowupTerminationService termination,
             FilePolicyService filePolicy,
             AuditLogger audit) {
@@ -86,6 +93,7 @@ public class ContactLogService {
         this.patientScope = patientScope;
         this.taskMapper = taskMapper;
         this.taskStatus = taskStatus;
+        this.unreachedFollowups = unreachedFollowups;
         this.termination = termination;
         this.filePolicy = filePolicy;
         this.audit = audit;
@@ -119,8 +127,11 @@ public class ContactLogService {
             LocalDateTime updatedAt,
             List<AudioView> audios) {}
 
-    /** 创建结果（terminatedTasks = 结果「告知已故」时本次终止的未完成任务数，其余 null）。 */
-    public record CreateResult(ContactLogView log, Integer terminatedTasks) {}
+    /**
+     * 创建结果（terminatedTasks = 结果「告知已故」时本次终止的未完成任务数；followupTaskId = 未接通时自动生成的跟进任务 id，无则
+     * null，E15-T05）。
+     */
+    public record CreateResult(ContactLogView log, Integer terminatedTasks, Long followupTaskId) {}
 
     /** 分页结果（统一分页口径）。 */
     public record ContactLogPage(
@@ -229,6 +240,13 @@ public class ContactLogService {
             // 第一次联系 → 进行中（只从待随访进，幂等不写审计；followup.md §4 预留接入点）
             taskStatus.markInProgress(taskId, row.getCreatedBy(), "记录沟通");
         }
+        Long followupTaskId = null;
+        if (taskId != null && result.triggersUnreachedFollowup()) {
+            // 未接通 → 自动跟进（A-FU-024，E15-T05）：窗口结束 / 已满 5 次等不满足条件时返回 null（不打断记录）
+            followupTaskId =
+                    unreachedFollowups.createForUnreachedContact(
+                            taskId, contactTime, row.getCreatedBy());
+        }
         Integer terminatedTasks = null;
         if (result.triggersDeathTermination()) {
             terminatedTasks =
@@ -260,17 +278,21 @@ public class ContactLogService {
                                         + (taskId == null ? "null" : taskId)
                                         + ",\"audioCount\":"
                                         + audioFileIds.size()
+                                        + ",\"followupTaskId\":"
+                                        + (followupTaskId == null ? "null" : followupTaskId)
                                         + "}")
                         .result(AuditResult.SUCCESS)
                         .build());
         log.info(
-                "沟通记录已创建 id={} patient={} result={} audio={} deathTerminated={}",
+                "沟通记录已创建 id={} patient={} result={} audio={} followup={} deathTerminated={}",
                 row.getId(),
                 patientId,
                 result.code(),
                 audioFileIds.size(),
+                followupTaskId,
                 terminatedTasks);
-        return new CreateResult(viewsOf(List.of(requireRow(row.getId()))).get(0), terminatedTasks);
+        return new CreateResult(
+                viewsOf(List.of(requireRow(row.getId()))).get(0), terminatedTasks, followupTaskId);
     }
 
     /** 修改（乐观锁 baseVersion，冲突 409；结果改为「告知已故」同样触发死亡终止，幂等）。 */

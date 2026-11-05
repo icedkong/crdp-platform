@@ -31,7 +31,13 @@ public final class TaskStatusFlow {
     /** 逾期：窗口结束日次日仍未完成（A-FU-010，每日 00:10 调度刷新；进入后不再退回进行中，直至完成 / 失访 / 终止）。 */
     public static final String OVERDUE = "OVERDUE";
 
-    /** 失访：多次联系不上、人工确认（A-FU-012，判定与确认随 E15-T05）。 */
+    /**
+     * 失访候选（A-FU-012，E15-T05）：窗口内不同日期连续 N 次「未联系到 / 号码错误」且窗口已结束，
+     * 每日刷新判定（「拒访」不计入）；不是终态——仍是待办（进「我的待办」、可改派）， 医生确认后 → 失访，或在直接录入期内联系上患者照常完成。
+     */
+    public static final String LOST_CANDIDATE = "LOST_CANDIDATE";
+
+    /** 失访：多次联系不上、医生自失访候选确认（A-FU-012，E15-T05）。 */
     public static final String LOST = "LOST";
 
     /** 已终止：患者死亡或人工停止（E14-T06 已落写入口）。 */
@@ -50,14 +56,17 @@ public final class TaskStatusFlow {
     public static final String KIND_OVERDUE = "OVERDUE";
 
     /**
-     * 合法流转表（A-FU-003 + 关键字段表「进入条件」逐行）：
+     * 合法流转表（A-FU-003 + 关键字段表「进入条件」逐行；E15-T05 起含失访候选）：
      *
      * <ul>
      *   <li>PENDING → IN_PROGRESS（第一次联系 /
-     *       暂存草稿）、OVERDUE（窗口结束日次日）、COMPLETED（提交）、LOST（E15-T05）、TERMINATED（E14-T06）；
-     *   <li>IN_PROGRESS → OVERDUE、COMPLETED、LOST、TERMINATED（逾期刷新与终止不排除已联系的任务）；
-     *   <li>OVERDUE → COMPLETED（逾期完成）、LOST、TERMINATED——<b>不退回</b> IN_PROGRESS（逾期是窗口事实，联系 / 录入不改写，
-     *       OQ-82①）；
+     *       暂存草稿）、OVERDUE（窗口结束日次日）、COMPLETED（提交）、LOST_CANDIDATE（E15-T05 每日刷新）、LOST （E15-T05
+     *       确认）、TERMINATED（E14-T06）；
+     *   <li>IN_PROGRESS → OVERDUE、COMPLETED、LOST_CANDIDATE、LOST、TERMINATED（逾期刷新与终止不排除已联系的任务）；
+     *   <li>OVERDUE → COMPLETED（逾期完成）、LOST_CANDIDATE、LOST、TERMINATED——<b>不退回</b>
+     *       IN_PROGRESS（逾期是窗口事实，联系 / 录入不改写， OQ-82①）；
+     *   <li>LOST_CANDIDATE → LOST（医生确认，A-FU-012）、COMPLETED（直接录入期内联系上患者照常完成，A-FU-010）、 TERMINATED（死亡
+     *       / 移出计划终止不排除待确认候选）——<b>不退回</b> PENDING / OVERDUE（判定是窗口事实）；
      *   <li>SKIPPED_SUSPENDED → PENDING / OVERDUE（补做：按窗口是否已结束定，OQ-82②）、TERMINATED（关闭，Q32 /
      *       PLT-TEN-017）；
      *   <li>COMPLETED / LOST / TERMINATED 终态，不再流转（历史事实，同 E14-T06 终止保留口径）。
@@ -66,11 +75,13 @@ public final class TaskStatusFlow {
     private static final Map<String, Set<String>> TRANSITIONS =
             Map.of(
                     PENDING,
-                    Set.of(IN_PROGRESS, OVERDUE, COMPLETED, LOST, TERMINATED),
+                    Set.of(IN_PROGRESS, OVERDUE, COMPLETED, LOST_CANDIDATE, LOST, TERMINATED),
                     IN_PROGRESS,
-                    Set.of(OVERDUE, COMPLETED, LOST, TERMINATED),
+                    Set.of(OVERDUE, COMPLETED, LOST_CANDIDATE, LOST, TERMINATED),
                     OVERDUE,
-                    Set.of(COMPLETED, LOST, TERMINATED),
+                    Set.of(COMPLETED, LOST_CANDIDATE, LOST, TERMINATED),
+                    LOST_CANDIDATE,
+                    Set.of(LOST, COMPLETED, TERMINATED),
                     SKIPPED_SUSPENDED,
                     Set.of(PENDING, OVERDUE, TERMINATED),
                     COMPLETED,

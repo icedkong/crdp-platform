@@ -47,13 +47,14 @@ public class FollowupTaskQueryService {
 
     private static final int KEYWORD_MAX_LENGTH = 64;
 
-    /** 任务状态（fu_task.status，E15-T01 状态机口径；components.md §2 task 枚举的展示派生在前端）。 */
+    /** 任务状态（fu_task.status，E15-T01 状态机 + E15-T05 失访候选；components.md §2 task 枚举的展示派生在前端）。 */
     private static final Set<String> STATUS_VALUES =
             Set.of(
                     "PENDING",
                     "IN_PROGRESS",
                     "COMPLETED",
                     "OVERDUE",
+                    "LOST_CANDIDATE",
                     "LOST",
                     "TERMINATED",
                     "SKIPPED_SUSPENDED");

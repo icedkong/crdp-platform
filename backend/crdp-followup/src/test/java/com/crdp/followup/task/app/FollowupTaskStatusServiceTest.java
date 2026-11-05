@@ -22,6 +22,7 @@ import com.crdp.framework.crypto.CryptoService;
 import com.crdp.framework.outbox.OutboxPublisher;
 import com.crdp.framework.web.ApiException;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -49,14 +50,24 @@ class FollowupTaskStatusServiceTest {
     private final OutboxPublisher outbox = mock(OutboxPublisher.class);
     private final AuditLogger audit = mock(AuditLogger.class);
     private final CryptoService crypto = mock(CryptoService.class);
+    private final FollowupPolicyService policy = mock(FollowupPolicyService.class);
 
     private final FollowupTaskStatusService service =
-            new FollowupTaskStatusService(taskMapper, planMapper, outbox, audit, crypto);
+            new FollowupTaskStatusService(taskMapper, planMapper, outbox, audit, crypto, policy);
+
+    {
+        lenient().when(policy.policy()).thenReturn(new FollowupPolicyService.ContactPolicy(3, 1));
+    }
 
     // ---------------------------------------------------------------- 装配
 
     /** 任务行（默认待随访；A 年度窗口 [2026-03-08, 2026-03-22]，第 3 次；第 4 次开启日 2027-03-08）。 */
     private FollowupTaskMapper.TaskRow taskRow(String status) {
+        return taskRow(status, 0);
+    }
+
+    /** 任务行（followupSeq = 窗口内跟进序号，0 = 主任务；E15-T05）。 */
+    private FollowupTaskMapper.TaskRow taskRow(String status, int followupSeq) {
         return new FollowupTaskMapper.TaskRow(
                 TASK_ID,
                 ENROLLMENT_ID,
@@ -66,6 +77,7 @@ class FollowupTaskStatusServiceTest {
                 3,
                 "NORMAL",
                 status,
+                followupSeq,
                 WINDOW_START,
                 WINDOW_END);
     }
@@ -319,6 +331,7 @@ class FollowupTaskStatusServiceTest {
                         3,
                         "NORMAL",
                         "PENDING",
+                        0,
                         LocalDate.of(2026, 3, 25),
                         LocalDate.of(2026, 3, 25));
         when(taskMapper.findTaskById(TASK_ID)).thenReturn(row);
@@ -402,6 +415,7 @@ class FollowupTaskStatusServiceTest {
                         3,
                         "NORMAL",
                         "SKIPPED_SUSPENDED",
+                        0,
                         LocalDate.of(2026, 11, 1),
                         LocalDate.of(2026, 11, 30));
         when(taskMapper.findTaskById(TASK_ID)).thenReturn(row);
@@ -439,5 +453,285 @@ class FollowupTaskStatusServiceTest {
         assertConflict(
                 () -> service.redoSkipped(TASK_ID, OPERATOR, LocalDate.of(2026, 11, 5)), 40901);
         assertConflict(() -> service.closeSkipped(TASK_ID, OPERATOR, "其他（示例）"), 40901);
+    }
+
+    // ---------------------------------------------------------------- 失访候选刷新（A-FU-012，E15-T05）
+
+    /** 候选行（窗口 [WINDOW_START, WINDOW_END]，第 3 次主任务）。 */
+    private FollowupTaskMapper.OverdueCandidateRow lostCandidate(long taskId) {
+        return new FollowupTaskMapper.OverdueCandidateRow(
+                taskId, PATIENT_ID, 66L, 5L, "cipher-a", "第 3 年随访（示例）", WINDOW_START, WINDOW_END);
+    }
+
+    /** 窗口内联系行（新→旧由 SQL 保证，测试按传入顺序走连续段）。 */
+    private static FollowupTaskMapper.ContactAttemptRow attempt(
+            String result, LocalDateTime contactTime) {
+        return new FollowupTaskMapper.ContactAttemptRow(1L, result, contactTime);
+    }
+
+    @Test
+    void refreshLostCandidatesMarksOnDistinctDateStreak() {
+        when(taskMapper.findLostCandidates(LocalDate.of(2026, 3, 23)))
+                .thenReturn(List.of(lostCandidate(901L)));
+        // 窗口内不同日期连续 3 次「未联系到 / 号码错误」（新→旧）
+        when(taskMapper.contactsOfPatientInWindow(PATIENT_ID, WINDOW_START, WINDOW_END))
+                .thenReturn(
+                        List.of(
+                                attempt("WRONG_NUMBER", LocalDateTime.of(2026, 3, 20, 10, 0)),
+                                attempt("NOT_REACHED", LocalDateTime.of(2026, 3, 19, 9, 0)),
+                                attempt("NOT_REACHED", LocalDateTime.of(2026, 3, 18, 15, 0))));
+        when(taskMapper.markLostCandidate(901L)).thenReturn(1);
+        when(crypto.decrypt("cipher-a")).thenReturn("张小明（示例）");
+
+        assertEquals(
+                1, service.refreshLostCandidates(LocalDate.of(2026, 3, 23)), "连续 3 次不同日期 → 失访候选");
+
+        verify(taskMapper).markLostCandidate(901L);
+        // 负载契约 NotifyEventPayload（同 TASK_OVERDUE 口径）：类型 = NotifyEventType.LOST_CANDIDATE.name()
+        verify(outbox).publish(eq("LOST_CANDIDATE"), contains("\"taskId\":901,\"ownerId\":66"));
+        verify(outbox).publish(eq("LOST_CANDIDATE"), contains("\"windowEndDate\":\"2026-03-22\""));
+        ArgumentCaptor<AuditEntry> captor = ArgumentCaptor.forClass(AuditEntry.class);
+        verify(audit).append(captor.capture());
+        assertEquals("TASK_LOST_CANDIDATE_MARK", captor.getValue().action(), "批量作业写一条汇总审计");
+    }
+
+    @Test
+    void refreshLostCandidatesCountsDistinctDatesOnly() {
+        when(taskMapper.findLostCandidates(any())).thenReturn(List.of(lostCandidate(901L)));
+        // 同日多次尝试只计一日：3 条未接通分布在 2 个日期 → 不足 3（Q02「不同日期连续 3 次」）
+        when(taskMapper.contactsOfPatientInWindow(PATIENT_ID, WINDOW_START, WINDOW_END))
+                .thenReturn(
+                        List.of(
+                                attempt("NOT_REACHED", LocalDateTime.of(2026, 3, 20, 10, 0)),
+                                attempt("NOT_REACHED", LocalDateTime.of(2026, 3, 20, 9, 0)),
+                                attempt("WRONG_NUMBER", LocalDateTime.of(2026, 3, 19, 15, 0))));
+
+        assertEquals(0, service.refreshLostCandidates(LocalDate.of(2026, 3, 23)));
+
+        verify(taskMapper, never()).markLostCandidate(anyLong());
+        verify(outbox, never()).publish(any(), any());
+        verify(audit, never()).append(any());
+    }
+
+    @Test
+    void refreshLostCandidatesStopsStreakAtReachedOrRefused() {
+        when(taskMapper.findLostCandidates(any())).thenReturn(List.of(lostCandidate(901L)));
+        // 最新一条是「拒访」：拒访不计入失访（改走移出计划），连续段从它断开
+        when(taskMapper.contactsOfPatientInWindow(PATIENT_ID, WINDOW_START, WINDOW_END))
+                .thenReturn(
+                        List.of(
+                                attempt("REFUSED", LocalDateTime.of(2026, 3, 20, 10, 0)),
+                                attempt("NOT_REACHED", LocalDateTime.of(2026, 3, 19, 9, 0)),
+                                attempt("NOT_REACHED", LocalDateTime.of(2026, 3, 18, 15, 0))));
+
+        assertEquals(
+                0, service.refreshLostCandidates(LocalDate.of(2026, 3, 23)), "「拒访」断开连续段（A-FU-012）");
+
+        // 「已联系」同样断开
+        when(taskMapper.contactsOfPatientInWindow(PATIENT_ID, WINDOW_START, WINDOW_END))
+                .thenReturn(
+                        List.of(
+                                attempt("NOT_REACHED", LocalDateTime.of(2026, 3, 20, 10, 0)),
+                                attempt("REACHED", LocalDateTime.of(2026, 3, 19, 9, 0)),
+                                attempt("NOT_REACHED", LocalDateTime.of(2026, 3, 18, 15, 0))));
+        assertEquals(0, service.refreshLostCandidates(LocalDate.of(2026, 3, 23)), "「已联系」断开连续段");
+        verify(taskMapper, never()).markLostCandidate(anyLong());
+    }
+
+    @Test
+    void refreshLostCandidatesUsesConfiguredThreshold() {
+        when(policy.policy()).thenReturn(new FollowupPolicyService.ContactPolicy(2, 1));
+        when(taskMapper.findLostCandidates(any())).thenReturn(List.of(lostCandidate(901L)));
+        // 2 个日期连续未接通即达阈值 2（次数可配置，A-FU-012）
+        when(taskMapper.contactsOfPatientInWindow(PATIENT_ID, WINDOW_START, WINDOW_END))
+                .thenReturn(
+                        List.of(
+                                attempt("NOT_REACHED", LocalDateTime.of(2026, 3, 20, 10, 0)),
+                                attempt("NOT_REACHED", LocalDateTime.of(2026, 3, 19, 9, 0))));
+        when(taskMapper.markLostCandidate(901L)).thenReturn(1);
+
+        assertEquals(1, service.refreshLostCandidates(LocalDate.of(2026, 3, 23)), "阈值取租户生效参数");
+    }
+
+    @Test
+    void refreshLostCandidatesSkipsGuardMissAndEmptyCandidates() {
+        when(taskMapper.findLostCandidates(any())).thenReturn(List.of());
+        assertEquals(0, service.refreshLostCandidates(LocalDate.of(2026, 3, 23)));
+        verify(audit, never()).append(any());
+
+        when(taskMapper.findLostCandidates(any())).thenReturn(List.of(lostCandidate(902L)));
+        when(taskMapper.contactsOfPatientInWindow(PATIENT_ID, WINDOW_START, WINDOW_END))
+                .thenReturn(
+                        List.of(
+                                attempt("NOT_REACHED", LocalDateTime.of(2026, 3, 20, 10, 0)),
+                                attempt("NOT_REACHED", LocalDateTime.of(2026, 3, 19, 9, 0)),
+                                attempt("NOT_REACHED", LocalDateTime.of(2026, 3, 18, 15, 0))));
+        when(taskMapper.markLostCandidate(902L)).thenReturn(0); // 并发完成 / 终止 / 重放
+        assertEquals(0, service.refreshLostCandidates(LocalDate.of(2026, 3, 23)), "守卫落空不标不发");
+        verify(outbox, never()).publish(any(), any());
+    }
+
+    // ---------------------------------------------------------------- 确认失访（A-FU-012，E15-T05）
+
+    @Test
+    void confirmLostMarksLostClosesFollowupsAndAudits() {
+        when(taskMapper.findTaskById(TASK_ID)).thenReturn(taskRow("LOST_CANDIDATE"));
+        when(taskMapper.confirmLostTask(TASK_ID)).thenReturn(1);
+        when(taskMapper.terminateWindowFollowups(
+                        eq(ENROLLMENT_ID),
+                        eq(NODE_ID),
+                        eq(3),
+                        eq(TASK_ID),
+                        any(),
+                        any(),
+                        eq(OPERATOR)))
+                .thenReturn(2);
+        when(taskMapper.findWindowStatuses(ENROLLMENT_ID))
+                .thenReturn(
+                        List.of(
+                                new FollowupTaskMapper.WindowStatusRow(WINDOW_START, "LOST"),
+                                new FollowupTaskMapper.WindowStatusRow(
+                                        LocalDate.of(2025, 3, 8), "COMPLETED")));
+
+        FollowupTaskStatusService.LostConfirmView view = service.confirmLost(TASK_ID, OPERATOR);
+
+        assertEquals("LOST", view.status(), "失访候选 → 失访（医生确认）");
+        assertEquals(2, view.terminatedFollowups(), "同窗口未完成跟进任务关闭");
+        assertFalse(view.patientLostPrompt(), "仅 1 个窗口失访，不提示患者级失访");
+        ArgumentCaptor<AuditEntry> captor = ArgumentCaptor.forClass(AuditEntry.class);
+        verify(audit).append(captor.capture());
+        assertEquals("TASK_LOST_CONFIRM", captor.getValue().action());
+    }
+
+    @Test
+    void confirmLostPromptsPatientLostOnTwoConsecutiveWindows() {
+        when(taskMapper.findTaskById(TASK_ID)).thenReturn(taskRow("LOST_CANDIDATE"));
+        when(taskMapper.confirmLostTask(TASK_ID)).thenReturn(1);
+        when(taskMapper.findWindowStatuses(ENROLLMENT_ID))
+                .thenReturn(
+                        List.of(
+                                new FollowupTaskMapper.WindowStatusRow(WINDOW_START, "LOST"),
+                                new FollowupTaskMapper.WindowStatusRow(
+                                        LocalDate.of(2025, 3, 8), "LOST")));
+
+        assertTrue(
+                service.confirmLost(TASK_ID, OPERATOR).patientLostPrompt(),
+                "连续 2 个窗口失访 → 提示把患者状态改为失访（A-FU-012，不自动改）");
+    }
+
+    @Test
+    void confirmLostPromptBreaksAtNonLostWindow() {
+        when(taskMapper.findTaskById(TASK_ID)).thenReturn(taskRow("LOST_CANDIDATE"));
+        when(taskMapper.confirmLostTask(TASK_ID)).thenReturn(1);
+        // 新→旧：LOST、LOST、COMPLETED、LOST → 最新连续段 = 2（第三年前已完成，段断开）
+        when(taskMapper.findWindowStatuses(ENROLLMENT_ID))
+                .thenReturn(
+                        List.of(
+                                new FollowupTaskMapper.WindowStatusRow(WINDOW_START, "LOST"),
+                                new FollowupTaskMapper.WindowStatusRow(
+                                        LocalDate.of(2025, 3, 8), "LOST"),
+                                new FollowupTaskMapper.WindowStatusRow(
+                                        LocalDate.of(2024, 3, 8), "COMPLETED"),
+                                new FollowupTaskMapper.WindowStatusRow(
+                                        LocalDate.of(2023, 3, 8), "LOST")));
+
+        assertTrue(service.confirmLost(TASK_ID, OPERATOR).patientLostPrompt(), "连续段仍达 2");
+    }
+
+    @Test
+    void confirmLostRejectsNonCandidateStates() {
+        for (String status :
+                List.of("PENDING", "IN_PROGRESS", "OVERDUE", "COMPLETED", "LOST", "TERMINATED")) {
+            when(taskMapper.findTaskById(TASK_ID)).thenReturn(taskRow(status));
+            assertConflict(() -> service.confirmLost(TASK_ID, OPERATOR), 40901);
+        }
+        verify(taskMapper, never()).confirmLostTask(anyLong());
+    }
+
+    @Test
+    void confirmLostSurfacesConcurrentChangeAs40900() {
+        when(taskMapper.findTaskById(TASK_ID)).thenReturn(taskRow("LOST_CANDIDATE"));
+        when(taskMapper.confirmLostTask(TASK_ID)).thenReturn(0);
+
+        assertConflict(() -> service.confirmLost(TASK_ID, OPERATOR), 40900);
+    }
+
+    // ---------------------------------------------------------------- 完成传播（A-FU-024 / OQ-86⑤）
+
+    @Test
+    void completingFollowupTaskCompletesWindowMainTask() {
+        // 跟进任务（followupSeq=1）完成 → 主任务同完成方式一并完成（窗口口径完成传播）
+        when(taskMapper.findTaskById(TASK_ID)).thenReturn(taskRow("IN_PROGRESS", 1));
+        when(taskMapper.completeTask(eq(TASK_ID), eq("ON_TIME"), any(), eq(OPERATOR)))
+                .thenReturn(1);
+        when(taskMapper.completeWindowMainTask(
+                        eq(ENROLLMENT_ID),
+                        eq(NODE_ID),
+                        eq(3),
+                        eq(TASK_ID),
+                        eq("ON_TIME"),
+                        any(),
+                        eq(OPERATOR)))
+                .thenReturn(1);
+        when(taskMapper.terminateWindowFollowups(
+                        eq(ENROLLMENT_ID),
+                        eq(NODE_ID),
+                        eq(3),
+                        eq(TASK_ID),
+                        any(),
+                        any(),
+                        eq(OPERATOR)))
+                .thenReturn(0);
+
+        assertEquals(
+                "ON_TIME",
+                service.complete(TASK_ID, OPERATOR, LocalDate.of(2026, 3, 15)).completeKind());
+
+        verify(taskMapper)
+                .completeWindowMainTask(
+                        eq(ENROLLMENT_ID),
+                        eq(NODE_ID),
+                        eq(3),
+                        eq(TASK_ID),
+                        eq("ON_TIME"),
+                        any(),
+                        eq(OPERATOR));
+    }
+
+    @Test
+    void completingMainTaskClosesOpenFollowups() {
+        // 主任务（followupSeq=0）完成 → 同窗口其余未完成跟进任务终止
+        when(taskMapper.findTaskById(TASK_ID)).thenReturn(taskRow("PENDING"));
+        when(taskMapper.completeTask(eq(TASK_ID), any(), any(), eq(OPERATOR))).thenReturn(1);
+        when(taskMapper.completeWindowMainTask(
+                        eq(ENROLLMENT_ID),
+                        eq(NODE_ID),
+                        eq(3),
+                        eq(TASK_ID),
+                        any(),
+                        any(),
+                        eq(OPERATOR)))
+                .thenReturn(0);
+        when(taskMapper.terminateWindowFollowups(
+                        eq(ENROLLMENT_ID),
+                        eq(NODE_ID),
+                        eq(3),
+                        eq(TASK_ID),
+                        any(),
+                        any(),
+                        eq(OPERATOR)))
+                .thenReturn(1);
+
+        service.complete(TASK_ID, OPERATOR, LocalDate.of(2026, 3, 15));
+
+        verify(taskMapper)
+                .terminateWindowFollowups(
+                        eq(ENROLLMENT_ID),
+                        eq(NODE_ID),
+                        eq(3),
+                        eq(TASK_ID),
+                        contains("窗口任务已完成"),
+                        any(),
+                        eq(OPERATOR));
     }
 }
