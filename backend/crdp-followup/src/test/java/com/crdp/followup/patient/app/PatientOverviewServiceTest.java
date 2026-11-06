@@ -74,6 +74,27 @@ class PatientOverviewServiceTest {
     // ---------------------------------------------------------------- 随访节点（E15-T07 /
     // A-FU-023、C-FU-023）
 
+    /** 站内提醒任务行（taskType = REMINDER，E15-T06 / A-FU-026）。 */
+    private static FollowupTaskQueryMapper.TimelineTaskRow reminderRowOf(
+            long id, int occurrence, String status, LocalDate planDate) {
+        return new FollowupTaskQueryMapper.TimelineTaskRow(
+                id,
+                501L,
+                11L,
+                "核对联系方式（示例）",
+                "循环随访（示例）",
+                occurrence,
+                "REMINDER",
+                planDate,
+                planDate.minusDays(7),
+                planDate.plusDays(7),
+                status,
+                null,
+                "NORMAL",
+                null,
+                null);
+    }
+
     private static FollowupTaskQueryMapper.TimelineTaskRow taskRowOf(
             long id,
             int occurrence,
@@ -237,6 +258,96 @@ class PatientOverviewServiceTest {
         assertEquals("IN_PROGRESS", draft.status(), "补录草稿按进行中展示");
         assertEquals("802", draft.recordId());
         assertEquals(true, draft.canOpen(), "补录草稿可继续填写");
+    }
+
+    @Test
+    void timelineSplitsUnplannedRecordsFromBackfill() {
+        when(gateway.findOverview(PATIENT_ID)).thenReturn(row("ACTIVE"));
+        when(recordMapper.findTasklessByPatient(PATIENT_ID))
+                .thenReturn(
+                        List.of(
+                                new FollowupRecordMapper.RecordRowRaw(
+                                        811L,
+                                        PATIENT_ID,
+                                        null,
+                                        "UNPLANNED",
+                                        LocalDate.of(2026, 6, 10),
+                                        "A_ANNUAL_FU",
+                                        1,
+                                        "SUBMITTED",
+                                        2,
+                                        "{}",
+                                        "{}",
+                                        7L,
+                                        LocalDateTime.of(2026, 6, 10, 15, 0),
+                                        7L,
+                                        LocalDateTime.of(2026, 6, 10, 15, 0)),
+                                new FollowupRecordMapper.RecordRowRaw(
+                                        812L,
+                                        PATIENT_ID,
+                                        null,
+                                        "UNPLANNED",
+                                        LocalDate.of(2026, 8, 1),
+                                        "A_ANNUAL_FU",
+                                        1,
+                                        "DRAFT",
+                                        0,
+                                        "{}",
+                                        "{}",
+                                        7L,
+                                        LocalDateTime.of(2026, 8, 2, 9, 0),
+                                        7L,
+                                        LocalDateTime.of(2026, 8, 2, 9, 0)),
+                                new FollowupRecordMapper.RecordRowRaw(
+                                        813L,
+                                        PATIENT_ID,
+                                        null,
+                                        "BACKFILL",
+                                        LocalDate.of(2024, 5, 10),
+                                        "A_ANNUAL_FU",
+                                        1,
+                                        "SUBMITTED",
+                                        2,
+                                        "{}",
+                                        "{}",
+                                        7L,
+                                        LocalDateTime.of(2025, 1, 15, 9, 0),
+                                        7L,
+                                        LocalDateTime.of(2025, 1, 15, 9, 0))));
+
+        PatientOverviewService.TimelineView timeline = service.timelineOf(PATIENT_ID);
+
+        List<PatientOverviewService.TimelineEntryView> unplanned =
+                timeline.items().stream().filter(item -> "UNPLANNED".equals(item.kind())).toList();
+        List<PatientOverviewService.TimelineEntryView> backfills =
+                timeline.items().stream().filter(item -> "BACKFILL".equals(item.kind())).toList();
+        assertEquals(2, unplanned.size(), "计划外随访单独成节点（E15-T06 / C-FU-022）");
+        assertEquals(1, backfills.size(), "补录节点不受影响");
+        PatientOverviewService.TimelineEntryView submitted = unplanned.get(0);
+        assertEquals("计划外随访", submitted.label(), "节点名「计划外随访」");
+        assertEquals("COMPLETED", submitted.status());
+        assertTrue(submitted.note().contains("不影响后续节点"), "备注写明不影响后续节点：" + submitted.note());
+        assertEquals("811", submitted.recordId());
+        assertEquals(true, submitted.canOpen(), "可打开表单页查看 / 续填");
+        PatientOverviewService.TimelineEntryView draft = unplanned.get(1);
+        assertEquals("IN_PROGRESS", draft.status(), "计划外草稿按进行中展示");
+    }
+
+    @Test
+    void reminderTaskNodeCarriesNoFormNote() {
+        when(gateway.findOverview(PATIENT_ID)).thenReturn(row("ACTIVE"));
+        when(taskQueryMapper.timelineTasks(PATIENT_ID))
+                .thenReturn(List.of(reminderRowOf(9101L, 1, "PENDING", LocalDate.of(2026, 11, 5))));
+
+        PatientOverviewService.TimelineView timeline = service.timelineOf(PATIENT_ID);
+
+        PatientOverviewService.TimelineEntryView reminder =
+                timeline.items().stream()
+                        .filter(item -> "FOLLOWUP".equals(item.kind()))
+                        .findFirst()
+                        .orElseThrow();
+        assertEquals("站内提醒：无需填表，到点提醒责任人（A-FU-026）", reminder.note(), "站内提醒任务节点标「无需填表」");
+        assertEquals(false, reminder.canOpen(), "无表单不可进录入");
     }
 
     @Test

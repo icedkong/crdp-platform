@@ -113,6 +113,17 @@ public interface FollowupRecordMapper {
     String findDisplayName(@Param("userId") Long userId);
 
     /**
+     * 患者随访状态（计划外随访「患者在随访中」校验，E15-T06 / C-FU-022；pages.md §4.10 已终止〔死亡 / 停止 / 失访〕置灰「患者不在随访中」）：
+     * 只取状态位；调用方（RecordBackfillService）已做患者数据范围校验（40400）。
+     */
+    @com.crdp.framework.datascope.IgnoreScope(
+            reason =
+                    "计划外随访的患者状态校验（E15-T06）：只取状态位（不输出患者数据）；"
+                            + "调用方（RecordBackfillService）已做患者数据范围校验（40400）")
+    @Select("SELECT followup_status FROM pt_patient WHERE id = #{patientId} AND deleted = 0")
+    String findPatientFollowupStatus(@Param("patientId") long patientId);
+
+    /**
      * 患者在组计划的首个 FORM 节点表单（历史补录缺省表单解析，E15-T07 / A-FU-014）：入组按创建时间、节点按 sort_no / id 取第一个 FORM
      * 节点；无在组入组或无表单节点 null。
      */

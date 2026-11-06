@@ -12,13 +12,19 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 历史补录（E15-T07 / A-FU-014、C-FU-013；docs/api/followup.md §3 {@code POST /patients/{id}/records}）。
+ * 历史补录与计划外随访（E15-T07 / A-FU-014、C-FU-013；E15-T06 起 UNPLANNED /
+ * A-FU-013、C-FU-022；docs/api/followup.md §3 {@code POST /patients/{id}/records}）。
  *
- * <p>验收口径（A-FU-014「为过去年度补录随访记录，填写实际随访日期，标记为补录」；C-FU-013「不需要任务、不受窗口限制」）： 选择患者后直接新建过去日期的随访记录（source =
- * BACKFILL、visit_date 必填），创建 DRAFT 草稿后统一用 recordId 进入随访整页表单（pages.md §5）填写并提交——提交流程与任务录入同一条（{@link
- * RecordEntryService#submit}，无任务 不联动完成）。表单缺省取患者在组计划的 FORM 节点表单（首个；显式传 formCode 时以请求为准）。
+ * <p><b>历史补录（BACKFILL）</b>验收口径（A-FU-014「为过去年度补录随访记录，填写实际随访日期，标记为补录」；C-FU-013「不需要任务、不受窗口限制」）：
+ * 选择患者后直接新建过去日期的随访记录（source = BACKFILL、visit_date 必填且早于今天），创建 DRAFT 草稿后统一用 recordId
+ * 进入随访整页表单（pages.md §5）填写并提交——提交流程与任务录入同一条（{@link RecordEntryService#submit}，无任务
+ * 不联动完成）。表单缺省取患者在组计划的 FORM 节点表单（首个；显式传 formCode 时以请求为准）。
  *
- * <p>计划外随访（UNPLANNED，A-FU-013）随 E15-T06、远程监测（REMOTE，C-FU-025）随 E21 开放，本入口先 40001。
+ * <p><b>计划外随访（UNPLANNED，E15-T06 /
+ * C-FU-022「症状就诊、程控调整等直接新建记录，随访时间点选『其他』；不影响后续节点，但填写了下次随访时间时照常覆盖」）</b>： 同一入口、同一条 fu_record（visit_date
+ * 必填、允许当天——补录须早于今天，计划外是「现在发生了的就诊」）， 不创建任务、不动入组 next_plan_date 缓存（「不影响后续节点」：时间轴单独成节点、不作对比对象
+ * A-FU-027）；须患者在随访中（ACTIVE，pages.md §4.10 已终止置灰）。 C 的「随访时间点选『其他』」是表单字段（随 E21 医院 C 接入）、「下次随访时间覆盖」随
+ * C-FU-005（E21），本任务先落数据与展示。 远程监测（REMOTE，C-FU-025）随 E21 开放，本入口 40001。
  * 补录建议随访时间点（C-FU-014）与重复记录提示（C-FU-024）随 C 医院接入（E21 / E23）。
  */
 @Service
@@ -26,9 +32,10 @@ public class RecordBackfillService {
 
     private static final ZoneId ZONE = ZoneId.of("Asia/Shanghai");
 
-    /** fu_record.source 之外的来源（本入口暂不开放）。 */
-    private static final String SOURCE_UNPLANNED = "UNPLANNED";
+    /** fu_record.source：计划外随访（E15-T06 / A-FU-013、C-FU-022）。 */
+    static final String SOURCE_UNPLANNED = "UNPLANNED";
 
+    /** fu_record.source 之外的来源（本入口暂不开放）。 */
     private static final String SOURCE_REMOTE = "REMOTE";
 
     private final PatientContactGateway patientScope;
@@ -50,14 +57,14 @@ public class RecordBackfillService {
         this.audit = audit;
     }
 
-    /** 补录请求（followup.md §3：source 目前只收 BACKFILL）。 */
+    /** 补录 / 计划外请求（followup.md §3：source 收 BACKFILL / UNPLANNED，REMOTE 随 E21）。 */
     public record BackfillCommand(String source, LocalDate visitDate, String formCode) {}
 
     /** 补录创建结果：recordId 即随访表单路由（pages.md §5 统一用 recordId）。 */
     public record BackfillView(
             String recordId, String patientId, LocalDate visitDate, String formCode) {}
 
-    /** 新建历史补录草稿（一次事务：范围校验 → 表单解析 → fu_record DRAFT → 审计）。 */
+    /** 新建历史补录 / 计划外随访草稿（一次事务：范围校验 → 来源分支 → 表单解析 → fu_record DRAFT → 审计）。 */
     @Transactional
     public BackfillView create(long patientId, BackfillCommand command) {
         // 数据范围前置校验（与任务开始录入同口径）：越范围患者 40400，不暴露存在
@@ -65,14 +72,14 @@ public class RecordBackfillService {
             throw new ApiException(404, 40400, "患者不存在或不在您的数据范围内");
         }
         String source = command == null ? null : command.source();
-        if (SOURCE_UNPLANNED.equals(source)) {
-            throw new ApiException(400, 40001, "计划外随访随 E15-T06 开放，暂不支持该来源");
-        }
         if (SOURCE_REMOTE.equals(source)) {
             throw new ApiException(400, 40001, "远程监测记录随 E21 开放，暂不支持该来源");
         }
+        if (SOURCE_UNPLANNED.equals(source)) {
+            return createUnplanned(patientId, command);
+        }
         if (source != null && !FollowupRecordService.SOURCE_BACKFILL.equals(source)) {
-            throw new ApiException(400, 40001, "source 只支持 BACKFILL（历史补录）");
+            throw new ApiException(400, 40001, "source 只支持 BACKFILL（历史补录）或 UNPLANNED（计划外随访）");
         }
         if (command == null || command.visitDate() == null) {
             throw new ApiException(400, 40001, "补录必须填写实际随访日期（A-FU-014）");
@@ -81,46 +88,84 @@ public class RecordBackfillService {
         if (!command.visitDate().isBefore(LocalDate.now(ZONE))) {
             throw new ApiException(400, 40001, "补录随访日期必须是过去的日期");
         }
-        String formCode = resolveFormCode(patientId, command.formCode());
+        return createRecord(
+                patientId,
+                FollowupRecordService.SOURCE_BACKFILL,
+                command.visitDate(),
+                command.formCode(),
+                "RECORD_BACKFILL_CREATE",
+                "历史补录（A-FU-014 / C-FU-013）");
+    }
+
+    /** 计划外随访分支（E15-T06 / C-FU-022）：当天可录、须患者在随访中、不影响后续节点。 */
+    private BackfillView createUnplanned(long patientId, BackfillCommand command) {
+        if (command.visitDate() == null) {
+            throw new ApiException(400, 40001, "计划外随访必须填写随访日期（C-FU-022）");
+        }
+        // 症状就诊、程控调整是「现在发生的随访」：允许当天，不允许未来（未来节点由计划排期）
+        if (command.visitDate().isAfter(LocalDate.now(ZONE))) {
+            throw new ApiException(400, 40001, "计划外随访日期不能晚于今天（未来随访请等待计划任务开启）");
+        }
+        String status = recordMapper.findPatientFollowupStatus(patientId);
+        if (!"ACTIVE".equals(status)) {
+            throw new ApiException(409, 40901, "患者不在随访中，不能新建计划外随访（pages.md §4.10）");
+        }
+        return createRecord(
+                patientId,
+                SOURCE_UNPLANNED,
+                command.visitDate(),
+                command.formCode(),
+                "RECORD_UNPLANNED_CREATE",
+                "计划外随访（C-FU-022：不影响后续节点；下次随访时间覆盖随 E21）");
+    }
+
+    /** 共用落库：表单解析 → DRAFT fu_record → 审计（source 落列与 data_meta 双记，时间轴按 source 分流）。 */
+    private BackfillView createRecord(
+            long patientId,
+            String source,
+            LocalDate visitDate,
+            String formCode,
+            String auditAction,
+            String auditLabel) {
+        String resolved = resolveFormCode(patientId, formCode);
         FollowupRecordService.RecordView created =
                 recordService.createDraft(
                         new FollowupRecordService.CreateCommand(
                                 patientId,
                                 null,
-                                FollowupRecordService.SOURCE_BACKFILL,
-                                command.visitDate(),
-                                formCode,
+                                source,
+                                visitDate,
+                                resolved,
                                 java.util.Map.of(),
-                                java.util.Map.of("source", "BACKFILL")));
+                                java.util.Map.of("source", source)));
         audit.append(
-                AuditEntry.operation("followup", "RECORD_BACKFILL_CREATE")
+                AuditEntry.operation("followup", auditAction)
                         .objectType("FU_RECORD")
                         .objectId(String.valueOf(created.id()))
                         .description(
-                                "历史补录：患者 "
+                                auditLabel
+                                        + "：患者 "
                                         + patientId
                                         + "，随访日期 "
-                                        + command.visitDate()
+                                        + visitDate
                                         + "，表单 "
-                                        + formCode
-                                        + "（A-FU-014 / C-FU-013）")
+                                        + resolved)
                         .afterJson(
                                 "{\"recordId\":"
                                         + created.id()
                                         + ",\"patientId\":"
                                         + patientId
                                         + ",\"visitDate\":\""
-                                        + command.visitDate()
+                                        + visitDate
                                         + "\",\"formCode\":\""
-                                        + formCode
+                                        + resolved
+                                        + "\",\"source\":\""
+                                        + source
                                         + "\"}")
                         .result(AuditResult.SUCCESS)
                         .build());
         return new BackfillView(
-                String.valueOf(created.id()),
-                String.valueOf(patientId),
-                command.visitDate(),
-                formCode);
+                String.valueOf(created.id()), String.valueOf(patientId), visitDate, resolved);
     }
 
     /** 表单解析：显式传 formCode 时校验存在（40400）；缺省取患者在组计划首个 FORM 节点表单，无可解析 40001。 */

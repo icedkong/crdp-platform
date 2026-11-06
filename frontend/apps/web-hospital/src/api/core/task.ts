@@ -13,6 +13,7 @@ import type {
   BackfillCreateView,
   RecordDetailView,
   RecordSubmitResult,
+  TaskAcknowledgeView,
   TaskAssignRequest,
   TaskAssignResult,
   TaskClaimView,
@@ -20,6 +21,8 @@ import type {
   TaskQueueView,
   TaskSearchRequest,
   TaskStartView,
+  TempTaskCreateRequest,
+  TempTaskView,
 } from '@crdp/api';
 
 import { apiPath, requestClient } from '#/api/request';
@@ -114,7 +117,7 @@ export function submitRecord(
   );
 }
 
-/** 历史补录（E15-T07 / A-FU-014、C-FU-013）：过去日期 + 实际随访日期新建记录，返回 recordId 进表单页。 */
+/** 历史补录 / 计划外随访（E15-T07 补录；E15-T06 起计划外 UNPLANNED 当天可录）：新建记录返回 recordId 进表单页。 */
 export function createBackfillRecord(
   patientId: number | string,
   data: BackfillCreateRequest,
@@ -122,5 +125,24 @@ export function createBackfillRecord(
   return requestClient.post(
     apiPath(`/followup/patients/${patientId}/records`),
     data,
+  );
+}
+
+/**
+ * 临时添加任务（E15-T06 / A-FU-013「不占用年度任务」）：挂靠患者在组入组与计划节点，
+ * 任务类型 FORM 填表随访 / REMINDER 站内提醒（A-FU-026 无需填表）；负责人缺省当前用户。
+ */
+export function createTempTask(data: TempTaskCreateRequest) {
+  return requestClient.post<TempTaskView>(apiPath('/followup/tasks'), data);
+}
+
+/**
+ * 完成提醒（E15-T06 / A-FU-026 验收「站内提醒类任务无需填表」）：站内提醒类任务确认即完成，
+ * 不创建记录；填表任务 40901（须提交随访记录）。
+ */
+export function acknowledgeTask(taskId: string) {
+  return requestClient.post<TaskAcknowledgeView>(
+    apiPath(`/followup/tasks/${taskId}/acknowledge`),
+    {},
   );
 }

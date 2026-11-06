@@ -59,6 +59,12 @@ public final class TaskCreationPlanner {
      */
     public static final String CREATE_DISABLED_SKIPPED = "DISABLED_SKIPPED";
 
+    /**
+     * 临时任务（E15-T06 / A-FU-013「在子计划任务列表中临时添加任务，不占用年度任务」）：用户在任务列表或时间轴 手工添加（如再住院后加访），occurrence
+     * 用负数计数器（-1、-2、…）避开常规 1..N 序列—— 排期纯函数不参与，由服务层（FollowupTaskTempService）创建。
+     */
+    public static final String CREATE_TEMP = "TEMP";
+
     /** 入组前已过窗口策略（fu_plan_node.passed_window_action）：BACKFILL 补建补录任务（A、B，Q44）。 */
     public static final String PASSED_WINDOW_BACKFILL = "BACKFILL";
 

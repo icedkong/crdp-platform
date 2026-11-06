@@ -119,21 +119,23 @@ public interface FollowupTaskMapper {
     /**
      * 创建任务（PENDING 待随访，A-FU-003 初始态）。普通 INSERT：affected 恒为 1——Connector/J 默认 CLIENT_FOUND_ROWS，
      * {@code ON DUPLICATE KEY UPDATE} 的 no-op 也会返回 1，不能当幂等信号；已存在由 {@link #findTaskId} 前置排除， 并发撞 uk
-     * 由服务层捕 {@code DuplicateKeyException} 当已存在处理。
+     * 由服务层捕 {@code DuplicateKeyException} 当已存在处理。created_by 随 E15-T06 落列写入（调度创建为 NULL，临时任务记操作人）。
      */
     @IgnoreScope(
             reason =
-                    "调度写入任务行（E14-T04 本体；跟进任务随 E15-T05 写沟通记录事务内创建）：无用户上下文，创建即 PENDING 待随访（A-FU-003）")
+                    "调度写入任务行（E14-T04 本体；跟进任务随 E15-T05 写沟通记录事务内创建；临时任务随 E15-T06 由用户入口创建，"
+                            + "调用方已做患者数据范围校验（40400））：创建即 PENDING 待随访（A-FU-003）")
     @Insert(
             """
             INSERT INTO fu_task
               (enrollment_id, patient_id, plan_id, node_id, occurrence, task_type, form_code,
                owner_type, assignee_id, plan_date, remind_start, window_start, window_end,
-               open_date, create_type, status, followup_seq, created_logical_date)
+               open_date, create_type, status, followup_seq, created_logical_date, created_by)
             VALUES
               (#{enrollmentId}, #{patientId}, #{planId}, #{nodeId}, #{occurrence}, #{taskType},
                #{formCode}, #{ownerType}, #{assigneeId}, #{planDate}, #{remindStart}, #{windowStart},
-               #{windowEnd}, #{openDate}, #{createType}, #{status}, #{followupSeq}, #{createdLogicalDate})
+               #{windowEnd}, #{openDate}, #{createType}, #{status}, #{followupSeq}, #{createdLogicalDate},
+               #{createdBy})
             """)
     @Options(useGeneratedKeys = true, keyProperty = "id")
     int insertTask(FollowupTaskInsertRow row);
@@ -478,8 +480,9 @@ public interface FollowupTaskMapper {
     /**
      * 失访候选判定候选行（A-FU-012，每日 00:10 调度在逾期刷新后执行；tech-plan §9）：窗口已结束（asOf 晚于 window_end） 仍未完成（待随访 / 进行中
      * / 逾期 / 失访候选重放落空）且非补录（BACKFILL 豁免，E14-T05 口径——建任务时窗口已过， 语义是补录历史）的<b>主任务</b>（followup_seq =
-     * 0；跟进任务不重复标候选）；EXISTS 预过滤 至少有一条窗口内「未联系到 / 号码错误」，零联系的任务（从未尝试）不进候选， 减少逐行计数查询。 只取标记与
-     * LOST_CANDIDATE 事件所需列（同 {@link OverdueCandidateRow} 口径）。
+     * 0；跟进任务不重复标候选）；只看 FORM 填表任务（E15-T06：失访判定是随访任务的联系方式 计数口径，站内提醒类任务〔A-FU-026〕无联系语义，不进候选）；EXISTS
+     * 预过滤 至少有一条窗口内「未联系到 / 号码错误」，零联系的任务（从未尝试）不进候选， 减少逐行计数查询。 只取标记与 LOST_CANDIDATE 事件所需列（同 {@link
+     * OverdueCandidateRow} 口径）。
      */
     @IgnoreScope(
             reason =
@@ -496,6 +499,7 @@ public interface FollowupTaskMapper {
             LEFT JOIN fu_plan_node n ON n.id = t.node_id
             WHERE t.status IN ('PENDING', 'IN_PROGRESS', 'OVERDUE')
               AND t.create_type <> 'BACKFILL'
+              AND t.task_type = 'FORM'
               AND t.followup_seq = 0
               AND t.window_end < #{asOf}
               AND EXISTS (
@@ -717,4 +721,89 @@ public interface FollowupTaskMapper {
                             + "入口（草稿保存 / 提交）的记录可见性由创建时的范围校验承担")
     @Select("SELECT id, status FROM fu_task WHERE record_id = #{recordId}")
     RecordLinkedTaskRow findTaskByRecordId(@Param("recordId") long recordId);
+
+    // ---------------------------------------------------------------- 临时添加任务（E15-T06 /
+    // A-FU-013）
+
+    /**
+     * 患者在组入组引用（临时任务挂靠 A-FU-013「在子计划任务列表中临时添加」）：入组 id + 患者与计划版本快照。 传 enrollmentId 时校验归属（非本人 / 非在组
+     * null → 40001）；不传时取患者在组时间最早的入组（A 通常单一计划）。
+     */
+    record EnrollmentRefRow(long id, long patientId, long planId) {}
+
+    /** 指定入组（在组且属于该患者才返回）。 */
+    @IgnoreScope(
+            reason =
+                    "临时任务挂靠入组解析（E15-T06）：只取入组 id 与计划版本快照（存在性位，不输出患者数据）；"
+                            + "调用方（FollowupTaskTempService）已做患者数据范围校验（40400）")
+    @Select(
+            """
+            SELECT e.id, e.patient_id AS patientId, e.plan_id AS planId
+            FROM fu_enrollment e
+            JOIN pt_patient pt ON pt.id = e.patient_id AND pt.deleted = 0
+            WHERE e.id = #{enrollmentId} AND e.patient_id = #{patientId} AND e.status = 'ACTIVE'
+            """)
+    EnrollmentRefRow findActiveEnrollment(
+            @Param("enrollmentId") long enrollmentId, @Param("patientId") long patientId);
+
+    /** 患者最早加入的在组入组（缺省挂靠目标）。 */
+    @IgnoreScope(
+            reason =
+                    "临时任务缺省入组解析（E15-T06）：只取入组 id 与计划版本快照（存在性位，不输出患者数据）；"
+                            + "调用方（FollowupTaskTempService）已做患者数据范围校验（40400）")
+    @Select(
+            """
+            SELECT e.id, e.patient_id AS patientId, e.plan_id AS planId
+            FROM fu_enrollment e
+            JOIN pt_patient pt ON pt.id = e.patient_id AND pt.deleted = 0
+            WHERE e.patient_id = #{patientId} AND e.status = 'ACTIVE'
+            ORDER BY e.created_at ASC, e.id ASC
+            LIMIT 1
+            """)
+    EnrollmentRefRow findFirstActiveEnrollment(@Param("patientId") long patientId);
+
+    /**
+     * 该（入组 × 节点）临时任务 occurrence 地板（E15-T06）：临时任务用负数计数器（-1、-2、…） 避开常规 1..N 序列——
+     * 「不占用年度任务」（A-FU-013）：调度按正数 occurrence 幂等建任务，两条序列互不相撞。 无临时任务返回 0（下一个取 -1）。
+     */
+    @IgnoreScope(
+            reason =
+                    "临时任务次数计数（E15-T06）：只取负数 occurrence 最小值（计数位，不输出患者数据）；"
+                            + "调用方（FollowupTaskTempService）已做患者数据范围校验（40400）")
+    @Select(
+            """
+            SELECT COALESCE(MIN(occurrence), 0) FROM fu_task
+            WHERE enrollment_id = #{enrollmentId} AND node_id = #{nodeId} AND occurrence < 0
+            """)
+    int findTempOccurrenceFloor(
+            @Param("enrollmentId") long enrollmentId, @Param("nodeId") long nodeId);
+
+    /** 患者当前病区 id（临时任务负责人的病区复核锚点，与改派 DOCTOR_NOT_IN_WARD 同口径，OQ-84①）。 调用方已做患者数据范围校验（40400）。 */
+    @IgnoreScope(
+            reason =
+                    "临时任务负责人病区复核（E15-T06）：只取病区 id（复核锚点，不输出患者数据）；"
+                            + "调用方（FollowupTaskTempService）已做患者数据范围校验（40400）")
+    @Select("SELECT ward_id FROM pt_patient WHERE id = #{patientId} AND deleted = 0")
+    Long findPatientWardId(@Param("patientId") long patientId);
+
+    /**
+     * 患者在组计划的首个 FORM 节点表单（临时 FORM 任务缺省表单解析，E15-T06 / A-FU-013； 与历史补录 E15-T07 的
+     * FollowupRecordMapper#findEnrollmentFormCode 同一条 SQL——跨子域重复一条比反向依赖干净）。 调用方已做患者数据范围校验（40400）。
+     */
+    @IgnoreScope(
+            reason =
+                    "临时任务缺省表单解析（E15-T06）：只取表单 code（配置位，不输出患者数据）；"
+                            + "调用方（FollowupTaskTempService）已做患者数据范围校验（40400）")
+    @Select(
+            """
+            SELECT n.form_code
+            FROM fu_enrollment e
+            JOIN pt_patient pt ON pt.id = e.patient_id AND pt.deleted = 0
+            JOIN fu_plan_node n ON n.plan_id = e.plan_id
+            WHERE e.patient_id = #{patientId} AND e.status = 'ACTIVE'
+              AND n.node_type = 'NODE' AND n.task_type = 'FORM' AND n.form_code IS NOT NULL
+            ORDER BY e.created_at ASC, n.sort_no ASC, n.id ASC
+            LIMIT 1
+            """)
+    String findEnrollmentFormCode(@Param("patientId") long patientId);
 }

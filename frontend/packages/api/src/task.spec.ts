@@ -10,6 +10,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  isTaskAcknowledgable,
   isTaskClaimable,
   isTaskEnterable,
   isTaskReassignable,
@@ -56,6 +57,50 @@ describe('taskDisplayStatus（components.md §2 task 域派生）', () => {
         createType: 'BACKFILL',
       }),
     ).toBe('已完成（补录）');
+  });
+});
+
+describe('e15-T06 / A-FU-013、A-FU-026 临时任务与站内提醒', () => {
+  it('临时 FORM 任务派生「待随访（临时）」（不占用年度任务）', () => {
+    expect(
+      taskDisplayStatus({
+        createType: 'TEMP',
+        status: 'PENDING',
+        taskType: 'FORM',
+      }),
+    ).toBe('待随访（临时）');
+    expect(
+      taskDisplayStatus({
+        createType: 'TEMP',
+        status: 'OVERDUE',
+        taskType: 'FORM',
+      }),
+    ).toBe('逾期');
+  });
+
+  it('临时 / 计划内站内提醒任务派生「待提醒」形态（无需填表）', () => {
+    expect(
+      taskDisplayStatus({
+        createType: 'TEMP',
+        status: 'PENDING',
+        taskType: 'REMINDER',
+      }),
+    ).toBe('待提醒（临时）');
+  });
+
+  it('isTaskAcknowledgable：站内提醒类任务且未完成可「完成提醒」（验收「站内提醒类任务无需填表」）', () => {
+    expect(
+      isTaskAcknowledgable({ status: 'PENDING', taskType: 'REMINDER' }),
+    ).toBe(true);
+    expect(
+      isTaskAcknowledgable({ status: 'OVERDUE', taskType: 'REMINDER' }),
+    ).toBe(true);
+    expect(isTaskAcknowledgable({ status: 'PENDING', taskType: 'FORM' })).toBe(
+      false,
+    );
+    expect(
+      isTaskAcknowledgable({ status: 'COMPLETED', taskType: 'REMINDER' }),
+    ).toBe(false);
   });
 });
 

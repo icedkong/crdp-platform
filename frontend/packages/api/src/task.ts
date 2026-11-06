@@ -26,6 +26,19 @@ export type TaskStatus =
 /** 完成方式（followup V53：状态仍为 COMPLETED，由本列派生展示）。 */
 export type TaskCompleteKind = 'BEFORE_WINDOW' | 'ON_TIME' | 'OVERDUE' | null;
 
+/** 任务类型（fu_task.task_type，A-FU-026）：FORM 电话随访 + 表单 / REMINDER 站内提醒（无需填表）。 */
+export type TaskType = 'FORM' | 'REMINDER';
+
+/** 任务类型中文（components.md §2 task 域）。 */
+export const TASK_TYPE_TEXT: Record<TaskType, string> = {
+  FORM: '填表随访',
+  REMINDER: '站内提醒',
+};
+
+/** 临时任务窗口宽度（E15-T06 / A-FU-013）：默认与上限与后端一致（A 医院预置窗口前后 7 天）。 */
+export const TEMP_TASK_DEFAULT_WINDOW_DAYS = 7;
+export const TEMP_TASK_MAX_WINDOW_DAYS = 365;
+
 /** 页签（A-FU-004：默认显示「我的待办」）。 */
 export type TaskScope = 'ALL' | 'MINE' | 'WARD';
 
@@ -159,9 +172,12 @@ export interface BackfillCreateView {
   visitDate: string;
 }
 
-/** 历史补录创建请求（A-FU-014 / C-FU-013：过去日期 + 实际随访日期；计划外 / 远程监测随后续任务）。 */
+/**
+ * 历史补录 / 计划外随访创建请求（A-FU-014 / C-FU-013 过去日期；C-FU-022 计划外当天可录、
+ * 须患者在随访中——E15-T06 开放 UNPLANNED；远程监测 REMOTE 随 E21）。
+ */
 export interface BackfillCreateRequest {
-  source: 'BACKFILL';
+  source: 'BACKFILL' | 'UNPLANNED';
   visitDate: string;
 }
 
@@ -223,6 +239,7 @@ export function taskDisplayStatus(task: {
   completeKind?: TaskCompleteKind;
   createType?: null | string;
   status: TaskStatus;
+  taskType?: null | string;
 }): string {
   if (task.status === 'COMPLETED') {
     if (task.createType === 'BACKFILL') return '已完成（补录）';
@@ -232,6 +249,16 @@ export function taskDisplayStatus(task: {
   }
   if (task.status === 'PENDING' && task.createType === 'FOLLOWUP') {
     return '待随访（跟进）';
+  }
+  if (
+    task.status === 'PENDING' &&
+    task.createType === 'TEMP' &&
+    task.taskType === 'REMINDER'
+  ) {
+    return '待提醒（临时）';
+  }
+  if (task.status === 'PENDING' && task.createType === 'TEMP') {
+    return '待随访（临时）';
   }
   return TASK_STATUS_TEXT[task.status];
 }
@@ -250,6 +277,59 @@ export function taskStatusTooltip(display: string): string {
 /** 任务是否可进入录入（未完成四态且 FORM 任务；站内提醒类任务无需填表，A-FU-026）。 */
 export function isTaskEnterable(task: TaskRow): boolean {
   return task.taskType === 'FORM' && TASK_OPEN_STATUSES.includes(task.status);
+}
+
+/**
+ * 任务是否可「完成提醒」（E15-T06 / A-FU-026 验收「站内提醒类任务无需填表」）：
+ * 站内提醒类任务且未完成——确认即完成，不创建记录；填表任务须提交随访记录。
+ */
+export function isTaskAcknowledgable(task: {
+  status: TaskStatus;
+  taskType: string;
+}): boolean {
+  return (
+    task.taskType === 'REMINDER' && TASK_OPEN_STATUSES.includes(task.status)
+  );
+}
+
+// ---------------------------------------------------------------- 临时添加任务（E15-T06 / A-FU-013）
+
+/** 临时添加任务请求（POST /followup/tasks；除 patientId / planDate 外可空——任务类型缺省 FORM）。 */
+export interface TempTaskCreateRequest {
+  assigneeId?: number | string;
+  enrollmentId?: number | string;
+  formCode?: string;
+  nodeId?: number | string;
+  /** 备注（如「再住院后加访」），≤255 字。 */
+  note?: string;
+  patientId: number | string;
+  planDate: string;
+  /** 任务类型：FORM 填表随访 / REMINDER 站内提醒（A-FU-026）。 */
+  taskType?: TaskType;
+  /** 窗口宽度（天，0–365）：窗口 = 计划日期 ± 宽度，缺省 7。 */
+  windowDays?: number;
+}
+
+/** 临时添加任务结果（id 超过 2^53 序列化为字符串）。 */
+export interface TempTaskView {
+  createType: string;
+  enrollmentId: string;
+  formCode?: null | string;
+  nodeId: string;
+  patientId: string;
+  planDate: string;
+  status: TaskStatus;
+  taskId: string;
+  taskType: TaskType;
+  windowEnd: string;
+  windowStart: string;
+}
+
+/** 完成提醒结果（A-FU-026：确认即完成，状态 COMPLETED + 完成方式）。 */
+export interface TaskAcknowledgeView {
+  completeKind: TaskCompleteKind;
+  status: TaskStatus;
+  taskId: string;
 }
 
 // ---------------------------------------------------------------- 认领与改派（E15-T03 / A-FU-009）

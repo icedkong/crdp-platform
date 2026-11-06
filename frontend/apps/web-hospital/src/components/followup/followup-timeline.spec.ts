@@ -137,6 +137,33 @@ describe('bACKFILL 节点（A-FU-014 / C-FU-023 单独标识）', () => {
   });
 });
 
+describe('uNPLANNED 节点（E15-T06 / C-FU-022 单独成节点）', () => {
+  it('显示计划外随访标识、随访日期与「不影响后续节点」备注，可打开表单', async () => {
+    const wrapper = mountTimeline([
+      {
+        canOpen: true,
+        createType: 'UNPLANNED',
+        date: '2026-06-10',
+        doneDate: '2026-06-10',
+        kind: 'UNPLANNED',
+        label: '计划外随访',
+        note: '计划外随访（随访时间点「其他」），不影响后续节点；不作对比对象',
+        progressDone: 1,
+        progressTotal: 1,
+        recordId: '811',
+        status: 'COMPLETED',
+      },
+    ]);
+    const node = wrapper.find('[data-testid="timeline-node-UNPLANNED"]');
+    expect(node.text()).toContain('计划外随访');
+    expect(node.text()).toContain('随访日期 2026-06-10');
+    expect(node.text()).toContain('不影响后续节点');
+    expect(node.text()).toContain('已完成');
+    await node.trigger('click');
+    expect(wrapper.emitted('open')).toHaveLength(1);
+  });
+});
+
 describe('既有节点（E13-T05 回归）', () => {
   it('出院 / 状态节点不显示进度、不 emit open', async () => {
     const wrapper = mountTimeline([

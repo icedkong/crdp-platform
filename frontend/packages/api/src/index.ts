@@ -910,8 +910,10 @@ export {
 export type { ReauthFlowDeps, ReauthResult } from './reauth';
 
 export type { OnlineSessionView } from './session';
-// E15-T02 / A-FU-004、A-FU-005、C-FU-020：我的任务、任务列表与随访工作台
+// E15-T02 / A-FU-004、A-FU-005、C-FU-020：我的任务、任务列表与随访工作台；
+// E15-T06 / A-FU-013、A-FU-026：临时添加任务与站内提醒（无需填表）
 export {
+  isTaskAcknowledgable,
   isTaskClaimable,
   isTaskEnterable,
   isTaskReassignable,
@@ -919,18 +921,24 @@ export {
   TASK_STATUS_OPTIONS,
   TASK_STATUS_TEXT,
   TASK_TABS,
+  TASK_TYPE_TEXT,
   taskAssignItemLabel,
   taskAssignOutcomeText,
   taskAssignSummary,
   taskDisplayStatus,
   taskStatusTooltip,
   taskWindowText,
+  TEMP_TASK_DEFAULT_WINDOW_DAYS,
+  TEMP_TASK_MAX_WINDOW_DAYS,
 } from './task';
 
 export type {
+  BackfillCreateRequest,
+  BackfillCreateView,
   RecordDetailView,
   RecordSubmitResult,
   RecordTaskContext,
+  TaskAcknowledgeView,
   TaskAssignItem,
   TaskAssignRequest,
   TaskAssignResult,
@@ -944,7 +952,10 @@ export type {
   TaskStartView,
   TaskStatus,
   TaskTabCounts,
+  TaskType,
   TaskWardOption,
+  TempTaskCreateRequest,
+  TempTaskView,
 } from './task';
 export {
   TENANT_ROLE_SCOPE_OPTIONS,
