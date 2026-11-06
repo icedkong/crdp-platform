@@ -9,6 +9,8 @@ import com.crdp.server.configtemplate.ConfigTemplateExportService.ExportRequest;
 import com.crdp.server.configtemplate.ConfigTemplateExportService.ExportedView;
 import com.crdp.server.configtemplate.ConfigTemplateExportService.PageView;
 import com.crdp.server.configtemplate.ConfigTemplateExportService.TemplateDetail;
+import com.crdp.server.configtemplate.ConfigTemplateImportService;
+import com.crdp.server.configtemplate.ConfigTemplateImportService.AppliedView;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.List;
@@ -21,8 +23,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 平台端配置模板 API（E12-T01 / A-FLD-014，docs/api/platform.md §7）。导出只含配置表注册表标注的表（不含患者数据）； 应用到新租户（导入与 ID
- * 重映射）随 E12-T02，管理页随 E12-T04。
+ * 平台端配置模板 API（E12-T01 导出 / E12-T02 应用，A-FLD-014，docs/api/platform.md §7.1）。
+ * 导出与应用都只碰配置表注册表标注的表（不含患者数据）；管理页随 E12-T04。
  */
 @Tag(name = "平台端配置模板")
 @RestController
@@ -30,12 +32,17 @@ import org.springframework.web.bind.annotation.RestController;
 public class PlatformConfigTemplateController {
 
     private final ConfigTemplateExportService service;
+    private final ConfigTemplateImportService importService;
 
-    public PlatformConfigTemplateController(ConfigTemplateExportService service) {
+    public PlatformConfigTemplateController(
+            ConfigTemplateExportService service, ConfigTemplateImportService importService) {
         this.service = service;
+        this.importService = importService;
     }
 
     public record ExportBody(Long tenantId, String name) {}
+
+    public record ApplyBody(Long tenantId) {}
 
     @Operation(
             summary =
@@ -78,5 +85,20 @@ public class PlatformConfigTemplateController {
     @RequiresPermission("platform:tenant:view")
     public ApiResponse<List<com.crdp.platform.configtemplate.ConfigTableEntry>> registry() {
         return ApiResponse.ok(service.registry());
+    }
+
+    @Operation(
+            summary =
+                    "将配置模板应用到目标租户（A-FLD-014）：导入配置表并重映射 ID / 改写引用；用户引用列置空；"
+                            + "角色菜单与新租户可分配范围取交集；只复制结构（术者、病区 / 中心）不落行")
+    @PostMapping("/{id}/apply")
+    @RequiresPermission("platform:tenant:create")
+    public ApiResponse<AppliedView> apply(@PathVariable long id, @RequestBody ApplyBody body) {
+        if (body == null || body.tenantId() == null) {
+            throw new ApiException(400, 40001, "tenantId 必填");
+        }
+        return ApiResponse.ok(
+                importService.apply(
+                        id, new ConfigTemplateImportService.ApplyRequest(body.tenantId())));
     }
 }
