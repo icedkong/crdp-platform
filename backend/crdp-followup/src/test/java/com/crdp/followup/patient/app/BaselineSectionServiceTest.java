@@ -10,6 +10,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -273,6 +274,71 @@ class BaselineSectionServiceTest {
         verify(audit).append(entry.capture());
         assertEquals("BASELINE_SECTION_SAVE", entry.getValue().action());
         verify(summary).updateBaselineCompleteness(eq(PATIENT_ID), eq(50), eq(null));
+    }
+
+    // ---------------------------------------------------------------- 报告单映射写入（E16-T07 / A-ATT-013）
+
+    @Test
+    void applyMappingWriteMergesUpdatesAndRefreshesCompleteness() {
+        SectionRowRaw before = sectionRow("case", 2, false, "{\"f010\":55}");
+        when(gateway.section(PATIENT_ID, "case"))
+                .thenReturn(before, sectionRow("case", 3, false, "{\"f010\":60}"));
+        when(mapper.updateSection(eq(before.id()), eq(2), any(), any(), eq(OPERATOR_ID)))
+                .thenReturn(1);
+
+        BaselineSectionService.MappingWriteOutcome outcome =
+                service.applyMappingWrite(PATIENT_ID, "case", 2, Map.of("f010", 60));
+
+        assertEquals(3, outcome.after().version(), "写入后 version + 1");
+        assertEquals(Map.of("f010", 55), outcome.before(), "返回写入前值（字段历史 before 用）");
+        assertEquals(60, outcome.after().data().get("f010"));
+        assertFalse(outcome.after().hasDraft(), "映射写入不置草稿标记");
+        verify(summary).updateBaselineCompleteness(eq(PATIENT_ID), anyInt(), eq(null));
+    }
+
+    @Test
+    void applyMappingWriteCreatesSectionWhenMissing() {
+        when(gateway.section(PATIENT_ID, "case"))
+                .thenReturn(null, sectionRow("case", 1, false, "{\"f010\":60}"));
+        when(mapper.insertSection(any()))
+                .thenAnswer(
+                        invocation -> {
+                            invocation.<BaselineSectionInsert>getArgument(0).setId(90L);
+                            return 1;
+                        });
+
+        BaselineSectionService.MappingWriteOutcome outcome =
+                service.applyMappingWrite(PATIENT_ID, "case", 0, Map.of("f010", 60));
+
+        assertEquals(1, outcome.after().version(), "首次写入建行 v1（baseVersion 0）");
+        ArgumentCaptor<BaselineSectionInsert> captor =
+                ArgumentCaptor.forClass(BaselineSectionInsert.class);
+        verify(mapper).insertSection(captor.capture());
+        assertEquals(3, captor.getValue().getTemplateVersion(), "建行固化当前发布版");
+        assertFalse(captor.getValue().isHasDraft());
+        verify(summary).updateBaselineCompleteness(eq(PATIENT_ID), anyInt(), eq(null));
+    }
+
+    @Test
+    void applyMappingWriteRejectsLockedBaselineAndStaleVersion() {
+        doThrow(new ApiException(409, 40901, "基线已锁定，不能写入映射字段（需先解锁）"))
+                .when(lockService)
+                .requireUnlocked(eq(PATIENT_ID), anyString());
+        ApiException locked =
+                assertThrows(
+                        ApiException.class,
+                        () -> service.applyMappingWrite(PATIENT_ID, "case", 2, Map.of("f010", 60)));
+        assertEquals(40901, locked.code(), "锁定后只读（A-PAT-006）");
+
+        org.mockito.Mockito.doNothing().when(lockService).requireUnlocked(anyLong(), anyString());
+        when(gateway.section(PATIENT_ID, "case")).thenReturn(sectionRow("case", 5, false, "{}"));
+        ApiException stale =
+                assertThrows(
+                        ApiException.class,
+                        () -> service.applyMappingWrite(PATIENT_ID, "case", 2, Map.of("f010", 60)));
+        assertEquals(40900, stale.code(), "乐观锁冲突 409");
+        verify(mapper, never())
+                .updateSection(anyLong(), anyInt(), anyString(), anyString(), anyLong());
     }
 
     @Test

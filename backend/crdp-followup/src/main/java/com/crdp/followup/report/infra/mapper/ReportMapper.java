@@ -53,6 +53,21 @@ public interface ReportMapper {
     /** 附件计数行。 */
     record FileCountRow(Long reportId, Long fileCount) {}
 
+    /** 报告单头行（E16-T07 映射写入：类型 / 名称快照 / 报告时间）。 */
+    record ReportHeadRow(
+            Long id,
+            Long patientId,
+            String typeCode,
+            String typeName,
+            String nameSnapshot,
+            LocalDate reportDate) {}
+
+    /** 指标结果行（E16-T07 映射写入取值，按模板顺序）。 */
+    record IndicatorRow(String itemCode, String result) {}
+
+    /** 患者手术 / 出院日期（基线映射时相边界校验，A-ATT-013 / V64 remark）。 */
+    record PatientDatesRow(LocalDate surgeryDate, LocalDate dischargeDate) {}
+
     /** 随访记录行（位置树用：label 取任务节点名或补录 / 计划外来源，date 取计划或实际日期）。 */
     record RecordRow(
             Long id,
@@ -189,6 +204,60 @@ public interface ReportMapper {
             ORDER BY COALESCE(t.plan_date, r.visit_date) ASC, r.id ASC
             """)
     List<RecordRow> recordsOfPatient(@Param("patientId") long patientId);
+
+    // ---------------------------------------------------------------- 单报告单读取（E16-T07 映射写入）
+
+    /** 单份报告单头（@DataScope 出行：越范围 / 已删 / 不存在 null → 服务层 40400）。 */
+    @DataScope(resource = "patient")
+    @Select(
+            """
+            SELECT r.id, r.patient_id AS patientId, r.type_code AS typeCode,
+                   r.type_name AS typeName, r.name_snapshot AS nameSnapshot,
+                   r.report_date AS reportDate
+            FROM rpt_report r
+            JOIN pt_patient pt ON pt.id = r.patient_id AND pt.deleted = 0
+            WHERE r.id = #{id} AND r.status = 'NORMAL'
+            """)
+    ReportHeadRow findReport(@Param("id") long id);
+
+    /** 某报告单的位置行（映射目标必须是其中之一，A-ATT-013）。 */
+    @DataScope(resource = "patient")
+    @Select(
+            """
+            SELECT l.id, l.report_id AS reportId, l.link_type AS linkType,
+                   l.link_record_id AS linkRecordId, l.anchor_type AS anchorType,
+                   l.anchor_key AS anchorKey, l.template_version AS templateVersion,
+                   l.adjusted
+            FROM rpt_report_link l
+            JOIN pt_patient pt ON pt.id = l.patient_id AND pt.deleted = 0
+            WHERE l.report_id = #{reportId}
+            ORDER BY l.id ASC
+            """)
+    List<LinkRow> linksOfReport(@Param("reportId") long reportId);
+
+    /** 某报告单的指标结果（映射按 item_code 取值；同一项目只一行——创建时按模板校验）。 */
+    @DataScope(resource = "patient")
+    @Select(
+            """
+            SELECT v.item_code AS itemCode, v.result
+            FROM rpt_indicator_value v
+            JOIN pt_patient pt ON pt.id = v.patient_id AND pt.deleted = 0
+            WHERE v.report_id = #{reportId}
+            ORDER BY v.sort_no, v.id
+            """)
+    List<IndicatorRow> indicatorsOfReport(@Param("reportId") long reportId);
+
+    /**
+     * 患者手术 / 出院日期（时相边界：术前最后一次 ≤ 手术日期、基线 ≤ 出院日期）。 调用方已经 findReport（@DataScope）确认可见性，本句只取日期、 不吐患者数据。
+     */
+    @IgnoreScope(reason = "报告单映射时相边界（E16-T07）：调用方已经 findReport（@DataScope）确认报告单可见，只取日期不吐患者数据")
+    @Select(
+            """
+            SELECT p.surgery_date AS surgeryDate, p.discharge_date AS dischargeDate
+            FROM pt_patient p
+            WHERE p.id = #{patientId} AND p.deleted = 0
+            """)
+    PatientDatesRow patientDates(@Param("patientId") long patientId);
 
     // ---------------------------------------------------------------- 配置删除守卫（OQ-95②）
 

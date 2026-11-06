@@ -350,6 +350,68 @@ public class BaselineSectionService {
                 toView(saved), warnings.stream().map(BaselineSectionService::toWarning).toList());
     }
 
+    // ---------------------------------------------------------------- 报告单映射写入（E16-T07 / A-ATT-013）
+
+    /** 映射写入结果：写入后分节视图 + 载体（formCode / 固化模板版本）+ 写入前 data（字段历史由调用方接线）。 */
+    public record MappingWriteOutcome(
+            SectionView after, String formCode, int templateVersion, Map<String, Object> before) {}
+
+    /**
+     * 报告单映射写入（E16-T07 / A-ATT-013「保存后写入基线“超声检查”分类的对应字段」）： 锁定校验（40901）→ 合并值过写入闸门 → version + 1 （乐观锁
+     * 40900）、has_draft 清 0；分节不存在时按 baseVersion 0 建行（template_version 固化 = 当前发布版）。 不执行必填 /
+     * 跨字段校验（映射只写指标字段， 与暂存同口径的闸门）、不写字段历史（source = REPORT 的留痕由 {@code ReportMappingService}
+     * 同一事务接线）、重算基线完整度（A-PAT-019）。
+     */
+    @Transactional
+    public MappingWriteOutcome applyMappingWrite(
+            long patientId, String categoryKey, int baseVersion, Map<String, Object> mergedData) {
+        requirePatient(patientId);
+        lockService.requireUnlocked(patientId, "基线已锁定，不能写入映射字段（需先解锁）");
+        long operator = CurrentSession.requireHospital().userId();
+        SectionRowRaw row = gateway.section(patientId, categoryKey);
+        boolean created = row == null;
+        if (created) {
+            requireBaseVersionZero(baseVersion);
+        } else if (row.version() != baseVersion) {
+            throw draftConflict(row, mergedData);
+        }
+        int templateVersion =
+                created ? formService.publishedVersion(BASELINE_FORM_CODE) : row.templateVersion();
+        String formCode = created ? BASELINE_FORM_CODE : row.formCode();
+        Map<String, Object> persisted =
+                formService.writeGateData(
+                        formCode,
+                        templateVersion,
+                        mergedData == null ? new LinkedHashMap<>() : mergedData);
+        if (created) {
+            mapper.insertSection(
+                    new BaselineSectionInsert(
+                            patientId,
+                            formCode,
+                            categoryKey,
+                            templateVersion,
+                            writeJson(persisted),
+                            null,
+                            1,
+                            false,
+                            operator));
+        } else {
+            int updated =
+                    mapper.updateSection(
+                            row.id(), baseVersion, writeJson(persisted), row.dataMeta(), operator);
+            if (updated != 1) {
+                throw draftConflict(requireRow(patientId, categoryKey), mergedData);
+            }
+        }
+        SectionRowRaw saved = requireRow(patientId, categoryKey);
+        refreshCompleteness(patientId);
+        return new MappingWriteOutcome(
+                toView(saved),
+                saved.formCode(),
+                saved.templateVersion(),
+                row == null ? Map.of() : readMap(row.data()));
+    }
+
     // ---------------------------------------------------------------- 字段历史查询（A-PAT-005「可查旧值新值人时间」）
 
     /** 分节字段历史（谁、何时、旧值 → 新值；分节未保存过 40400——无记录可查）。 */

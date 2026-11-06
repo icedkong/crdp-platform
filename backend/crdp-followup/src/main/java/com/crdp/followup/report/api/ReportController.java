@@ -1,5 +1,6 @@
 package com.crdp.followup.report.api;
 
+import com.crdp.followup.report.app.ReportMappingService;
 import com.crdp.followup.report.app.ReportService;
 import com.crdp.framework.security.RequireModule;
 import com.crdp.framework.security.RequiresPermission;
@@ -28,8 +29,11 @@ public class ReportController {
 
     private final ReportService service;
 
-    public ReportController(ReportService service) {
+    private final ReportMappingService mappingService;
+
+    public ReportController(ReportService service, ReportMappingService mappingService) {
         this.service = service;
+        this.mappingService = mappingService;
     }
 
     @Operation(
@@ -69,6 +73,49 @@ public class ReportController {
             @PathVariable("id") long id) {
         return ApiResponse.ok(service.reportLocations(id));
     }
+
+    // ---------------------------------------------------------------- 映射写入（E16-T07 /
+    // A-ATT-013、C-SCAN-005）
+
+    @Operation(
+            summary =
+                    "映射预览（A-ATT-013 流程第 4 步「列出将写入的字段及原值」）：适用映射、候选目标"
+                            + "（映射目标须是位置之一）、字段原值 / 新值与 conflict 标记、值转换错误、时相边界 / "
+                            + "基线锁定 blockedReason；不写任何数据")
+    @PostMapping("/reports/{id}/mapping/preview")
+    @RequireModule("followup")
+    @RequiresPermission("followup:scan:upload")
+    public ApiResponse<ReportMappingService.PreviewView> mappingPreview(
+            @PathVariable("id") long id) {
+        return ApiResponse.ok(mappingService.preview(id));
+    }
+
+    @Operation(
+            summary =
+                    "映射确认写入（流程第 5 步「参数写入映射目标记录，并记入字段变更记录」）：只写 fieldKeys"
+                            + " 内的键（原值不同的须逐项确认覆盖，未确认的冲突字段跳过并回告）；"
+                            + "同一事务写 fe_field_history（来源 = 报告单）与 RPT_MAPPING_WRITE 审计；"
+                            + "版本冲突 40900、基线锁定 40901、时相越界 40001")
+    @PostMapping("/reports/{id}/mapping/confirm")
+    @RequireModule("followup")
+    @RequiresPermission("followup:scan:upload")
+    public ApiResponse<ReportMappingService.ConfirmedView> mappingConfirm(
+            @PathVariable("id") long id, @RequestBody(required = false) MappingConfirmBody body) {
+        if (body == null) {
+            throw new ApiException(400, 40001, "请求体不能为空");
+        }
+        ReportMappingService.ConfirmCommand command =
+                new ReportMappingService.ConfirmCommand(
+                        body.mappingId(),
+                        body.linkRecordId(),
+                        body.targetVersion(),
+                        body.fieldKeys());
+        return ApiResponse.ok(mappingService.confirm(id, command));
+    }
+
+    /** 映射确认请求体（report.md §3；targetVersion 未建基线分节为 0）。 */
+    record MappingConfirmBody(
+            String mappingId, String linkRecordId, Integer targetVersion, List<String> fieldKeys) {}
 
     private static ReportService.CreateRequest toRequest(CreateBody body) {
         List<ReportService.IndicatorInput> indicators =

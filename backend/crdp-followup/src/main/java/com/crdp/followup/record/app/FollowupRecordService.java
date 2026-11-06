@@ -208,6 +208,39 @@ public class FollowupRecordService {
         return new SubmitOutcome(record(id), readMap(row.data()), stripped.clearedKeys(), warnings);
     }
 
+    // ---------------------------------------------------------------- 报告单映射写入（E16-T07 /
+    // C-SCAN-005）
+
+    /** 映射写入结果：写入后视图 + 写入前 data（字段历史 before 由调用方接线）。 */
+    public record MappingWriteOutcome(RecordView after, Map<String, Object> before) {}
+
+    /**
+     * 报告单映射写入（E16-T07 / A-ATT-013「参数写入映射目标记录」）：合并值过写入闸门（键 / 类型 / 派生 / 硬范围）后写回， 状态不变、version + 1（乐观锁
+     * 40900）；字段历史（source = REPORT）由 {@code ReportMappingService} 在同一事务接线。 mergedData 为「目标记录现值 +
+     * 本次映射写入值」的全量（与提交口径一致，不做字段级合并）。
+     */
+    @Transactional
+    public MappingWriteOutcome applyMappingWrite(
+            long id, int baseVersion, Map<String, Object> mergedData) {
+        FollowupRecordMapper.RecordRowRaw row = requireRecord(id);
+        if (row.version() != baseVersion) {
+            throw draftConflict(row, mergedData);
+        }
+        Map<String, Object> values = mergedData == null ? new LinkedHashMap<>() : mergedData;
+        Map<String, Object> persisted =
+                formService.writeGateData(row.formCode(), row.templateVersion(), values);
+        int updated =
+                recordMapper.applyMappingWrite(
+                        id,
+                        baseVersion,
+                        writeJson(persisted),
+                        CurrentSession.requireHospital().userId());
+        if (updated != 1) {
+            throw draftConflict(requireRecord(id), mergedData);
+        }
+        return new MappingWriteOutcome(record(id), readMap(row.data()));
+    }
+
     // ---------------------------------------------------------------- 内部
 
     private FollowupRecordMapper.RecordRowRaw requireRecord(long id) {
