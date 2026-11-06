@@ -57,6 +57,20 @@ public final class ConfigTableRegistry {
                     // ---- followup：通知设置（A-FLD-014「通知设置」）----
                     entry("ntf_rule", "followup", "通知设置", "通知规则（逾期、报告单归档等事件的提醒规则）"),
                     entry("ntf_setting", "followup", "通知设置", "通知渠道与全局设置"),
+                    // ---- followup：报告单设置（E16-T01 / A-ATT-003、011、012；模板先于类型 / 名称，
+                    //      rpt_name.indicator_tpl_id 数值引用在导入时按已导入的模板行重映射）----
+                    entry(
+                            "rpt_indicator_tpl",
+                            "followup",
+                            "报告单设置",
+                            "指标模板（租户管理员维护，A-ATT-012 / C-SCAN-004）"),
+                    entry("rpt_indicator_item", "followup", "报告单设置", "指标模板项目（名称、代码、参考范围、单位、顺序）"),
+                    entry(
+                            "rpt_type",
+                            "followup",
+                            "报告单设置",
+                            "资料类型（编码、字段集引用 fe_form、名称必填、默认电子化状态、排序、启停）"),
+                    entry("rpt_name", "followup", "报告单设置", "名称字典（类型下名称、绑定指标模板、电子化状态覆盖）"),
                     // ---- followup：只复制结构（A-FLD-014「术者、病区 / 中心」）----
                     structure(
                             "ward",

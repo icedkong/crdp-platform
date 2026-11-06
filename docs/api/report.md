@@ -28,8 +28,8 @@
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| GET | `/api/hospital/followup/report-types` | `followup:patient:view` | 类型与字段集、默认电子化状态（C） |
-| GET | `/api/hospital/followup/report-names?typeCode=` | 同上 | 名称字典，含指标模板 |
+| GET | `/api/hospital/followup/report-types` | `followup:patient:view` | 类型与字段集、默认电子化状态（C）。**已实现（E16-T01）**：只返回启用类型，行 `{ code, name, nameRequired, defaultDigitizeStatus, fields: [{ key, code, label, type, unit, required, sortNo }] }`（fields 为该类型 fe_form REPORT 表单的启用字段，紧凑视图） |
+| GET | `/api/hospital/followup/report-names?typeCode=` | 同上 | 名称字典，含指标模板。**已实现（E16-T01）**：`typeCode` 必填（缺失 / 不存在 40400），只返回启用名称，行 `{ id, typeCode, name, indicatorTplId, items: [...] }`——绑定的模板启用时 `items` 带出项目行（模板停用不再带出，只影响新报告单） |
 | POST | `/api/hospital/followup/reports` | `followup:scan:upload` | `{ patientId, typeCode, nameCode?, reportDate, hospital?, fields, indicators[], findings, conclusion, locations[≥1], fileIds[], note }`；位置为空 → 40001（A-ATT-002、C-SCAN-010） |
 | GET | `/api/hospital/followup/reports/{id}` | `followup:patient:view` | 详情（含位置、文件列表、电子化状态） |
 | PUT | `/api/hospital/followup/reports/{id}` | `followup:scan:upload` | `{ version, ... }`；乐观锁 409 |
@@ -72,7 +72,26 @@ token 过期或已用：返回 40101，前端显示“二维码已过期，请�
 
 ## 6. 报告单设置（`/system/report-config`，`followup:scan:config`）
 
-`GET/POST/PUT /api/hospital/followup/report-config/types`（类型、字段集、默认电子化状态）、`.../names`（名称字典）、`.../indicator-templates`（项目名称、代码、参考范围、单位、顺序）、`.../mappings`（心脏超声 → 超声字段、程控报告单 → 程控字段）、`.../file-policy`（格式与大小）。所有变更写审计。
+表：`rpt_type` / `rpt_name` / `rpt_indicator_tpl` / `rpt_indicator_item`（followup V62，A 医院预置 10 类随包）；四张配置表已进配置模板注册表（E12 导出 / 导入，tpl_id 数值引用导入时重映射）。**已实现（E16-T01）**：
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/hospital/followup/report-config/types` | 类型清单（含停用，按 sort_no）：`{ id, code, name, formCode, formName, nameRequired, defaultDigitizeStatus, sortNo, status, remark, nameCount }`；编码本院唯一、创建后不可改（A-ATT-003「可增减、停用、排序」） |
+| POST | 同上 `/types` | 新建：`{ code, name, formCode, nameRequired?, defaultDigitizeStatus?, sortNo?, remark? }`；重复编码 40902、`formCode` 必须是 `fe_form.usage_type = REPORT` 的表单否则 40001；默认电子化状态只收 `PENDING` / `NO_ENTRY`（A 为 null，A-ATT-018） |
+| PUT | `/types/{id}` | 编辑（编码不可改）：`{ name, formCode, nameRequired?, defaultDigitizeStatus?, sortNo, status, remark? }`；停用（DISABLED）后添加报告单不再可选，不删除 |
+| DELETE | `/types/{id}` | 类型下仍有名称（含停用）→ 40901「先删除名称」；报告单引用守卫随 E16-T02 `rpt_report` 落地 |
+| GET | `.../names?typeCode=` | 名称清单（typeCode 可空 = 全部，含停用）：`{ id, typeCode, typeName, name, indicatorTplId, indicatorTplName, digitizeStatusOverride, sortNo, status }` |
+| POST | 同上 `/names` | 新建：`{ typeCode, name, indicatorTplId?, digitizeStatusOverride?, sortNo? }`；同类型重名 40902（同名报告单可多次添加、按报告时间区分——字典只管取值，A-ATT-011）；类型不存在 40400、模板不存在 40001 |
+| PUT | `/names/{id}` | 编辑（所属类型不可改）：`{ name, indicatorTplId?, digitizeStatusOverride?, sortNo, status }` |
+| DELETE | `/names/{id}` | 删除名称（已保存报告单的名称快照不联动，随 E16-T02 落地时定稿） |
+| GET | `.../indicator-templates` | 模板清单（含停用，带全部项目与 `boundNameCount`）：`{ id, name, status, remark, items: [{ itemName, itemCode, unit, refRange, refRangeMale, refRangeFemale, sortNo }] }`（参考范围可按性别区分，A-ATT-012 / C-SCAN-004） |
+| POST | 同上 `/indicator-templates` | 新建：`{ name, remark?, items[≥1] }`；名称本院唯一 40902、项目代码模板内唯一 40001 |
+| PUT | `/indicator-templates/{id}` | 编辑：`{ name, remark?, status, items }`——项目**全量替换**（先清后插）；修改只影响之后新建的报告单，已保存指标行不变 |
+| DELETE | `/indicator-templates/{id}` | 仍被名称绑定（含停用名称）→ 40901「先解绑」 |
+
+增删改全部写审计（module=followup，objectType=`REPORT_TYPE` / `REPORT_NAME` / `REPORT_INDICATOR_TPL`，action=`RPT_TYPE_CREATE` 等 9 个；被拦截的删除写 DENIED）。
+
+**推断，待确认**：`.../mappings`（心脏超声 → 超声字段、程控报告单 → 程控字段，随 E16-T07 / E23-T03）。`.../file-policy` 不单独设口——格式与大小是平台参数 `file.upload.*`（平台库 V33）+ 租户覆盖，机构设置 → 租户参数维护（E10-T01 已实现 `GET /api/hospital/files/policy` 读取生效值）。
 
 ## 7. 测试要点
 

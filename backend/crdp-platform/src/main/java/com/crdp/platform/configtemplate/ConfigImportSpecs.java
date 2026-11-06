@@ -85,7 +85,19 @@ public final class ConfigImportSpecs {
                             ConfigImportMode.SINGLE_ROW,
                             List.of("id"),
                             Map.of(),
-                            false));
+                            false),
+                    // ---- followup：报告单设置（E16-T01；tpl_id / indicator_tpl_id 数值引用重映射，
+                    //      form_code / type_code 为编码引用不改写——fe_form 与 rpt_type 整包同序导入后自然一致）----
+                    ConfigImportSpec.copy("rpt_indicator_tpl", List.of("name")),
+                    ConfigImportSpec.copy(
+                            "rpt_indicator_item",
+                            List.of("tpl_id", "item_code"),
+                            Map.of("tpl_id", "rpt_indicator_tpl")),
+                    ConfigImportSpec.copy("rpt_type", List.of("code")),
+                    ConfigImportSpec.copy(
+                            "rpt_name",
+                            List.of("type_code", "name"),
+                            Map.of("indicator_tpl_id", "rpt_indicator_tpl")));
 
     private static final Map<String, ConfigImportSpec> BY_TABLE = index(SPECS);
 

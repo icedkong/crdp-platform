@@ -135,6 +135,21 @@ public class MenuManifest {
                             "followup:field:edit",
                             null,
                             50),
+                    // E16-T01 / A-ATT-003、011、012、018：报告单设置（挂 base 的系统设置目录下，平台库 V53 同构；
+                    // A-ATT-003「租户管理员可增减、停用、排序」，内置角色只授 TENANT_ADMIN，OQ-12 scan 族权限码）
+                    new MenuManifestItem(
+                            "followup",
+                            "HOSPITAL",
+                            "MENU",
+                            "FollowupReportConfig",
+                            "HospitalSystem",
+                            "报告单设置",
+                            "FollowupReportConfig",
+                            "/system/report-config",
+                            "followup/report/config",
+                            "followup:scan:config",
+                            null,
+                            55),
                     // E13-T08 / A-WARD-001、A-WARD-008：病区管理（挂 base 的系统设置目录下，平台库 V40 同构；
                     // A-WARD-001「租户管理员维护」，内置角色只授 TENANT_ADMIN）
                     new MenuManifestItem(
