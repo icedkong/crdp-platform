@@ -82,6 +82,13 @@ import ContactLogModal from '#/components/followup/contact-log-modal.vue';
 import FollowupTimeline from '#/components/followup/followup-timeline.vue';
 import PatientHeader from '#/components/followup/patient-header.vue';
 import ReasonModal from '#/components/followup/reason-modal.vue';
+import {
+  buildReportTree,
+  findTreeNode,
+  reportsForKey,
+  treeFilterLabel,
+} from '#/components/followup/report-tree-logic';
+import ReportTree from '#/components/followup/report-tree.vue';
 import TempTaskModal from '#/components/followup/temp-task-modal.vue';
 import TransferWardModal from '#/components/followup/transfer-ward-modal.vue';
 import UnplannedRecordModal from '#/components/followup/unplanned-record-modal.vue';
@@ -437,6 +444,40 @@ const followupUploadPreset = computed<ReportLocationInput[] | undefined>(() =>
 function handleReportCreated() {
   void loadReports();
 }
+
+// ------------------------------ E16-T04 双树浏览（按类型 / 按时间，A-ATT-010 / C-SCAN-013）
+
+/** 树模式与选中分组键（v-model 给 ReportTree；切换树时组件会清空选中）。 */
+const reportTreeMode = ref<'time' | 'type'>('type');
+const reportTreeKey = ref<null | string>(null);
+
+/** 选中键 → 当前列表（null = 全部；类型 / 日期分组或单份报告单）。 */
+const filteredReports = computed(() =>
+  reportsForKey(reports.value, reportTreeMode.value, reportTreeKey.value),
+);
+
+/** 工具栏筛选标签：「类型：心脏超声」/「时间：2026-10-28」/「报告单：…」。 */
+const reportTreeFilterLabel = computed(() => {
+  if (!reportTreeKey.value) return null;
+  const node = findTreeNode(
+    buildReportTree(reports.value, reportTreeMode.value),
+    reportTreeKey.value,
+  );
+  return node ? treeFilterLabel(node) : null;
+});
+
+// 列表刷新（上传 / 批量上传后）可能移走选中分组对应的报告单，键失效时回到全部
+watch(reports, () => {
+  if (
+    reportTreeKey.value &&
+    !findTreeNode(
+      buildReportTree(reports.value, reportTreeMode.value),
+      reportTreeKey.value,
+    )
+  ) {
+    reportTreeKey.value = null;
+  }
+});
 
 const reportColumns = [
   { dataIndex: 'typeName', title: '类型', width: 110 },
@@ -917,64 +958,86 @@ const timelineLegendNote =
     </div>
 
     <div v-else-if="tab === 'reports'" class="main" data-testid="reports-panel">
-      <div class="toolbar">
-        <Button
-          v-if="canUploadReport"
-          data-testid="report-batch-upload"
-          @click="openBatchUpload()"
-        >
-          批量上传
-        </Button>
-        <Button
-          v-if="canUploadReport"
-          data-testid="report-create"
-          type="primary"
-          @click="openReportUpload()"
-        >
-          添加报告单
-        </Button>
+      <div class="reports-layout">
+        <!-- E16-T04 左侧双树（按类型 / 按时间，A-ATT-010 / C-SCAN-013） -->
+        <ReportTree
+          v-model:mode="reportTreeMode"
+          v-model:selected-key="reportTreeKey"
+          :loading="reportsLoading"
+          :reports="reports"
+        />
+        <div class="reports-content">
+          <div class="toolbar">
+            <Tag
+              v-if="reportTreeFilterLabel"
+              closable
+              data-testid="report-tree-filter"
+              @close.prevent="reportTreeKey = null"
+            >
+              {{ reportTreeFilterLabel }}
+            </Tag>
+            <Button
+              v-if="canUploadReport"
+              data-testid="report-batch-upload"
+              @click="openBatchUpload()"
+            >
+              批量上传
+            </Button>
+            <Button
+              v-if="canUploadReport"
+              data-testid="report-create"
+              type="primary"
+              @click="openReportUpload()"
+            >
+              添加报告单
+            </Button>
+          </div>
+          <Table
+            :columns="reportColumns"
+            :data-source="filteredReports"
+            :loading="reportsLoading"
+            :pagination="{ pageSize: 20, showSizeChanger: false }"
+            size="small"
+            data-testid="report-table"
+          >
+            <template #bodyCell="{ column, record }">
+              <template v-if="column.dataIndex === 'name'">
+                {{ record.name ?? '—' }}
+              </template>
+              <template v-else-if="column.dataIndex === 'locations'">
+                <template v-if="record.locations.length === 0">
+                  <span class="unassigned">未指定位置</span>
+                </template>
+                <template v-else>
+                  <Tag
+                    v-for="text in locationTags(record).slice(0, 2)"
+                    :key="text"
+                  >
+                    {{ text }}
+                  </Tag>
+                  <Tooltip
+                    v-if="locationTags(record).length > 2"
+                    :title="locationTags(record).join('、')"
+                  >
+                    <Tag>+{{ locationTags(record).length - 2 }}</Tag>
+                  </Tooltip>
+                </template>
+              </template>
+              <template v-else-if="column.dataIndex === 'creatorName'">
+                {{ record.creatorName ?? '—' }}
+              </template>
+              <template v-else-if="column.dataIndex === 'createdAt'">
+                {{ formatDateTime(record.createdAt) }}
+              </template>
+            </template>
+            <template #emptyText> 暂无报告单 </template>
+          </Table>
+          <p class="hint">
+            位置标签「基线 · 分类」「第N年随访 ·
+            分组」；右侧详情与全屏查看器随后续任务开放。
+          </p>
+        </div>
       </div>
-      <Table
-        :columns="reportColumns"
-        :data-source="reports"
-        :loading="reportsLoading"
-        :pagination="{ pageSize: 20, showSizeChanger: false }"
-        size="small"
-        data-testid="report-table"
-      >
-        <template #bodyCell="{ column, record }">
-          <template v-if="column.dataIndex === 'name'">
-            {{ record.name ?? '—' }}
-          </template>
-          <template v-else-if="column.dataIndex === 'locations'">
-            <template v-if="record.locations.length === 0">
-              <span class="unassigned">未指定位置</span>
-            </template>
-            <template v-else>
-              <Tag v-for="text in locationTags(record).slice(0, 2)" :key="text">
-                {{ text }}
-              </Tag>
-              <Tooltip
-                v-if="locationTags(record).length > 2"
-                :title="locationTags(record).join('、')"
-              >
-                <Tag>+{{ locationTags(record).length - 2 }}</Tag>
-              </Tooltip>
-            </template>
-          </template>
-          <template v-else-if="column.dataIndex === 'creatorName'">
-            {{ record.creatorName ?? '—' }}
-          </template>
-          <template v-else-if="column.dataIndex === 'createdAt'">
-            {{ formatDateTime(record.createdAt) }}
-          </template>
-        </template>
-        <template #emptyText> 暂无报告单 </template>
-      </Table>
-      <p class="hint">
-        位置标签「基线 · 分类」「第N年随访 ·
-        分组」；双树浏览、详情与全屏查看器随后续任务开放。
-      </p>
     </div>
 
     <div v-else class="main" data-testid="contacts-panel">
@@ -1177,8 +1240,22 @@ const timelineLegendNote =
 
 .toolbar {
   display: flex;
+  gap: 8px;
+  align-items: center;
   justify-content: flex-end;
   margin-bottom: 12px;
+}
+
+/* E16-T04 报告单页签：左侧双树 + 右侧列表（pages.md §4.6；右侧预览随 E16-T06） */
+.reports-layout {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.reports-content {
+  flex: 1;
+  min-width: 0;
 }
 
 .hint {
