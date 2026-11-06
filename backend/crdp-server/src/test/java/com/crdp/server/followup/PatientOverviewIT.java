@@ -64,6 +64,10 @@ class PatientOverviewIT {
             runInTenant(
                     tenant,
                     () -> {
+                        // E23-T02 预置计划常驻自动入组（A_ANNUAL_FU_PLAN）：本类按「单计划世界」断言，
+                        // 先关掉它的自动入组；预置规格与行为由 APresetPlanSqlTest / APresetPlanVerifyIT 锁定
+                        jdbc.update(
+                                "UPDATE fu_plan SET auto_enroll = 0 WHERE code = 'A_ANNUAL_FU_PLAN'");
                         jdbc.update("DELETE FROM pt_patient WHERE legacy_no LIKE 'IT-E13T05-%'");
                         jdbc.update(
                                 "DELETE FROM pt_patient_summary WHERE patient_id NOT IN"
