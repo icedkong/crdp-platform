@@ -44,6 +44,9 @@ import org.springframework.test.context.ActiveProfiles;
  *
  * <p>「任务变进行中」的写库联动：fu_task 建表与状态流转随 E14-T04 / E15-T01（晚于本任务），接入点在 RecordDraftService.saveDraft
  * 成功之后（OQ-77）。门控 CRDP_IT_MYSQL_PORT。全部虚构数据（记录经 data_meta 标记 E25T01 自建自清）。
+ *
+ * <p>E25-T03 补多设备同时编辑链路（twoDevicesTakeTurnsSavingSameRecord）：两个登录会话轮流保存同一记录——先保存成功、后保存 409、覆盖写审计、
+ * 冲突传播回先保存一侧、重拉对齐后继续保存；前端同链路见 form-engine auto-save-multi-device.spec。
  */
 @ActiveProfiles("local")
 @SpringBootTest(
@@ -259,6 +262,116 @@ class RecordDraftIT {
                     String afterJson = String.valueOf(auditRow.get("after_json"));
                     assertTrue(afterJson.contains("\"f214\""), "审计记变更字段键：" + afterJson);
                     assertFalse(afterJson.contains("2026-04-01"), "审计不落字段值（敏感值只存摘要）：" + afterJson);
+                });
+    }
+
+    // ---------------------------------------------------------------- E25-T03 多设备同时编辑
+
+    /**
+     * E25-T03 / NFR-SAVE-001、003：两台设备（两个登录会话——演示医生的电脑与演示护士的平板，V47 均授 222）轮流自动保存同一记录的完整链路： 先保存者成功 →
+     * 后保存者持旧 baseVersion 收 40900（附更新人显示名 / 差异字段）→「保留我的并覆盖」以 currentVersion 重发成功并写覆盖审计 →
+     * 冲突随覆盖传播回先保存的一侧（仍持旧版本再保存同样 40900，更新人换成覆盖者）→「载入服务器版本」经 GET /records/{id} 重拉 data / version
+     * 对齐后继续保存成功——两边设备的改动最终合并在同一份草稿里（前端同链路见 auto-save-multi-device.spec）。
+     */
+    @Test
+    void twoDevicesTakeTurnsSavingSameRecord() {
+        long recordId = createRecord(Map.of("f213", 1, "f214", "2026-01-05")); // v0
+        String doctor = doctorToken();
+        String nurse = adminToken();
+
+        // ① 设备一（演示医生）到点保存：v0 → v1
+        Map<?, ?> doctorSaved =
+                put(
+                        draftPath(recordId),
+                        doctor,
+                        Map.of("baseVersion", 0, "changes", Map.of("f218", "心源性死亡（示例）")));
+        assertEquals(0, code(doctorSaved), "先到先得：" + doctorSaved);
+        assertEquals(1, ((Number) data(doctorSaved).get("version")).intValue());
+
+        // ② 设备二（演示护士）打开页面后未刷新、仍持 v0，到点保存 → 40900：更新人 = 设备一显示名；值相同的键（f213）不列
+        Map<?, ?> nurseConflict =
+                put(
+                        draftPath(recordId),
+                        nurse,
+                        Map.of(
+                                "baseVersion",
+                                0,
+                                "changes",
+                                Map.of("f214", "2026-03-10", "f213", 1)));
+        assertEquals(40900, code(nurseConflict), "后保存的设备收到 409：" + nurseConflict);
+        Map<?, ?> detail = data(nurseConflict);
+        assertEquals(1, ((Number) detail.get("currentVersion")).intValue(), "附服务器当前版本");
+        assertEquals("演示医生", detail.get("updatedBy"), "冲突详情指向先保存的设备");
+        assertNotNull(detail.get("updatedAt"), "附更新时间");
+        List<Map<?, ?>> diffFields = (List<Map<?, ?>>) detail.get("diffFields");
+        assertEquals(1, diffFields.size(), "只列两边不同的键：" + diffFields);
+        assertEquals("f214", diffFields.get(0).get("key"));
+        assertEquals("2026-03-10", diffFields.get(0).get("mine"));
+        assertEquals("2026-01-05", diffFields.get(0).get("server"));
+
+        // ③ 设备二「保留我的并覆盖」：currentVersion 作 baseVersion + overwrite → v2 并写覆盖审计
+        Map<?, ?> nurseOverwritten =
+                put(
+                        draftPath(recordId),
+                        nurse,
+                        Map.of(
+                                "baseVersion",
+                                1,
+                                "changes",
+                                Map.of("f214", "2026-03-10"),
+                                "overwrite",
+                                true));
+        assertEquals(0, code(nurseOverwritten), "覆盖保存成功：" + nurseOverwritten);
+        assertEquals(2, ((Number) data(nurseOverwritten).get("version")).intValue());
+
+        // ④ 设备一仍持 v1：下一次到点保存同样 40900，更新人换成覆盖者（冲突随覆盖传播回先保存的一侧）
+        Map<?, ?> doctorConflict =
+                put(
+                        draftPath(recordId),
+                        doctor,
+                        Map.of("baseVersion", 1, "changes", Map.of("f215", 1)));
+        assertEquals(40900, code(doctorConflict), "先保存的一侧随后也会冲突：" + doctorConflict);
+        assertEquals(2, ((Number) data(doctorConflict).get("currentVersion")).intValue());
+        assertEquals("演示护士", data(doctorConflict).get("updatedBy"), "更新人 = 覆盖者");
+
+        // ⑤ 设备一「载入服务器版本」：GET /records/{id} 重拉拿到 v2 与设备二的改动，对齐后再保存 → v3
+        Map<?, ?> reloaded = get("/api/hospital/followup/records/" + recordId, doctor);
+        assertEquals(0, code(reloaded), "重拉详情失败：" + reloaded);
+        assertEquals(2, ((Number) data(reloaded).get("version")).intValue(), "重拉对齐到服务器版本");
+        Map<?, ?> reloadedData = (Map<?, ?>) data(reloaded).get("data");
+        assertEquals("2026-03-10", reloadedData.get("f214"), "重拉拿到设备二的改动");
+        assertEquals("心源性死亡（示例）", reloadedData.get("f218"), "设备一早前的改动仍在");
+        Map<?, ?> doctorAfterReload =
+                put(
+                        draftPath(recordId),
+                        doctor,
+                        Map.of("baseVersion", 2, "changes", Map.of("f215", 1)));
+        assertEquals(0, code(doctorAfterReload), "对齐后的设备一继续保存成功：" + doctorAfterReload);
+        assertEquals(3, ((Number) data(doctorAfterReload).get("version")).intValue());
+
+        runInTenant(
+                "demoa",
+                () -> {
+                    assertEquals(
+                            1L,
+                            jdbc.queryForObject(
+                                            "SELECT COUNT(*) FROM aud_log WHERE action ="
+                                                    + " 'RECORD_DRAFT_OVERWRITE' AND object_id = ?",
+                                            Long.class,
+                                            String.valueOf(recordId))
+                                    .longValue(),
+                            "整条链路只写一次覆盖审计（步骤 ③）");
+                    Map<String, Object> row =
+                            jdbc.queryForMap(
+                                    "SELECT data, version FROM fu_record WHERE id = ?", recordId);
+                    assertEquals(3, ((Number) row.get("version")).intValue(), "落库版本号 = 3");
+                    String dataJson = String.valueOf(row.get("data")).replaceAll("\\s", "");
+                    assertTrue(
+                            dataJson.contains("\"f213\":1")
+                                    && dataJson.contains("\"f214\":\"2026-03-10\"")
+                                    && dataJson.contains("\"f215\":1")
+                                    && dataJson.contains("心源性死亡（示例）"),
+                            "两台设备的改动合并在同一份草稿：" + dataJson);
                 });
     }
 
@@ -555,6 +668,10 @@ class RecordDraftIT {
                         Map.of("tenantCode", tenant, "username", username, "password", password));
         assertEquals(0, code(response), "登录失败：" + response);
         return (String) data(response).get("token");
+    }
+
+    private Map<?, ?> get(String path, String token) {
+        return exchange(HttpMethod.GET, path, token, null);
     }
 
     private Map<?, ?> post(String path, String token, Map<String, Object> body) {
