@@ -113,7 +113,7 @@ class ContactLogServiceTest {
                                 TASK,
                                 "PHONE",
                                 "REACHED",
-                                null,
+                                LocalDateTime.of(2026, 11, 5, 9, 0),
                                 null,
                                 LocalDateTime.of(2026, 11, 5, 9, 0).plusDays(1),
                                 "患者诉近期胸闷，建议门诊复查（示例）",
