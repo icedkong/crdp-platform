@@ -77,7 +77,8 @@ public class TenantViewService {
 
     private static final String SELECT_ROW =
             "SELECT id, session_no, account_id, account_name, display_name, role_codes,"
-                    + " tenant_id, purpose, note, started_at, ends_at FROM plt_view_session";
+                    + " tenant_id, purpose, note, started_at_epoch, started_at, ends_at FROM"
+                    + " plt_view_session";
 
     private final JdbcTemplate platform;
 
@@ -182,7 +183,9 @@ public class TenantViewService {
     /** 退出结果（结束方式回显，前端提示用）。 */
     public record ExitResult(long sessionId, String sessionNo, String endMethod) {}
 
-    /** 台账行（内部读取用）。 */
+    /**
+     * 台账行（内部读取用）。{@code startedAtEpoch} 是到时判定的唯一依据（epoch 秒， 跨时区安全，见 V51 迁移注释）；DATETIME 字段只做展示回显。
+     */
     private record SessionRow(
             long id,
             String sessionNo,
@@ -193,6 +196,7 @@ public class TenantViewService {
             long tenantId,
             String purpose,
             String note,
+            long startedAtEpoch,
             LocalDateTime startedAt,
             LocalDateTime endsAt) {}
 
@@ -235,10 +239,12 @@ public class TenantViewService {
         String sessionNo = view.sessionId();
         LocalDateTime now = LocalDateTime.now(ZONE);
         LocalDateTime endsAt = now.plusSeconds(MAX_SESSION_SECONDS);
+        long startedAtEpoch = view.issuedAtEpochSecond();
         platform.update(
                 "INSERT INTO plt_view_session (session_no, account_id, account_name, display_name,"
-                        + " role_codes, tenant_id, purpose, note, rule_version, status, started_at,"
-                        + " ends_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'DEFAULT', 'ACTIVE', ?, ?)",
+                        + " role_codes, tenant_id, purpose, note, started_at_epoch, rule_version,"
+                        + " status, started_at, ends_at)"
+                        + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'DEFAULT', 'ACTIVE', ?, ?)",
                 sessionNo,
                 caller.userId(),
                 caller.username(),
@@ -247,6 +253,7 @@ public class TenantViewService {
                 tenantId,
                 purpose,
                 note,
+                startedAtEpoch,
                 now,
                 endsAt);
         Long rowId =
@@ -351,14 +358,26 @@ public class TenantViewService {
         TenantContext.runAsPlatform(
                 () -> {
                     for (SessionRow row : activeRows()) {
-                        LocalDateTime now = LocalDateTime.now(ZONE);
-                        if (!now.isBefore(row.endsAt())) {
-                            closeSession(row, END_TIMEOUT, row.endsAt());
-                        } else if (viewTokenAlive(row) == null) {
-                            closeSession(row, END_IDLE, now);
-                        }
+                        finalizeRow(row);
                     }
                 });
+    }
+
+    /**
+     * 单行收尾（epoch 判定，跨时区安全）：到时（started_at_epoch + 2 小时 ≤ 当前 epoch）按最晚结束 时间收尾； 2 小时未到但令牌已被 Redis
+     * 逐出（空闲 15 分钟无请求）按当前时间收尾。end_at 是展示值， 取台账的 ends_at 钟面。
+     */
+    private void finalizeRow(SessionRow row) {
+        long nowEpoch = Instant.now().getEpochSecond();
+        long endsAtEpoch = row.startedAtEpoch() + MAX_SESSION_SECONDS;
+        if (row.startedAtEpoch() > 0 && nowEpoch < endsAtEpoch) {
+            if (viewTokenAlive(row) == null) {
+                closeSession(row, END_IDLE, LocalDateTime.now(ZONE));
+            }
+        } else {
+            // 到时（含 started_at_epoch=0 的历史行：按最老处理，到时收尾）
+            closeSession(row, END_TIMEOUT, row.endsAt());
+        }
     }
 
     // ---------------------------------------------------------------- 授权计算（PLT-VIEW-005、006）
@@ -447,17 +466,11 @@ public class TenantViewService {
                 FieldPolicySnapshot.defaults());
     }
 
-    /** 单账号收尾（current / 权限变更前调用）：到时按最晚结束时间、令牌被逐出按空闲超时。 */
+    /** 单账号收尾（current / 权限变更前调用）：先按到时 / 空闲收尾，剩余行由调用方按权限变更结束。 */
     private void finalizeAccount(long accountId) {
         SessionRow row = findActiveRow(accountId);
-        if (row == null) {
-            return;
-        }
-        LocalDateTime now = LocalDateTime.now(ZONE);
-        if (!now.isBefore(row.endsAt())) {
-            closeSession(row, END_TIMEOUT, row.endsAt());
-        } else if (viewTokenAlive(row) == null) {
-            closeSession(row, END_IDLE, now);
+        if (row != null) {
+            finalizeRow(row);
         }
     }
 
@@ -478,6 +491,7 @@ public class TenantViewService {
                 rs.getLong("tenant_id"),
                 rs.getString("purpose"),
                 rs.getString("note"),
+                rs.getLong("started_at_epoch"),
                 rs.getTimestamp("started_at").toLocalDateTime(),
                 rs.getTimestamp("ends_at").toLocalDateTime());
     }

@@ -340,11 +340,14 @@ class PlatformTenantViewMySqlIT {
         // 直接造一条 3 小时前开始、1 小时前到时的 ACTIVE 台账（令牌早已被 Redis TTL 逐出）
         JdbcTemplate platform = platformDirect();
         long adminId = accountIdByUsername(ADMIN_USERNAME);
+        // started_at_epoch 按库内 UNIX_TIMESTAMP 构造（OQ-56 ⑥：CI 容器钟面为 UTC，epoch 判定不受影响）
         platform.update(
                 "INSERT INTO plt_view_session (session_no, account_id, account_name, display_name,"
-                        + " role_codes, tenant_id, purpose, note, status, started_at, ends_at)"
+                        + " role_codes, tenant_id, purpose, note, started_at_epoch, status,"
+                        + " started_at, ends_at)"
                         + " VALUES ('itteststalesession', ?, 'platform.admin', '平台管理员（示例）',"
-                        + " 'PLATFORM_ADMIN', ?, 'TROUBLESHOOT', '超时收尾用例（示例）', 'ACTIVE',"
+                        + " 'PLATFORM_ADMIN', ?, 'TROUBLESHOOT', '超时收尾用例（示例）',"
+                        + " UNIX_TIMESTAMP() - 10800, 'ACTIVE',"
                         + " DATE_SUB(NOW(3), INTERVAL 3 HOUR), DATE_SUB(NOW(3), INTERVAL 1 HOUR))",
                 adminId,
                 demoaId);
