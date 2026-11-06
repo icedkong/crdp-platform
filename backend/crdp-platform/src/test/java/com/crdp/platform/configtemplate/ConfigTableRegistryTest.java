@@ -6,12 +6,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 /**
  * E12-T01 / A-FLD-014：配置表注册表。导出包只含注册表里显式标注的配置表（tech-plan §6「配置表在注册表中显式标注，
- * 未标注的表一律不导出」），验收「导出包只含配置，不含患者数据」的第一道闸门在这里： 患者与业务数据表登记即初始化失败。
+ * 未标注的表一律不导出」），验收「导出包只含配置，不含患者数据」的第一道闸门在这里： 患者与业务数据表登记即初始化失败。 E12-T03：行排除谓词结构化（导出 SQL 与敏感检查共用）+
+ * 组织架构 / 品牌 / Webhook 凭据显式排除。
  */
 class ConfigTableRegistryTest {
 
@@ -115,19 +117,32 @@ class ConfigTableRegistryTest {
     @Test
     void surgeonDictValuesAreExcludedFromItems() {
         // 术者取值不走 STRUCTURE_ONLY 表（术者是 cfg_dict_item 里 dict_code='surgeon' 的行），
-        // 用行排除谓词表达「只复制结构、不复制取值」。
+        // 用结构化行排除谓词表达「只复制结构、不复制取值」——导出 SQL 与敏感信息检查共用同一份定义。
         ConfigTableEntry items = ConfigTableRegistry.entry("cfg_dict_item");
-        assertThat(items.excludeRows()).contains("surgeon");
+        assertThat(items.excludeWhen()).containsEntry("dict_code", "surgeon");
+        // 包行命中谓词（术者取值出现在包内 → 敏感违规）
+        assertThat(items.rowExcluded(Map.of("dict_code", "surgeon", "item_code", "s1"))).isTrue();
+        assertThat(items.rowExcluded(Map.of("dict_code", "patient_type", "item_code", "p1")))
+                .isFalse();
+        assertThat(items.rowExcluded(Map.of())).isFalse();
     }
 
     @Test
     void excludePredicateOnlyAppearsOnCopyEntries() {
         for (ConfigTableEntry entry : ConfigTableRegistry.ENTRIES) {
-            if (entry.excludeRows() != null) {
+            if (entry.excludeWhen() != null && !entry.excludeWhen().isEmpty()) {
                 assertThat(entry.mode())
                         .as("表 %s 的行排除谓词只应出现在 COPY 条目上", entry.table())
                         .isEqualTo(ConfigCopyMode.COPY);
             }
         }
+    }
+
+    @Test
+    void nonCopyTablesAreExplicitlyExcluded() {
+        // E12-T03 包含 / 排除规则定稿：组织架构（sys_org / sys_dept 不在 A-FLD-014 复制清单）、
+        // 租户品牌（cfg_brand 属新租户自身信息）、Webhook 凭据（sys_webhook 含 secret_token）不随模板复制。
+        assertThat(ConfigTableRegistry.NEVER_EXPORT_TABLES)
+                .contains("sys_org", "sys_dept", "cfg_brand", "sys_webhook");
     }
 }

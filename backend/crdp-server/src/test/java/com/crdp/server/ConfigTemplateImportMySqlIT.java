@@ -31,7 +31,8 @@ import org.springframework.test.context.ActiveProfiles;
  *   <li>用户引用列（updated_by / published_by）置空——账号不随模板复制；
  *   <li>角色菜单与新租户可分配范围取交集（范围外 menu_id 丢弃）；sys_role_scope_dept 行丢弃（sys_dept 不复制）；
  *   <li>STRUCTURE_ONLY（ward）与患者数据表不受影响；重放（二次应用）幂等，子行不叠加；
- *   <li>应用写 CONFIG_TEMPLATE_APPLY 审计；40300 / 40400 / 40001 负向。
+ *   <li>应用写 CONFIG_TEMPLATE_APPLY 审计；40300 / 40400 / 40001 负向；
+ *   <li>E12-T03：被篡改（塞入患者表节）的包应用前拦截（40901 + 失败审计），目标租户库零写入。
  *       <p>门控 CRDP_IT_MYSQL_PORT（docker compose 的 MySQL 与 Redis），自建自清（两个租户库里的标记行、平台模板与审计、 无权限账号）。
  */
 @ActiveProfiles("local")
@@ -53,6 +54,7 @@ class ConfigTemplateImportMySqlIT {
     private static final String PLAN = "ITCFG_PLAN";
     private static final String ROLE = "ITCFG_ROLE";
     private static final long OUT_OF_RANGE_MENU = 999_999L;
+    private static final String TAMPER_MRN = "IT-TAMPER-MRN（示例）";
 
     private static JdbcTemplate platform;
     private static JdbcTemplate demoa;
@@ -478,6 +480,79 @@ class ConfigTemplateImportMySqlIT {
                                 token,
                                 Map.of("tenantId", TARGET_TENANT)))
                 .isEqualTo(40300);
+    }
+
+    @Test
+    @Order(6)
+    void tamperedPackageWithPatientDataIsBlocked() throws Exception {
+        // E12-T03（验收：含敏感信息的包被拦截）：直接改库把一节患者表塞进包体，模拟被篡改 / 旧版包——
+        // 应用前敏感检查必须拦下（40901），目标租户库一个字都不进
+        connect();
+        String token = loginPlatform("platform.admin");
+        byte[] body =
+                platform.queryForObject(
+                        "SELECT package_body FROM plt_config_template WHERE id = ?",
+                        byte[].class,
+                        templateId);
+        String json;
+        try (java.util.zip.GZIPInputStream gzip =
+                new java.util.zip.GZIPInputStream(new java.io.ByteArrayInputStream(body))) {
+            json = new String(gzip.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        }
+        String tampered =
+                json.replaceFirst(
+                        java.util.regex.Pattern.quote("\"tables\":["),
+                        "\"tables\":["
+                                + "{\"table\":\"pt_patient\",\"module\":\"followup\",\"mode\":\"COPY\","
+                                + "\"category\":\"IT 篡改（示例）\",\"present\":true,\"rowCount\":1,"
+                                + "\"excludedRowCount\":0,\"sourceRowCount\":1,"
+                                + "\"columns\":[\"id\",\"mrn_cipher\"],"
+                                + "\"rows\":[{\"id\":1,\"mrn_cipher\":\""
+                                + TAMPER_MRN
+                                + "\"}]},");
+        assertThat(tampered).isNotEqualTo(json);
+        platform.update(
+                "UPDATE plt_config_template SET package_body = ? WHERE id = ?",
+                gzip(tampered),
+                templateId);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.setBearerAuth(token);
+        Map<?, ?> payload =
+                (Map<?, ?>)
+                        rest.postForEntity(
+                                        "/api/platform/config-templates/" + templateId + "/apply",
+                                        new HttpEntity<>(
+                                                Map.of("tenantId", TARGET_TENANT), headers),
+                                        Map.class)
+                                .getBody();
+        assertThat(payload).isNotNull();
+        assertThat(Integer.parseInt(String.valueOf(payload.get("code")))).isEqualTo(40901);
+        assertThat(String.valueOf(payload.get("message"))).contains("pt_patient").contains("敏感");
+
+        // 拦截写失败审计（reason 含敏感摘要），目标租户库没有篡改数据
+        assertThat(
+                        platform.queryForObject(
+                                "SELECT COUNT(*) FROM plt_audit_log WHERE event_type ="
+                                        + " 'CONFIG_TEMPLATE_APPLY' AND result = 'FAIL'"
+                                        + " AND reason LIKE '%含敏感信息%'",
+                                Integer.class))
+                .isGreaterThan(0);
+        assertThat(
+                        demob.queryForObject(
+                                "SELECT COUNT(*) FROM pt_patient WHERE mrn_cipher = ?",
+                                Long.class,
+                                TAMPER_MRN))
+                .isZero();
+    }
+
+    private static byte[] gzip(String text) throws Exception {
+        java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+        try (java.util.zip.GZIPOutputStream gzip = new java.util.zip.GZIPOutputStream(buffer)) {
+            gzip.write(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+        return buffer.toByteArray();
     }
 
     private int codeOf(HttpMethod method, String path, String token, Object body) {

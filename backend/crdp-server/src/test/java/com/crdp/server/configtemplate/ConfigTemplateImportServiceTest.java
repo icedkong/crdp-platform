@@ -337,6 +337,203 @@ class ConfigTemplateImportServiceTest {
         assertThat(byTable.get("fe_field").note()).contains("present=false");
     }
 
+    // ---------------------------------------------------------------- 敏感信息拦截（E12-T03）
+
+    @Test
+    void packageWithPatientTableIsBlocked() {
+        // 验收原文：含敏感信息的包被拦截。包里混入患者表节 → 应用前拒绝，不进导入事务
+        stubTemplateHeader(9L);
+        stubTenantRow(TARGET_TENANT, "demob");
+        when(routing.hasTenant(TARGET_TENANT)).thenReturn(true);
+        when(exporter.packageOf(9L))
+                .thenReturn(
+                        new ConfigPackage(
+                                1,
+                                "demoa",
+                                "医院 A（示例）",
+                                "2026-11-06T00:00:00+08:00",
+                                List.of(
+                                        section(
+                                                "cfg_dict",
+                                                List.of("id", "code"),
+                                                List.of(row(11L, "IT_DICT"))),
+                                        section(
+                                                "pt_patient",
+                                                List.of("id", "mrn_cipher"),
+                                                List.of(patientRow())))));
+        assertThatThrownBy(
+                        () ->
+                                service.apply(
+                                        9L,
+                                        new ConfigTemplateImportService.ApplyRequest(
+                                                TARGET_TENANT)))
+                .isInstanceOf(ApiException.class)
+                .satisfies(
+                        ex -> {
+                            assertThat(((ApiException) ex).code()).isEqualTo(40901);
+                            assertThat(ex.getMessage()).contains("pt_patient").contains("敏感");
+                        });
+        verifyBlocked();
+    }
+
+    @Test
+    void packageWithUnregisteredTableIsBlocked() {
+        stubTemplateHeader(9L);
+        stubTenantRow(TARGET_TENANT, "demob");
+        when(routing.hasTenant(TARGET_TENANT)).thenReturn(true);
+        when(exporter.packageOf(9L))
+                .thenReturn(
+                        new ConfigPackage(
+                                1,
+                                "demoa",
+                                "医院 A（示例）",
+                                "2026-11-06T00:00:00+08:00",
+                                List.of(
+                                        section(
+                                                "rpt_report_type",
+                                                List.of("id", "code"),
+                                                List.of(row(11L, "IT_RPT"))))));
+        assertThatThrownBy(
+                        () ->
+                                service.apply(
+                                        9L,
+                                        new ConfigTemplateImportService.ApplyRequest(
+                                                TARGET_TENANT)))
+                .isInstanceOf(ApiException.class)
+                .satisfies(ex -> assertThat(((ApiException) ex).code()).isEqualTo(40901));
+        verifyBlocked();
+    }
+
+    @Test
+    void packageWithSurgeonValueRowIsBlocked() {
+        // 术者「只复制结构」：术者取值行出现在包内即敏感违规
+        stubTemplateHeader(9L);
+        stubTenantRow(TARGET_TENANT, "demob");
+        when(routing.hasTenant(TARGET_TENANT)).thenReturn(true);
+        Map<String, Object> surgeon = new LinkedHashMap<>();
+        surgeon.put("id", 41L);
+        surgeon.put("dict_code", "surgeon");
+        surgeon.put("item_code", "s1");
+        when(exporter.packageOf(9L))
+                .thenReturn(
+                        new ConfigPackage(
+                                1,
+                                "demoa",
+                                "医院 A（示例）",
+                                "2026-11-06T00:00:00+08:00",
+                                List.of(
+                                        section(
+                                                "cfg_dict_item",
+                                                List.of("id", "dict_code", "item_code"),
+                                                List.of(surgeon)))));
+        assertThatThrownBy(
+                        () ->
+                                service.apply(
+                                        9L,
+                                        new ConfigTemplateImportService.ApplyRequest(
+                                                TARGET_TENANT)))
+                .isInstanceOf(ApiException.class)
+                .satisfies(
+                        ex -> {
+                            assertThat(((ApiException) ex).code()).isEqualTo(40901);
+                            assertThat(ex.getMessage()).contains("cfg_dict_item");
+                        });
+        verifyBlocked();
+    }
+
+    @Test
+    void packageWithStructureOnlyRowsIsBlocked() {
+        // ward 只复制结构：包里带行即违规（篡改 / 旧版包）
+        stubTemplateHeader(9L);
+        stubTenantRow(TARGET_TENANT, "demob");
+        when(routing.hasTenant(TARGET_TENANT)).thenReturn(true);
+        Map<String, Object> wardRow = new LinkedHashMap<>();
+        wardRow.put("id", 5L);
+        wardRow.put("code", "ward-1");
+        when(exporter.packageOf(9L))
+                .thenReturn(
+                        new ConfigPackage(
+                                1,
+                                "demoa",
+                                "医院 A（示例）",
+                                "2026-11-06T00:00:00+08:00",
+                                List.of(
+                                        new ConfigPackage.TableSection(
+                                                "ward",
+                                                "followup",
+                                                "STRUCTURE_ONLY",
+                                                "病区 / 中心（只复制结构）",
+                                                true,
+                                                1,
+                                                0,
+                                                1,
+                                                List.of("id", "code"),
+                                                List.of(wardRow)))));
+        assertThatThrownBy(
+                        () ->
+                                service.apply(
+                                        9L,
+                                        new ConfigTemplateImportService.ApplyRequest(
+                                                TARGET_TENANT)))
+                .isInstanceOf(ApiException.class)
+                .satisfies(ex -> assertThat(((ApiException) ex).code()).isEqualTo(40901));
+        verifyBlocked();
+    }
+
+    @Test
+    void packageWithSensitiveValueIsBlocked() {
+        stubTemplateHeader(9L);
+        stubTenantRow(TARGET_TENANT, "demob");
+        when(routing.hasTenant(TARGET_TENANT)).thenReturn(true);
+        Map<String, Object> param = new LinkedHashMap<>();
+        param.put("id", 51L);
+        param.put("param_key", "it.hotline");
+        param.put("param_value", "13812345678");
+        when(exporter.packageOf(9L))
+                .thenReturn(
+                        new ConfigPackage(
+                                1,
+                                "demoa",
+                                "医院 A（示例）",
+                                "2026-11-06T00:00:00+08:00",
+                                List.of(
+                                        section(
+                                                "cfg_param",
+                                                List.of("id", "param_key", "param_value"),
+                                                List.of(param)))));
+        assertThatThrownBy(
+                        () ->
+                                service.apply(
+                                        9L,
+                                        new ConfigTemplateImportService.ApplyRequest(
+                                                TARGET_TENANT)))
+                .isInstanceOf(ApiException.class)
+                .satisfies(
+                        ex -> {
+                            assertThat(((ApiException) ex).code()).isEqualTo(40901);
+                            assertThat(ex.getMessage()).contains("cfg_param");
+                        });
+        verifyBlocked();
+    }
+
+    /** 拦截后：不进导入事务（无任何写库）、写 CONFIG_TEMPLATE_APPLY 失败审计。 */
+    private void verifyBlocked() {
+        verify(jdbc, never()).update(anyString(), any(Object[].class));
+        verify(jdbc, never()).update(any(PreparedStatementCreator.class), any(KeyHolder.class));
+        ArgumentCaptor<AuditEntry> captor = ArgumentCaptor.forClass(AuditEntry.class);
+        verify(audit).append(captor.capture());
+        assertThat(captor.getValue().action()).isEqualTo("CONFIG_TEMPLATE_APPLY");
+        assertThat(captor.getValue().result()).isEqualTo(com.crdp.framework.audit.AuditResult.FAIL);
+        assertThat(captor.getValue().reason()).contains("敏感");
+    }
+
+    private static Map<String, Object> patientRow() {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("id", 1L);
+        row.put("mrn_cipher", "密文（示例）");
+        return row;
+    }
+
     // ---------------------------------------------------------------- 桩
 
     private void stubTemplateHeader(long id) {

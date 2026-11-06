@@ -153,23 +153,27 @@ E20-T01 落地口径（PLT-VIEW-001、004、005、006）：
 
 配置变更写记录并说明生效方式（PLT-CFG-011）：字典 / 参数保存即作废平台定义缓存（`PlatformConfigCache`，60 秒 TTL + 保存即 evict，M1 单实例），租户端下一次读取即见新值；全部写操作写平台审计（DICT_* / PARAM_*）。
 
-### 7.1 配置模板（A-FLD-014，E12-T01 导出）
+### 7.1 配置模板（A-FLD-014，E12-T01 导出 / E12-T02 导入 / E12-T03 敏感检查）
 
 从源租户导出**只含配置**的模板包（gzip JSON 存平台库 `plt_config_template`，V49）：只导出配置表注册表（`ConfigTableRegistry`，随包代码）显式标注的表，未标注的一律不导出；`COPY` 表带全量行、`STRUCTURE_ONLY`（术者、病区 / 中心）只带结构不带取值（术者 = `cfg_dict_item` 里 `dict_code='surgeon'` 的行，经行排除谓词剔除）。患者与业务数据表另有 `NEVER_EXPORT_TABLES` 自检（登记即启动失败，双保险）。
 
+**包含与排除规则（E12-T03）**：租户库每张表都必须显式分类——登记（COPY / STRUCTURE_ONLY）或排除（`NEVER_EXPORT_TABLES`：患者与业务数据、账号、审计、作业、文件、日志、密钥、outbox，以及组织架构 `sys_org` / `sys_dept`、租户品牌 `cfg_brand`、Webhook 凭据 `sys_webhook`）。完备性由 `ConfigTableCoverageTest` 把关：迁移里每张 CREATE TABLE 的表都必须有归属，新增表不分类即测试失败；排除清单里也不允许悬空表名。行排除谓词为结构化定义（`excludeWhen`：列 → 值），导出 SQL（参数化绑定）与敏感检查共用同一份规则。
+
+**敏感信息检查（E12-T03，验收「含敏感信息的包被拦截」）**：导出前把配置行里引用用户的字段（`created_by / updated_by / published_by`）一律置空（账号不随模板复制，置空计数写进导出审计）；建包后自检、应用前拦截共用 `SensitiveConfigChecker` 五条规则——患者 / 业务数据 / 显式排除表（`FORBIDDEN_TABLE`）、未在注册表标注的表（`UNREGISTERED_TABLE`）、STRUCTURE_ONLY 表携带取值（`STRUCTURE_ROWS`）、被排除规则剔除的行如术者取值（`EXCLUDED_ROW`）、疑似患者敏感值即独立手机号或校验位正确的身份证号（`SENSITIVE_VALUE`）。命中即 40901：导出侧不落库、应用侧不进导入事务，两侧都写失败审计（reason 含规则摘要，不含数据明文）。
+
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| POST | `/api/platform/config-templates` | `platform:tenant:create` | **已实现（E12-T01）**。导出：`{tenantId, name?}`（name ≤128 字，缺省「{租户名} 配置模板」）→ `{id,tenantId,tenantCode,tenantName,name,version(同租户递增),formatVersion,tableCount,rowCount,packageHash,exportedAt}`；未知租户 40400、租户库未注册 40901；写 `CONFIG_TEMPLATE_EXPORT` 审计（含包哈希） |
+| POST | `/api/platform/config-templates` | `platform:tenant:create` | **已实现（E12-T01）**。导出：`{tenantId, name?}`（name ≤128 字，缺省「{租户名} 配置模板」）→ `{id,tenantId,tenantCode,tenantName,name,version(同租户递增),formatVersion,tableCount,rowCount,packageHash,exportedAt}`；未知租户 40400、租户库未注册 40901；含敏感信息 40901（自检拦截，不落库、写失败审计，E12-T03）；写 `CONFIG_TEMPLATE_EXPORT` 审计（含包哈希与用户引用置空计数） |
 | GET | `/api/platform/config-templates` | `platform:tenant:view` | **已实现**。模板分页（新→旧）：`{items[同导出视图],total,pageNo,pageSize}` |
 | GET | `/api/platform/config-templates/{id}` | `platform:tenant:view` | **已实现**。详情：`{template, tables[{table,module,mode,category,present,rowCount,excludedRowCount,sourceRowCount,columns}]}`（不带行数据；未知 40400） |
 | GET | `/api/platform/config-templates/{id}/package` | `platform:tenant:view` | **已实现**。读回完整包（gzip 解压后的 JSON 结构，`formatVersion/tenantCode/tenantName/exportedAt/tables[]`，行值已归一化）；写 `CONFIG_TEMPLATE_DOWNLOAD` 审计 |
-| GET | `/api/platform/config-templates/registry` | `platform:tenant:view` | **已实现**。配置表注册表清单（table / module / mode / category / description / excludeRows），预览「会导出什么」用（管理页随 E12-T04） |
-| POST | `/api/platform/config-templates/{id}/apply` | `platform:tenant:create` | **已实现（E12-T02）**。应用到目标租户：`{tenantId}`（不能是源租户 40001；租户库未注册 40901；未知租户 / 模板 40400；包结构版本不支持 40901）→ `{templateId,templateName,templateVersion,templateHash,sourceTenantId,sourceTenantCode,tenantId,tenantCode,tenantName,appliedAt,insertedRows,mergedRows,skippedRows,droppedRows,tables[{table,mode,imported,packageRows,inserted,merged,skipped,dropped,note}]}`；写 `CONFIG_TEMPLATE_APPLY` 审计（含包哈希），并递增目标租户全部用户权限版本（角色授权可能变化） |
+| GET | `/api/platform/config-templates/registry` | `platform:tenant:view` | **已实现**。配置表注册表清单（table / module / mode / category / description / excludeWhen），预览「会导出什么」用（管理页随 E12-T04） |
+| POST | `/api/platform/config-templates/{id}/apply` | `platform:tenant:create` | **已实现（E12-T02）**。应用到目标租户：`{tenantId}`（不能是源租户 40001；租户库未注册 40901；未知租户 / 模板 40400；包结构版本不支持 40901；含敏感信息 40901——`SensitiveConfigChecker` 应用前拦截，见上，E12-T03）→ `{templateId,templateName,templateVersion,templateHash,sourceTenantId,sourceTenantCode,tenantId,tenantCode,tenantName,appliedAt,insertedRows,mergedRows,skippedRows,droppedRows,tables[{table,mode,imported,packageRows,inserted,merged,skipped,dropped,note}]}`；写 `CONFIG_TEMPLATE_APPLY` 审计（含包哈希），并递增目标租户全部用户权限版本（角色授权可能变化） |
 
 应用（导入）口径（A-FLD-014「导入时重新分配 ID 并重写引用」，验收「导入后引用关系正确」）：
 
 - **ID 重映射**：逐表维护「源 ID → 目标 ID」并改写数值引用列——`sys_role_menu` / `sys_role_scope` / `sys_role_field_policy` 的 `role_id`、`fe_form_version_field.version_id`、`fu_plan_node.plan_id` 与 `parent_id`（自引用）；解析不到目标行的行丢弃并在结果计数。编码引用（`form_code` / `option_set_code` / `dict_code` / `set_code` 等字符串列）不改写，随整包导入自然一致。
-- **用户引用置空**：`created_by / updated_by / published_by` 一律置 NULL（账号不随模板复制）；导出侧敏感信息检查与拦截随 E12-T03。
+- **用户引用置空**：`created_by / updated_by / published_by` 一律置 NULL（账号不随模板复制）；导出侧同样置空（E12-T03，tech-plan §6「配置中引用用户的字段一律置空」），列清单以 `ConfigImportSpecs.USER_REFERENCE_COLUMNS` 为唯一定义。
 - **角色权限取交集**：`sys_role_menu.menu_id` 须落在目标租户生效可分配范围（`TenantScopeService.assignableMenuIds`：base 固定能力 ∪ 模板调整 ∩ 已开通模块）内，超出即丢弃；`sys_role_menu` 本身取并集（INSERT IGNORE）。
 - **合并语义（源值胜，重放幂等）**：自然键相同的行用包值更新；`fu_plan_node` 无自然键，按计划版本（`plan_id` 分组）整组替换（先删后插），重放不叠加；`ntf_setting` 单行表按固定 `id=1` upsert。
 - **整表策略**：`sys_role_scope_dept` 行全部丢弃（`sys_dept` 组织架构不在复制清单，`dept_id` 无法重映射）；STRUCTURE_ONLY（术者、病区 / 中心）、`present=false` 与目标库缺表的节跳过（结果 note 说明）。

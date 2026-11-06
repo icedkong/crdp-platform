@@ -18,7 +18,7 @@ import java.util.Set;
  * </ul>
  *
  * <p>用户引用列（created_by / updated_by / published_by）置空：账号不随模板复制（A-FLD-014），置空比留下 源租户用户 ID
- * 更安全；导出侧的敏感信息检查与拦截随 E12-T03。
+ * 更安全；导出侧同样置空（E12-T03，tech-plan §6「配置中引用用户的字段一律置空」），列清单以本类为唯一定义。
  *
  * <p>角色权限与新租户可分配范围取交集：sys_role_menu 的 menu_id 须落在目标租户生效可分配集（TenantScopeService 口径）内，
  * 超出（模块未开通、敏感未放开、菜单不存在）即丢弃。

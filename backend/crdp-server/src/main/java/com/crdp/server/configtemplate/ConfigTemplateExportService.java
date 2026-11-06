@@ -9,6 +9,7 @@ import com.crdp.framework.tenant.TenantContext;
 import com.crdp.framework.tenant.TenantRoutingDataSource;
 import com.crdp.framework.web.ApiException;
 import com.crdp.platform.configtemplate.ConfigCopyMode;
+import com.crdp.platform.configtemplate.ConfigImportSpecs;
 import com.crdp.platform.configtemplate.ConfigTableEntry;
 import com.crdp.platform.configtemplate.ConfigTableRegistry;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -26,6 +27,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -38,9 +40,11 @@ import org.springframework.stereotype.Service;
  * 配置模板导出（E12-T01 / A-FLD-014，docs/api/platform.md §7）。
  *
  * <p>从源租户导出配置包：只遍历 {@link ConfigTableRegistry} 登记的配置表（白名单；「配置表在注册表中显式标注， 未标注的表一律不导出」），COPY
- * 表带全量行、STRUCTURE_ONLY 表（术者、病区 / 中心）只带计数、术者字典取值经行排除谓词剔除。 包 gzip JSON 存平台库 plt_config_template（与
- * job_export.file_body 同构先例），写 CONFIG_TEMPLATE_EXPORT 审计。导入与 ID 重映射是 E12-T02，包含 / 排除规则与敏感信息检查是
- * E12-T03。
+ * 表带全量行、STRUCTURE_ONLY 表（术者、病区 / 中心）只带计数、术者字典取值经行排除谓词剔除。 包 gzip JSON 存平台库（与 job_export.file_body
+ * 同构先例），写 CONFIG_TEMPLATE_EXPORT 审计。
+ *
+ * <p><b>敏感信息检查（E12-T03）</b>：建包前置空用户引用列（created_by / updated_by / published_by——tech-plan §6
+ * 「配置中引用用户的字段一律置空」，账号不随模板复制）；建包后跑 {@link SensitiveConfigChecker} 自检， 含敏感信息的包当场拦截（40901，不落库，写失败审计）。
  */
 @Service
 public class ConfigTemplateExportService {
@@ -51,6 +55,13 @@ public class ConfigTemplateExportService {
     private static final int NAME_MAX = 128;
     private static final int MAX_PAGE_SIZE = 100;
     private static final ZoneId ZONE = ZoneId.of("Asia/Shanghai");
+
+    /**
+     * 用户引用列：导出前置空（tech-plan §6「配置中引用用户的字段一律置空」；账号不随模板复制）。 与导入侧 （E12-T02 {@code
+     * ConfigTemplateImportService#prepareRow} 置空）同一份定义。
+     */
+    private static final Set<String> USER_REFERENCE_COLUMNS =
+            ConfigImportSpecs.USER_REFERENCE_COLUMNS;
 
     /** 导出请求：tenantId 必填；name 可选（缺省「{租户名} 配置模板」）。 */
     public record ExportRequest(long tenantId, String name) {}
@@ -111,12 +122,29 @@ public class ConfigTemplateExportService {
             throw new ApiException(409, 40901, "租户数据源未注册（未开通或已注销），无法读取配置：" + code);
         }
 
-        List<ConfigPackage.TableSection> sections =
+        ReadOut read =
                 TenantContext.callAsTenant(
                         request.tenantId(), code, () -> readSections(ConfigTableRegistry.ENTRIES));
+        List<ConfigPackage.TableSection> sections = read.sections();
         String exportedAt = OffsetDateTime.now(ZONE).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
         ConfigPackage pkg =
                 new ConfigPackage(FORMAT_VERSION, code, tenantName, exportedAt, sections);
+
+        // 敏感信息自检（E12-T03）：正常导出永远干净（白名单 + 行排除 + 用户引用置空），
+        // 拦到的只可能是缺陷（误登记表、排除谓词失效）——当场暴露，不把敏感数据存进平台库
+        List<SensitiveConfigChecker.Violation> violations = SensitiveConfigChecker.check(pkg);
+        if (!violations.isEmpty()) {
+            String summary = SensitiveConfigChecker.summarize(violations);
+            audit.append(
+                    AuditEntry.operation("platform", "CONFIG_TEMPLATE_EXPORT")
+                            .tenantId(request.tenantId())
+                            .objectType("plt_config_template")
+                            .description("从租户 " + code + " 导出配置模板被拦截（含敏感信息）")
+                            .fail("含敏感信息，导出被拦截：" + summary)
+                            .errorCode(40901)
+                            .build());
+            throw new ApiException(409, 40901, "配置包含敏感信息，导出被拦截：" + summary);
+        }
 
         byte[] body;
         String hash;
@@ -167,7 +195,10 @@ public class ConfigTemplateExportService {
                                         + "：表 "
                                         + sections.size()
                                         + " 张 / 配置行 "
-                                        + rowCount)
+                                        + rowCount
+                                        + " / 用户引用列置空 "
+                                        + read.nulledUserRefs()
+                                        + " 处")
                         .recordCount(rowCount)
                         .fileHash(hash)
                         .success()
@@ -278,8 +309,12 @@ public class ConfigTemplateExportService {
 
     // ---------------------------------------------------------------- 导出内部步骤
 
-    private List<ConfigPackage.TableSection> readSections(List<ConfigTableEntry> entries) {
+    /** 读表结果：配置表节 + 用户引用列置空计数（进审计描述）。 */
+    private record ReadOut(List<ConfigPackage.TableSection> sections, long nulledUserRefs) {}
+
+    private ReadOut readSections(List<ConfigTableEntry> entries) {
         List<ConfigPackage.TableSection> sections = new ArrayList<>();
+        long nulledUserRefs = 0;
         for (ConfigTableEntry entry : entries) {
             boolean present = reader.tablePresent(entry.table());
             if (!present) {
@@ -316,7 +351,15 @@ public class ConfigTemplateExportService {
                 continue;
             }
             List<Map<String, Object>> rows =
-                    reader.rows(entry.table(), columns, entry.excludeRows());
+                    reader.rows(entry.table(), columns, entry.excludeWhen());
+            // 敏感信息检查（E12-T03）：引用用户的字段一律置空（账号不随模板复制，A-FLD-014）
+            for (Map<String, Object> row : rows) {
+                for (String column : USER_REFERENCE_COLUMNS) {
+                    if (row.containsKey(column) && row.put(column, null) != null) {
+                        nulledUserRefs++;
+                    }
+                }
+            }
             sections.add(
                     new ConfigPackage.TableSection(
                             entry.table(),
@@ -330,7 +373,7 @@ public class ConfigTemplateExportService {
                             columns,
                             rows));
         }
-        return sections;
+        return new ReadOut(sections, nulledUserRefs);
     }
 
     private Stored store(

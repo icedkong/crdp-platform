@@ -54,6 +54,7 @@ class ConfigTemplateExportMySqlIT {
     private static final String MARKER_MRN = "ITCFG-MRN-2026（示例）";
     private static final String MARKER_NAME = "配置导出验证患者（示例）";
     private static final String SURGEON_ITEM = "ITCFG-SURGEON-1";
+    private static final String USERREF_ITEM = "ITCFG-USERREF-1";
 
     private static JdbcTemplate platform;
     private static JdbcTemplate demoa;
@@ -97,6 +98,7 @@ class ConfigTemplateExportMySqlIT {
         demoa.update(
                 "DELETE FROM cfg_dict_item WHERE dict_code = 'surgeon' AND item_code = ?",
                 SURGEON_ITEM);
+        demoa.update("DELETE FROM cfg_dict_item WHERE item_code = ?", USERREF_ITEM);
         if (viewerCreated) {
             platform.update(
                     "DELETE ar FROM plt_account_role ar JOIN plt_account a ON a.id = ar.account_id"
@@ -133,6 +135,15 @@ class ConfigTemplateExportMySqlIT {
                 "INSERT INTO cfg_dict_item (dict_code, item_code, label, sort_no, source, status)"
                         + " VALUES ('surgeon', ?, '配置导出术者（示例）', 10, 'TENANT', 'ENABLED')",
                 SURGEON_ITEM);
+        // 带 updated_by 的配置行：导出前「引用用户的字段一律置空」（E12-T03，tech-plan §6）
+        long userId =
+                demoa.queryForObject("SELECT id FROM sys_user ORDER BY id LIMIT 1", Long.class);
+        demoa.update(
+                "INSERT INTO cfg_dict_item (dict_code, item_code, label, sort_no, source, status,"
+                        + " updated_by) VALUES ('patient_type', ?, '置空验证项（示例）', 20, 'TENANT',"
+                        + " 'ENABLED', ?)",
+                USERREF_ITEM,
+                userId);
 
         String token = loginPlatform("platform.admin");
         Map<?, ?> view =
@@ -196,6 +207,31 @@ class ConfigTemplateExportMySqlIT {
                         .orElseThrow();
         assertThat((List<?>) items.get("rows"))
                 .noneMatch(r -> String.valueOf(((Map<?, ?>) r).get("dict_code")).equals("surgeon"));
+        // 用户引用列置空（E12-T03）：带 updated_by 的源行入包后为 null；全包任何用户引用列都为 null
+        assertThat((List<?>) items.get("rows"))
+                .anyMatch(
+                        r -> USERREF_ITEM.equals(String.valueOf(((Map<?, ?>) r).get("item_code"))));
+        assertThat((List<?>) items.get("rows"))
+                .filteredOn(
+                        r -> USERREF_ITEM.equals(String.valueOf(((Map<?, ?>) r).get("item_code"))))
+                .first()
+                .satisfies(r -> assertThat(((Map<?, ?>) r).get("updated_by")).isNull());
+        for (Map<?, ?> table : tables) {
+            List<?> rows = (List<?>) table.get("rows");
+            if (rows == null) {
+                continue;
+            }
+            for (Object rowObject : rows) {
+                Map<?, ?> row = (Map<?, ?>) rowObject;
+                for (String column : List.of("created_by", "updated_by", "published_by")) {
+                    if (row.containsKey(column)) {
+                        assertThat(row.get(column))
+                                .as("表 %s 的用户引用列 %s 应置空", table.get("table"), column)
+                                .isNull();
+                    }
+                }
+            }
+        }
         Map<?, ?> fields =
                 tables.stream()
                         .filter(t -> "fe_field".equals(t.get("table")))
@@ -223,7 +259,7 @@ class ConfigTemplateExportMySqlIT {
         // row_count = 各节入包行数合计（> 0：字段字典等配置在包里）
         assertThat(((Number) row.get("row_count")).longValue()).isGreaterThan(0);
 
-        // 审计：导出一条 OPERATION；下载一条 OPERATION
+        // 审计：导出一条 OPERATION（描述含用户引用置空计数）；下载一条 OPERATION
         assertThat(
                         platform.queryForObject(
                                 "SELECT COUNT(*) FROM plt_audit_log WHERE event_type ="
@@ -231,6 +267,14 @@ class ConfigTemplateExportMySqlIT {
                                 Integer.class,
                                 String.valueOf(templateId)))
                 .isGreaterThan(0);
+        assertThat(
+                        platform.queryForObject(
+                                "SELECT COUNT(*) FROM plt_audit_log WHERE event_type ="
+                                        + " 'CONFIG_TEMPLATE_EXPORT' AND object_id = ?"
+                                        + " AND detail LIKE '%用户引用列置空%' AND detail NOT LIKE"
+                                        + " '%置空 0 处%'",
+                                Integer.class, String.valueOf(templateId)))
+                .isEqualTo(1);
         assertThat(
                         platform.queryForObject(
                                 "SELECT COUNT(*) FROM plt_audit_log WHERE event_type ="
