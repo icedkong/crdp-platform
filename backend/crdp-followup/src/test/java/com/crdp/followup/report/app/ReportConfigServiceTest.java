@@ -586,6 +586,120 @@ class ReportConfigServiceTest {
         assertEquals(40400, error.code());
     }
 
+    // ---------------------------------------------------------------- 字段映射读取（E23-T03 / A-ATT-013）
+
+    /** mappings()：行联查展示名、项目按顺序带出，附带写入 JSON 解析为视图（A 心脏超声预置的读取口径）。 */
+    @Test
+    void mappingsBringItemsAndParseExtraWrites() {
+        when(mapper.findMappings())
+                .thenReturn(
+                        List.of(
+                                new ReportConfigMapper.MappingRow(
+                                        5L,
+                                        "ECHO_FOLLOWUP",
+                                        "心脏超声 → 随访记录（复查超声）",
+                                        "ECHO",
+                                        "心脏超声",
+                                        "FOLLOWUP_RECORD",
+                                        "A_ANNUAL_FU",
+                                        "年度随访（示例）",
+                                        null,
+                                        77L,
+                                        "心脏超声指标",
+                                        "[{\"fieldKey\":\"f236\",\"value\":\"1\"}]",
+                                        30,
+                                        "ENABLED",
+                                        "医院 A 预置（示例）")));
+        when(mapper.findMappingItems(5L))
+                .thenReturn(
+                        List.of(
+                                new ReportConfigMapper.MappingItemRow(
+                                        1L, 5L, "REPORT_DATE", "f237", "超声检查时间", null, 10),
+                                new ReportConfigMapper.MappingItemRow(
+                                        2L, 5L, "EF", "f248", "EF 射血分数", null, 20),
+                                new ReportConfigMapper.MappingItemRow(
+                                        3L,
+                                        5L,
+                                        "MR_DEGREE",
+                                        "f239",
+                                        "二尖瓣返流程度",
+                                        "[{\"fieldKey\":\"f238\",\"value\":\"1\"}]",
+                                        150)));
+
+        List<ReportConfigService.MappingView> views = service.mappings();
+
+        assertEquals(1, views.size());
+        ReportConfigService.MappingView view = views.get(0);
+        assertEquals("ECHO_FOLLOWUP", view.code());
+        assertEquals("ECHO", view.typeCode(), "来源类型 = 心脏超声（rpt_type 联查）");
+        assertEquals("FOLLOWUP_RECORD", view.targetType(), "目标 = 随访记录");
+        assertNull(view.phase(), "随访目标无时相");
+        assertEquals("77", view.indicatorTplId(), "绑定的指标模板（一一对应，A-ATT-013）");
+        assertEquals("心脏超声指标", view.indicatorTplName());
+        assertEquals(
+                List.of(new ReportConfigService.ExtraWriteView("f236", "1")),
+                view.extraWrites(),
+                "映射级附带写入：复查超声置为是");
+
+        assertEquals(3, view.items().size());
+        assertEquals("REPORT_DATE", view.items().get(0).itemCode(), "报告时间伪项目（超声检查时间 = 报告时间）");
+        assertEquals("f237", view.items().get(0).targetFieldKey());
+        assertEquals("超声检查时间", view.items().get(0).targetFieldLabel(), "目标字段显示名（字段字典联查）");
+        assertEquals(0, view.items().get(1).extraWrites().size(), "无附带写入返回空清单");
+        assertEquals(
+                List.of(new ReportConfigService.ExtraWriteView("f238", "1")),
+                view.items().get(2).extraWrites(),
+                "项目级附带写入：二尖瓣返流程度写入时同时填有无二尖瓣返流");
+    }
+
+    /** 附带写入 JSON 缺省或不可解析时按空清单返回（读取口径容错，不阻断配置核对页）。 */
+    @Test
+    void mappingsTolerateBlankOrBrokenExtraWrites() {
+        when(mapper.findMappings())
+                .thenReturn(
+                        List.of(
+                                new ReportConfigMapper.MappingRow(
+                                        6L,
+                                        "ECHO_PREOP_LAST",
+                                        "心脏超声 → 基线（术前最后一次）",
+                                        "ECHO",
+                                        "心脏超声",
+                                        "BASELINE",
+                                        "A_BASELINE",
+                                        "基线（示例）",
+                                        "PREOP_LAST",
+                                        77L,
+                                        "心脏超声指标",
+                                        null,
+                                        10,
+                                        "ENABLED",
+                                        null),
+                                new ReportConfigMapper.MappingRow(
+                                        7L,
+                                        "BROKEN",
+                                        "坏行（示例）",
+                                        "ECHO",
+                                        "心脏超声",
+                                        "BASELINE",
+                                        "A_BASELINE",
+                                        "基线（示例）",
+                                        null,
+                                        null,
+                                        null,
+                                        "不是 JSON",
+                                        20,
+                                        "ENABLED",
+                                        null)));
+        when(mapper.findMappingItems(6L)).thenReturn(List.of());
+        when(mapper.findMappingItems(7L)).thenReturn(List.of());
+
+        List<ReportConfigService.MappingView> views = service.mappings();
+
+        assertEquals(2, views.size());
+        assertEquals(0, views.get(0).extraWrites().size(), "缺省按空清单");
+        assertEquals(0, views.get(1).extraWrites().size(), "不可解析按空清单（不抛异常）");
+    }
+
     // ---------------------------------------------------------------- 构造
 
     private static ReportConfigService.IndicatorItemRequest item(String name, String code) {

@@ -1,6 +1,6 @@
 # 报告单 / 资料、文件、手机上传（report）
 
-> 后端：`crdp-followup`（报告单子域，A-ATT-018 平台通用、按租户配置）+ 文件服务（OSS + 预览代理）。表：`rpt_report`、`rpt_report_link`（位置，见 OQ-02：统一用 `rpt_report_link`）、`rpt_report_file`、`rpt_type`、`rpt_name`、`rpt_indicator_tpl`、`sys_file`。
+> 后端：`crdp-followup`（报告单子域，A-ATT-018 平台通用、按租户配置）+ 文件服务（OSS + 预览代理）。表：`rpt_report`、`rpt_report_link`（位置，见 OQ-02：统一用 `rpt_report_link`）、`rpt_report_file`、`rpt_type`、`rpt_name`、`rpt_indicator_tpl`、`rpt_mapping` / `rpt_mapping_item`（字段映射，E23-T03）、`sys_file`。
 > 页面：`docs/design/pages.md` §4（报告单页签、左栏附件导航）、§6（上传、H5、批量、全院报告单）；组件：AttachmentNav、LocationPicker、WatermarkPreview、ReportFormModal。
 > 路径除各表已标注「已实现」的接口（E10 文件、E16-T01 配置与目录、E16-T02 创建 / 患者内清单 / 位置树）外，其余 **推断，待确认**。权限：上传 `followup:scan:upload`、下载 `followup:scan:download`、删除 `followup:scan:delete`、配置 `followup:scan:config`；全院报告单菜单种子是 `followup:report:view`，与规格待统一（见 OQ-12）。
 
@@ -73,7 +73,7 @@ token 过期或已用：返回 40101，前端显示“二维码已过期，请�
 
 ## 6. 报告单设置（`/system/report-config`，`followup:scan:config`）
 
-表：`rpt_type` / `rpt_name` / `rpt_indicator_tpl` / `rpt_indicator_item`（followup V62，A 医院预置 10 类随包）；四张配置表已进配置模板注册表（E12 导出 / 导入，tpl_id 数值引用导入时重映射）。**已实现（E16-T01）**：
+表：`rpt_type` / `rpt_name` / `rpt_indicator_tpl` / `rpt_indicator_item`（followup V62，A 医院预置 10 类随包）；`rpt_mapping` / `rpt_mapping_item`（followup V64，E23-T03 / A-ATT-013：报告单 → 结构化字段映射，A 预置心脏超声三条）六张配置表已进配置模板注册表（E12 导出 / 导入，tpl_id / indicator_tpl_id / mapping_id 数值引用导入时重映射）。**已实现（E16-T01）**：
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -92,7 +92,13 @@ token 过期或已用：返回 40101，前端显示“二维码已过期，请�
 
 增删改全部写审计（module=followup，objectType=`REPORT_TYPE` / `REPORT_NAME` / `REPORT_INDICATOR_TPL`，action=`RPT_TYPE_CREATE` 等 9 个；被拦截的删除写 DENIED）。
 
-**推断，待确认**：`.../mappings`（心脏超声 → 超声字段、程控报告单 → 程控字段，随 E16-T07 / E23-T03）。`.../file-policy` 不单独设口——格式与大小是平台参数 `file.upload.*`（平台库 V33）+ 租户覆盖，机构设置 → 租户参数维护（E10-T01 已实现 `GET /api/hospital/files/policy` 读取生效值）。
+**字段映射（E23-T03 / A-ATT-013 已实现读取）**：
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/hospital/followup/report-config/mappings` | 映射清单（含停用，按来源类型与排序号）：`{ id, code, name, typeCode, typeName, targetType: BASELINE\|FOLLOWUP_RECORD\|IMPLANT_RECORD, targetFormCode, targetFormName, phase: PREOP_LAST\|PREDISCHARGE_LAST\|null, indicatorTplId, indicatorTplName, extraWrites: [{fieldKey, value}], sortNo, status, remark, items: [{ itemCode, targetFieldKey, targetFieldLabel, extraWrites, sortNo }] }`；`itemCode` 为指标模板项目代码或固定 `REPORT_DATE`（报告时间，如随访目标「超声检查时间 = 报告时间」）；A 预置 `ECHO_PREOP_LAST` / `ECHO_PREDISCHARGE_LAST` / `ECHO_FOLLOWUP` 三条（迁移 V64），V64 同时把心脏超声名称绑定「心脏超声指标」模板（经 `report-names` 带出 18 个项目）；C 程控报告单映射同一机制（E23-T21） |
+
+映射维护（增删改，审计 `RPT_MAPPING_*`）与映射写入（`POST /reports/{id}/mapping/preview|confirm`，见 §3）随 E16-T07。`.../file-policy` 不单独设口——格式与大小是平台参数 `file.upload.*`（平台库 V33）+ 租户覆盖，机构设置 → 租户参数维护（E10-T01 已实现 `GET /api/hospital/files/policy` 读取生效值）。
 
 ## 7. 测试要点
 

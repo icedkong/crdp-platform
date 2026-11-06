@@ -48,6 +48,9 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>删除守卫：类型下仍有名称时不能删（40901）；模板仍被名称绑定时不能删（40901）。报告单（rpt_report）随 E16-T02 落地后，类型 /
  * 名称被报告单引用的删除守卫与「已存报告单不联动」口径届时补上。增删改全部写审计 （AGENTS §5.4 配置变更；module=followup，objectType=REPORT_TYPE
  * / REPORT_NAME / REPORT_INDICATOR_TPL）。
+ *
+ * <p>字段映射（{@code rpt_mapping} / {@code rpt_mapping_item}，followup V64）本任务（E23-T03）只读： A
+ * 医院预置心脏超声三条映射（术前最后一次 / 出院前最后一次 / 第 N 年随访），维护与映射写入（预览、逐项确认覆盖、留痕）随 E16-T07。
  */
 @Service
 public class ReportConfigService {
@@ -129,6 +132,36 @@ public class ReportConfigService {
             List<IndicatorItemView> items,
             long boundNameCount) {}
 
+    /** 附带写入（A-ATT-013「复查超声 = 是」「同时填有无…返流」）：目标字段键 + 写入值（字段字典取值文本）。 */
+    public record ExtraWriteView(String fieldKey, String value) {}
+
+    /** 字段映射项目视图（itemCode 可为固定 REPORT_DATE；targetFieldLabel 来自目标表单字段字典）。 */
+    public record MappingItemView(
+            String itemCode,
+            String targetFieldKey,
+            String targetFieldLabel,
+            List<ExtraWriteView> extraWrites,
+            int sortNo) {}
+
+    /** 字段映射视图（E23-T03 读取；维护与映射写入随 E16-T07）。 */
+    public record MappingView(
+            String id,
+            String code,
+            String name,
+            String typeCode,
+            String typeName,
+            String targetType,
+            String targetFormCode,
+            String targetFormName,
+            String phase,
+            String indicatorTplId,
+            String indicatorTplName,
+            List<ExtraWriteView> extraWrites,
+            int sortNo,
+            String status,
+            String remark,
+            List<MappingItemView> items) {}
+
     /** 新建类型请求（A-ATT-003：租户管理员可增减类型）。 */
     public record TypeCreateRequest(
             String code,
@@ -203,6 +236,24 @@ public class ReportConfigService {
         List<IndicatorTplView> views = new ArrayList<>();
         for (ReportConfigMapper.TplRow row : mapper.findTpls()) {
             views.add(toTplView(row, mapper.findItems(row.id())));
+        }
+        return views;
+    }
+
+    // ---------------------------------------------------------------- 字段映射读取（E23-T03 / A-ATT-013）
+
+    /**
+     * 字段映射清单（含停用，按来源类型与排序号，项目按顺序带出）。A 医院预置心脏超声三条映射（迁移 V64）： 基线 · 术前最后一次 / 基线 · 出院前最后一次 / 第 N
+     * 年随访复查超声；医院 C 的程控报告单映射同一机制（E23-T21）。 只读——维护与「映射写入留痕、冲突提示」（预览 / 确认覆盖）随 E16-T07。
+     */
+    public List<MappingView> mappings() {
+        List<MappingView> views = new ArrayList<>();
+        for (ReportConfigMapper.MappingRow row : mapper.findMappings()) {
+            List<MappingItemView> items =
+                    mapper.findMappingItems(row.id()).stream()
+                            .map(ReportConfigService::toMappingItemView)
+                            .toList();
+            views.add(toMappingView(row, items));
         }
         return views;
     }
@@ -951,6 +1002,51 @@ public class ReportConfigService {
                 row.remark(),
                 items.stream().map(ReportConfigService::toItemView).toList(),
                 row.boundNameCount() == null ? 0 : row.boundNameCount());
+    }
+
+    private static MappingItemView toMappingItemView(ReportConfigMapper.MappingItemRow row) {
+        return new MappingItemView(
+                row.itemCode(),
+                row.targetFieldKey(),
+                row.targetFieldLabel(),
+                parseExtraWrites(row.extraWrites()),
+                row.sortNo() == null ? 0 : row.sortNo());
+    }
+
+    private static MappingView toMappingView(
+            ReportConfigMapper.MappingRow row, List<MappingItemView> items) {
+        return new MappingView(
+                String.valueOf(row.id()),
+                row.code(),
+                row.name(),
+                row.typeCode(),
+                row.typeName(),
+                row.targetType(),
+                row.targetFormCode(),
+                row.targetFormName(),
+                row.phase(),
+                row.indicatorTplId() == null ? null : String.valueOf(row.indicatorTplId()),
+                row.indicatorTplName(),
+                parseExtraWrites(row.extraWrites()),
+                row.sortNo() == null ? 0 : row.sortNo(),
+                row.status(),
+                row.remark(),
+                items);
+    }
+
+    /** 附带写入 JSON（[{fieldKey,value}]，迁移 V64 口径）→ 视图；空或不可解析返回空清单（配置核对页照常显示）。 */
+    private static List<ExtraWriteView> parseExtraWrites(String json) {
+        if (json == null || json.isBlank()) {
+            return List.of();
+        }
+        try {
+            return JSON.readValue(
+                    json,
+                    JSON.getTypeFactory()
+                            .constructCollectionType(List.class, ExtraWriteView.class));
+        } catch (JsonProcessingException failure) {
+            return List.of();
+        }
     }
 
     private static String writeJson(Object value) {

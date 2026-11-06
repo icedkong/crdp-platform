@@ -97,7 +97,18 @@ public final class ConfigImportSpecs {
                     ConfigImportSpec.copy(
                             "rpt_name",
                             List.of("type_code", "name"),
-                            Map.of("indicator_tpl_id", "rpt_indicator_tpl")));
+                            Map.of("indicator_tpl_id", "rpt_indicator_tpl")),
+                    // ---- followup：报告单设置（E23-T03；indicator_tpl_id / mapping_id 数值引用重映射，
+                    //      type_code / target_form_code / item_code / target_field_key 为编码引用不改写——
+                    //      rpt_type、fe_form 与 rpt_indicator_tpl 整包同序导入后自然一致）----
+                    ConfigImportSpec.copy(
+                            "rpt_mapping",
+                            List.of("code"),
+                            Map.of("indicator_tpl_id", "rpt_indicator_tpl")),
+                    ConfigImportSpec.copy(
+                            "rpt_mapping_item",
+                            List.of("mapping_id", "item_code"),
+                            Map.of("mapping_id", "rpt_mapping")));
 
     private static final Map<String, ConfigImportSpec> BY_TABLE = index(SPECS);
 

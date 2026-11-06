@@ -23,8 +23,8 @@ import org.springframework.web.bind.annotation.RestController;
  * （docs/api/report.md §6，页面 /system/report-config，pages.md §10）。
  *
  * <p>查看与维护同码 followup:scan:config（菜单 plt_menu 39，平台迁移 V53，OQ-12 定论的 scan 族）。
- * 配置是平台通用能力、按院生效（A-ATT-018），同一套接口服务 A / B / C，差异全部在配置行。 字段映射（.../mappings）随
- * E16-T07、格式与大小（.../file-policy）随 E10-T01 平台参数，不在本控制器。
+ * 配置是平台通用能力、按院生效（A-ATT-018），同一套接口服务 A / B / C，差异全部在配置行。 字段映射（.../mappings）读取随 E23-T03（A 心脏超声预置，迁移
+ * V64）、维护与写入随 E16-T07；格式与大小（.../file-policy）随 E10-T01 平台参数，不在本控制器。
  */
 @Tag(name = "医院端报告单设置")
 @RestController
@@ -173,5 +173,20 @@ public class ReportConfigController {
     public ApiResponse<Void> deleteTemplate(@PathVariable("id") long id) {
         service.deleteTemplate(id);
         return ApiResponse.ok(null);
+    }
+
+    // ---------------------------------------------------------------- 字段映射（E23-T03 读取 /
+    // A-ATT-013；维护随 E16-T07）
+
+    @Operation(
+            summary =
+                    "字段映射清单（含停用，按来源类型与排序号）：来源类型、目标记录（基线时相 / 随访记录 / "
+                            + "程控记录）、目标表单、绑定的指标模板、附带写入与项目行（项目代码 → 目标字段键，"
+                            + "itemCode 可为固定 REPORT_DATE）；A 预置心脏超声三条（迁移 V64）")
+    @GetMapping("/mappings")
+    @RequireModule("followup")
+    @RequiresPermission("followup:scan:config")
+    public ApiResponse<List<ReportConfigService.MappingView>> mappings() {
+        return ApiResponse.ok(service.mappings());
     }
 }

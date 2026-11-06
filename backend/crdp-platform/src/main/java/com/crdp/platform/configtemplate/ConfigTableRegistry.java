@@ -71,6 +71,18 @@ public final class ConfigTableRegistry {
                             "报告单设置",
                             "资料类型（编码、字段集引用 fe_form、名称必填、默认电子化状态、排序、启停）"),
                     entry("rpt_name", "followup", "报告单设置", "名称字典（类型下名称、绑定指标模板、电子化状态覆盖）"),
+                    // ---- followup：报告单设置（E23-T03 / A-ATT-013；A 心脏超声、C 程控报告单同一机制，
+                    //      rpt_mapping.indicator_tpl_id 数值引用在导入时按已导入的模板行重映射）----
+                    entry(
+                            "rpt_mapping",
+                            "followup",
+                            "报告单设置",
+                            "字段映射（来源类型、目标记录与基线时相、绑定指标模板、附带写入、启停）"),
+                    entry(
+                            "rpt_mapping_item",
+                            "followup",
+                            "报告单设置",
+                            "字段映射项目（项目代码 → 目标字段键，itemCode 可为固定 REPORT_DATE）"),
                     // ---- followup：只复制结构（A-FLD-014「术者、病区 / 中心」）----
                     structure(
                             "ward",
