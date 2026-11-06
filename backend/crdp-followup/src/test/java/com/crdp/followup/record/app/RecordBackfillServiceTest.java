@@ -21,10 +21,10 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
- * E15-T07 / A-FU-014、C-FU-013：历史补录业务口径。
+ * E15-T07 / A-FU-014、C-FU-013：历史补录业务口径；E15-T06 起 UNPLANNED 计划外随访（A-FU-013、C-FU-022）。
  *
- * <p>锁定：越范围患者 40400（不暴露存在）；来源只收 BACKFILL（计划外随 E15-T06、远程监测随 E21）； 实际随访日期必填且必须是过去的日期；表单缺省取在组计划 FORM
- * 节点、显式指定时校验存在；创建 source=BACKFILL 的 DRAFT 并写 RECORD_BACKFILL_CREATE 审计。全部虚构数据。
+ * <p>锁定：越范围患者 40400（不暴露存在）；补录只收过去日期（计划外允许当天）；计划外须患者在随访中（ACTIVE）、 不创建任务、不动后续节点（C-FU-022）；远程监测随 E21 仍
+ * 40001；表单缺省取在组计划 FORM 节点、显式指定时校验存在； 创建 source=BACKFILL / UNPLANNED 的 DRAFT 并写各自审计。全部虚构数据。
  */
 @ExtendWith(MockitoExtension.class)
 class RecordBackfillServiceTest {
@@ -124,19 +124,8 @@ class RecordBackfillServiceTest {
     }
 
     @Test
-    void unplannedAndRemoteSourcesAreRejected() {
+    void remoteAndUnknownSourcesAreRejected() {
         when(patientScope.patientIdInScope(301L)).thenReturn(301L);
-        assertEquals(
-                40001,
-                assertThrows(
-                                ApiException.class,
-                                () ->
-                                        service.create(
-                                                301L,
-                                                new RecordBackfillService.BackfillCommand(
-                                                        "UNPLANNED", PAST, null)))
-                        .code(),
-                "计划外随访随 E15-T06");
         assertEquals(
                 40001,
                 assertThrows(
@@ -159,6 +148,89 @@ class RecordBackfillServiceTest {
                                                         "TASK", PAST, null)))
                         .code(),
                 "任务录入走 POST /tasks/{id}/start");
+    }
+
+    // ---------------------------------------------------------------- 计划外随访（E15-T06 / C-FU-022）
+
+    @Test
+    void createsUnplannedDraftTodayForActivePatient() {
+        when(patientScope.patientIdInScope(301L)).thenReturn(301L);
+        when(recordMapper.findPatientFollowupStatus(301L)).thenReturn("ACTIVE");
+        when(recordMapper.findEnrollmentFormCode(301L)).thenReturn("A_ANNUAL_FU");
+        when(recordService.createDraft(any()))
+                .thenReturn(
+                        new FollowupRecordService.RecordView(
+                                801L,
+                                301L,
+                                null,
+                                "UNPLANNED",
+                                LocalDate.now(),
+                                "A_ANNUAL_FU",
+                                1,
+                                "DRAFT",
+                                0,
+                                Map.of(),
+                                Map.of(),
+                                null,
+                                null));
+
+        RecordBackfillService.BackfillView view =
+                service.create(
+                        301L,
+                        new RecordBackfillService.BackfillCommand(
+                                "UNPLANNED", LocalDate.now(), null));
+
+        assertEquals("801", view.recordId());
+        ArgumentCaptor<FollowupRecordService.CreateCommand> captor =
+                ArgumentCaptor.forClass(FollowupRecordService.CreateCommand.class);
+        verify(recordService).createDraft(captor.capture());
+        assertEquals("UNPLANNED", captor.getValue().source(), "计划外随访标记来源（C-FU-022）");
+        assertEquals(null, captor.getValue().taskId(), "不创建任务、不影响后续节点");
+        verify(audit).append(any());
+    }
+
+    @Test
+    void unplannedRequiresActivePatientAndNonFutureDate() {
+        when(patientScope.patientIdInScope(301L)).thenReturn(301L);
+        assertEquals(
+                40001,
+                assertThrows(
+                                ApiException.class,
+                                () ->
+                                        service.create(
+                                                301L,
+                                                new RecordBackfillService.BackfillCommand(
+                                                        "UNPLANNED", null, null)))
+                        .code(),
+                "随访日期必填");
+        assertEquals(
+                40001,
+                assertThrows(
+                                ApiException.class,
+                                () ->
+                                        service.create(
+                                                301L,
+                                                new RecordBackfillService.BackfillCommand(
+                                                        "UNPLANNED",
+                                                        LocalDate.now().plusDays(1),
+                                                        null)))
+                        .code(),
+                "未来日期拒绝（未来随访由计划排期）");
+        for (String status : java.util.List.of("DEAD", "TERMINATED", "LOST")) {
+            when(recordMapper.findPatientFollowupStatus(301L)).thenReturn(status);
+            assertEquals(
+                    40901,
+                    assertThrows(
+                                    ApiException.class,
+                                    () ->
+                                            service.create(
+                                                    301L,
+                                                    new RecordBackfillService.BackfillCommand(
+                                                            "UNPLANNED", LocalDate.now(), null)))
+                            .code(),
+                    "患者不在随访中（" + status + "）不能新建计划外随访");
+        }
+        verify(recordService, never()).createDraft(any());
     }
 
     @Test

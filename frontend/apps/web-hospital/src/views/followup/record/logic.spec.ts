@@ -40,6 +40,59 @@ const context = (over: Partial<RecordTaskContext> = {}): RecordTaskContext => ({
   ...over,
 });
 
+describe('e15-T06 / C-FU-022 计划外随访横幅与文案', () => {
+  it('计划外记录（无任务上下文）显示「不影响后续节点」横幅（pages.md §5.1 文案照抄）', () => {
+    const banners = bannersOf(
+      null,
+      '2026-11-05',
+      () => '2026-11-05',
+      'UNPLANNED',
+    );
+    expect(banners).toHaveLength(1);
+    expect(banners[0]).toMatchObject({
+      key: 'unplanned',
+      text: '计划外随访：随访时间点为“其他”，不影响后续节点。',
+      tone: 'info',
+    });
+  });
+
+  it('补录记录（无任务、source=BACKFILL）不显示计划外横幅', () => {
+    expect(
+      bannersOf(null, '2025-11-05', () => '2026-11-05', 'BACKFILL'),
+    ).toEqual([]);
+  });
+
+  it('顶栏标题与摘要区分计划外 / 补录（无任务上下文）', () => {
+    const patient = { patientName: '周*（示例）' };
+    expect(headerTitle(null, patient, 'UNPLANNED')).toBe(
+      '计划外随访 · 周*（示例）',
+    );
+    expect(headerTitle(null, patient, 'BACKFILL')).toBe(
+      '历史补录 · 周*（示例）',
+    );
+    expect(headerSummary(null, '2026-06-10', 'UNPLANNED')).toBe(
+      '计划外 · 实际随访日期 2026-06-10',
+    );
+    expect(headerSummary(null, '2025-01-15', 'BACKFILL')).toBe(
+      '补录 · 实际随访日期 2025-01-15',
+    );
+  });
+
+  it('提交确认与成功文案：计划外记录不联动任务、不影响后续节点', () => {
+    expect(submitConfirmText(false, 'UNPLANNED')).toBe(
+      '提交后计划外随访记录生效（不影响后续节点，C-FU-022）。',
+    );
+    expect(submitSuccessMessage(false, false, 'UNPLANNED')).toBe(
+      '已提交计划外随访记录',
+    );
+    expect(submitSuccessMessage(true, false, 'UNPLANNED')).toBe(
+      '已提交计划外随访记录；随访计划终止，不再创建后续任务',
+    );
+    // 补录文案保持原口径（A-FU-014 不占用年度任务）
+    expect(submitConfirmText(false, 'BACKFILL')).toContain('不占用年度任务');
+  });
+});
+
 describe('bannersOf（pages.md §5.1 横幅，文案照抄）', () => {
   const today = () => '2026-11-05';
 

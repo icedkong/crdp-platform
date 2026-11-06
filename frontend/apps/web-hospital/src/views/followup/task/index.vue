@@ -8,6 +8,7 @@ import { useRoute, useRouter } from 'vue-router';
 
 import {
   contactResultText,
+  isTaskAcknowledgable,
   isTaskClaimable,
   isTaskEnterable,
   isTaskReassignable,
@@ -36,8 +37,14 @@ import {
   Tabs,
 } from 'ant-design-vue';
 
-import { claimTask, searchTasks, startTask } from '#/api/core/task';
+import {
+  acknowledgeTask,
+  claimTask,
+  searchTasks,
+  startTask,
+} from '#/api/core/task';
 import TaskAssignModal from '#/components/followup/task-assign-modal.vue';
+import TempTaskModal from '#/components/followup/temp-task-modal.vue';
 import { useBreakpoint } from '#/reference/use-breakpoint';
 import { usePermission } from '#/reference/use-permission';
 
@@ -71,8 +78,12 @@ defineOptions({ name: 'FollowupTask' });
  *
  * 「最近联系」列已随 E15-T04 沟通记录接入（该患者最新一条结果，中文由
  * packages/api contactResultText 映射，无联系显示「—」）；C 的器械类型 /
- * 随访时间点 / 上次标红项数三列随 E21 / E17 开放；
- * 临时任务（+ 临时任务按钮）随 E15-T06；任务卡片手机响应式随 E24-T05。
+ * 随访时间点 / 上次标红项数三列随 E21 / E17 开放。
+ *
+ * E15-T06 / A-FU-013：「+ 临时任务」打开 TempTaskModal（检索选患者 →
+ * FORM / REMINDER → 计划日期 + 窗口宽度），不占用年度任务；
+ * A-FU-026：站内提醒类任务无需填表——行内「完成提醒」确认即完成（不进录入）。
+ * 任务卡片手机响应式随 E24-T05。
  */
 const route = useRoute();
 const router = useRouter();
@@ -244,6 +255,31 @@ async function handleClaim(row: TaskRow) {
   }
 }
 
+/** E15-T06 / A-FU-026：完成提醒（站内提醒类任务无需填表，确认即完成）。 */
+const acknowledgingId = ref('');
+
+async function handleAcknowledge(row: TaskRow) {
+  acknowledgingId.value = row.id;
+  try {
+    await acknowledgeTask(row.id);
+    message.success('提醒已确认，任务完成（无需填表）');
+    void load();
+  } catch (error) {
+    const body = error as { message?: string };
+    message.error(body?.message || '完成提醒失败，请稍后重试');
+  } finally {
+    acknowledgingId.value = '';
+  }
+}
+
+// ---------------------------------------------------------------- 临时任务（E15-T06 / A-FU-013）
+
+const tempOpen = ref(false);
+
+function onTempCreated() {
+  void load();
+}
+
 /** 打开改派弹窗（单个改派 = 传一条）。 */
 function openAssign(ids: Array<number | string>) {
   if (ids.length === 0) return;
@@ -331,6 +367,14 @@ function handleEmptyAction() {
     <Card :bordered="false" class="crdp-card">
       <div class="title-row">
         <h1 class="crdp-page-title">我的任务</h1>
+        <Button
+          v-if="canEditRecord"
+          data-testid="temp-task-open"
+          type="primary"
+          @click="tempOpen = true"
+        >
+          + 临时任务
+        </Button>
       </div>
 
       <Tabs
@@ -479,6 +523,16 @@ function handleEmptyAction() {
                 查看
               </Button>
               <Button
+                v-if="isTaskAcknowledgable(record as TaskRow) && canEditRecord"
+                :data-testid="`task-ack-${record.id}`"
+                :loading="acknowledgingId === record.id"
+                size="small"
+                type="link"
+                @click="handleAcknowledge(record as TaskRow)"
+              >
+                完成提醒
+              </Button>
+              <Button
                 v-if="isTaskClaimable(record as TaskRow)"
                 :data-testid="`task-claim-${record.id}`"
                 :loading="claimingId === record.id"
@@ -501,6 +555,7 @@ function handleEmptyAction() {
                 v-if="
                   !isTaskEnterable(record as TaskRow) &&
                   !record.recordId &&
+                  !isTaskAcknowledgable(record as TaskRow) &&
                   !isTaskClaimable(record as TaskRow) &&
                   !(isTaskReassignable(record as TaskRow) && canAssign)
                 "
@@ -576,6 +631,8 @@ function handleEmptyAction() {
       :task-ids="assignTargetIds"
       @success="handleAssignSuccess"
     />
+    <!-- 临时任务（E15-T06 / A-FU-013：不占用年度任务；FORM / REMINDER 两形态） -->
+    <TempTaskModal v-model:open="tempOpen" @created="onTempCreated" />
   </div>
 </template>
 

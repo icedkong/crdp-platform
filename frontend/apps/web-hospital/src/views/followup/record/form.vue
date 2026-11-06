@@ -59,6 +59,7 @@ import {
   missingRequiredText,
   nextVisitText,
   readonlyBanner,
+  submitConfirmText,
   submitSuccessMessage,
 } from './logic';
 
@@ -137,8 +138,11 @@ const filter = queueFilterOfQuery(route.query);
 const readonly = computed(() => !canEdit.value || status.value === 'SUBMITTED');
 const banners = computed(() =>
   readonly.value
-    ? [readonlyBanner(status.value), ...bannersOf(context.value, visitDate())]
-    : bannersOf(context.value, visitDate()),
+    ? [
+        readonlyBanner(status.value),
+        ...bannersOf(context.value, visitDate(), source.value),
+      ]
+    : bannersOf(context.value, visitDate(), source.value),
 );
 const dirty = computed(() => hasChanges(savedData.value, data.value));
 
@@ -358,7 +362,7 @@ async function handleSubmit() {
   }
   Modal.confirm({
     title: '确认提交',
-    content: '提交后任务完成，按计划生成下次随访任务。',
+    content: submitConfirmText(context.value !== null, source.value),
     okText: '确认提交',
     cancelText: '取消',
     onOk: () => doSubmit(),
@@ -378,7 +382,11 @@ async function doSubmit() {
     // 服务器已收到全量数据：丢弃本机草稿，重开不再提示恢复
     void autosave.discardLocalDraft();
     message.success(
-      submitSuccessMessage(deathSelected.value, context.value !== null),
+      submitSuccessMessage(
+        deathSelected.value,
+        context.value !== null,
+        source.value,
+      ),
     );
   } catch (error) {
     message.error('提交失败，请稍后重试');
@@ -470,7 +478,7 @@ function handleJump(key: string) {
     v-if="submitted"
     data-testid="record-submitted"
     status="success"
-    :sub-title="submitSuccessMessage(deathSelected, context !== null)"
+    :sub-title="submitSuccessMessage(deathSelected, context !== null, source)"
     title="已提交"
   >
     <template #extra>
@@ -505,10 +513,10 @@ function handleJump(key: string) {
         </Button>
         <div>
           <h1 class="crdp-page-title">
-            {{ headerTitle(context, patient) }}
+            {{ headerTitle(context, patient, source) }}
           </h1>
           <div class="sub-text">
-            {{ headerSummary(context, recordVisitDate) }}
+            {{ headerSummary(context, recordVisitDate, source) }}
           </div>
         </div>
         <StatusTag

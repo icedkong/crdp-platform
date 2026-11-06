@@ -135,13 +135,15 @@ public class PatientOverviewService {
     /**
      * 时间轴节点（按时间顺序，旧 → 新）。
      *
-     * @param kind DISCHARGE 出院 / STATUS 状态变更（含死亡）/ FOLLOWUP 每年随访（任务节点，E15-T07）/ BACKFILL 历史补录（无任务
-     *     的补录记录，A-FU-014、C-FU-013）/ PLANNED 下次计划日期（「计划中 / 待开始」，实时计算不落库，A-FU-001）；UNPLANNED 计划外随访随
-     *     E15-T06、EVENT 终点事件与 C 器械事件随 E17 / E21
-     * @param label 数据驱动的节点名（DISCHARGE「出院」；STATUS / PLANNED 为空，由前端映射文案；FOLLOWUP = 节点名）
+     * @param kind DISCHARGE 出院 / STATUS 状态变更（含死亡）/ FOLLOWUP 每年随访（任务节点，E15-T07；REMINDER 站内提醒任务 随
+     *     E15-T06 同为任务节点、note 标「无需填表」）/ BACKFILL 历史补录（无任务 的补录记录，A-FU-014、C-FU-013）/ UNPLANNED
+     *     计划外随访（无任务记录按 source 分流，E15-T06 / C-FU-022）/ PLANNED 下次计划日期（「计划中 / 待开始」，实时计算不落库，
+     *     A-FU-001）；EVENT 终点事件与 C 器械事件随 E17 / E21
+     * @param label 数据驱动的节点名（DISCHARGE「出院」；STATUS / PLANNED 为空，由前端映射文案；FOLLOWUP =
+     *     节点名；BACKFILL「历史补录」、UNPLANNED「计划外随访」）
      * @param status STATUS = 患者随访状态码（components.md §2 patient 域）；FOLLOWUP = 任务状态（PENDING /
      *     IN_PROGRESS / COMPLETED / OVERDUE / LOST_CANDIDATE / LOST / TERMINATED /
-     *     SKIPPED_SUSPENDED）；BACKFILL = COMPLETED（已提交） 或 IN_PROGRESS（草稿未提交）；PLANNED =
+     *     SKIPPED_SUSPENDED）；BACKFILL / UNPLANNED = COMPLETED（已提交） 或 IN_PROGRESS（草稿未提交）；PLANNED =
      *     PLANNED（前端映射「计划中」）
      * @param planDate FOLLOWUP / PLANNED 的计划日期；windowStart / windowEnd 窗口起止；doneDate
      *     完成日期；progressDone / progressTotal 该子计划次数的完成进度 x / y（A-FU-023「完成进度 x/y」——主任务口径，跟进任务不单列）
@@ -265,22 +267,23 @@ public class PatientOverviewService {
                             canOpen(task),
                             null));
         }
-        // 无任务的历史补录记录（A-FU-014 / C-FU-013：不需要任务、不受窗口限制）
+        // 无任务记录（A-FU-014 / C-FU-013 历史补录；E15-T06 起含 C-FU-022 计划外随访——按 source 分流成节点）
         for (FollowupRecordMapper.RecordRowRaw record :
                 recordMapper.findTasklessByPatient(patientId)) {
             boolean submitted = "SUBMITTED".equals(record.status());
+            boolean unplanned = "UNPLANNED".equals(record.source());
             items.add(
                     new TimelineEntryView(
-                            "BACKFILL",
+                            unplanned ? "UNPLANNED" : "BACKFILL",
                             record.visitDate(),
-                            "历史补录",
+                            unplanned ? "计划外随访" : "历史补录",
                             submitted ? "COMPLETED" : "IN_PROGRESS",
-                            backfillNote(record),
+                            unplanned ? unplannedNote(record) : backfillNote(record),
                             String.valueOf(record.id()),
                             null,
                             null,
                             null,
-                            "BACKFILL",
+                            unplanned ? "UNPLANNED" : "BACKFILL",
                             null,
                             null,
                             null,
@@ -327,8 +330,11 @@ public class PatientOverviewService {
         }
     }
 
-    /** 任务节点备注（components.md §9：补录 / 逾期完成 / 跟进等的展示口径由状态与标记派生）。 */
+    /** 任务节点备注（components.md §9：补录 / 逾期完成 / 跟进 / 站内提醒等的展示口径由状态与标记派生）。 */
     private static String followupNote(FollowupTaskQueryMapper.TimelineTaskRow task) {
+        if ("REMINDER".equals(task.taskType())) {
+            return "站内提醒：无需填表，到点提醒责任人（A-FU-026）";
+        }
         if ("COMPLETED".equals(task.status()) && "OVERDUE".equals(task.completeKind())) {
             return "窗口结束后完成，记逾期完成";
         }
@@ -339,6 +345,14 @@ public class PatientOverviewService {
             return "期间未执行，待人工选择补做或关闭";
         }
         return null;
+    }
+
+    /** 计划外随访备注（E15-T06 / C-FU-022）：随访时间点为「其他」、不影响后续节点，不作对比对象（A-FU-027）。 */
+    private static String unplannedNote(FollowupRecordMapper.RecordRowRaw record) {
+        if (!"SUBMITTED".equals(record.status())) {
+            return "计划外随访草稿（未提交），不影响后续节点";
+        }
+        return "计划外随访（随访时间点「其他」），不影响后续节点；不作对比对象";
     }
 
     /** 历史补录备注：「补录，随访日期 X，Y 录入」（C-FU-023 各次随访含补录、单独标识）。 */

@@ -28,10 +28,12 @@ import { useBreakpoint } from '#/reference/use-breakpoint';
  * E15-T07 / A-FU-023、C-FU-023（components.md §9）：患者详情「随访记录」页签右侧内容。
  *
  * 节点：出院（DISCHARGE）、状态变更（STATUS）、每年随访（FOLLOWUP，带计划日期 / 窗口 / 完成日期 /
- * 完成进度 x/y）、历史补录（BACKFILL，单独标识）、下次计划日期（PLANNED「计划中」，canOpen=false
- * 置灰：任务开启日才创建）；计划外随访随 E15-T06、终点事件随 E17、C 器械事件随 E21。
- * 点节点卡片 canOpen 时 emit open（有 recordId 直接开表单页；未开始任务先 start 再开，由父页处理）。
- * 视图切换记住用户上次选择（localStorage crdp:fu-view，只存视图名，不含患者信息）。
+ * 完成进度 x/y；REMINDER 站内提醒任务同为任务节点，note 标「无需填表」）、历史补录（BACKFILL，
+ * 单独标识）、计划外随访（UNPLANNED，E15-T06 / C-FU-022：单独成节点、不影响后续节点）、
+ * 下次计划日期（PLANNED「计划中」，canOpen=false 置灰：任务开启日才创建）；终点事件随 E17、
+ * C 器械事件随 E21。点节点卡片 canOpen 时 emit open（有 recordId 直接开表单页；未开始任务先
+ * start 再开，由父页处理）。视图切换记住用户上次选择（localStorage crdp:fu-view，只存视图名，
+ * 不含患者信息）。
  */
 const props = defineProps<{
   entries: PatientTimelineEntry[];
@@ -61,9 +63,13 @@ function setView(next: 'table' | 'timeline') {
   localStorage.setItem(VIEW_KEY, next);
 }
 
-/** 是否随访类节点（任务 / 补录 / 计划中——图例与状态列按任务状态口径展示）。 */
+/** 是否随访类节点（任务 / 补录 / 计划外 / 计划中——图例与状态列按任务状态口径展示）。 */
 function isFollowupKind(entry: PatientTimelineEntry): boolean {
-  return entry.kind === 'FOLLOWUP' || entry.kind === 'BACKFILL';
+  return (
+    entry.kind === 'FOLLOWUP' ||
+    entry.kind === 'BACKFILL' ||
+    entry.kind === 'UNPLANNED'
+  );
 }
 
 /** 节点显示状态（StatusTag 文案）：FOLLOWUP 用任务状态派生（含补录 / 逾期完成细分）、PLANNED 固定「计划中」。 */
@@ -100,7 +106,7 @@ function isDimmed(entry: PatientTimelineEntry): boolean {
   return entry.canOpen === false;
 }
 
-/** 节点主日期显示：随访节点用计划日期（补录用随访日期），其余用 date。 */
+/** 节点主日期显示：随访节点用计划日期（补录 / 计划外用随访日期），其余用 date。 */
 function nodeDate(entry: PatientTimelineEntry): string {
   return entry.planDate ?? entry.date;
 }
@@ -115,7 +121,7 @@ function nodeDetail(entry: PatientTimelineEntry): string {
   const parts: string[] = [];
   if (entry.kind === 'FOLLOWUP' || entry.kind === 'PLANNED') {
     parts.push(`计划 ${nodeDate(entry)}`);
-  } else if (entry.kind === 'BACKFILL') {
+  } else if (entry.kind === 'BACKFILL' || entry.kind === 'UNPLANNED') {
     parts.push(`随访日期 ${nodeDate(entry)}`);
   } else {
     parts.push(entry.date);

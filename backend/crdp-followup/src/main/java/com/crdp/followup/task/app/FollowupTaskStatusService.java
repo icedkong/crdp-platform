@@ -77,6 +77,7 @@ public class FollowupTaskStatusService {
     private final AuditLogger audit;
     private final CryptoService crypto;
     private final FollowupPolicyService policy;
+    private final com.crdp.followup.patient.app.PatientContactGateway patientScope;
 
     public FollowupTaskStatusService(
             FollowupTaskMapper taskMapper,
@@ -84,13 +85,15 @@ public class FollowupTaskStatusService {
             OutboxPublisher outbox,
             AuditLogger audit,
             CryptoService crypto,
-            FollowupPolicyService policy) {
+            FollowupPolicyService policy,
+            com.crdp.followup.patient.app.PatientContactGateway patientScope) {
         this.taskMapper = taskMapper;
         this.planMapper = planMapper;
         this.outbox = outbox;
         this.audit = audit;
         this.crypto = crypto;
         this.policy = policy;
+        this.patientScope = patientScope;
     }
 
     /** 完成结果（complete_kind 为完成方式：窗口前 / 窗口内 / 逾期完成，followup V53）。 */
@@ -391,6 +394,78 @@ public class FollowupTaskStatusService {
         return consecutive;
     }
 
+    // ---------------------------------------------------------------- 完成提醒（REMINDER 无需填表，
+    // A-FU-026 / E15-T06）
+
+    /** 完成提醒结果（与 {@link CompletionView} 同形：状态 COMPLETED + 完成方式按窗口派生）。 */
+    public record AcknowledgeView(String taskId, String status, String completeKind) {}
+
+    /**
+     * 站内提醒类任务完成（A-FU-026「到点只提醒责任人、无需填表」；POST /tasks/{id}/acknowledge，E15-T06； tasks.csv E15-T06
+     * 验收「站内提醒类任务无需填表」）：责任人确认「已处理」即完成——不创建记录、不走提交。
+     *
+     * <ul>
+     *   <li>只接受 REMINDER 任务：FORM 任务须提交随访记录完成（40901，验收「无需填表」只对提醒类）；
+     *   <li>数据范围前置校验（越范围患者 40400，不暴露任务存在，与开始录入 / 认领同口径）；
+     *   <li>完成方式仍按业务日与窗口的相对关系落（窗口前 / 窗口内 / 逾期完成）；不受直接录入期约束（无「下一次」可拦， 窗口结束后补点确认同样允许——提醒语义是「知道了」）；
+     *   <li>终态（已完成 / 失访 / 已终止 / 期间未执行）40901、并发已被处理 40900；写 TASK_ACKNOWLEDGE 审计。
+     * </ul>
+     */
+    @Transactional
+    public AcknowledgeView acknowledgeReminder(long taskId, Long operatorId) {
+        FollowupTaskMapper.StartTaskRow task = taskMapper.findStartTaskById(taskId);
+        if (task == null) {
+            throw new ApiException(404, 40400, "任务不存在");
+        }
+        // 数据范围前置校验（与 E15-T02 / E15-T03 写入口同口径）：越范围患者不暴露任务存在
+        if (patientScope.patientIdInScope(task.patientId()) == null) {
+            throw new ApiException(404, 40400, "任务不存在");
+        }
+        if (!"REMINDER".equals(task.taskType())) {
+            throw new ApiException(409, 40901, "填表任务须提交随访记录完成（站内提醒类任务才可「完成提醒」，A-FU-026）");
+        }
+        switch (task.status()) {
+            case TaskStatusFlow.COMPLETED -> throw new ApiException(409, 40901, "任务已完成");
+            case TaskStatusFlow.LOST, TaskStatusFlow.LOST_CANDIDATE ->
+                    throw new ApiException(409, 40901, "任务已失访，不能完成");
+            case TaskStatusFlow.TERMINATED -> throw new ApiException(409, 40901, "任务已终止，不能完成");
+            case TaskStatusFlow.SKIPPED_SUSPENDED ->
+                    throw new ApiException(
+                            409, 40901, "「停用或暂停期间未执行」的任务须先补做（redo）才能完成（Q32 / PLT-TEN-017）");
+            default -> {
+                // PENDING / IN_PROGRESS / OVERDUE：可确认完成
+            }
+        }
+        // 完成方式判定用的窗口列（此时任务必然开放态，行必在）
+        FollowupTaskMapper.TaskRow window = requireTask(taskId);
+        LocalDate completedOn = PlanDateCalculator.businessToday(Instant.now());
+        String completeKind =
+                TaskStatusFlow.completeKindOf(
+                        window.windowStart(), window.windowEnd(), completedOn);
+        java.time.LocalDateTime completedAt = java.time.LocalDateTime.now();
+        if (taskMapper.completeTask(taskId, completeKind, completedAt, operatorId) == 0) {
+            throw new ApiException(409, 40900, "任务状态已变化，请刷新后重试");
+        }
+        audit.append(
+                AuditEntry.operation("followup", "TASK_ACKNOWLEDGE")
+                        .objectType("TASK")
+                        .objectId(String.valueOf(taskId))
+                        .description(
+                                "完成提醒（站内提醒类任务无需填表，A-FU-026）：完成方式 "
+                                        + completeKindLabel(completeKind))
+                        .beforeJson("{\"status\":\"" + task.status() + "\"}")
+                        .afterJson(
+                                "{\"status\":\""
+                                        + TaskStatusFlow.COMPLETED
+                                        + "\",\"completeKind\":\""
+                                        + completeKind
+                                        + "\"}")
+                        .result(AuditResult.SUCCESS)
+                        .build());
+        log.info("完成提醒 taskId={} kind={} operator={}", taskId, completeKind, operatorId);
+        return new AcknowledgeView(String.valueOf(taskId), TaskStatusFlow.COMPLETED, completeKind);
+    }
+
     // ---------------------------------------------------------------- 完成（随访记录提交联动）
 
     /**
@@ -412,7 +487,11 @@ public class FollowupTaskStatusService {
     CompletionView complete(long taskId, Long operatorId, LocalDate completedOn) {
         FollowupTaskMapper.TaskRow task = requireTask(taskId);
         requireCompletable(task);
-        if (completedOn.isAfter(task.windowEnd()) && !withinDirectEntryPeriod(task, completedOn)) {
+        // 临时任务（E15-T06 / A-FU-013）豁免直接录入期：occurrence 为负数计数器，无「本节点第 N+1 次」可排，
+        // 医生手工加的加访到窗口结束前始终可提交（更晚仍可走历史补录，A-FU-014）
+        if (completedOn.isAfter(task.windowEnd())
+                && !TaskCreationPlanner.CREATE_TEMP.equals(task.createType())
+                && !withinDirectEntryPeriod(task, completedOn)) {
             throw new ApiException(409, 40901, "已过直接录入期（下一节点任务已开启），只能历史补录（A-FU-010）");
         }
         String completeKind =

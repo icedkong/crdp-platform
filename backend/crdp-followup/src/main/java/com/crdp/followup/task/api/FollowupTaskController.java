@@ -4,6 +4,7 @@ import com.crdp.followup.task.app.FollowupTaskAssignService;
 import com.crdp.followup.task.app.FollowupTaskQueryService;
 import com.crdp.followup.task.app.FollowupTaskStartService;
 import com.crdp.followup.task.app.FollowupTaskStatusService;
+import com.crdp.followup.task.app.FollowupTaskTempService;
 import com.crdp.framework.security.CurrentSession;
 import com.crdp.framework.security.RequireModule;
 import com.crdp.framework.security.RequiresPermission;
@@ -29,8 +30,8 @@ import org.springframework.web.bind.annotation.RestController;
  * followup:task:view}（docs/api/followup.md §2：从公共池认领是随访员 / 医生的日常自助操作，不设改派权限门槛，行可见性由数据范围承担）。数据范围由
  * Mapper 语句上的 {@code @DataScope} 出行（越范围任务不可见，直接访问 40400）；接口资源由启动扫描登记（SCAN）。
  *
- * <p>临时任务（A-FU-013）随 E15-T06；失访确认（A-FU-012）已随 E15-T05 落地（confirm-lost，权限沿用 {@code
- * followup:record:edit}，followup.md §2「推断」定为该码）。
+ * <p>临时添加任务与完成提醒（A-FU-013 / A-FU-026）已随 E15-T06 落地（POST /tasks 与 POST /tasks/{id}/acknowledge， 权限沿用
+ * {@code followup:record:edit}，followup.md §2 预留口径）；失访确认（A-FU-012）已随 E15-T05 落地（confirm-lost，同码）。
  */
 @Tag(name = "医院端随访任务")
 @RestController
@@ -41,16 +42,19 @@ public class FollowupTaskController {
     private final FollowupTaskStartService startService;
     private final FollowupTaskAssignService assignService;
     private final FollowupTaskStatusService statusService;
+    private final FollowupTaskTempService tempService;
 
     public FollowupTaskController(
             FollowupTaskQueryService queryService,
             FollowupTaskStartService startService,
             FollowupTaskAssignService assignService,
-            FollowupTaskStatusService statusService) {
+            FollowupTaskStatusService statusService,
+            FollowupTaskTempService tempService) {
         this.queryService = queryService;
         this.startService = startService;
         this.assignService = assignService;
         this.statusService = statusService;
+        this.tempService = tempService;
     }
 
     @Operation(
@@ -78,6 +82,50 @@ public class FollowupTaskController {
     @RequiresPermission("followup:record:edit")
     public ApiResponse<FollowupTaskStartService.StartView> start(@PathVariable("id") long id) {
         return ApiResponse.ok(startService.start(id));
+    }
+
+    @Operation(
+            summary =
+                    "临时添加任务（A-FU-013「在子计划任务列表中临时添加任务，不占用年度任务」，E15-T06）："
+                            + "挂靠患者在组入组与计划节点，occurrence 用负数计数器避开常规年度序列；"
+                            + "任务类型 FORM 填表随访（表单缺省取节点 / 在组计划 FORM 节点）或 REMINDER 站内提醒"
+                            + "（无表单，A-FU-026）；窗口 = 计划日期 ± 窗口宽度（默认 7 天），开启日 = 当天；"
+                            + "负责人缺省当前用户，显式指定须负责患者病区（或全院）；越范围患者 40400；"
+                            + "写 TaskOpened 事件与 TASK_TEMP_CREATE 审计")
+    @PostMapping
+    @RequireModule("followup")
+    @RequiresPermission("followup:record:edit")
+    public ApiResponse<FollowupTaskTempService.TempTaskView> createTemp(
+            @RequestBody(required = false) TempCreateBody body) {
+        return ApiResponse.ok(
+                tempService.create(
+                        body == null
+                                ? null
+                                : new FollowupTaskTempService.TempCommand(
+                                        body.patientId(),
+                                        body.enrollmentId(),
+                                        body.nodeId(),
+                                        body.taskType(),
+                                        body.planDate(),
+                                        body.windowDays(),
+                                        body.assigneeId(),
+                                        body.formCode(),
+                                        body.note())));
+    }
+
+    @Operation(
+            summary =
+                    "完成提醒（A-FU-026「到点只提醒责任人、无需填表」，E15-T06；验收「站内提醒类任务无需填表」）："
+                            + "站内提醒类任务由责任人确认「已处理」即完成，不创建记录、不走提交；"
+                            + "完成方式按业务日与窗口派生；填表任务 40901（须提交随访记录）；"
+                            + "越范围患者 40400、终态 40901、并发 40900；写 TASK_ACKNOWLEDGE 审计")
+    @PostMapping("/{id}/acknowledge")
+    @RequireModule("followup")
+    @RequiresPermission("followup:record:edit")
+    public ApiResponse<FollowupTaskStatusService.AcknowledgeView> acknowledge(
+            @PathVariable("id") long id) {
+        return ApiResponse.ok(
+                statusService.acknowledgeReminder(id, CurrentSession.requireHospital().userId()));
     }
 
     @Operation(
@@ -176,6 +224,18 @@ public class FollowupTaskController {
 
     /** 批量改派请求体（docs/api/followup.md §2；单个改派 = 传一条）。 */
     public record BatchAssignBody(List<Long> taskIds, Long assigneeId, String reason) {}
+
+    /** 临时添加任务请求体（docs/api/followup.md §2 POST /tasks；除 patientId / planDate 外可空）。 */
+    public record TempCreateBody(
+            Long patientId,
+            Long enrollmentId,
+            Long nodeId,
+            String taskType,
+            LocalDate planDate,
+            Integer windowDays,
+            Long assigneeId,
+            String formCode,
+            String note) {}
 
     private static FollowupTaskQueryService.SearchRequest toRequest(SearchBody body) {
         if (body == null) {

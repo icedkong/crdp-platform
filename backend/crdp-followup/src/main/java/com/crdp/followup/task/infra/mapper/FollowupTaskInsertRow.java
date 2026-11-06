@@ -27,6 +27,7 @@ public class FollowupTaskInsertRow {
     private final String status;
     private final Integer followupSeq;
     private final LocalDate createdLogicalDate;
+    private final Long createdBy;
 
     public FollowupTaskInsertRow(
             Long enrollmentId,
@@ -47,6 +48,49 @@ public class FollowupTaskInsertRow {
             String status,
             Integer followupSeq,
             LocalDate createdLogicalDate) {
+        this(
+                enrollmentId,
+                patientId,
+                planId,
+                nodeId,
+                occurrence,
+                taskType,
+                formCode,
+                ownerType,
+                assigneeId,
+                planDate,
+                remindStart,
+                windowStart,
+                windowEnd,
+                openDate,
+                createType,
+                status,
+                followupSeq,
+                createdLogicalDate,
+                null);
+    }
+
+    /** 全参构造（E15-T06 起 created_by 落列：临时任务记操作人；调度 / 跟进创建传 null）。 */
+    public FollowupTaskInsertRow(
+            Long enrollmentId,
+            Long patientId,
+            Long planId,
+            Long nodeId,
+            Integer occurrence,
+            String taskType,
+            String formCode,
+            String ownerType,
+            Long assigneeId,
+            LocalDate planDate,
+            LocalDate remindStart,
+            LocalDate windowStart,
+            LocalDate windowEnd,
+            LocalDate openDate,
+            String createType,
+            String status,
+            Integer followupSeq,
+            LocalDate createdLogicalDate,
+            Long createdBy) {
         this.enrollmentId = enrollmentId;
         this.patientId = patientId;
         this.planId = planId;
@@ -65,6 +109,7 @@ public class FollowupTaskInsertRow {
         this.status = status;
         this.followupSeq = followupSeq;
         this.createdLogicalDate = createdLogicalDate;
+        this.createdBy = createdBy;
     }
 
     public long getId() {
@@ -146,5 +191,10 @@ public class FollowupTaskInsertRow {
 
     public LocalDate getCreatedLogicalDate() {
         return createdLogicalDate;
+    }
+
+    /** 创建人（调度创建为 NULL；临时任务记操作人，A-FU-013 / V48 注释「临时任务随 E15 记操作人」）。 */
+    public Long getCreatedBy() {
+        return createdBy;
     }
 }

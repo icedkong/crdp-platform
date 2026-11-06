@@ -326,7 +326,7 @@
 
 | 项 | 内容 |
 |---|---|
-| 路由 | `/followup/record/:recordId`（任务开启时已创建草稿记录，所以统一用 recordId）；补录 / 计划外新建：`/followup/record/new?patientId=&kind=backfill|unplanned`（推断，待确认） |
+| 路由 | `/followup/record/:recordId`（任务开启时已创建草稿记录，所以统一用 recordId）；补录 / 计划外新建经患者详情弹窗创建 DRAFT 后统一以 recordId 进本页（E15-T07 / E15-T06 已实现，原 `/record/new` 直建路由不做） |
 | 权限 | 查看 `followup:task:view`；录入 / 暂存 / 提交 `followup:record:edit`；修改已提交：A `followup:record:edit`，C `followup:record:edit-submitted` |
 | 需求 | A-FU-005、010、014、015、027、024、006、025；A-ATT-015、019；C-FU-005、008、009、010、013、014、015、016、017、018、022、024、026；NFR-SAVE-001/002/003；NFR-RESP-001/002/003 |
 | 组件 | `FormRenderer mode="edit"`、`CategoryBar`（桌面竖向锚点）、`FormStatusBar`、`ConflictBanner`、`InlineAttachmentStrip`、`LocationPicker`、`WatermarkPreview`（分屏对照）、`ReasonModal`、`useAutoSave` |
@@ -442,7 +442,7 @@
 | 权限 | `followup:task:view`；改派 / 认领 `followup:task:assign` |
 | 需求 | A-FU-003、004、009、010、012、013、024；A-DASH-003、004；C-FU-020；C-DASH-003；A-WARD-004 |
 | 组件 | `a-tabs`（我的待办 / 本病区 / 全部）、`SearchBar`、`a-table`、`StatusTag`、`a-segmented`（列表 / 看板） |
-| 接口 | `POST /api/hospital/followup/tasks/search`；改派 `POST .../tasks/batch-assign`；认领 `POST .../tasks/{id}/claim`；临时任务 `POST .../tasks`（A-FU-013）；失访确认 `POST .../tasks/{id}/confirm-lost`（均推断，待确认；规格中 `GET /api/followup/tasks` 为旧写法，统一加 `/api/hospital` 前缀） |
+| 接口 | `POST /api/hospital/followup/tasks/search`；改派 `POST .../tasks/batch-assign`；认领 `POST .../tasks/{id}/claim`；临时任务 `POST .../tasks`（E15-T06 已实现，A-FU-013）；完成提醒 `POST .../tasks/{id}/acknowledge`（E15-T06，站内提醒类无需填表）；失访确认 `POST .../tasks/{id}/confirm-lost`（规格中 `GET /api/followup/tasks` 为旧写法，统一加 `/api/hospital` 前缀） |
 
 ```text
 ┌ 我的任务 ───────────────────────────────────────── [列表 | 看板] [+ 临时任务] ┐

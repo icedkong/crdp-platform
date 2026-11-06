@@ -51,9 +51,12 @@ class FollowupTaskStatusServiceTest {
     private final AuditLogger audit = mock(AuditLogger.class);
     private final CryptoService crypto = mock(CryptoService.class);
     private final FollowupPolicyService policy = mock(FollowupPolicyService.class);
+    private final com.crdp.followup.patient.app.PatientContactGateway patientScope =
+            mock(com.crdp.followup.patient.app.PatientContactGateway.class);
 
     private final FollowupTaskStatusService service =
-            new FollowupTaskStatusService(taskMapper, planMapper, outbox, audit, crypto, policy);
+            new FollowupTaskStatusService(
+                    taskMapper, planMapper, outbox, audit, crypto, policy, patientScope);
 
     {
         lenient().when(policy.policy()).thenReturn(new FollowupPolicyService.ContactPolicy(3, 1));
@@ -378,6 +381,100 @@ class FollowupTaskStatusServiceTest {
         assertEquals(
                 "OVERDUE",
                 service.complete(TASK_ID, OPERATOR, LocalDate.of(2027, 6, 1)).completeKind());
+    }
+
+    @Test
+    void completeSkipsDirectEntryCutoffForTempTasks() {
+        // 临时任务（E15-T06 / A-FU-013）occurrence 为负数计数器，无「第 N+1 次」可排：
+        // 窗口结束后仍可完成（更晚走历史补录），不受直接录入期限拦
+        when(taskMapper.findTaskById(TASK_ID))
+                .thenReturn(
+                        new FollowupTaskMapper.TaskRow(
+                                TASK_ID,
+                                ENROLLMENT_ID,
+                                PATIENT_ID,
+                                PLAN_ID,
+                                NODE_ID,
+                                -1,
+                                "TEMP",
+                                "OVERDUE",
+                                0,
+                                WINDOW_START,
+                                WINDOW_END));
+        annualPlan();
+        when(taskMapper.completeTask(eq(TASK_ID), eq("OVERDUE"), any(), eq(OPERATOR)))
+                .thenReturn(1);
+
+        assertEquals(
+                "OVERDUE",
+                service.complete(TASK_ID, OPERATOR, LocalDate.of(2027, 3, 8)).completeKind(),
+                "临时任务过窗口完成不按直接录入期限拦截");
+    }
+
+    // ---------------------------------------------------------------- 完成提醒（A-FU-026 无需填表，E15-T06）
+
+    /** 提醒任务行（findStartTaskById：taskType / status / patientId）。 */
+    private FollowupTaskMapper.StartTaskRow reminderRow(String status) {
+        return new FollowupTaskMapper.StartTaskRow(
+                TASK_ID, PATIENT_ID, "REMINDER", null, status, null);
+    }
+
+    @Test
+    void acknowledgeCompletesReminderWithoutRecord() {
+        when(taskMapper.findStartTaskById(TASK_ID)).thenReturn(reminderRow("PENDING"));
+        when(taskMapper.findTaskById(TASK_ID)).thenReturn(taskRow("PENDING"));
+        when(patientScope.patientIdInScope(PATIENT_ID)).thenReturn(PATIENT_ID);
+        when(taskMapper.completeTask(eq(TASK_ID), any(), any(), eq(OPERATOR))).thenReturn(1);
+
+        FollowupTaskStatusService.AcknowledgeView view =
+                service.acknowledgeReminder(TASK_ID, OPERATOR);
+
+        assertEquals("COMPLETED", view.status(), "站内提醒类任务无需填表，确认即完成（A-FU-026）");
+        // 完成方式按业务日与窗口的相对关系派生（测试窗口固定 2026-03，只校非空与服务同口径）
+        assertEquals(
+                com.crdp.followup.task.domain.TaskStatusFlow.completeKindOf(
+                        WINDOW_START, WINDOW_END, java.time.LocalDate.now()),
+                view.completeKind());
+        verify(audit).append(any());
+    }
+
+    @Test
+    void acknowledgeRejectsFormTasks() {
+        when(taskMapper.findStartTaskById(TASK_ID))
+                .thenReturn(
+                        new FollowupTaskMapper.StartTaskRow(
+                                TASK_ID, PATIENT_ID, "FORM", "A_ANNUAL_FU", "PENDING", null));
+        when(patientScope.patientIdInScope(PATIENT_ID)).thenReturn(PATIENT_ID);
+
+        ApiException ex =
+                assertConflict(() -> service.acknowledgeReminder(TASK_ID, OPERATOR), 40901);
+        assertTrue(ex.getMessage().contains("随访记录"), "填表任务须提交记录完成");
+        verify(taskMapper, never()).completeTask(anyLong(), any(), any(), any());
+    }
+
+    @Test
+    void acknowledgeHidesTaskForOutOfScopePatientAndRejectsStates() {
+        when(taskMapper.findStartTaskById(TASK_ID)).thenReturn(reminderRow("PENDING"));
+        when(patientScope.patientIdInScope(PATIENT_ID)).thenReturn(null);
+        assertConflict(() -> service.acknowledgeReminder(TASK_ID, OPERATOR), 40400);
+
+        when(patientScope.patientIdInScope(PATIENT_ID)).thenReturn(PATIENT_ID);
+        for (String status :
+                List.of("COMPLETED", "LOST", "LOST_CANDIDATE", "TERMINATED", "SKIPPED_SUSPENDED")) {
+            when(taskMapper.findStartTaskById(TASK_ID)).thenReturn(reminderRow(status));
+            assertConflict(() -> service.acknowledgeReminder(TASK_ID, OPERATOR), 40901);
+        }
+        verify(taskMapper, never()).completeTask(anyLong(), any(), any(), any());
+    }
+
+    @Test
+    void acknowledgeSurfacesConcurrentStateChangeAs40900() {
+        when(taskMapper.findStartTaskById(TASK_ID)).thenReturn(reminderRow("PENDING"));
+        when(taskMapper.findTaskById(TASK_ID)).thenReturn(taskRow("PENDING"));
+        when(patientScope.patientIdInScope(PATIENT_ID)).thenReturn(PATIENT_ID);
+        when(taskMapper.completeTask(anyLong(), any(), any(), any())).thenReturn(0);
+
+        assertConflict(() -> service.acknowledgeReminder(TASK_ID, OPERATOR), 40900);
     }
 
     @Test

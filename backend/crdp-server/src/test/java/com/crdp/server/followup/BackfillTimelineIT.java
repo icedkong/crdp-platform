@@ -299,10 +299,6 @@ class BackfillTimelineIT {
 
         assertEquals(
                 40001,
-                code(backfillCall(doctor, patientId, "UNPLANNED", today.minusDays(10))),
-                "计划外随访随 E15-T06");
-        assertEquals(
-                40001,
                 code(backfillCall(doctor, patientId, "REMOTE", today.minusDays(10))),
                 "远程监测随 E21");
         assertEquals(

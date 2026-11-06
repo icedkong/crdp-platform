@@ -70,7 +70,9 @@ import ContactLogModal from '#/components/followup/contact-log-modal.vue';
 import FollowupTimeline from '#/components/followup/followup-timeline.vue';
 import PatientHeader from '#/components/followup/patient-header.vue';
 import ReasonModal from '#/components/followup/reason-modal.vue';
+import TempTaskModal from '#/components/followup/temp-task-modal.vue';
 import TransferWardModal from '#/components/followup/transfer-ward-modal.vue';
+import UnplannedRecordModal from '#/components/followup/unplanned-record-modal.vue';
 import { usePermission } from '#/reference/use-permission';
 
 defineOptions({ name: 'FollowupPatientDetail' });
@@ -121,6 +123,11 @@ const transferOpen = ref(false);
 
 // E15-T07 / A-FU-014：历史补录弹窗（随访记录页签入口）
 const backfillOpen = ref(false);
+
+// E15-T06 / A-FU-013：临时添加任务弹窗（A-FU-023 时间轴「添加任务」）与
+// C-FU-022 计划外随访弹窗（患者头部入口，components.md §4）
+const tempTaskOpen = ref(false);
+const unplannedOpen = ref(false);
 
 const patientId = computed(() => String(route.params.id ?? ''));
 
@@ -469,14 +476,19 @@ async function openTimelineNode(entry: PatientTimelineEntry) {
   }
 }
 
-/** 补录创建成功：新标签页打开表单并刷新时间轴（补录草稿节点随建随显）。 */
-async function onBackfillCreated(recordId: string) {
+/** 补录 / 计划外创建成功：新标签页打开表单并刷新时间轴（记录节点随建随显）。 */
+async function onRecordCreated(recordId: string) {
   window.open(`/followup/record/${recordId}`, '_blank');
   await reloadTimeline();
 }
 
+/** 临时任务创建成功（E15-T06 / A-FU-013）：刷新时间轴（任务节点随建随显）。 */
+async function onTempTaskCreated() {
+  await reloadTimeline();
+}
+
 const timelineLegendNote =
-  '时间轴含每年随访、历史补录与下次计划日期（计划中）；计划外随访随 E15-T06、终点事件随 E17、医院 C 的器械事件随 E21 接入。';
+  '时间轴含每年随访、历史补录、计划外随访（不影响后续节点）与下次计划日期（计划中）；终点事件随 E17、医院 C 的器械事件随 E21 接入。';
 </script>
 
 <template>
@@ -501,6 +513,7 @@ const timelineLegendNote =
       :overview="overview"
       @contacts="openContacts"
       @transfer="transferOpen = true"
+      @unplanned="unplannedOpen = true"
     />
     <Tabs v-model:active-key="tab" class="tabs">
       <TabPane key="baseline" tab="基线资料" />
@@ -676,6 +689,17 @@ const timelineLegendNote =
         >
           历史补录
         </Button>
+        <!-- A-FU-023「中间该子计划的任务列表，可临时添加任务」：时间轴工具栏入口 -->
+        <Tooltip v-if="followupTerminated" title="患者不在随访中">
+          <Button disabled>添加任务</Button>
+        </Tooltip>
+        <Button
+          v-else-if="canEditRecord"
+          data-testid="temp-task-create"
+          @click="tempTaskOpen = true"
+        >
+          添加任务
+        </Button>
       </div>
       <FollowupTimeline
         :entries="timeline"
@@ -685,7 +709,18 @@ const timelineLegendNote =
       <BackfillRecordModal
         v-model:open="backfillOpen"
         :patient-id="overview.id"
-        @created="onBackfillCreated"
+        @created="onRecordCreated"
+      />
+      <TempTaskModal
+        v-model:open="tempTaskOpen"
+        :patient-id="overview.id"
+        :patient-label="overview.name"
+        @created="onTempTaskCreated"
+      />
+      <UnplannedRecordModal
+        v-model:open="unplannedOpen"
+        :patient-id="overview.id"
+        @created="onRecordCreated"
       />
     </div>
 

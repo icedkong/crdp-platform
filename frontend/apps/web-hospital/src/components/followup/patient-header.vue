@@ -22,8 +22,9 @@ import MaskedField from './masked-field.vue';
  * 概览三块（验收「概览显示基线、计划、最近随访」）：完整度（基线块）、下次随访
  * （计划块，E14 写入前「未安排」）、最近随访（E15 写入前「暂无随访记录」）。
  * 姓名 MaskedField revealable：明文走 plaintext 专用接口并写审计，60 秒恢复脱敏。
- * C 当前器械行随 E21 植入数据开放；四个操作按钮随 E14（停止）/ E15（计划外、
- * 沟通）/ E16（上传）的接口落地后按 summary.actions 渲染。
+ * 操作按钮按 summary.actions（后端按权限 + 状态计算）渲染：E15-T06 起接入
+ * 「新建计划外随访」（unplanned，C-FU-022：患者在随访中 + followup:record:edit）；
+ * 上传报告单（E16）/ 停止随访（E14 接口待页面接入）随对应任务开放。
  */
 const props = defineProps<{
   overview: PatientOverview;
@@ -32,10 +33,16 @@ const props = defineProps<{
 const emit = defineEmits<{
   contacts: [];
   transfer: [];
+  unplanned: [];
 }>();
 
 /** E13-T08 / A-WARD-005：转病区按钮按 summary.actions（后端按权限计算）显示。 */
 const canTransfer = computed(() => props.overview.actions.includes('transfer'));
+
+/** E15-T06 / C-FU-022：新建计划外随访（components.md §4 按权限 + 在随访中显示）。 */
+const canUnplanned = computed(() =>
+  props.overview.actions.includes('unplanned'),
+);
 
 const { isMobile } = useBreakpoint();
 const detailsOpen = ref(false);
@@ -121,6 +128,16 @@ const metrics = computed(() => [
         @click="emit('transfer')"
       >
         转病区
+      </Button>
+      <!-- C-FU-022 症状就诊、程控调整等直接新建记录；患者不在随访中时后端不下发该 action -->
+      <Button
+        v-if="canUnplanned"
+        data-testid="open-unplanned"
+        size="small"
+        type="primary"
+        @click="emit('unplanned')"
+      >
+        新建计划外随访
       </Button>
     </div>
   </header>
