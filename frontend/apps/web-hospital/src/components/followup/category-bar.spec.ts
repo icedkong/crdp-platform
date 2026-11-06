@@ -6,7 +6,7 @@
  */
 import { mount } from '@vue/test-utils';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import CategoryBar from './category-bar.vue';
 
@@ -21,6 +21,8 @@ const mounted: Array<{ unmount: () => void }> = [];
 afterEach(() => {
   for (const wrapper of mounted.splice(0)) wrapper.unmount();
   document.body.innerHTML = '';
+  vi.unstubAllGlobals();
+  FakeIntersectionObserver.instances.length = 0;
 });
 
 function mountBar(props: Record<string, unknown> = {}) {
@@ -105,5 +107,103 @@ describe('e24-t02 CategoryBar：手机「跳到分组」下拉 + 底部抽屉', 
     window.dispatchEvent(new Event('resize'));
     const desktop = mountBar({ mode: 'auto' });
     expect(desktop.find('[data-testid="category-bar"]').exists()).toBe(true);
+  });
+});
+
+/* ----------------------------------------------------------------------
+ * E13-T11 / A-PAT-021、C-PAT-018 · 分类条 / 分组条（components.md §6）：
+ * 已填 / 应填着色（未填完为 colors.warning 橙）、scroll-spy 联动 activeKey
+ * （IntersectionObserver 观察各分类锚点，顶部最近的一个为 active）。
+ */
+class FakeIntersectionObserver {
+  static instances: FakeIntersectionObserver[] = [];
+  callback: IntersectionObserverCallback;
+  entries = new Map<Element, IntersectionObserverEntry>();
+
+  constructor(
+    callback: IntersectionObserverCallback,
+    _options?: IntersectionObserverInit,
+  ) {
+    this.callback = callback;
+    FakeIntersectionObserver.instances.push(this);
+  }
+
+  disconnect() {
+    this.entries.clear();
+  }
+
+  observe(target: Element) {
+    this.entries.set(target, {
+      isIntersecting: false,
+      target,
+    } as IntersectionObserverEntry);
+  }
+
+  setVisible(target: Element, visible: boolean) {
+    const entry = this.entries.get(target);
+    if (!entry) return;
+    this.callback(
+      [{ ...entry, isIntersecting: visible }] as IntersectionObserverEntry[],
+      this as unknown as IntersectionObserver,
+    );
+  }
+
+  unobserve(target: Element) {
+    this.entries.delete(target);
+  }
+}
+
+function mountSections(keys: string[]) {
+  for (const key of keys) {
+    const el = document.createElement('section');
+    el.id = `crdp-anchor-${key}`;
+    document.body.append(el);
+  }
+}
+
+describe('e13-t11 CategoryBar：已填 / 应填着色与 scroll-spy（E13-T11）', () => {
+  it('未填完的分类数字为橙色（colors.warning），填完的不着色', () => {
+    const wrapper = mountBar({ mode: 'bar' });
+    const counts = wrapper.findAll('[data-testid="category-bar"] .count');
+    expect(counts).toHaveLength(3);
+    // 随访概况 2/2 已填完 → 不着色
+    expect(counts[0]?.attributes('style') ?? '').not.toContain('#FA8C16');
+    // 随访结局 0/1、超声复查 1/3 未填完 → 橙色（tokens colors.warning）
+    expect(counts[1]?.attributes('style')).toContain('#FA8C16');
+    expect(counts[2]?.attributes('style')).toContain('#FA8C16');
+  });
+
+  it('spy：滚动时顶部最近可见的分类经 update:activeKey 上抛', () => {
+    vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver);
+    mountSections(['overview', 'outcome', 'echo']);
+    const wrapper = mountBar({ mode: 'bar', spy: true });
+
+    const observer = FakeIntersectionObserver.instances.at(-1);
+    expect(observer).toBeDefined();
+    // items 的三个锚点都被观察
+    expect(observer?.entries.size).toBe(3);
+
+    const outcomeEl = document.querySelector('#crdp-anchor-outcome');
+    const echoEl = document.querySelector('#crdp-anchor-echo');
+    observer?.setVisible(outcomeEl as Element, true);
+    observer?.setVisible(echoEl as Element, true);
+    const emitted = wrapper.emitted('update:activeKey');
+    expect(emitted?.at(-1)?.[0]).toBe('outcome');
+  });
+
+  it('spy 默认关闭：不创建 IntersectionObserver（既有表单页行为不变）', () => {
+    vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver);
+    const before = FakeIntersectionObserver.instances.length;
+    mountSections(['overview', 'outcome', 'echo']);
+    mountBar({ mode: 'bar' });
+    expect(FakeIntersectionObserver.instances.length).toBe(before);
+  });
+
+  it('点击 chip 发出 jump（页面滚动定位），并同步 activeKey', async () => {
+    const wrapper = mountBar({ mode: 'bar' });
+    const chips = wrapper.findAll('[data-testid="category-bar"] .chip');
+    await chips[0]?.trigger('click');
+    expect(wrapper.emitted('jump')?.[0]?.[0]).toBe('overview');
+    expect(wrapper.emitted('update:activeKey')?.[0]?.[0]).toBe('overview');
   });
 });

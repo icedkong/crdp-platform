@@ -64,8 +64,14 @@ import {
   fetchPatientWardHistory,
 } from '#/api/core/patient';
 import { startTask } from '#/api/core/task';
+import {
+  categoryHash,
+  jumpToAnchor,
+  parseCategoryHash,
+} from '#/components/followup/anchor-nav';
 import AudioPlayer from '#/components/followup/audio-player.vue';
 import BackfillRecordModal from '#/components/followup/backfill-record-modal.vue';
+import CategoryBar from '#/components/followup/category-bar.vue';
 import ContactLogModal from '#/components/followup/contact-log-modal.vue';
 import FollowupTimeline from '#/components/followup/followup-timeline.vue';
 import PatientHeader from '#/components/followup/patient-header.vue';
@@ -205,6 +211,60 @@ const baselineSectionViews = computed(() => {
     })
     .filter((item) => item.schema !== null);
 });
+
+// ---------------------------------------------------------------- E13-T11 基线分类条（A-PAT-021）
+
+/**
+ * 顶部分类条（吸顶）：每个分类显示「已填 / 应填」（服务端按 A-PAT-019 口径随
+ * 基线视图下发，与分节标题同源）；未填完的数字由 CategoryBar 标橙色。
+ */
+const baselineBarItems = computed(() =>
+  baselineSectionViews.value.map((section) => {
+    const progress = baseline.value?.progress.find(
+      (item) => item.key === section.code,
+    );
+    return {
+      filled: progress?.filled ?? 0,
+      key: section.code,
+      label: section.label,
+      total: progress?.total ?? 0,
+    };
+  }),
+);
+
+const baselineActiveKey = ref('');
+let lastJumpedKey = '';
+
+/**
+ * 点击分类：滚动到该分类并高亮 2 秒，位置写入页面地址 `#cat=<key>`
+ * （A-PAT-021 可分享、可后退；后退 / 分享链接由 watch(route.hash) 接住重放）。
+ */
+function jumpToBaselineCategory(key: string) {
+  baselineActiveKey.value = key;
+  lastJumpedKey = key;
+  jumpToAnchor(key, document);
+  if (route.hash !== categoryHash(key)) {
+    void router.push({ hash: categoryHash(key) });
+  }
+}
+
+// 分节懒加载完成后：分享 / 后退进来的 #cat=<key> 重放定位（只对有效分类生效）
+watch(
+  [baselineBarItems, () => route.hash],
+  ([items, hash]) => {
+    const key = parseCategoryHash(String(hash ?? ''));
+    if (!key) return;
+    if (!items.some((item) => item.key === key)) return;
+    if (key === lastJumpedKey) return;
+    baselineActiveKey.value = key;
+    lastJumpedKey = key;
+    jumpToAnchor(key, document);
+  },
+  { immediate: true },
+);
+
+// 随访记录页签：展开的记录（v-model，一次一条；分组条在该记录顶部吸顶）
+const expandedRecordId = ref<null | string>(null);
 
 /** 「编辑」入口（pages.md §4.2：锁定置灰；无编辑权限隐藏）。 */
 const canEditPatient = computed(() => hasPermission('followup:patient:edit'));
@@ -522,6 +582,17 @@ const timelineLegendNote =
     </Tabs>
 
     <div v-if="tab === 'baseline'" class="main" data-testid="baseline-panel">
+      <!-- E13-T11 / A-PAT-021：右侧内容顶部吸顶分类条（已填 / 应填，未填完橙色；
+           点击滚到该分类并高亮 2 秒，位置写入地址；平板横向滚动、手机下拉） -->
+      <CategoryBar
+        v-if="baselineBarItems.length > 0"
+        v-model:active-key="baselineActiveKey"
+        class="baseline-bar"
+        :items="baselineBarItems"
+        data-testid="baseline-category-bar"
+        spy
+        @jump="jumpToBaselineCategory"
+      />
       <Alert
         v-if="baselineLockBannerText"
         class="notice"
@@ -702,6 +773,7 @@ const timelineLegendNote =
         </Button>
       </div>
       <FollowupTimeline
+        v-model:expanded-record-id="expandedRecordId"
         :entries="timeline"
         :patient-id="overview.id"
         @open="openTimelineNode"
@@ -867,6 +939,11 @@ const timelineLegendNote =
 
 .main {
   padding: 16px;
+}
+
+/* E13-T11 基线分类条：吸顶后与下方锁定横幅留出间距 */
+.baseline-bar {
+  margin-bottom: 12px;
 }
 
 .baseline-section {

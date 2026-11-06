@@ -1,7 +1,8 @@
 <script lang="ts" setup>
-import type { PatientTimelineEntry } from '@crdp/api';
+import type { FormSchema, PatientTimelineEntry } from '@crdp/api';
+import type { CategoryProgress } from '@crdp/rules';
 
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 
 import {
   PATIENT_STATUS_TEXT,
@@ -10,19 +11,28 @@ import {
   timelineEntryLabel,
   timelineProgressText,
 } from '@crdp/api';
+import { FormRenderer } from '@crdp/form-engine';
 import { StatusTag } from '@crdp/status-tag';
 import { colors } from '@crdp/tokens';
 import {
+  Alert,
+  Button,
   Card,
   Empty,
   Segmented,
   Select,
+  Spin,
   Table,
   Timeline,
   TimelineItem,
 } from 'ant-design-vue';
 
+import { fetchFormSchema } from '#/api/core/form';
+import { fetchRecordDetail } from '#/api/core/task';
 import { useBreakpoint } from '#/reference/use-breakpoint';
+
+import { jumpToAnchor } from './anchor-nav';
+import CategoryBar from './category-bar.vue';
 
 /**
  * E15-T07 / A-FU-023、C-FU-023（components.md §9）：患者详情「随访记录」页签右侧内容。
@@ -34,14 +44,22 @@ import { useBreakpoint } from '#/reference/use-breakpoint';
  * C 器械事件随 E21。点节点卡片 canOpen 时 emit open（有 recordId 直接开表单页；未开始任务先
  * start 再开，由父页处理）。视图切换记住用户上次选择（localStorage crdp:fu-view，只存视图名，
  * 不含患者信息）。
+ *
+ * E13-T11 / A-PAT-021、C-PAT-018：有 recordId 的节点可「展开」——卡片内只读渲染该次记录
+ * （FormRenderer readonly），顶部吸顶分组条（分组名、已填 / 应填、未填完橙色，A-PAT-019 口径
+ * 由 progress 事件实时上抛），点击滚动到该分组并高亮 2 秒；平板横向滚动、手机「跳到分组」
+ * 下拉 + 底部抽屉（CategoryBar select 形态）。标红数随 E17（compareRules）接入。
  */
 const props = defineProps<{
   entries: PatientTimelineEntry[];
+  /** v-model：当前展开的记录（一次只展开一条；null = 全部收起）。 */
+  expandedRecordId?: null | string;
   patientId: string;
 }>();
 
 const emit = defineEmits<{
   (event: 'open', entry: PatientTimelineEntry): void;
+  (event: 'update:expandedRecordId', id: null | string): void;
 }>();
 
 /** 颜色全部取自 tokens（不写魔法数）；stylelint 不认 v-bind()，走 CSS 变量注入。 */
@@ -141,6 +159,72 @@ function onNodeClick(entry: PatientTimelineEntry) {
   if (isClickable(entry)) emit('open', entry);
 }
 
+// ---------------------------------------------------------------- E13-T11 展开记录与分组条
+
+const recordLoading = ref(false);
+const recordFailed = ref(false);
+const recordSchema = ref<FormSchema | null>(null);
+const recordData = ref<Record<string, unknown>>({});
+const recordProgress = ref<CategoryProgress[]>([]);
+const recordActiveKey = ref('');
+/** 已加载过的记录（切换展开不重复请求；只存模板与值，不含患者敏感信息）。 */
+const recordCache = new Map<
+  string,
+  { data: Record<string, unknown>; schema: FormSchema }
+>();
+
+/** 展开 / 收起（一次只展开一条；按钮在卡片内，stopPropagation 不触发 open）。 */
+function toggleExpand(entry: PatientTimelineEntry) {
+  if (!entry.recordId) return;
+  emit(
+    'update:expandedRecordId',
+    entry.recordId === props.expandedRecordId ? null : entry.recordId,
+  );
+}
+
+async function loadRecord(recordId: string) {
+  recordLoading.value = true;
+  recordFailed.value = false;
+  try {
+    const detail = await fetchRecordDetail(recordId);
+    const schema = await fetchFormSchema(detail.formCode, detail.formVersion);
+    recordCache.set(recordId, { data: detail.data, schema });
+    if (props.expandedRecordId === recordId) {
+      recordSchema.value = schema;
+      recordData.value = detail.data;
+    }
+  } catch {
+    recordFailed.value = true;
+  } finally {
+    recordLoading.value = false;
+  }
+}
+
+watch(
+  () => props.expandedRecordId,
+  (recordId) => {
+    recordActiveKey.value = '';
+    recordProgress.value = [];
+    recordFailed.value = false;
+    if (!recordId) return;
+    const cached = recordCache.get(recordId);
+    if (cached) {
+      recordSchema.value = cached.schema;
+      recordData.value = cached.data;
+      return;
+    }
+    recordSchema.value = null;
+    void loadRecord(recordId);
+  },
+  { immediate: true },
+);
+
+/** 分组条点击：滚到该分组锚点（FormRenderer 输出 #crdp-anchor-<key>）并高亮 2 秒。 */
+function jumpRecordSection(key: string) {
+  recordActiveKey.value = key;
+  jumpToAnchor(key, document);
+}
+
 const jumpOptions = computed(() =>
   props.entries.map((entry, index) => ({
     label: `${timelineEntryLabel(entry)}（${nodeDate(entry)}）`,
@@ -150,6 +234,11 @@ const jumpOptions = computed(() =>
 
 function jumpTo(index: number) {
   setView('timeline');
+  const entry = props.entries[index];
+  // 「跳到节点 ▾」选中后滚动并展开（components.md §9）
+  if (entry?.recordId && entry.recordId !== props.expandedRecordId) {
+    emit('update:expandedRecordId', entry.recordId);
+  }
   document
     .querySelector(`#timeline-item-${index}`)
     ?.scrollIntoView({ block: 'start' });
@@ -290,10 +379,68 @@ const tableRows = computed(() =>
                 }}
               </span>
               <span class="date">{{ nodeDate(entry) }}</span>
+              <span class="head-actions">
+                <!-- E13-T11「展开」：卡片内只读展开该次记录（分组条在其顶部吸顶） -->
+                <Button
+                  v-if="entry.recordId"
+                  class="expand-toggle"
+                  :data-testid="`record-expand-toggle-${entry.recordId}`"
+                  size="small"
+                  type="link"
+                  @click.stop="toggleExpand(entry)"
+                >
+                  {{ entry.recordId === expandedRecordId ? '收起' : '展开' }}
+                </Button>
+              </span>
             </div>
             <p class="detail">{{ nodeDetail(entry) }}</p>
             <p v-if="entry.note" class="note">{{ entry.note }}</p>
           </Card>
+
+          <!-- E13-T11 展开的随访记录：顶部吸顶分组条 + FormRenderer 只读内容 -->
+          <div
+            v-if="entry.recordId && entry.recordId === expandedRecordId"
+            class="record-expand"
+            :data-testid="`record-expand-${entry.recordId}`"
+          >
+            <Spin
+              v-if="recordLoading"
+              class="record-loading"
+              tip="正在加载记录…"
+            />
+            <Alert
+              v-else-if="recordFailed"
+              show-icon
+              type="error"
+              message="记录加载失败，请稍后重试"
+            >
+              <template #action>
+                <Button
+                  data-testid="record-expand-retry"
+                  size="small"
+                  type="primary"
+                  @click="loadRecord(entry.recordId ?? '')"
+                >
+                  重试
+                </Button>
+              </template>
+            </Alert>
+            <template v-else-if="recordSchema">
+              <CategoryBar
+                v-model:active-key="recordActiveKey"
+                :items="recordProgress"
+                show-highlight-count
+                spy
+                @jump="jumpRecordSection"
+              />
+              <FormRenderer
+                :model-value="recordData"
+                :schema="recordSchema"
+                mode="readonly"
+                @progress="recordProgress = $event"
+              />
+            </template>
+          </div>
         </TimelineItem>
       </Timeline>
     </div>
@@ -360,5 +507,28 @@ const tableRows = computed(() =>
 .node.disabled {
   cursor: not-allowed;
   opacity: 0.6;
+}
+
+/* E13-T11 展开记录：分组条顶部吸顶（CategoryBar 自带 sticky），内容收进浅底卡片 */
+.record-expand {
+  padding: 8px 12px;
+  margin-top: 4px;
+  background: #fafafa;
+  border: 1px solid #f0f0f0;
+  border-radius: 6px;
+}
+
+.record-loading {
+  display: block;
+  padding: 24px 0;
+  text-align: center;
+}
+
+.head-actions {
+  margin-left: auto;
+}
+
+.expand-toggle {
+  padding: 0;
 }
 </style>

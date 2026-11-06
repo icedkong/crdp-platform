@@ -1,15 +1,31 @@
-import type { PatientTimelineEntry } from '@crdp/api';
+import type {
+  FormSchema,
+  FormSchemaField,
+  PatientTimelineEntry,
+} from '@crdp/api';
 
 import { mount } from '@vue/test-utils';
-import { nextTick } from 'vue';
+import { nextTick, ref } from 'vue';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { fetchFormSchema } from '#/api/core/form';
+import { fetchRecordDetail } from '#/api/core/task';
+
 import FollowupTimeline from './followup-timeline.vue';
 
-// happy-dom 视口窄，会被判为手机；表格视图测试按桌面口径
+// happy-dom 视口窄，会被判为手机；表格视图测试按桌面口径（手机形态用例切换 mock 状态）
+const breakpointState = { isMobile: false };
 vi.mock('#/reference/use-breakpoint', () => ({
-  useBreakpoint: () => ({ isMobile: false }),
+  useBreakpoint: () => ({ isMobile: ref(breakpointState.isMobile) }),
+}));
+
+// E13-T11 展开记录：只读详情 + 模板（分组条数据源）
+vi.mock('#/api/core/form', () => ({
+  fetchFormSchema: vi.fn(),
+}));
+vi.mock('#/api/core/task', () => ({
+  fetchRecordDetail: vi.fn(),
 }));
 
 /**
@@ -24,10 +40,15 @@ const mounted: Array<{ unmount: () => void }> = [];
 afterEach(() => {
   localStorage.removeItem('crdp:fu-view');
   for (const wrapper of mounted.splice(0)) wrapper.unmount();
+  document.body.innerHTML = '';
+  breakpointState.isMobile = false;
+  vi.clearAllMocks();
 });
 
 function mountTimeline(entries: PatientTimelineEntry[]) {
   const wrapper = mount(FollowupTimeline, {
+    // attachTo：E13-T11 分组条跳转走 document.getElementById（页面锚点同源）
+    attachTo: document.body,
     props: { entries, patientId: '301' },
   });
   mounted.push(wrapper);
@@ -195,5 +216,212 @@ describe('既有节点（E13-T05 回归）', () => {
     expect(headers).toContain('完成日期');
     expect(headers).toContain('进度');
     expect(wrapper.text()).toContain('进度 1/1');
+  });
+});
+
+/* ----------------------------------------------------------------------
+ * E13-T11 / A-PAT-021、C-PAT-018 · 随访记录展开分组条（components.md §9「展开」）：
+ * 已提交记录「展开」→ 卡片内只读内容（FormRenderer readonly）+ 顶部吸顶分组条
+ * （分组名、已填 / 应填，未填完橙色）；点击滚动到该分组；平板横向滚动、手机下拉选择。
+ */
+function f(
+  partial: Partial<FormSchemaField> & { key: string; label: string },
+): FormSchemaField {
+  return {
+    code: partial.key,
+    required: false,
+    sensitive: false,
+    storage: 'json',
+    type: 'text',
+    ...partial,
+  };
+}
+
+const recordSchema: FormSchema = {
+  categories: [
+    {
+      key: 'overview',
+      label: '随访概况',
+      order: 10,
+      fields: [
+        f({ key: 'f501', label: '随访日期', type: 'date', required: true }),
+        f({ key: 'f502', label: '随访方式', type: 'text', required: true }),
+      ],
+    },
+    {
+      key: 'echo',
+      label: '超声复查',
+      order: 20,
+      fields: [
+        f({
+          key: 'f520',
+          label: 'EF 射血分数',
+          type: 'number',
+          required: true,
+        }),
+      ],
+    },
+  ],
+  code: 'fu_a_year',
+  name: '年度随访（示例）',
+  rules: [],
+  usage: 'FOLLOWUP',
+  version: 3,
+};
+
+const recordDetail = {
+  context: null,
+  data: { f501: '2026-11-02', f502: '电话' },
+  dataMeta: {},
+  formCode: 'fu_a_year',
+  formVersion: 3,
+  id: '701',
+  status: 'SUBMITTED' as const,
+  version: 2,
+};
+
+function mockRecordLoading() {
+  vi.mocked(fetchRecordDetail).mockResolvedValue(recordDetail);
+  vi.mocked(fetchFormSchema).mockResolvedValue(recordSchema);
+}
+
+describe('e13-t11 随访记录展开分组条（components.md §9「展开」+ §6）', () => {
+  it('有 recordId 的节点显示「展开」：点击展开只读内容 + 顶部分组条（已填 / 应填）', async () => {
+    mockRecordLoading();
+    const wrapper = mountTimeline([followupNode()]);
+    const expandButton = wrapper.find(
+      '[data-testid="record-expand-toggle-701"]',
+    );
+    expect(expandButton.exists()).toBe(true);
+    expect(expandButton.text()).toContain('展开');
+
+    await expandButton.trigger('click');
+    expect(wrapper.emitted('update:expandedRecordId')?.at(-1)?.[0]).toBe('701');
+    await wrapper.setProps({ expandedRecordId: '701' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(fetchRecordDetail).toHaveBeenCalledWith('701');
+    expect(fetchFormSchema).toHaveBeenCalledWith('fu_a_year', 3);
+
+    const panel = wrapper.find('[data-testid="record-expand-701"]');
+    expect(panel.exists()).toBe(true);
+    // 分组条：分组名 + 已填 / 应填（FormRenderer progress 事件实时上抛）
+    const bar = panel.find('[data-testid="category-bar"]');
+    expect(bar.exists()).toBe(true);
+    expect(bar.text()).toContain('随访概况');
+    expect(bar.text()).toContain('2/2');
+    expect(bar.text()).toContain('超声复查');
+    expect(bar.text()).toContain('0/1');
+    // 只读内容来自 FormRenderer readonly
+    expect(panel.text()).toContain('EF 射血分数');
+    // 按钮变为「收起」
+    expect(
+      wrapper.find('[data-testid="record-expand-toggle-701"]').text(),
+    ).toContain('收起');
+  });
+
+  it('未填完的分组数字为橙色（colors.warning）', async () => {
+    mockRecordLoading();
+    const wrapper = mountTimeline([followupNode()]);
+    await wrapper
+      .find('[data-testid="record-expand-toggle-701"]')
+      .trigger('click');
+    await wrapper.setProps({ expandedRecordId: '701' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const counts = wrapper.findAll('[data-testid="record-expand-701"] .count');
+    expect(counts).toHaveLength(2);
+    expect(counts[0]?.attributes('style') ?? '').not.toContain('#FA8C16');
+    expect(counts[1]?.attributes('style')).toContain('#FA8C16');
+  });
+
+  it('点分组 chip 滚动到该分组（renderer.scrollTo）', async () => {
+    mockRecordLoading();
+    const wrapper = mountTimeline([followupNode()]);
+    await wrapper
+      .find('[data-testid="record-expand-toggle-701"]')
+      .trigger('click');
+    await wrapper.setProps({ expandedRecordId: '701' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const chips = wrapper.findAll('[data-testid="record-expand-701"] .chip');
+    expect(chips).toHaveLength(2);
+    await chips[1]?.trigger('click');
+
+    const echoSection = document.querySelector('#crdp-anchor-echo');
+    expect(echoSection).not.toBeNull();
+    expect(echoSection?.className).toContain('crdp-anchor-flash');
+  });
+
+  it('再点「收起」发出 null；计划中节点（无 recordId）没有展开按钮', async () => {
+    const wrapper = mountTimeline([
+      followupNode(),
+      {
+        canOpen: false,
+        date: '2027-11-05',
+        kind: 'PLANNED',
+        planDate: '2027-11-05',
+        status: 'PLANNED',
+      },
+    ]);
+    expect(
+      wrapper.find('[data-testid="record-expand-toggle-701"]').exists(),
+    ).toBe(true);
+    expect(
+      wrapper.findAll('[data-testid^="record-expand-toggle"]'),
+    ).toHaveLength(1);
+
+    // 第一次点「展开」→ '701'；再点（已展开，按钮变「收起」）→ null
+    const toggle = wrapper.find('[data-testid="record-expand-toggle-701"]');
+    await toggle.trigger('click');
+    expect(wrapper.emitted('update:expandedRecordId')?.at(-1)?.[0]).toBe('701');
+    await wrapper.setProps({ expandedRecordId: '701' });
+    await wrapper
+      .find('[data-testid="record-expand-toggle-701"]')
+      .trigger('click');
+    expect(wrapper.emitted('update:expandedRecordId')?.at(-1)?.[0]).toBe(null);
+  });
+
+  it('手机：分组条改「跳到分组」下拉（不渲染横向 chip 条）', async () => {
+    breakpointState.isMobile = true;
+    mockRecordLoading();
+    const wrapper = mountTimeline([followupNode()]);
+    await wrapper
+      .find('[data-testid="record-expand-toggle-701"]')
+      .trigger('click');
+    await wrapper.setProps({ expandedRecordId: '701' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const panel = wrapper.find('[data-testid="record-expand-701"]');
+    expect(panel.find('[data-testid="category-jump-trigger"]').exists()).toBe(
+      true,
+    );
+    expect(panel.find('[data-testid="category-bar"]').exists()).toBe(false);
+  });
+
+  it('加载失败显示错误与重试，不阻塞时间轴', async () => {
+    vi.mocked(fetchRecordDetail).mockRejectedValue(new Error('boom'));
+    vi.mocked(fetchFormSchema).mockResolvedValue(recordSchema);
+    const wrapper = mountTimeline([followupNode()]);
+    await wrapper
+      .find('[data-testid="record-expand-toggle-701"]')
+      .trigger('click');
+    await wrapper.setProps({ expandedRecordId: '701' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const panel = wrapper.find('[data-testid="record-expand-701"]');
+    expect(panel.text()).toContain('记录加载失败');
+    const retry = panel.find('[data-testid="record-expand-retry"]');
+    expect(retry.exists()).toBe(true);
+
+    mockRecordLoading();
+    await retry.trigger('click');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(
+      wrapper
+        .find('[data-testid="record-expand-701"]')
+        .find('[data-testid="category-bar"]')
+        .exists(),
+    ).toBe(true);
   });
 });

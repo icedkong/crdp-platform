@@ -1,12 +1,14 @@
 <script lang="ts" setup>
 import type { CategoryProgress } from '#/reference/types';
 
-import { computed, ref } from 'vue';
+import { computed, onBeforeUnmount, ref } from 'vue';
 
 import { colors } from '@crdp/tokens';
 import { Drawer } from 'ant-design-vue';
 
 import { useBreakpoint } from '#/reference/use-breakpoint';
+
+import { useAnchorSpy } from './anchor-nav';
 
 const props = withDefaults(
   defineProps<{
@@ -14,12 +16,20 @@ const props = withDefaults(
     items?: CategoryProgress[];
     mode?: 'auto' | 'bar' | 'select';
     showHighlightCount?: boolean;
+    /**
+     * scroll-spy（E13-T11，components.md §6）：观察 `#crdp-anchor-<key>` 锚点，
+     * 滚动时顶部最近的一个经 update:activeKey 上抛。默认关闭——表单编辑页的
+     * activeKey 是「选中分类」语义（baseline-edit 只渲染当前分类），只有
+     * 详情页这类全分类连续滚动视图（基线页签、展开的随访记录）开启。
+     */
+    spy?: boolean;
   }>(),
   {
     activeKey: '',
     items: () => [],
     mode: 'auto',
     showHighlightCount: false,
+    spy: false,
   },
 );
 
@@ -53,6 +63,20 @@ function pickInDrawer(key: string) {
 const activeItem = computed(() =>
   props.items.find((item) => item.key === props.activeKey),
 );
+
+/**
+ * E13-T11 scroll-spy：spy 开启时观察各分类锚点，滚动把顶部最近的一个
+ * 上抛为 activeKey（components.md §6「v-model:activeKey，滚动时由 scroll-spy 更新」）。
+ */
+const spy = useAnchorSpy({
+  enabled: () => props.spy,
+  keys: computed(() => props.items.map((item) => item.key)),
+  onActive: (key) => {
+    if (key !== props.activeKey) emit('update:activeKey', key);
+  },
+});
+
+onBeforeUnmount(() => spy.stop());
 </script>
 
 <template>
