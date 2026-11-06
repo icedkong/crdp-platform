@@ -209,10 +209,15 @@ class ProvisionedTenantIsolationIT {
         String code = data.get("code").toString();
         createdCodes.add(code);
         List<Map<String, Object>> steps = (List<Map<String, Object>>) data.get("steps");
-        assertEquals(5, steps.size(), () -> steps.toString());
+        assertEquals(6, steps.size(), () -> steps.toString());
         assertTrue(
-                steps.stream().allMatch(step -> "SUCCESS".equals(step.get("status"))),
-                "开通五步必须全部成功: " + steps);
+                steps.stream()
+                        .allMatch(
+                                step ->
+                                        "SUCCESS".equals(step.get("status"))
+                                                || ("config-template".equals(step.get("step"))
+                                                        && "SKIPPED".equals(step.get("status")))),
+                "开通六步必须成功（未选模板时 config-template 记 SKIPPED）: " + steps);
         return code;
     }
 

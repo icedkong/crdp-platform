@@ -535,6 +535,11 @@ export interface CreateTenantRequest {
   modules?: string[];
   name: string;
   remindDays?: null | number[];
+  /**
+   * 初始化所选配置模板（E12-T05 / A-FLD-014「新建租户时选择模板初始化」，向导第 2 步）：
+   * 省略 = 不用模板（开通 config-template 步骤记 SKIPPED）；未知模板 40400。
+   */
+  templateId?: number;
 }
 
 export interface TenantProvisionStep {

@@ -118,10 +118,15 @@ class M1FoundationRegressionIT {
         assertTrue(tenantCode.matches("^t[a-z0-9]{7}$"), "编码自动生成：" + tenantCode);
 
         List<Map<String, Object>> steps = (List<Map<String, Object>>) data.get("steps");
-        assertEquals(5, steps.size(), "开通编排五步：" + steps);
+        assertEquals(6, steps.size(), "开通编排六步（含可选 config-template）：" + steps);
         assertTrue(
-                steps.stream().allMatch(step -> "SUCCESS".equals(step.get("status"))),
-                () -> "五步全部 SUCCESS：" + steps);
+                steps.stream()
+                        .allMatch(
+                                step ->
+                                        "SUCCESS".equals(step.get("status"))
+                                                || ("config-template".equals(step.get("step"))
+                                                        && "SKIPPED".equals(step.get("status")))),
+                () -> "未选模板时 config-template 记 SKIPPED，其余 SUCCESS：" + steps);
 
         // 平台登记与租户库
         assertEquals(

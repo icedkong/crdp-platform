@@ -21,7 +21,7 @@ import {
 import { provisionOf, recycleTenant, retryProvision } from '#/api/core/tenant';
 
 import { canRecycle, canRetry } from './provision';
-import { PROVISION_TITLES } from './wizard';
+import { PROVISION_TITLES, provisionSkipText } from './wizard';
 
 defineOptions({ name: 'PlatformTenantProvision' });
 
@@ -74,9 +74,14 @@ const failedSteps = computed(
     view.value?.steps.filter((step) => step.status === 'FAILED').length ?? 0,
 );
 
-function describe(step: { error: null | string; status: string }): string {
+function describe(step: {
+  error: null | string;
+  status: string;
+  step: string;
+}): string {
   if (step.status === 'FAILED') return step.error ?? '失败';
-  if (step.status === 'SKIPPED') return '已跳过，启用前补设';
+  // SKIPPED 文案按步骤区分：admin=启用前补设，config-template=未选择模板（E12-T05）
+  if (step.status === 'SKIPPED') return provisionSkipText(step.step);
   return '';
 }
 

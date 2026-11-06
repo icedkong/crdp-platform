@@ -55,7 +55,10 @@ public class PlatformTenantController {
         this.accountService = accountService;
     }
 
-    /** 新建租户请求：到期设置五项可整体省略（默认长期有效）；有到期日时到期日必填且须晚于当天， 提醒节点 / 宽限期缺省取默认值（30、7、1 天与 15 天）。 */
+    /**
+     * 新建租户请求：到期设置五项可整体省略（默认长期有效）；有到期日时到期日必填且须晚于当天， 提醒节点 / 宽限期缺省取默认值（30、7、1 天与 15 天）。templateId 为向导第
+     * 2 步选择的配置模板（E12-T05 / A-FLD-014「新建租户时选择模板初始化」）， 省略 = 不用模板，开通步骤记 SKIPPED；未知模板 40400。
+     */
     public record CreateTenantRequest(
             String name,
             String code,
@@ -67,7 +70,8 @@ public class PlatformTenantController {
             List<Integer> remindDays,
             Integer graceDays,
             Boolean graceReadOnly,
-            List<String> modules) {}
+            List<String> modules,
+            Long templateId) {}
 
     @Operation(summary = "租户列表（PLT-TEN-001）：按名称/编码关键词、状态、到期日、模块检索")
     @GetMapping
@@ -195,7 +199,8 @@ public class PlatformTenantController {
                                 request.adminDisplayName(),
                                 request.adminInitialPassword(),
                                 expire,
-                                request.modules())));
+                                request.modules(),
+                                request.templateId())));
     }
 
     @Operation(summary = "开通进度（PLT-TEN-008）：租户状态与逐步结果")
