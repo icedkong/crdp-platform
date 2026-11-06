@@ -164,7 +164,16 @@ E20-T01 落地口径（PLT-VIEW-001、004、005、006）：
 | GET | `/api/platform/config-templates/{id}` | `platform:tenant:view` | **已实现**。详情：`{template, tables[{table,module,mode,category,present,rowCount,excludedRowCount,sourceRowCount,columns}]}`（不带行数据；未知 40400） |
 | GET | `/api/platform/config-templates/{id}/package` | `platform:tenant:view` | **已实现**。读回完整包（gzip 解压后的 JSON 结构，`formatVersion/tenantCode/tenantName/exportedAt/tables[]`，行值已归一化）；写 `CONFIG_TEMPLATE_DOWNLOAD` 审计 |
 | GET | `/api/platform/config-templates/registry` | `platform:tenant:view` | **已实现**。配置表注册表清单（table / module / mode / category / description / excludeRows），预览「会导出什么」用（管理页随 E12-T04） |
-| POST | `/api/platform/config-templates/{id}/apply` | `platform:tenant:create` | 应用到新租户（导入、ID 重映射、引用用户字段置空与敏感拦截）随 E12-T02 / E12-T03 |
+| POST | `/api/platform/config-templates/{id}/apply` | `platform:tenant:create` | **已实现（E12-T02）**。应用到目标租户：`{tenantId}`（不能是源租户 40001；租户库未注册 40901；未知租户 / 模板 40400；包结构版本不支持 40901）→ `{templateId,templateName,templateVersion,templateHash,sourceTenantId,sourceTenantCode,tenantId,tenantCode,tenantName,appliedAt,insertedRows,mergedRows,skippedRows,droppedRows,tables[{table,mode,imported,packageRows,inserted,merged,skipped,dropped,note}]}`；写 `CONFIG_TEMPLATE_APPLY` 审计（含包哈希），并递增目标租户全部用户权限版本（角色授权可能变化） |
+
+应用（导入）口径（A-FLD-014「导入时重新分配 ID 并重写引用」，验收「导入后引用关系正确」）：
+
+- **ID 重映射**：逐表维护「源 ID → 目标 ID」并改写数值引用列——`sys_role_menu` / `sys_role_scope` / `sys_role_field_policy` 的 `role_id`、`fe_form_version_field.version_id`、`fu_plan_node.plan_id` 与 `parent_id`（自引用）；解析不到目标行的行丢弃并在结果计数。编码引用（`form_code` / `option_set_code` / `dict_code` / `set_code` 等字符串列）不改写，随整包导入自然一致。
+- **用户引用置空**：`created_by / updated_by / published_by` 一律置 NULL（账号不随模板复制）；导出侧敏感信息检查与拦截随 E12-T03。
+- **角色权限取交集**：`sys_role_menu.menu_id` 须落在目标租户生效可分配范围（`TenantScopeService.assignableMenuIds`：base 固定能力 ∪ 模板调整 ∩ 已开通模块）内，超出即丢弃；`sys_role_menu` 本身取并集（INSERT IGNORE）。
+- **合并语义（源值胜，重放幂等）**：自然键相同的行用包值更新；`fu_plan_node` 无自然键，按计划版本（`plan_id` 分组）整组替换（先删后插），重放不叠加；`ntf_setting` 单行表按固定 `id=1` upsert。
+- **整表策略**：`sys_role_scope_dept` 行全部丢弃（`sys_dept` 组织架构不在复制清单，`dept_id` 无法重映射）；STRUCTURE_ONLY（术者、病区 / 中心）、`present=false` 与目标库缺表的节跳过（结果 note 说明）。
+- **事务**：导入在目标租户库单事务内全成或全败；平台库读取（包、租户、可分配范围）在事务外完成。
 
 包值口径：DATETIME → `yyyy-MM-dd HH:mm:ss[.SSS]`、DATE → `yyyy-MM-dd`、二进制 → Base64，其余原样；模块未开通的表以 `present=false` 空节入包，导入侧按迁移存在性对照。
 

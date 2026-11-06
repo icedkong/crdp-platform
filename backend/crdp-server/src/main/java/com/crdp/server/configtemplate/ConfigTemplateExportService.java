@@ -224,6 +224,12 @@ public class ConfigTemplateExportService {
                 header(id), pkg.tables().stream().map(ConfigPackage.TableSection::toMeta).toList());
     }
 
+    /** 模板头信息（导入 {@code ConfigTemplateImportService} 复用；未知模板 40400）。 */
+    public ExportedView headerOf(long id) {
+        CurrentSession.requirePlatform();
+        return header(id);
+    }
+
     /** 读取模板包（gzip 解压后的完整配置包）。纯读，不写审计——HTTP 下载入口走 {@link #download} 补审计。 */
     public ConfigPackage packageOf(long id) {
         CurrentSession.requirePlatform();
@@ -386,12 +392,16 @@ public class ConfigTemplateExportService {
     private ExportedView header(long id) {
         return TenantContext.callAsPlatform(
                 () -> {
-                    Map<String, Object> row =
-                            platform.queryForMap(
+                    List<Map<String, Object>> rows =
+                            platform.queryForList(
                                     "SELECT id, tenant_id, tenant_code, tenant_name, name, version,"
                                             + " format_version, table_count, row_count, package_hash,"
                                             + " created_at FROM plt_config_template WHERE id = ?",
                                     id);
+                    if (rows.isEmpty()) {
+                        throw new ApiException(404, 40400, "配置模板不存在: " + id);
+                    }
+                    Map<String, Object> row = rows.get(0);
                     return new ExportedView(
                             ((Number) row.get("id")).longValue(),
                             ((Number) row.get("tenant_id")).longValue(),
