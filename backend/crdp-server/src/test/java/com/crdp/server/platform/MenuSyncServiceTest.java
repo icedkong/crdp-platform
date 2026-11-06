@@ -374,6 +374,30 @@ class MenuSyncServiceTest {
                         null,
                         "followup:patient:delete",
                         50,
+                        "ENABLED"),
+                // E13-T02 锁定/解锁基线按钮与基线分节编辑隐藏路由（平台库 V48 同构）：
+                // 患者档案（21）下；基线分节编辑 perm_code 为 NULL（沿用患者档案菜单 21 的授予）
+                manifestRow(
+                        226L,
+                        21L,
+                        "BUTTON",
+                        "锁定/解锁基线",
+                        null,
+                        null,
+                        null,
+                        "followup:patient:lock",
+                        45,
+                        "ENABLED"),
+                manifestRow(
+                        227L,
+                        21L,
+                        "MENU",
+                        "基线分节编辑",
+                        "FollowupBaselineEdit",
+                        "/followup/patient/:id/baseline/edit",
+                        "followup/patient/baseline-edit",
+                        null,
+                        25,
                         "ENABLED"));
     }
 

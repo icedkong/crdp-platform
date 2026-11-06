@@ -271,6 +271,37 @@ public class MenuManifest {
                             null,
                             null,
                             20),
+                    // E13-T02 / A-PAT-006：患者档案下的「锁定/解锁基线」按钮（followup:patient:lock，
+                    // A 规格权限表「锁定与解锁基线」——解锁基线的专门权限；平台库 V48 同构）
+                    new MenuManifestItem(
+                            "followup",
+                            "HOSPITAL",
+                            "BUTTON",
+                            "followup:patient:lock",
+                            "FollowupPatient",
+                            "锁定/解锁基线",
+                            null,
+                            null,
+                            null,
+                            "followup:patient:lock",
+                            null,
+                            45),
+                    // E13-T02 / A-PAT-003、A-PAT-005：基线分节编辑隐藏路由（患者档案下，pages.md
+                    // §4.3 新标签页整页；平台库 V48 同构；perm_code 为 NULL——followup:patient:view
+                    // 已由患者档案菜单持有，页面内保存 / 暂存按 followup:patient:edit 按钮）
+                    new MenuManifestItem(
+                            "followup",
+                            "HOSPITAL",
+                            "MENU",
+                            "FollowupBaselineEdit",
+                            "FollowupPatient",
+                            "基线分节编辑",
+                            "FollowupBaselineEdit",
+                            "/followup/patient/:id/baseline/edit",
+                            "followup/patient/baseline-edit",
+                            null,
+                            null,
+                            25),
                     // E14-T01 / A-FU-016、A-FU-018、A-FU-019、C-FU-001：随访计划页面菜单（随访目录下，
                     // 平台库 V42 同构；页面随 E14-T02 落地，本任务先落数据面接口与菜单资源）
                     new MenuManifestItem(

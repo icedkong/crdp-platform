@@ -51,6 +51,9 @@ public class FieldHistoryService {
     /** 随访业务记录（fu_record，E15-T07 / A-FU-014、C-FU-013 载体）的记录类型常量。 */
     public static final String FU_RECORD = "FU_RECORD";
 
+    /** 基线分节（pt_baseline_section，E13-T02 / A-PAT-005、C-PAT-011 字段级留痕）的记录类型常量。 */
+    public static final String PT_BASELINE_SECTION = "PT_BASELINE_SECTION";
+
     /** 查询默认条数（变更记录页单页口径，超长历史按 id 倒序取最近一段）。 */
     public static final int DEFAULT_LIMIT = 200;
 

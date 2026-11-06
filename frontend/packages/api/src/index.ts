@@ -105,14 +105,42 @@ export type {
 } from './advanced-search';
 // E08-T04 审计中心（PLT-AUD-005~007）
 export * from './audit';
-
 export {
   cooldownRemaining,
   isTwoFactorChallenge,
   maskPhone,
   pickTwoFactorChallenge,
 } from './auth-flow';
+
 export type { TwoFactorChallenge } from './auth-flow';
+
+// E13-T02 基线分节、基线锁定与解锁（A-PAT-003、A-PAT-005、A-PAT-006）
+export {
+  BASELINE_LOCKED_TOOLTIP,
+  baselineDraftRecordKey,
+  baselineLockBanner,
+  baselineProgressText,
+  baselineReasonError,
+  baselineSectionStatusText,
+  canEditBaseline,
+  sectionDisplaySchema,
+  showBaselineLock,
+  showBaselineUnlock,
+  sliceSchemaCategory,
+} from './baseline';
+export type {
+  BaselineCategoryProgress,
+  BaselineDraftPayload,
+  BaselineDraftSavedView,
+  BaselineFieldHistoryRow,
+  BaselineLockInfo,
+  BaselineLockPayload,
+  BaselineSection,
+  BaselineSectionSavePayload,
+  BaselineSectionSaveResult,
+  BaselineSectionStatus,
+  PatientBaseline,
+} from './baseline';
 
 export {
   BATCH_SKIP_REASON_TEXT,

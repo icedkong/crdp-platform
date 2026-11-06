@@ -1,5 +1,6 @@
 export * from './audit';
 export * from './auth';
+export * from './baseline';
 export * from './brand';
 export * from './config';
 export * from './contact';

@@ -30,4 +30,11 @@ public class PatientSummaryService {
     public void recompute(long patientId, Long triggeredBy) {
         mapper.upsertRecompute(patientId, triggeredBy);
     }
+
+    /**
+     * 写入基线资料完整度（E13-T02 / A-PAT-019：已填基线必填 ÷ 应填，0–100）：分节保存 / 暂存后由基线用例按 模板进度口径算出并经本入口落列（行不存在则建行）。
+     */
+    public void updateBaselineCompleteness(long patientId, int completeness, Long triggeredBy) {
+        mapper.updateBaselineCompleteness(patientId, completeness, triggeredBy);
+    }
 }

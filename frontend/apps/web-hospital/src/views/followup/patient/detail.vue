@@ -1,6 +1,8 @@
 <script lang="ts" setup>
 import type {
   ContactLogRow,
+  FormSchema,
+  PatientBaseline,
   PatientContactVersion,
   PatientOverview,
   PatientStatusHistoryRow,
@@ -12,6 +14,11 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import {
+  BASELINE_LOCKED_TOOLTIP,
+  baselineLockBanner,
+  baselineProgressText,
+  baselineSectionStatusText,
+  canEditBaseline,
   completenessText,
   contactMethodText,
   contactResultText,
@@ -22,9 +29,13 @@ import {
   latestFollowupText,
   nextVisitText,
   PATIENT_STATUS_TEXT,
+  sectionDisplaySchema,
+  showBaselineLock,
+  showBaselineUnlock,
   statusSourceText,
   survivalStatusText,
 } from '@crdp/api';
+import { FormRenderer } from '@crdp/form-engine';
 import { StatusTag } from '@crdp/status-tag';
 import {
   Alert,
@@ -42,7 +53,9 @@ import {
   Tooltip,
 } from 'ant-design-vue';
 
+import { fetchPatientBaseline, setBaselineLock } from '#/api/core/baseline';
 import { deleteContactLog, fetchPatientContacts } from '#/api/core/contact';
+import { fetchFormSchema } from '#/api/core/form';
 import {
   fetchPatientContactInfo,
   fetchPatientStatusHistory,
@@ -56,6 +69,7 @@ import BackfillRecordModal from '#/components/followup/backfill-record-modal.vue
 import ContactLogModal from '#/components/followup/contact-log-modal.vue';
 import FollowupTimeline from '#/components/followup/followup-timeline.vue';
 import PatientHeader from '#/components/followup/patient-header.vue';
+import ReasonModal from '#/components/followup/reason-modal.vue';
 import TransferWardModal from '#/components/followup/transfer-ward-modal.vue';
 import { usePermission } from '#/reference/use-permission';
 
@@ -67,17 +81,34 @@ defineOptions({ name: 'FollowupPatientDetail' });
  * 登记实体列）、计划（下次随访窗口）、最近随访（关键指标）；「随访记录」页签为
  * 患者时间轴（出院 + 状态变更，随访记录节点随 E15）。
  * 姓名与编号只显示后端脱敏值；越范围 / 不存在的患者 40400 → 「患者不存在或无权
- * 查看」。基线分节（E13-T02）、报告单（E16）、沟通记录与操作日志（E15）等页签
- * 随对应任务开放。
+ * 查看」。报告单（E16）等页签随对应任务开放。
+ *
+ * E13-T02 / A-PAT-003、A-PAT-006：基线资料页签 = 模板分类的只读分节视图
+ * （出院登记实体列在上方登记信息块；分节只渲染 JSON 字段）+ 分类进度 +
+ * 「编辑」（新标签页整页，锁定置灰）与「锁定 / 解锁」（解锁需
+ * followup:patient:lock 并填写原因，ReasonModal；锁定 / 解锁留痕见操作日志）。
  */
 const route = useRoute();
 const router = useRouter();
+const { hasPermission } = usePermission();
 
 const loading = ref(true);
 const loadFailed = ref(false);
 const overview = ref<null | PatientOverview>(null);
 const timeline = ref<PatientTimelineEntry[]>([]);
 const tab = ref('baseline');
+
+// ---------------------------------------------------------------- E13-T02 基线分节与锁定
+
+const baseline = ref<null | PatientBaseline>(null);
+const baselineSchema = ref<FormSchema | null>(null);
+const unlockOpen = ref(false);
+const lockSubmitting = ref(false);
+
+const baselineLocked = computed(() => baseline.value?.lock.locked ?? false);
+const baselineLockBannerText = computed(() =>
+  baselineLockBanner(baseline.value?.lock ?? null),
+);
 
 const contactsOpen = ref(false);
 const contactsLoading = ref(false);
@@ -115,6 +146,7 @@ onMounted(async () => {
     ]);
     overview.value = summary;
     timeline.value = timelineResult.items;
+    void loadBaseline();
   } catch {
     // 越范围 / 不存在统一 40400（AGENTS.md §5.2，不暴露对象存在）
     loadFailed.value = true;
@@ -122,6 +154,102 @@ onMounted(async () => {
     loading.value = false;
   }
 });
+
+/** 基线全量视图（分节 + 进度 + 锁定态）；失败保留空态，不影响档案主体。 */
+async function loadBaseline() {
+  try {
+    const view = await fetchPatientBaseline(patientId.value);
+    baseline.value = view;
+    baselineSchema.value = await fetchFormSchema(
+      view.formCode,
+      view.formVersion,
+    );
+  } catch {
+    baseline.value = null;
+    baselineSchema.value = null;
+  }
+}
+
+/** 基线分节标题与展示模板（分节只渲染 JSON 字段，实体列在登记信息块）。 */
+const baselineSectionViews = computed(() => {
+  const view = baseline.value;
+  const formSchema = baselineSchema.value;
+  if (!view || !formSchema) return [];
+  return view.sections
+    .map((section) => {
+      const schema = sectionDisplaySchema(formSchema, section.code);
+      const progress = view.progress.find((item) => item.key === section.code);
+      const label =
+        formSchema.categories.find((category) => category.key === section.code)
+          ?.label ?? section.code;
+      return {
+        code: section.code,
+        data: section.data,
+        hasDraft: section.hasDraft,
+        label,
+        progressText: progress
+          ? baselineProgressText(progress.filled, progress.total)
+          : baselineProgressText(0, 0),
+        schema,
+        statusText: baselineSectionStatusText(section.status),
+        updatedAt: section.updatedAt,
+        updatedBy: section.updatedBy,
+      };
+    })
+    .filter((item) => item.schema !== null);
+});
+
+/** 「编辑」入口（pages.md §4.2：锁定置灰；无编辑权限隐藏）。 */
+const canEditPatient = computed(() => hasPermission('followup:patient:edit'));
+const canLockBaseline = computed(() => hasPermission('followup:patient:lock'));
+const editEnabled = computed(() =>
+  canEditBaseline(baselineLocked.value, canEditPatient.value),
+);
+const unlockVisible = computed(() =>
+  showBaselineUnlock(baselineLocked.value, canLockBaseline.value),
+);
+const lockVisible = computed(() =>
+  showBaselineLock(baselineLocked.value, canLockBaseline.value),
+);
+
+function openBaselineEdit() {
+  if (!editEnabled.value) return;
+  window.open(`/followup/patient/${patientId.value}/baseline/edit`, '_blank');
+}
+
+/** 锁定（A-PAT-006：病区医生确认无误后锁定；锁定说明可选）。 */
+function confirmBaselineLock() {
+  Modal.confirm({
+    content:
+      '锁定后基线只读；要修改须持有「锁定/解锁基线」权限并填写原因解锁（A-PAT-006）。',
+    okText: '确认锁定',
+    cancelText: '取消',
+    onOk: () => doSetBaselineLock(true, '出院 30 天内确认无误'),
+    title: '锁定基线？',
+  });
+}
+
+/** 解锁（ReasonModal：原因必填，pages.md §4.2）。 */
+async function handleUnlock(reason: string) {
+  await doSetBaselineLock(false, reason);
+}
+
+async function doSetBaselineLock(locked: boolean, reason: string) {
+  if (lockSubmitting.value) return;
+  lockSubmitting.value = true;
+  try {
+    await setBaselineLock(patientId.value, { locked, reason });
+    message.success(
+      locked ? '基线已锁定，分节只读' : '基线已解锁，可继续编辑（解锁已留痕）',
+    );
+    unlockOpen.value = false;
+    await loadBaseline();
+  } catch {
+    // 提示由统一拦截器弹出（如「基线已是锁定状态」「解锁基线必须填写原因」）
+  } finally {
+    lockSubmitting.value = false;
+  }
+}
 
 const dischargeStatusLabel = computed(() =>
   overview.value?.dischargeStatus === null ||
@@ -166,7 +294,6 @@ function handleTransferred() {
 
 // ---------------------------------------------------------------- E15-T04 沟通记录页签（pages.md §4.8）
 
-const { hasPermission } = usePermission();
 const canEditRecord = computed(() => hasPermission('followup:record:edit'));
 const canDownload = computed(() => hasPermission('followup:scan:download'));
 
@@ -383,11 +510,45 @@ const timelineLegendNote =
 
     <div v-if="tab === 'baseline'" class="main" data-testid="baseline-panel">
       <Alert
+        v-if="baselineLockBannerText"
         class="notice"
-        message="基线按分类分节补录与报告单导航随后续任务开放（E13-T02 / E16）；此处先展示出院登记的最小必填集。"
-        type="info"
+        data-testid="baseline-lock-banner"
+        :message="baselineLockBannerText"
+        type="warning"
         show-icon
       />
+      <div class="toolbar">
+        <Tooltip
+          v-if="canEditPatient && !editEnabled"
+          :title="BASELINE_LOCKED_TOOLTIP"
+        >
+          <Button data-testid="baseline-edit" disabled>编辑</Button>
+        </Tooltip>
+        <Button
+          v-else-if="canEditPatient"
+          data-testid="baseline-edit"
+          type="primary"
+          @click="openBaselineEdit"
+        >
+          编辑
+        </Button>
+        <Button
+          v-if="unlockVisible"
+          data-testid="baseline-unlock"
+          :loading="lockSubmitting"
+          @click="unlockOpen = true"
+        >
+          解锁
+        </Button>
+        <Button
+          v-else-if="lockVisible"
+          data-testid="baseline-lock"
+          :loading="lockSubmitting"
+          @click="confirmBaselineLock"
+        >
+          锁定
+        </Button>
+      </div>
       <Descriptions
         bordered
         :column="{ xs: 1, sm: 1, md: 2, xl: 3 }"
@@ -458,8 +619,38 @@ const timelineLegendNote =
           {{ survivalStatusText(overview.latestFollowup.survivalStatus) }}
         </DescriptionsItem>
       </Descriptions>
+
+      <section
+        v-for="section in baselineSectionViews"
+        :id="`crdp-anchor-${section.code}`"
+        :key="section.code"
+        class="baseline-section"
+        :data-testid="`baseline-section-${section.code}`"
+      >
+        <h3 class="section-title">
+          {{ section.label }}
+          <span class="section-meta">
+            {{ section.progressText }} · {{ section.statusText }}
+            <template v-if="section.hasDraft"> · 有未保存草稿</template>
+            <template v-if="section.updatedBy">
+              · {{ section.updatedBy }} 保存于
+              {{ section.updatedAt?.slice(0, 10) ?? '' }}
+            </template>
+          </span>
+        </h3>
+        <FormRenderer
+          :model-value="section.data"
+          :schema="section.schema"
+          mode="readonly"
+        />
+      </section>
+      <p v-if="baseline && baselineSectionViews.length === 0" class="hint">
+        基线分节尚未填写：点「编辑」按分类补录（A-PAT-003
+        可分次补录、先暂存后保存）。
+      </p>
       <p class="hint">
-        完整度列在基线分节（E13-T02）与随访记录（E15）写入前显示「—」；计划与随访块在入组调度（E14）与首次随访提交（E15）前显示占位。
+        分节字段值按模板只读展示；字段修改历史与锁定 /
+        解锁留痕可在操作日志查询（随报告单页签后的日志入口开放）。
       </p>
     </div>
 
@@ -613,6 +804,15 @@ const timelineLegendNote =
       :patient-id="overview.id"
       @success="handleTransferred"
     />
+
+    <ReasonModal
+      v-model:open="unlockOpen"
+      confirm-text="解锁"
+      :label="`${overview.name} · ${overview.patientNo}`"
+      note="解锁原因必填，将记入操作日志（A-PAT-006）；解锁后基线恢复可编辑。"
+      placeholder="必填，如：发现录入错误需要修正"
+      @confirm="handleUnlock"
+    />
   </div>
 </template>
 
@@ -632,6 +832,24 @@ const timelineLegendNote =
 
 .main {
   padding: 16px;
+}
+
+.baseline-section {
+  padding: 8px 4px 0;
+  margin-top: 16px;
+}
+
+.section-title {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.section-meta {
+  margin-left: 8px;
+  font-size: 12px;
+  font-weight: 400;
+  color: #8c8c8c;
 }
 
 .notice {
