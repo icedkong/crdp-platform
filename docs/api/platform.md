@@ -138,9 +138,24 @@ PLT-MOD-010/011 为后续规划，不实现。
 | 系统公告 | `/api/platform/announcements` | `platform:notice:edit` |
 | 文件上传配置 | `/api/platform/params/upload`（格式、大小上限） | `platform:param:edit` |
 | 安全策略下限 | `/api/platform/security-policy`（密码策略、锁定、会话、二次认证场景） | `platform:security:edit` |
-| 配置模板 | `/api/platform/config-templates`（从某租户导出配置 → 应用到新租户；只导出注册表中标注为配置的表，引用用户的字段置空） | `platform:tenant:create` |
+| 配置模板 | 见 §7.1（导出已实现 E12-T01；应用 / 导入随 E12-T02） | 导出 `platform:tenant:create`，读 `platform:tenant:view` |
 
 配置变更写记录并说明生效方式（PLT-CFG-011）：字典 / 参数保存即作废平台定义缓存（`PlatformConfigCache`，60 秒 TTL + 保存即 evict，M1 单实例），租户端下一次读取即见新值；全部写操作写平台审计（DICT_* / PARAM_*）。
+
+### 7.1 配置模板（A-FLD-014，E12-T01 导出）
+
+从源租户导出**只含配置**的模板包（gzip JSON 存平台库 `plt_config_template`，V49）：只导出配置表注册表（`ConfigTableRegistry`，随包代码）显式标注的表，未标注的一律不导出；`COPY` 表带全量行、`STRUCTURE_ONLY`（术者、病区 / 中心）只带结构不带取值（术者 = `cfg_dict_item` 里 `dict_code='surgeon'` 的行，经行排除谓词剔除）。患者与业务数据表另有 `NEVER_EXPORT_TABLES` 自检（登记即启动失败，双保险）。
+
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| POST | `/api/platform/config-templates` | `platform:tenant:create` | **已实现（E12-T01）**。导出：`{tenantId, name?}`（name ≤128 字，缺省「{租户名} 配置模板」）→ `{id,tenantId,tenantCode,tenantName,name,version(同租户递增),formatVersion,tableCount,rowCount,packageHash,exportedAt}`；未知租户 40400、租户库未注册 40901；写 `CONFIG_TEMPLATE_EXPORT` 审计（含包哈希） |
+| GET | `/api/platform/config-templates` | `platform:tenant:view` | **已实现**。模板分页（新→旧）：`{items[同导出视图],total,pageNo,pageSize}` |
+| GET | `/api/platform/config-templates/{id}` | `platform:tenant:view` | **已实现**。详情：`{template, tables[{table,module,mode,category,present,rowCount,excludedRowCount,sourceRowCount,columns}]}`（不带行数据；未知 40400） |
+| GET | `/api/platform/config-templates/{id}/package` | `platform:tenant:view` | **已实现**。读回完整包（gzip 解压后的 JSON 结构，`formatVersion/tenantCode/tenantName/exportedAt/tables[]`，行值已归一化）；写 `CONFIG_TEMPLATE_DOWNLOAD` 审计 |
+| GET | `/api/platform/config-templates/registry` | `platform:tenant:view` | **已实现**。配置表注册表清单（table / module / mode / category / description / excludeRows），预览「会导出什么」用（管理页随 E12-T04） |
+| POST | `/api/platform/config-templates/{id}/apply` | `platform:tenant:create` | 应用到新租户（导入、ID 重映射、引用用户字段置空与敏感拦截）随 E12-T02 / E12-T03 |
+
+包值口径：DATETIME → `yyyy-MM-dd HH:mm:ss[.SSS]`、DATE → `yyyy-MM-dd`、二进制 → Base64，其余原样；模块未开通的表以 `present=false` 空节入包，导入侧按迁移存在性对照。
 
 ## 8. 平台工作台与审计
 
