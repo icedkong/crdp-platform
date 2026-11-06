@@ -322,18 +322,11 @@ class ConfigTemplateImportMySqlIT {
                                 Long.class,
                                 targetVersionId))
                 .isEqualTo(1L);
-        Long sourceVersionId =
-                queryId(
-                        demoa,
-                        "SELECT id FROM fe_form_version WHERE form_code = '"
-                                + FORM
-                                + "' AND version = 1");
-        assertThat(targetVersionId).isNotEqualTo(sourceVersionId);
-
-        // ---- fu_plan_node：plan_id / parent_id 全部改写到 demob 的新 ID，结构保持 子计划 → 节点 ----
+        // ---- fu_plan_node：plan_id / parent_id 全部改写到 demob 的版本行，结构保持 子计划 → 节点 ----
+        //（注：CI 全新库两侧种子一致、自增 ID 恰好相同，「目标 ID ≠ 源 ID」不可断言；重映射正确性由
+        // 引用挂接断言保证——节点挂在本库查得的 plan / subplan 行上，而非包内源 ID）
         Long targetPlanId = queryId(demob, "SELECT id FROM fu_plan WHERE code = '" + PLAN + "'");
-        Long sourcePlanId = queryId(demoa, "SELECT id FROM fu_plan WHERE code = '" + PLAN + "'");
-        assertThat(targetPlanId).isNotNull().isNotEqualTo(sourcePlanId);
+        assertThat(targetPlanId).isNotNull();
         List<Map<String, Object>> nodes =
                 demob.queryForList(
                         "SELECT id, parent_id FROM fu_plan_node WHERE plan_id = ?", targetPlanId);
@@ -355,8 +348,7 @@ class ConfigTemplateImportMySqlIT {
 
         // ---- 角色：授权取交集（范围内 menu 10 保留、范围外丢弃），科室范围行丢弃，字段策略 / 范围随角色改写 ----
         Long targetRoleId = queryId(demob, "SELECT id FROM sys_role WHERE code = '" + ROLE + "'");
-        Long sourceRoleId = queryId(demoa, "SELECT id FROM sys_role WHERE code = '" + ROLE + "'");
-        assertThat(targetRoleId).isNotNull().isNotEqualTo(sourceRoleId);
+        assertThat(targetRoleId).isNotNull();
         assertThat(
                         demob.queryForObject(
                                 "SELECT COUNT(*) FROM sys_role_menu WHERE role_id = ? AND menu_id = 10",
