@@ -118,7 +118,16 @@ const loading = ref(true);
 const loadFailed = ref(false);
 const overview = ref<null | PatientOverview>(null);
 const timeline = ref<PatientTimelineEntry[]>([]);
-const tab = ref('baseline');
+// 初始页签可由 ?tab= 指定（E16-T05 全院报告单列表「点击进入该患者的报告单页签」；未知值回落基线资料）
+const TAB_KEYS = ['baseline', 'contacts', 'followup', 'reports'] as const;
+const initialTab = Array.isArray(route.query.tab)
+  ? route.query.tab[0]
+  : route.query.tab;
+const tab = ref(
+  initialTab && (TAB_KEYS as readonly string[]).includes(initialTab)
+    ? initialTab
+    : 'baseline',
+);
 
 // ---------------------------------------------------------------- E13-T02 基线分节与锁定
 

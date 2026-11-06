@@ -180,7 +180,7 @@ class EffectivePermissionIT {
         assertTrue(version1 > version0, "授权变化递增权限版本号（前端据此重拉菜单与权限码）");
         assertTrue(scopeOfDoctor().all(), "数据范围并集：任一角色为 ALL 即不过滤");
         String menus = menusOf(doctor).toString();
-        assertTrue(menus.contains("报告单"), "菜单树下发并集：报告单出现");
+        assertTrue(menus.contains("报告单与资料"), "菜单树下发并集：报告单出现（V55 标题）");
         assertTrue(menus.contains("用户管理"), "菜单树下发并集：用户管理出现（父目录一并授权）");
 
         // 停用角色 → 旧令牌下一次请求立即收缩（platform-spec §1「停用角色」）

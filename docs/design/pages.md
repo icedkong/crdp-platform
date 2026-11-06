@@ -418,7 +418,7 @@
 | 路由 | `/followup/report` |
 | 权限 | 见 §0.1（种子 `followup:report:view` 与规格 `followup:scan:upload` 待统一） |
 | 需求 | A-ATT-016、010、020；C-SCAN-014、013、011、009（待归档区 P1，`report_inbox`） |
-| 接口 | `POST /api/hospital/followup/reports/search`；批量 `POST .../reports/batch`（改类型、修改位置、标为无需录入）（推断，待确认） |
+| 接口 | 检索 `POST /api/hospital/followup/reports/search`（**已实现，E16-T05**：患者关键词 / 类型 / 报告时间 / 上传日期 / 上传人 / 位置含 `UNASSIGNED` / 电子化 / 病区，行含位置标签与首附件缩略图，按病区隔离见 docs/api/report.md §2；顶部「添加报告单 / 批量上传」需患者上下文，入口在患者档案报告单页签，随患者选择器一并补）；批量 `POST .../reports/batch`（改类型、修改位置、标为无需录入）（推断，待确认，随 E16-T13 修改位置落地） |
 
 ```text
 ┌ 报告单与资料 ─────────────────────────────────────────────── [批量上传] [添加报告单] ┐
