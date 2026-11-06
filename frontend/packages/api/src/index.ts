@@ -913,6 +913,36 @@ export {
 } from './reauth';
 
 export type { ReauthFlowDeps, ReauthResult } from './reauth';
+// E16-T01 报告单设置：资料类型、名称字典与指标模板（A-ATT-003、011、012、018；C-SCAN-002、003、004）
+export {
+  REPORT_CODE_PATTERN,
+  REPORT_CONFIG_STATUS_TEXT,
+  REPORT_DIGITIZE_STATUS_TEXT,
+  reportConfigStatusText,
+  reportDigitizeStatusText,
+  reportNameRequiredText,
+  reportRefRangeText,
+  validateReportTypeCode,
+} from './report-config';
+
+export type {
+  ReportCatalogField,
+  ReportCatalogName,
+  ReportCatalogType,
+  ReportConfigStatus,
+  ReportDigitizeStatus,
+  ReportIndicatorItemRequest,
+  ReportIndicatorItemView,
+  ReportIndicatorTplView,
+  ReportNameCreateRequest,
+  ReportNameUpdateRequest,
+  ReportNameView,
+  ReportTplCreateRequest,
+  ReportTplUpdateRequest,
+  ReportTypeCreateRequest,
+  ReportTypeUpdateRequest,
+  ReportTypeView,
+} from './report-config';
 export type { OnlineSessionView } from './session';
 
 // E15-T02 / A-FU-004、A-FU-005、C-FU-020：我的任务、任务列表与随访工作台；
@@ -961,7 +991,6 @@ export type {
   TempTaskCreateRequest,
   TempTaskView,
 } from './task';
-
 export {
   TENANT_ROLE_SCOPE_OPTIONS,
   tenantFieldPolicyText,
@@ -991,6 +1020,7 @@ export type {
   TenantRoleView,
 } from './tenant-role';
 export { TENANT_SCOPE_STATE_TEXT } from './tenant-scope';
+
 export type {
   ScopeTemplateItem,
   ScopeTemplateModule,
@@ -1018,7 +1048,6 @@ export {
   userOptionLabel,
   userStatusText,
 } from './tenant-user';
-
 export type {
   FieldPolicyPreviewView,
   MenuPreviewNode,
