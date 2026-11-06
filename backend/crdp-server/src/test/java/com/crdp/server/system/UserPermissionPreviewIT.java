@@ -233,8 +233,9 @@ class UserPermissionPreviewIT {
                                 admin));
 
         // 并集：报告单出现，且「患者档案」来源只有随访医生、「报告单」来源只有新角色
-        Map<?, ?> reportMenu = findNodeByTitle((List<?>) view.get("menus"), "报告单");
-        assertNotNull(reportMenu, "多角色并集应包含报告单");
+        // （标题自平台库 V55 起为「报告单与资料」，pages.md §0.1 / E16-T05）
+        Map<?, ?> reportMenu = findNodeByTitle((List<?>) view.get("menus"), "报告单与资料");
+        assertNotNull(reportMenu, "多角色并集应包含报告单与资料");
         assertEquals("followup:report:view", reportMenu.get("permCode"));
         assertEquals(List.of("IT 示例报告角色"), (List<?>) reportMenu.get("sourceRoles"));
         Map<?, ?> patientMenu = findNodeByTitle((List<?>) view.get("menus"), "患者档案");
@@ -260,7 +261,7 @@ class UserPermissionPreviewIT {
                                 admin));
         List<String> titles = new java.util.ArrayList<>();
         collectTitles((List<?>) shrunk.get("menus"), titles);
-        assertFalse(titles.contains("报告单"), "停用角色的授权立即失效：" + titles);
+        assertFalse(titles.contains("报告单与资料"), "停用角色的授权立即失效：" + titles);
         assertEquals(List.of("随访医生"), scopeTypeSources(shrunk).get("WARD"), "范围来源同步收缩");
         List<String> roleStatuses =
                 ((List<?>) shrunk.get("roles"))

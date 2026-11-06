@@ -924,11 +924,14 @@ export {
 } from './reauth';
 
 export type { ReauthFlowDeps, ReauthResult } from './reauth';
-// E16-T02 报告单运行时：添加报告单对话框、位置选择（必填多选树）与患者内清单
+// E16-T02 报告单运行时：添加报告单对话框、位置选择（必填多选树）与患者内清单；
+// E16-T05 全院报告单列表与检索（A-ATT-016 / C-SCAN-014）
 export {
+  foldReportLocations,
   reportIndicatorFlag,
   reportLocationText,
   reportRefRangeFor,
+  reportRowDigitizeStatusText,
 } from './report';
 
 export type {
@@ -944,8 +947,14 @@ export type {
   ReportLinkType,
   ReportLocationInput,
   ReportLocationNode,
+  ReportLocationScope,
   ReportLocationTag,
   ReportRow,
+  ReportRowDigitizeStatus,
+  ReportSearchFirstFile,
+  ReportSearchPage,
+  ReportSearchRequest,
+  ReportSearchRow,
 } from './report';
 // E16-T01 报告单设置：资料类型、名称字典与指标模板（A-ATT-003、011、012、018；C-SCAN-002、003、004）
 export {

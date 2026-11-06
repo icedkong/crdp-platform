@@ -3,9 +3,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  foldReportLocations,
   reportIndicatorFlag,
   reportLocationText,
   reportRefRangeFor,
+  reportRowDigitizeStatusText,
 } from './report';
 
 describe('e16-t02 reportLocationText（位置标签）', () => {
@@ -84,5 +86,51 @@ describe('e16-t02 reportRefRangeFor（参考范围按性别选定）', () => {
     expect(reportRefRangeFor({ ...item, refRange: '3.5–9.5' }, 'F')).toBe(
       '115–150',
     );
+  });
+});
+
+// E16-T05 / A-ATT-016、C-SCAN-014：全院报告单列表（位置列 +N 折叠、行电子化状态文案）
+describe('e16-t05 foldReportLocations（位置列超过 2 个折叠为 +N）', () => {
+  const tag = (label: string) => ({
+    anchorKey: label,
+    anchorLabel: label,
+    anchorType: 'category' as const,
+    linkType: 'baseline' as const,
+    templateVersion: 3,
+  });
+
+  it('1–2 个全部显示；3 个起折叠 +N 并给悬停全文', () => {
+    expect(foldReportLocations([tag('a')])).toEqual({
+      all: '基线 · a',
+      extraCount: 0,
+      visible: ['基线 · a'],
+    });
+    expect(foldReportLocations([tag('a'), tag('b')]).extraCount).toBe(0);
+    const folded = foldReportLocations([
+      tag('a'),
+      tag('b'),
+      tag('c'),
+      tag('d'),
+    ]);
+    expect(folded.visible).toEqual(['基线 · a', '基线 · b']);
+    expect(folded.extraCount).toBe(2);
+    expect(folded.all).toBe('基线 · a、基线 · b、基线 · c、基线 · d');
+  });
+
+  it('空清单 extraCount=0（由调用方显示「未指定位置」）', () => {
+    expect(foldReportLocations([])).toEqual({
+      all: '',
+      extraCount: 0,
+      visible: [],
+    });
+  });
+});
+
+describe('e16-t05 reportRowDigitizeStatusText（行电子化状态，C-SCAN-011）', () => {
+  it('三态文案；A 租户 null 行不显示', () => {
+    expect(reportRowDigitizeStatusText('PENDING')).toBe('待录入');
+    expect(reportRowDigitizeStatusText('DONE')).toBe('已电子化');
+    expect(reportRowDigitizeStatusText('NO_ENTRY')).toBe('无需录入');
+    expect(reportRowDigitizeStatusText(null)).toBeNull();
   });
 });

@@ -144,6 +144,97 @@ export interface PatientReportsView {
   scope: 'all' | 'baseline' | 'followup';
 }
 
+// ---------------------------------------------------------------- E16-T05 全院报告单（A-ATT-016 / C-SCAN-014）
+
+/** 位置筛选（A-ATT-016「位置（含『未指定位置』）」）：不传 = 全部。 */
+export type ReportLocationScope = 'BASELINE' | 'FOLLOWUP' | 'UNASSIGNED';
+
+/** 全院列表行电子化状态（含转录产生的 DONE；A 租户不启用、为 null，C-SCAN-011）。 */
+export type ReportRowDigitizeStatus = 'DONE' | 'NO_ENTRY' | 'PENDING';
+
+/** 全院报告单检索请求（POST /followup/reports/search；字段全部可空 = 不过滤）。 */
+export interface ReportSearchRequest {
+  creatorId?: string;
+  digitizeStatus?: null | ReportRowDigitizeStatus;
+  keyword?: string;
+  locationScope?: null | ReportLocationScope;
+  pageNo?: number;
+  pageSize?: number;
+  reportDateFrom?: string;
+  reportDateTo?: string;
+  typeCode?: string;
+  uploadedFrom?: string;
+  uploadedTo?: string;
+  wardIds?: string[];
+}
+
+/** 缩略图首附件（图片走预览短时链接，非图片显示文件类型图标）。 */
+export interface ReportSearchFirstFile {
+  fileId: string;
+  format: string;
+}
+
+/** 全院报告单行（姓名 / 病案号只含脱敏值；locations 为空 = 未指定位置，前端显示橙色标签）。 */
+export interface ReportSearchRow {
+  createdAt: string;
+  creatorName: null | string;
+  digitizeStatus: null | ReportRowDigitizeStatus;
+  fileCount: number;
+  firstFile: null | ReportSearchFirstFile;
+  id: string;
+  locations: ReportLocationTag[];
+  mrn: string;
+  name: null | string;
+  patientId: string;
+  patientName: string;
+  reportDate: string;
+  typeCode: string;
+  typeName: string;
+  visitNo: null | string;
+  wardName: null | string;
+}
+
+/** 全院检索分页结果（统一分页口径 + 类型 / 上传人 / 病区候选）。 */
+export interface ReportSearchPage {
+  items: ReportSearchRow[];
+  pageNo: number;
+  pageSize: number;
+  total: number;
+  types: Array<{ code: string; name: string }>;
+  uploaders: Array<{ id: string; name: string }>;
+  wards: Array<{ id: string; name: string }>;
+}
+
+/**
+ * 位置列折叠（A-ATT-016 / C-SCAN-014「超过 2 个折叠为 +N，悬停显示全部」）：
+ * 返回可见标签与折叠计数；空清单由调用方显示「未指定位置」。
+ */
+export function foldReportLocations(
+  tags: ReportLocationTag[],
+  max = 2,
+): { all: string; extraCount: number; visible: string[] } {
+  const texts = tags.map((tag) => reportLocationText(tag));
+  const visible = texts.slice(0, max);
+  return {
+    all: texts.join('、'),
+    extraCount: Math.max(texts.length - visible.length, 0),
+    visible,
+  };
+}
+
+/** 全院列表行电子化状态文案（C-SCAN-011；DONE 只由转录产生；A 的 null 行不显示）。 */
+export function reportRowDigitizeStatusText(
+  status: null | ReportRowDigitizeStatus,
+): null | string {
+  if (!status) return null;
+  const text: Record<ReportRowDigitizeStatus, string> = {
+    DONE: '已电子化',
+    NO_ENTRY: '无需录入',
+    PENDING: '待录入',
+  };
+  return text[status];
+}
+
 /**
  * 位置标签文案（列表 / 详情显示）：「基线 · 病例基本信息」「第3年随访 · 超声复查」；
  * 整条记录无锚点时只显示记录名；adjusted 追加「原位置已调整」（E16-T15 起）。

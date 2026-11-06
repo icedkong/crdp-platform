@@ -13,9 +13,23 @@ import type {
   ReportCreatedView,
   ReportCreateRequest,
   ReportLocationNode,
+  ReportSearchPage,
+  ReportSearchRequest,
 } from '@crdp/api';
 
 import { apiPath, requestClient } from '#/api/request';
+
+/**
+ * E16-T05 / A-ATT-016、C-SCAN-014：全院报告单列表检索（/followup/report，pages.md §6.4）。
+ * 病区隔离由后端数据范围承担（越范围患者的报告单不可见）；行内姓名 / 病案号为脱敏值。
+ * 权限 followup:report:view（菜单 plt_menu 23，OQ-12）。
+ */
+export function searchReports(payload: ReportSearchRequest) {
+  return requestClient.post<ReportSearchPage>(
+    apiPath('/followup/reports/search'),
+    payload,
+  );
+}
 
 /** 生效类型与字段集（只含启用类型，选类型后对话框字段集随之变化）。 */
 export function fetchCatalogReportTypes() {
