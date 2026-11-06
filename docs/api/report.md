@@ -2,7 +2,7 @@
 
 > 后端：`crdp-followup`（报告单子域，A-ATT-018 平台通用、按租户配置）+ 文件服务（OSS + 预览代理）。表：`rpt_report`、`rpt_report_link`（位置，见 OQ-02：统一用 `rpt_report_link`）、`rpt_report_file`、`rpt_type`、`rpt_name`、`rpt_indicator_tpl`、`sys_file`。
 > 页面：`docs/design/pages.md` §4（报告单页签、左栏附件导航）、§6（上传、H5、批量、全院报告单）；组件：AttachmentNav、LocationPicker、WatermarkPreview、ReportFormModal。
-> 路径除 §1 已标注「已实现（E10-T01）」的两个文件接口外，其余 **推断，待确认**。权限：上传 `followup:scan:upload`、下载 `followup:scan:download`、删除 `followup:scan:delete`、配置 `followup:scan:config`；全院报告单菜单种子是 `followup:report:view`，与规格待统一（见 OQ-12）。
+> 路径除各表已标注「已实现」的接口（E10 文件、E16-T01 配置与目录、E16-T02 创建 / 患者内清单 / 位置树）外，其余 **推断，待确认**。权限：上传 `followup:scan:upload`、下载 `followup:scan:download`、删除 `followup:scan:delete`、配置 `followup:scan:config`；全院报告单菜单种子是 `followup:report:view`，与规格待统一（见 OQ-12）。
 
 ## 1. 文件
 
@@ -30,12 +30,13 @@
 |---|---|---|---|
 | GET | `/api/hospital/followup/report-types` | `followup:patient:view` | 类型与字段集、默认电子化状态（C）。**已实现（E16-T01）**：只返回启用类型，行 `{ code, name, nameRequired, defaultDigitizeStatus, fields: [{ key, code, label, type, unit, required, sortNo }] }`（fields 为该类型 fe_form REPORT 表单的启用字段，紧凑视图） |
 | GET | `/api/hospital/followup/report-names?typeCode=` | 同上 | 名称字典，含指标模板。**已实现（E16-T01）**：`typeCode` 必填（缺失 / 不存在 40400），只返回启用名称，行 `{ id, typeCode, name, indicatorTplId, items: [...] }`——绑定的模板启用时 `items` 带出项目行（模板停用不再带出，只影响新报告单） |
-| POST | `/api/hospital/followup/reports` | `followup:scan:upload` | `{ patientId, typeCode, nameCode?, reportDate, hospital?, fields, indicators[], findings, conclusion, locations[≥1], fileIds[], note }`；位置为空 → 40001（A-ATT-002、C-SCAN-010） |
+| POST | `/api/hospital/followup/reports` | `followup:scan:upload` | `{ patientId, typeCode, nameId?, reportDate, fields?, indicators[{itemCode,result,refRange?}]?, findings?, conclusion?, locations[≥1], fileIds?[], note? }`；位置为空 → 40001「请至少选择 1 个位置」（A-ATT-002、C-SCAN-010）。**已实现（E16-T02）**：名称按类型 `nameRequired` 校验（40001，OQ-95③）；位置粒度三种——基线分类（`baseline`+`category`，锚点须在基线表单当前发布版分类内）、随访记录整条（`followup_record`+`anchorType=null`）、随访分组（`section`，锚点按该记录固化版本分类清单校验）；越患者记录 / 越范围患者 40400；`implant_record` 随 E21-T32（当前 40001）；附件去重后 ≤ `maxFilesPerReport`（40001）、逐个挂台账置 ATTACHED（不存在 40400、已挂他处 40001）；指标项目须来自名称绑定的启用模板（40001），参考范围与结果可解析时服务端记 ↑/↓；同一报告单同一位置只一行（服务层去重）；写 `RPT_CREATE` 审计（类型 · 名称 · 位置 / 附件 / 指标计数）。返回 `{ id, typeCode, typeName, name, reportDate, locationCount, fileCount }`。批量（A-ATT-014）随 E16-T03 |
 | GET | `/api/hospital/followup/reports/{id}` | `followup:patient:view` | 详情（含位置、文件列表、电子化状态） |
 | PUT | `/api/hospital/followup/reports/{id}` | `followup:scan:upload` | `{ version, ... }`；乐观锁 409 |
 | PUT | `/api/hospital/followup/reports/{id}/locations` | `followup:scan:upload` | 修改位置 `{ add[], remove[] }`，写操作日志（A-ATT-020、C-SCAN-020）。允许移除到 0 个 → 进“未指定位置” |
 | DELETE | `/api/hospital/followup/reports/{id}` · `/files/{fileId}` | `followup:scan:delete` | 软删除，`{ reason }` 必填，审计（A-ATT-007、C-SCAN-016） |
-| GET | `/api/hospital/followup/patients/{id}/reports?scope=baseline|followup|all&view=type|time` | `followup:patient:view` | 患者内报告单；`scope` 给左栏附件导航（AttachmentNavItem，components.md §5），`view` 给双树（A-ATT-010、C-SCAN-013） |
+| GET | `/api/hospital/followup/patients/{id}/reports?scope=all|baseline|followup` | `followup:patient:view` | 患者内清单（**已实现（E16-T02）**，报告单页签用）：`{ patientId, scope, items: [{ id, typeCode, typeName, name, reportDate, findings, conclusion, note, digitizeStatus, version, creatorName, createdAt, fileCount, locations: [{ linkType, linkRecordId, recordLabel, recordDate, anchorType, anchorKey, anchorLabel, templateVersion, adjusted }] }] }`，按报告时间倒序；`baseline` / `followup` 只保留含该侧位置的报告单（左栏附件导航 AttachmentNav 随 E16-T14 消费）；越范围患者 40400。`view=type|time` 双树随 E16-T04 |
+| GET | `/api/hospital/followup/patients/{id}/report-locations` | `followup:patient:view` | 位置树（components.md §8 LocationPicker options；**已实现（E16-T02）**）：`[{ key, title, selectable, value?, children? }]` 两个分组根——基线资料（子节点 = 基线表单当前发布版分类，`value={baseline,category,分类key,当前发布版}`）与随访记录（子节点 = 该患者全部 fu_record 含 DRAFT，标题「第N年随访 日期 / 历史补录·计划外随访 日期」，`value={followup_record,recordId,anchorType=null,记录固化版本}`，孙节点 = 该记录表单分组 `section`）；越范围患者 40400 |
 | POST | `/api/hospital/followup/reports/search` | `followup:report:view`（种子） | 全院报告单（A-ATT-016、C-SCAN-014）：患者、类型、名称、报告时间、上传日期、上传人、位置（含 `UNASSIGNED`）、电子化状态（C） |
 | POST | `/api/hospital/followup/reports/batch` | `followup:scan:upload` | 批量 `{ ids[], action: CHANGE_TYPE|SET_LOCATIONS|MARK_NO_ENTRY, payload }` |
 | POST | `/api/hospital/followup/reports/batch-create` | `followup:scan:upload` | 批量上传（A-ATT-014、C-SCAN-007，P1）：≤ 50 个文件，`mode: ONE_PER_FILE|MERGE` |
@@ -79,11 +80,11 @@ token 过期或已用：返回 40101，前端显示“二维码已过期，请�
 | GET | `/api/hospital/followup/report-config/types` | 类型清单（含停用，按 sort_no）：`{ id, code, name, formCode, formName, nameRequired, defaultDigitizeStatus, sortNo, status, remark, nameCount }`；编码本院唯一、创建后不可改（A-ATT-003「可增减、停用、排序」） |
 | POST | 同上 `/types` | 新建：`{ code, name, formCode, nameRequired?, defaultDigitizeStatus?, sortNo?, remark? }`；重复编码 40902、`formCode` 必须是 `fe_form.usage_type = REPORT` 的表单否则 40001；默认电子化状态只收 `PENDING` / `NO_ENTRY`（A 为 null，A-ATT-018） |
 | PUT | `/types/{id}` | 编辑（编码不可改）：`{ name, formCode, nameRequired?, defaultDigitizeStatus?, sortNo, status, remark? }`；停用（DISABLED）后添加报告单不再可选，不删除 |
-| DELETE | `/types/{id}` | 类型下仍有名称（含停用）→ 40901「先删除名称」；报告单引用守卫随 E16-T02 `rpt_report` 落地 |
+| DELETE | `/types/{id}` | 类型下仍有名称（含停用）→ 40901「先删除名称」；已被报告单引用 → 40901「可停用不可删」**（已实现，E16-T02 / OQ-95②）** |
 | GET | `.../names?typeCode=` | 名称清单（typeCode 可空 = 全部，含停用）：`{ id, typeCode, typeName, name, indicatorTplId, indicatorTplName, digitizeStatusOverride, sortNo, status }` |
 | POST | 同上 `/names` | 新建：`{ typeCode, name, indicatorTplId?, digitizeStatusOverride?, sortNo? }`；同类型重名 40902（同名报告单可多次添加、按报告时间区分——字典只管取值，A-ATT-011）；类型不存在 40400、模板不存在 40001 |
 | PUT | `/names/{id}` | 编辑（所属类型不可改）：`{ name, indicatorTplId?, digitizeStatusOverride?, sortNo, status }` |
-| DELETE | `/names/{id}` | 删除名称（已保存报告单的名称快照不联动，随 E16-T02 落地时定稿） |
+| DELETE | `/names/{id}` | 删除名称；已被报告单引用 → 40901「可停用不可删」（**已实现，E16-T02 / OQ-95②**；已存报告单带名称快照显示，不随字典联动） |
 | GET | `.../indicator-templates` | 模板清单（含停用，带全部项目与 `boundNameCount`）：`{ id, name, status, remark, items: [{ itemName, itemCode, unit, refRange, refRangeMale, refRangeFemale, sortNo }] }`（参考范围可按性别区分，A-ATT-012 / C-SCAN-004） |
 | POST | 同上 `/indicator-templates` | 新建：`{ name, remark?, items[≥1] }`；名称本院唯一 40902、项目代码模板内唯一 40001 |
 | PUT | `/indicator-templates/{id}` | 编辑：`{ name, remark?, status, items }`——项目**全量替换**（先清后插）；修改只影响之后新建的报告单，已保存指标行不变 |
@@ -95,7 +96,8 @@ token 过期或已用：返回 40101，前端显示“二维码已过期，请�
 
 ## 7. 测试要点
 
-- 无位置创建 → 40001；移除最后一个位置 → 进入未指定位置列表。
+- 无位置创建 → 40001（「请至少选择 1 个位置」）；移除最后一个位置 → 进入未指定位置列表（E16-T13）。
+- 三种粒度位置各落一行；勾分组不自动勾整条（前端 check-strictly，后端按四元组去重）。
 - 预览 / 下载各写一条审计；无 `scan:download` 时 download-url → 40300。
 - 越范围患者的报告单在全院列表不出现，按 id 访问 40400；重复文件提示不泄露范围外患者。
 - 伪造扩展名的 exe → 被拒；超大文件 → 40001。

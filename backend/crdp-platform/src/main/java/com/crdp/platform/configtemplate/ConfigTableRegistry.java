@@ -106,6 +106,11 @@ public final class ConfigTableRegistry {
                     "fu_contact_log",
                     "fu_contact_audio",
                     "fu_saved_filter",
+                    // 报告单业务数据（E16-T02；配置表 rpt_type 等四张在 ENTRIES，数据表不入模板）
+                    "rpt_report",
+                    "rpt_report_link",
+                    "rpt_report_file",
+                    "rpt_indicator_value",
                     // 表单记录与字段历史（数据，不是模板）
                     "fe_record",
                     "fe_field_history",

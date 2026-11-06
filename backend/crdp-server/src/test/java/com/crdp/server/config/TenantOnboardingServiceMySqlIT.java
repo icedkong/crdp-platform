@@ -248,14 +248,16 @@ class TenantOnboardingServiceMySqlIT {
                 // E09-T06 增加 V59（sys_webhook）、E13-T02 增加 V60（基线分节锁）、
                 // E23-T02 增加 V61（医院 A 预置计划 fu_plan / fu_plan_node / fu_plan_log）、
                 // E16-T01 增加 V62（报告单配置 rpt_type / rpt_name / rpt_indicator_tpl /
-                // rpt_indicator_item）。
+                // rpt_indicator_item）、E16-T02 增加 V63（报告单运行时 rpt_report /
+                // rpt_report_link / rpt_report_file / rpt_indicator_value）。
                 // 此处随迁移清单维护
                 List.of(
                         "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14",
                         "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26",
                         "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38",
                         "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50",
-                        "51", "52", "53", "54", "55", "56", "57", "58", "59", "60", "61", "62"),
+                        "51", "52", "53", "54", "55", "56", "57", "58", "59", "60", "61", "62",
+                        "63"),
                 root.queryForList(
                         "SELECT version FROM "
                                 + DB
