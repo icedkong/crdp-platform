@@ -269,6 +269,8 @@ export {
   tenantStatusText,
 } from './enums';
 export type { FileDownloadGrant, FilePreviewGrant } from './file';
+// E16-T03 上传策略（本院生效的格式 / 大小 / 每份报告单文件数上限）
+export type { FileFormatPolicy, FileUploadPolicy } from './file';
 export { previewGrantExpired } from './file';
 // E11-T01 字段字典（A-FLD-001、A-FLD-002、C-FLD-001：显示名与编码分离，字段可启停）
 export {
@@ -932,6 +934,10 @@ export {
 export type {
   PatientReportsView,
   ReportAnchorType,
+  ReportBatchCreatedView,
+  ReportBatchCreateRequest,
+  ReportBatchItemOverride,
+  ReportBatchMode,
   ReportCreatedView,
   ReportCreateRequest,
   ReportIndicatorInput,

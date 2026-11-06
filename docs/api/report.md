@@ -2,7 +2,7 @@
 
 > 后端：`crdp-followup`（报告单子域，A-ATT-018 平台通用、按租户配置）+ 文件服务（OSS + 预览代理）。表：`rpt_report`、`rpt_report_link`（位置，见 OQ-02：统一用 `rpt_report_link`）、`rpt_report_file`、`rpt_type`、`rpt_name`、`rpt_indicator_tpl`、`rpt_mapping` / `rpt_mapping_item`（字段映射，E23-T03）、`sys_file`。
 > 页面：`docs/design/pages.md` §4（报告单页签、左栏附件导航）、§6（上传、H5、批量、全院报告单）；组件：AttachmentNav、LocationPicker、WatermarkPreview、ReportFormModal。
-> 路径除各表已标注「已实现」的接口（E10 文件、E16-T01 配置与目录、E16-T02 创建 / 患者内清单 / 位置树、E16-T07 映射预览与确认写入）外，其余 **推断，待确认**。权限：上传 `followup:scan:upload`、下载 `followup:scan:download`、删除 `followup:scan:delete`、配置 `followup:scan:config`；全院报告单菜单种子是 `followup:report:view`，与规格待统一（见 OQ-12）。
+> 路径除各表已标注「已实现」的接口（E10 文件、E16-T01 配置与目录、E16-T02 创建 / 患者内清单 / 位置树、E16-T03 批量上传、E16-T07 映射预览与确认写入）外，其余 **推断，待确认**。权限：上传 `followup:scan:upload`、下载 `followup:scan:download`、删除 `followup:scan:delete`、配置 `followup:scan:config`；全院报告单菜单种子是 `followup:report:view`，与规格待统一（见 OQ-12）。
 
 ## 1. 文件
 
@@ -30,7 +30,7 @@
 |---|---|---|---|
 | GET | `/api/hospital/followup/report-types` | `followup:patient:view` | 类型与字段集、默认电子化状态（C）。**已实现（E16-T01）**：只返回启用类型，行 `{ code, name, nameRequired, defaultDigitizeStatus, fields: [{ key, code, label, type, unit, required, sortNo }] }`（fields 为该类型 fe_form REPORT 表单的启用字段，紧凑视图） |
 | GET | `/api/hospital/followup/report-names?typeCode=` | 同上 | 名称字典，含指标模板。**已实现（E16-T01）**：`typeCode` 必填（缺失 / 不存在 40400），只返回启用名称，行 `{ id, typeCode, name, indicatorTplId, items: [...] }`——绑定的模板启用时 `items` 带出项目行（模板停用不再带出，只影响新报告单） |
-| POST | `/api/hospital/followup/reports` | `followup:scan:upload` | `{ patientId, typeCode, nameId?, reportDate, fields?, indicators[{itemCode,result,refRange?}]?, findings?, conclusion?, locations[≥1], fileIds?[], note? }`；位置为空 → 40001「请至少选择 1 个位置」（A-ATT-002、C-SCAN-010）。**已实现（E16-T02）**：名称按类型 `nameRequired` 校验（40001，OQ-95③）；位置粒度三种——基线分类（`baseline`+`category`，锚点须在基线表单当前发布版分类内）、随访记录整条（`followup_record`+`anchorType=null`）、随访分组（`section`，锚点按该记录固化版本分类清单校验）；越患者记录 / 越范围患者 40400；`implant_record` 随 E21-T32（当前 40001）；附件去重后 ≤ `maxFilesPerReport`（40001）、逐个挂台账置 ATTACHED（不存在 40400、已挂他处 40001）；指标项目须来自名称绑定的启用模板（40001），参考范围与结果可解析时服务端记 ↑/↓；同一报告单同一位置只一行（服务层去重）；写 `RPT_CREATE` 审计（类型 · 名称 · 位置 / 附件 / 指标计数）。返回 `{ id, typeCode, typeName, name, reportDate, locationCount, fileCount }`。批量（A-ATT-014）随 E16-T03 |
+| POST | `/api/hospital/followup/reports` | `followup:scan:upload` | `{ patientId, typeCode, nameId?, reportDate, fields?, indicators[{itemCode,result,refRange?}]?, findings?, conclusion?, locations[≥1], fileIds?[], note? }`；位置为空 → 40001「请至少选择 1 个位置」（A-ATT-002、C-SCAN-010）。**已实现（E16-T02）**：名称按类型 `nameRequired` 校验（40001，OQ-95③）；位置粒度三种——基线分类（`baseline`+`category`，锚点须在基线表单当前发布版分类内）、随访记录整条（`followup_record`+`anchorType=null`）、随访分组（`section`，锚点按该记录固化版本分类清单校验）；越患者记录 / 越范围患者 40400；`implant_record` 随 E21-T32（当前 40001）；附件去重后 ≤ `maxFilesPerReport`（40001）、逐个挂台账置 ATTACHED（不存在 40400、已挂他处 40001）；指标项目须来自名称绑定的启用模板（40001），参考范围与结果可解析时服务端记 ↑/↓；同一报告单同一位置只一行（服务层去重）；写 `RPT_CREATE` 审计（类型 · 名称 · 位置 / 附件 / 指标计数）。返回 `{ id, typeCode, typeName, name, reportDate, locationCount, fileCount }`。批量上传随 E16-T03（见下 `batch-create`） |
 | GET | `/api/hospital/followup/reports/{id}` | `followup:patient:view` | 详情（含位置、文件列表、电子化状态） |
 | PUT | `/api/hospital/followup/reports/{id}` | `followup:scan:upload` | `{ version, ... }`；乐观锁 409 |
 | PUT | `/api/hospital/followup/reports/{id}/locations` | `followup:scan:upload` | 修改位置 `{ add[], remove[] }`，写操作日志（A-ATT-020、C-SCAN-020）。允许移除到 0 个 → 进“未指定位置” |
@@ -39,7 +39,7 @@
 | GET | `/api/hospital/followup/patients/{id}/report-locations` | `followup:patient:view` | 位置树（components.md §8 LocationPicker options；**已实现（E16-T02）**）：`[{ key, title, selectable, value?, children? }]` 两个分组根——基线资料（子节点 = 基线表单当前发布版分类，`value={baseline,category,分类key,当前发布版}`）与随访记录（子节点 = 该患者全部 fu_record 含 DRAFT，标题「第N年随访 日期 / 历史补录·计划外随访 日期」，`value={followup_record,recordId,anchorType=null,记录固化版本}`，孙节点 = 该记录表单分组 `section`）；越范围患者 40400 |
 | POST | `/api/hospital/followup/reports/search` | `followup:report:view`（种子） | 全院报告单（A-ATT-016、C-SCAN-014）：患者、类型、名称、报告时间、上传日期、上传人、位置（含 `UNASSIGNED`）、电子化状态（C） |
 | POST | `/api/hospital/followup/reports/batch` | `followup:scan:upload` | 批量 `{ ids[], action: CHANGE_TYPE|SET_LOCATIONS|MARK_NO_ENTRY, payload }` |
-| POST | `/api/hospital/followup/reports/batch-create` | `followup:scan:upload` | 批量上传（A-ATT-014、C-SCAN-007，P1）：≤ 50 个文件，`mode: ONE_PER_FILE|MERGE` |
+| POST | `/api/hospital/followup/reports/batch-create` | `followup:scan:upload` | 批量上传。**已实现（E16-T03 / A-ATT-014、C-SCAN-007）**：`{ patientId, mode: ONE_PER_FILE\|MERGE, typeCode, nameId?, reportDate, locations[≥1], fileIds[1..50], items?[] }`——先统一类型 / 名称 / 报告时间 / 位置，`items`（ONE_PER_FILE）逐份调整 `{ fileId, nameId?, reportDate?, locations? }`（空项沿用公共值，引用清单外文件 40001）；`ONE_PER_FILE` 每个文件一份、`MERGE` 合并为一份多页资料（文件按提交顺序排 sortNo，C-SCAN-006「可调整顺序」）。去重后 1–50 个文件（A-ATT-014「一次最多 50 个」），单份 ≤ `maxFilesPerReport`（40001 超限拦截，A-ATT-004）；不收指标 / 所见 / 结论 / 备注（批后逐份编辑）。**整批一个事务：任一份失败全部回滚**，前端整批重试（文件已上传、fileId 仍有效）。每份照常写 `RPT_CREATE`，另写一条 `RPT_BATCH_CREATE` 汇总（objectId = 首份报告单）。返回 `{ mode, reportCount, fileCount, reports: [CreatedView] }`；无 `scan:upload` 40300、越范围 / 跨租户患者 40400 |
 
 位置对象（与前端 `ReportLocation` 一致）：`{ linkType: baseline|followup_record|implant_record, linkRecordId?, anchorType: category|section|null, anchorKey?, templateVersion }`。模板改版后分组不存在时，后端把位置退回到上一级并置 `adjusted=true`（A-ATT-021、C-SCAN-021）。
 
@@ -110,4 +110,5 @@ token 过期或已用：返回 40101，前端显示“二维码已过期，请�
 - 越范围患者的报告单在全院列表不出现，按 id 访问 40400；重复文件提示不泄露范围外患者。
 - 伪造扩展名的 exe → 被拒；超大文件 → 40001。
 - H5 token：过期、重复使用、换患者均失败。
+- 批量上传（E16-T03）：MERGE 超过每份上限（demoa 10 个）→ 40001「附件数量超过上限（每份报告单最多 10 个）」且不落库；ONE_PER_FILE n 个文件 → n 份报告单、逐份调整名称 / 报告时间生效；> 50 个文件 40001；空 fileIds / 未知 mode 40001；items 引用清单外文件 40001；每份 RPT_CREATE + 一条 RPT_BATCH_CREATE；无 `scan:upload` 40300。
 - 映射写入（E16-T07）：预览 conflict 字段未进 fieldKeys → 跳过并回告 `skippedConflicts`、原值保留；确认后 `fe_field_history` 有 `source=REPORT` 行（旧值 → 新值）且 `aud_log` 有 `RPT_MAPPING_WRITE`；目标版本过期 40900、基线锁定 40901、报告时间晚于手术 / 出院日期 40001；位置中无映射目标 → mappings 空；无映射类型（检验）→ mappings 空；无 `scan:upload` 40300、跨租户 40400。

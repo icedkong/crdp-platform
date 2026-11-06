@@ -42,8 +42,8 @@ import org.springframework.transaction.annotation.Transactional;
  *       的植入记录锚点（implant_record）随 E21-T32 开放，此前 40001 拒绝。
  *   <li>锚点校验（E16-T02 口径）：基线分类对当前发布版模板、随访分组对该记录固化版本的模板分类清单； 锚点按模板版本校验、修改位置与「未指定位置」随 E16-T13，模板改版退回随
  *       E16-T15。
- *   <li>附件走 E10 上传接口拿 fileId 后挂台账（≤ file.upload.max.files.per.report，超限 40001； 批量上传 A-ATT-014 随
- *       E16-T03）。
+ *   <li>附件走 E10 上传接口拿 fileId 后挂台账（≤ file.upload.max.files.per.report，超限 40001）； 批量上传（E16-T03 /
+ *       A-ATT-014、C-SCAN-007）见 {@link #batchCreate}：每个文件一份或合并为一份，一次 ≤ 50 个文件。
  *   <li>指标结果逐行存显示快照（模板修改不联动已存报告单，E16-T01 口径）；↑ / ↓ 由服务端按参考范围 与数值结果计算，解析不出范围不标。
  *   <li>审计：创建写 RPT_CREATE（module=followup，objectType=REPORT）；类型 / 名称删除守卫（OQ-95②） 在 {@code
  *       ReportConfigService} 引用本域的计数。
@@ -145,6 +145,35 @@ public class ReportService {
             LocalDate reportDate,
             int locationCount,
             int fileCount) {}
+
+    /**
+     * 批量上传模式（A-ATT-014、C-SCAN-007）：{@link #BATCH_MODE_ONE_PER_FILE} 每个文件一份、 {@link
+     * #BATCH_MODE_MERGE} 合并为一份多页资料。
+     */
+    public static final String BATCH_MODE_ONE_PER_FILE = "ONE_PER_FILE";
+
+    public static final String BATCH_MODE_MERGE = "MERGE";
+
+    /** 一次批量上传的文件数上限（A-ATT-014「一次最多 50 个文件」；C-SCAN-007 同口径）。 */
+    static final int MAX_BATCH_FILES = 50;
+
+    /** 逐份调整（A-ATT-014「可逐份调整」）：null / 空清单表示该项沿用公共值。 */
+    public record BatchItemOverride(
+            String fileId, String nameId, LocalDate reportDate, List<LocationInput> locations) {}
+
+    /** 批量上传请求（report.md §2 POST /reports/batch-create）：公共类型 / 名称 / 报告时间 / 位置。 */
+    public record BatchCreateRequest(
+            String mode,
+            String typeCode,
+            String nameId,
+            LocalDate reportDate,
+            List<LocationInput> locations,
+            List<String> fileIds,
+            List<BatchItemOverride> items) {}
+
+    /** 批量上传结果：reports 与文件顺序一致（ONE_PER_FILE）或单元素（MERGE）。 */
+    public record BatchCreatedView(
+            String mode, int reportCount, int fileCount, List<CreatedView> reports) {}
 
     /** 位置树节点（components.md §8 LocationTreeNode；selectable=false 为分组节点）。 */
     public record LocationNodeView(
@@ -283,6 +312,167 @@ public class ReportService {
                 locations.size(),
                 fileIds.size());
         return view;
+    }
+
+    // ---------------------------------------------------------------- 批量上传（E16-T03 /
+    // A-ATT-014、C-SCAN-007）
+
+    /**
+     * 批量上传：先统一选择类型与位置（至少一个），可逐份调整名称与报告时间； {@link #BATCH_MODE_ONE_PER_FILE} 每个文件一份、{@link
+     * #BATCH_MODE_MERGE} 合并为一份多页资料 （文件按提交顺序排 sortNo，C-SCAN-006「可调整顺序」）。一次 ≤ {@link
+     * #MAX_BATCH_FILES} 个文件； 单份数量上限沿用创建校验（A-ATT-004 超限 40001「超限拦截」）。整批一个事务：任一份失败全部回滚，
+     * 由前端整批重试（文件已上传、fileId 仍有效）。
+     *
+     * <p>审计：每份报告单照常写 RPT_CREATE（复用 {@link #create}），另写一条批量汇总 RPT_BATCH_CREATE。
+     */
+    @Transactional
+    public BatchCreatedView batchCreate(long patientId, BatchCreateRequest request) {
+        if (request == null) {
+            throw bad("请求体不能为空");
+        }
+        String mode = normalizeBatchMode(request.mode());
+        List<Long> fileIds = normalizeBatchFileIds(request.fileIds());
+        Map<Long, BatchItemOverride> overrides = normalizeBatchOverrides(request.items(), fileIds);
+        List<CreatedView> created = new ArrayList<>();
+        if (BATCH_MODE_MERGE.equals(mode)) {
+            created.add(
+                    create(
+                            patientId,
+                            toCreateRequest(
+                                    request,
+                                    request.nameId(),
+                                    request.reportDate(),
+                                    request.locations(),
+                                    fileIds)));
+        } else {
+            for (Long fileId : fileIds) {
+                BatchItemOverride override = overrides.get(fileId);
+                String nameId =
+                        override != null && override.nameId() != null
+                                ? override.nameId()
+                                : request.nameId();
+                LocalDate reportDate =
+                        override != null && override.reportDate() != null
+                                ? override.reportDate()
+                                : request.reportDate();
+                List<LocationInput> locations =
+                        override != null
+                                        && override.locations() != null
+                                        && !override.locations().isEmpty()
+                                ? override.locations()
+                                : request.locations();
+                created.add(
+                        create(
+                                patientId,
+                                toCreateRequest(
+                                        request, nameId, reportDate, locations, List.of(fileId))));
+            }
+        }
+        BatchCreatedView view =
+                new BatchCreatedView(mode, created.size(), fileIds.size(), List.copyOf(created));
+        audit.append(
+                AuditEntry.operation("followup", "RPT_BATCH_CREATE")
+                        .objectType("REPORT")
+                        .objectId(created.isEmpty() ? null : created.get(0).id())
+                        .description(
+                                "批量上传报告单（"
+                                        + (BATCH_MODE_MERGE.equals(mode) ? "合并为一份" : "每个文件一份")
+                                        + "）：报告单 "
+                                        + created.size()
+                                        + " 份、文件 "
+                                        + fileIds.size()
+                                        + " 个，类型 "
+                                        + request.typeCode())
+                        .afterJson(writeJson(view))
+                        .build());
+        log.info(
+                "报告单批量创建（E16-T03）：patientId={} mode={} 报告单={} 份、文件={} 个",
+                patientId,
+                mode,
+                created.size(),
+                fileIds.size());
+        return view;
+    }
+
+    /** 批量创建的公共部分 → 单份创建请求（批量不收指标 / 所见 / 结论 / 备注，随批后逐份编辑）。 */
+    private CreateRequest toCreateRequest(
+            BatchCreateRequest batch,
+            String nameId,
+            LocalDate reportDate,
+            List<LocationInput> locations,
+            List<Long> fileIds) {
+        return new CreateRequest(
+                batch.typeCode(),
+                nameId,
+                reportDate,
+                Map.of(),
+                List.of(),
+                null,
+                null,
+                locations,
+                fileIds.stream().map(String::valueOf).toList(),
+                null);
+    }
+
+    private String normalizeBatchMode(String mode) {
+        if (mode == null || mode.isBlank()) {
+            throw bad("请选择批量模式（每个文件一份 / 合并为一份）");
+        }
+        String normalized = mode.trim();
+        if (!BATCH_MODE_ONE_PER_FILE.equals(normalized) && !BATCH_MODE_MERGE.equals(normalized)) {
+            throw bad("批量模式只能是 ONE_PER_FILE 或 MERGE");
+        }
+        return normalized;
+    }
+
+    /** 批量文件清单：与单份同口径解析去重；空清单 40001、超过 {@link #MAX_BATCH_FILES} 个 40001。 */
+    private List<Long> normalizeBatchFileIds(List<String> fileIds) {
+        if (fileIds == null || fileIds.isEmpty()) {
+            throw bad("请至少选择 1 个文件");
+        }
+        LinkedHashSet<Long> distinct = new LinkedHashSet<>();
+        for (String raw : fileIds) {
+            if (raw == null || raw.isBlank()) {
+                continue;
+            }
+            try {
+                distinct.add(Long.parseLong(raw.trim()));
+            } catch (NumberFormatException e) {
+                throw new ApiException(404, 40400, "附件文件不存在或已删除");
+            }
+        }
+        if (distinct.isEmpty()) {
+            throw bad("请至少选择 1 个文件");
+        }
+        if (distinct.size() > MAX_BATCH_FILES) {
+            throw bad("一次最多上传 " + MAX_BATCH_FILES + " 个文件");
+        }
+        return List.copyOf(distinct);
+    }
+
+    /** 逐份调整归一化：按文件 ID 建索引；引用清单外的文件 40001。 */
+    private Map<Long, BatchItemOverride> normalizeBatchOverrides(
+            List<BatchItemOverride> items, List<Long> fileIds) {
+        Map<Long, BatchItemOverride> index = new LinkedHashMap<>();
+        if (items == null) {
+            return index;
+        }
+        for (BatchItemOverride item : items) {
+            if (item == null || item.fileId() == null || item.fileId().isBlank()) {
+                continue;
+            }
+            long fileId;
+            try {
+                fileId = Long.parseLong(item.fileId().trim());
+            } catch (NumberFormatException e) {
+                throw bad("逐份调整的文件不在本次上传清单内");
+            }
+            if (!fileIds.contains(fileId)) {
+                throw bad("逐份调整的文件不在本次上传清单内");
+            }
+            index.put(fileId, item);
+        }
+        return index;
     }
 
     private TypeRow requireType(String typeCode) {

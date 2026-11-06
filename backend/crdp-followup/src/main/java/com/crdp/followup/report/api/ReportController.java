@@ -51,6 +51,23 @@ public class ReportController {
 
     @Operation(
             summary =
+                    "批量上传（E16-T03 / A-ATT-014、C-SCAN-007）：先统一类型与位置（至少 1 个），"
+                            + "再逐份调整名称与报告时间；mode=ONE_PER_FILE 每个文件一份、MERGE 合并为一份多页资料；"
+                            + "一次 ≤ 50 个文件、单份 ≤ 每份上限（超限 40001）；整批一个事务，"
+                            + "每份写 RPT_CREATE、另写一条 RPT_BATCH_CREATE 汇总审计")
+    @PostMapping("/reports/batch-create")
+    @RequireModule("followup")
+    @RequiresPermission("followup:scan:upload")
+    public ApiResponse<ReportService.BatchCreatedView> batchCreate(
+            @Valid @RequestBody BatchCreateBody body) {
+        if (body == null || body.patientId() == null || body.patientId() <= 0) {
+            throw new ApiException(400, 40001, "缺少患者");
+        }
+        return ApiResponse.ok(service.batchCreate(body.patientId(), toBatchRequest(body)));
+    }
+
+    @Operation(
+            summary =
                     "患者内报告单清单（pages.md §4.6 报告单页签）：scope=all 默认 / baseline / followup"
                             + "（后两者只保留含该侧位置的报告单，左栏附件导航 E16-T14 用）")
     @GetMapping("/patients/{id}/reports")
@@ -146,6 +163,39 @@ public class ReportController {
                 body.note());
     }
 
+    private static ReportService.BatchCreateRequest toBatchRequest(BatchCreateBody body) {
+        List<ReportService.BatchItemOverride> items =
+                body.items() == null
+                        ? List.of()
+                        : body.items().stream()
+                                .map(
+                                        item ->
+                                                new ReportService.BatchItemOverride(
+                                                        item.fileId(),
+                                                        item.nameId(),
+                                                        item.reportDate(),
+                                                        item.locations() == null
+                                                                ? null
+                                                                : item.locations().stream()
+                                                                        .map(
+                                                                                ReportController
+                                                                                        ::toLocation)
+                                                                        .toList()))
+                                .toList();
+        List<ReportService.LocationInput> locations =
+                body.locations() == null
+                        ? List.of()
+                        : body.locations().stream().map(ReportController::toLocation).toList();
+        return new ReportService.BatchCreateRequest(
+                body.mode(),
+                body.typeCode(),
+                body.nameId(),
+                body.reportDate(),
+                locations,
+                body.fileIds(),
+                items);
+    }
+
     private static ReportService.LocationInput toLocation(LocationBody loc) {
         Long recordId = null;
         if (loc.linkRecordId() != null && !loc.linkRecordId().isBlank()) {
@@ -176,6 +226,24 @@ public class ReportController {
             List<LocationBody> locations,
             List<String> fileIds,
             String note) {}
+
+    /** 批量上传请求体（report.md §2 POST /reports/batch-create）。 */
+    record BatchCreateBody(
+            Long patientId,
+            String mode,
+            String typeCode,
+            String nameId,
+            java.time.LocalDate reportDate,
+            List<LocationBody> locations,
+            List<String> fileIds,
+            List<BatchItemBody> items) {}
+
+    /** 逐份调整（ONE_PER_FILE；空 / null 项沿用公共值）。 */
+    record BatchItemBody(
+            String fileId,
+            String nameId,
+            java.time.LocalDate reportDate,
+            List<LocationBody> locations) {}
 
     record IndicatorBody(String itemCode, String result, String refRange) {}
 

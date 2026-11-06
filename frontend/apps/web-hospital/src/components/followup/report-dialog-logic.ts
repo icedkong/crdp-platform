@@ -143,3 +143,49 @@ export function initialLocations(
 ): ReportLocationInput[] {
   return preset ? preset.map((item) => ({ ...item })) : [];
 }
+
+// ------------------------------------------- E16-T03 多附件（A-ATT-004、C-SCAN-006）
+
+/**
+ * 附件数量拦截（A-ATT-004「一份报告单最多 10 个」按租户 maxFilesPerReport）：已选
+ * selected 个再进 incoming 个将超限时返回文案（与服务端 40001 同口径），否则 null。
+ * 策略未加载（≤ 0）不拦截，由后端兜底。
+ */
+export function attachmentOverLimit(
+  selected: number,
+  incoming: number,
+  maxFilesPerReport: number,
+): null | string {
+  if (maxFilesPerReport <= 0) return null;
+  return selected + incoming > maxFilesPerReport
+    ? `附件数量超过上限（每份报告单最多 ${maxFilesPerReport} 个）`
+    : null;
+}
+
+/** 附件计数提示（已选 x / 上限 N；策略未加载时只显示已选数）。 */
+export function attachmentCountText(
+  selected: number,
+  maxFilesPerReport: number,
+): string {
+  return maxFilesPerReport > 0
+    ? `已选 ${selected} / ${maxFilesPerReport} 个附件`
+    : `已选 ${selected} 个附件`;
+}
+
+/** 顺序调整（C-SCAN-006「可调整顺序」）：index 处上移 / 下移，越界原样返回（顺序随 sortNo 落库）。 */
+export function moveItem<T>(list: T[], index: number, delta: -1 | 1): T[] {
+  const target = index + delta;
+  if (
+    index < 0 ||
+    index >= list.length ||
+    target < 0 ||
+    target >= list.length
+  ) {
+    return list;
+  }
+  const next = [...list];
+  const current = next[index] as T;
+  next[index] = next[target] as T;
+  next[target] = current;
+  return next;
+}

@@ -448,6 +448,158 @@ class ReportIT {
         assertEquals(0, code(get(BASE + "/patients/" + patientId + "/report-locations", admin)));
     }
 
+    /**
+     * E16-T03 批量上传 / A-ATT-014、A-ATT-004；C-SCAN-006、C-SCAN-007。验收原文：单份最多 10 个文件，超限拦截。 覆盖：MERGE 11
+     * 个文件 40001 拦截（demoa 每份上限 10）且不落库；ONE_PER_FILE 3 个文件 → 3 份报告单 （逐份调整名称 / 报告时间生效）、文件挂台账
+     * ATTACHED；每份 RPT_CREATE + 一条 RPT_BATCH_CREATE 审计； 无上传权限 40300。
+     */
+    @Test
+    void batchCreateOnePerFileAndMergeOverLimit() {
+        String admin = hospitalToken("demoa");
+        String doctor = hospitalToken("demoa", "doctor.demo");
+        long patientId = registeredPatient("demoa", admin);
+        Map<?, ?> baselineRoot = locationRoot(admin, patientId, "baseline");
+        String categoryKey =
+                str(
+                        ((Map<?, ?>)
+                                        ((Map<?, ?>)
+                                                        ((List<?>) baselineRoot.get("children"))
+                                                                .get(0))
+                                                .get("value"))
+                                .get("anchorKey"));
+        Map<?, ?> name = labNameWithItems(admin);
+
+        List<String> eleven = new java.util.ArrayList<>();
+        for (int i = 1; i <= 11; i++) {
+            eleven.add(String.valueOf(uploadPng(admin, "IT-E16T03-合并-" + i + "（示例）.png")));
+        }
+        Map<?, ?> merge =
+                post(
+                        BASE + "/reports/batch-create",
+                        admin,
+                        batchBody(
+                                patientId,
+                                "MERGE",
+                                "LAB",
+                                str(name.get("id")),
+                                categoryKey,
+                                eleven,
+                                null));
+        assertEquals(40001, code(merge), "MERGE 11 个文件超过每份 10 个 → 拦截：" + merge);
+        assertTrue(str(merge.get("message")).contains("最多 10 个"), str(merge.get("message")));
+        runInTenant(
+                "demoa",
+                () ->
+                        assertEquals(
+                                0L,
+                                jdbc.queryForObject(
+                                        "SELECT COUNT(*) FROM rpt_report WHERE patient_id = ?",
+                                        Long.class,
+                                        patientId),
+                                "超限拦截后不落任何报告单"));
+
+        long f1 = uploadPng(admin, "IT-E16T03-一份-1（示例）.png");
+        long f2 = uploadPng(admin, "IT-E16T03-一份-2（示例）.png");
+        long f3 = uploadPng(admin, "IT-E16T03-一份-3（示例）.png");
+        Map<?, ?> other = otherLabName(admin);
+        Map<?, ?> created =
+                post(
+                        BASE + "/reports/batch-create",
+                        admin,
+                        batchBody(
+                                patientId,
+                                "ONE_PER_FILE",
+                                "LAB",
+                                str(name.get("id")),
+                                categoryKey,
+                                List.of(String.valueOf(f1), String.valueOf(f2), String.valueOf(f3)),
+                                List.of(
+                                        Map.of(
+                                                "fileId",
+                                                String.valueOf(f2),
+                                                "nameId",
+                                                str(other.get("id")),
+                                                "reportDate",
+                                                "2026-09-09"))));
+        assertEquals(0, code(created), "批量创建失败：" + created);
+        Map<?, ?> view = data(created);
+        assertEquals("ONE_PER_FILE", str(view.get("mode")));
+        assertEquals(3, ((Number) view.get("reportCount")).intValue(), "每个文件一份");
+        assertEquals(3, ((Number) view.get("fileCount")).intValue());
+        List<?> reports = (List<?>) view.get("reports");
+        assertEquals("血常规", str(((Map<?, ?>) reports.get(0)).get("name")), "公共名称");
+        assertEquals("肝肾功能", str(((Map<?, ?>) reports.get(1)).get("name")), "逐份调整名称（A-ATT-014）");
+        assertEquals("2026-09-09", str(((Map<?, ?>) reports.get(1)).get("reportDate")), "逐份调整报告时间");
+
+        runInTenant(
+                "demoa",
+                () -> {
+                    assertEquals(
+                            3L,
+                            jdbc.queryForObject(
+                                    "SELECT COUNT(*) FROM rpt_report WHERE patient_id = ?",
+                                    Long.class,
+                                    patientId),
+                            "3 个文件各成一份报告单");
+                    assertEquals(
+                            3L,
+                            jdbc.queryForObject(
+                                    "SELECT COUNT(*) FROM rpt_report_file WHERE patient_id = ?"
+                                            + " AND file_id IN (?, ?, ?)",
+                                    Long.class,
+                                    patientId,
+                                    f1,
+                                    f2,
+                                    f3),
+                            "每个文件挂到各自报告单");
+                    assertEquals(
+                            "ATTACHED",
+                            jdbc.queryForObject(
+                                    "SELECT status FROM sys_file WHERE id = ?", String.class, f2),
+                            "挂台账后置 ATTACHED");
+                    assertEquals(
+                            3L,
+                            jdbc.queryForObject(
+                                    "SELECT COUNT(*) FROM rpt_report r"
+                                            + " JOIN rpt_report_file f ON f.report_id = r.id"
+                                            + " WHERE r.patient_id = ? AND f.file_id IN (?, ?, ?)",
+                                    Long.class,
+                                    patientId,
+                                    f1,
+                                    f2,
+                                    f3),
+                            "每份报告单 1 个文件");
+                    assertTrue(
+                            jdbc.queryForObject(
+                                            "SELECT COUNT(*) FROM aud_log WHERE action = 'RPT_CREATE'",
+                                            Long.class)
+                                    >= 3,
+                            "每份报告单各写一条 RPT_CREATE");
+                    assertTrue(
+                            jdbc.queryForObject(
+                                            "SELECT COUNT(*) FROM aud_log WHERE action = 'RPT_BATCH_CREATE'",
+                                            Long.class)
+                                    >= 1,
+                            "批量汇总写 RPT_BATCH_CREATE 审计");
+                });
+
+        assertEquals(
+                40300,
+                code(
+                        post(
+                                BASE + "/reports/batch-create",
+                                doctor,
+                                batchBody(
+                                        patientId,
+                                        "MERGE",
+                                        "LAB",
+                                        null,
+                                        categoryKey,
+                                        List.of(String.valueOf(f1)),
+                                        null))),
+                "FOLLOWUP_DOCTOR 无 followup:scan:upload → 40300");
+    }
+
     // ---------------------------------------------------------------- 造数与工具（与 ContactLogIT 同口径）
 
     private long registeredPatient(String tenant, String token) {
@@ -489,6 +641,48 @@ class ReportIT {
     private Map<?, ?> labNameWithItems(String token) {
         List<?> names = (List<?>) get(BASE + "/report-names?typeCode=LAB", token).get("data");
         return (Map<?, ?>) names.get(0);
+    }
+
+    /** 批量上传第二个 LAB 名称（肝肾功能，A 预置 V62），逐份调整用。 */
+    private Map<?, ?> otherLabName(String token) {
+        List<?> names = (List<?>) get(BASE + "/report-names?typeCode=LAB", token).get("data");
+        return names.stream()
+                .map(node -> (Map<?, ?>) node)
+                .filter(node -> "肝肾功能".equals(str(node.get("name"))))
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("LAB 预置名称缺「肝肾功能」"));
+    }
+
+    /** 批量上传请求体（E16-T03；items 可空 = 全部沿用公共值）。 */
+    private Map<String, Object> batchBody(
+            long patientId,
+            String mode,
+            String typeCode,
+            String nameId,
+            String categoryKey,
+            List<String> fileIds,
+            List<Map<String, Object>> items) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("patientId", patientId);
+        body.put("mode", mode);
+        body.put("typeCode", typeCode);
+        body.put("nameId", nameId);
+        body.put("reportDate", "2026-10-28");
+        body.put(
+                "locations",
+                List.of(
+                        Map.of(
+                                "linkType",
+                                "baseline",
+                                "anchorType",
+                                "category",
+                                "anchorKey",
+                                categoryKey)));
+        body.put("fileIds", fileIds);
+        if (items != null) {
+            body.put("items", items);
+        }
+        return body;
     }
 
     private Map<String, Object> reportBody(
