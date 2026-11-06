@@ -34,7 +34,10 @@ import {
   fetchCatalogReportTypes,
   fetchReportLocations,
 } from '#/api/core/report';
+import { usePermission } from '#/reference/use-permission';
+import { useWatermarkViewer } from '#/reference/use-watermark-viewer';
 
+import { downloadFileById } from './file-download';
 import LocationPicker from './location-picker.vue';
 import {
   attachmentCountText,
@@ -52,6 +55,7 @@ import {
   validateReportForm,
   withIndicatorFlag,
 } from './report-dialog-logic';
+import WatermarkPreview from './watermark-preview.vue';
 
 /**
  * E16-T02 / A-ATT-001、A-ATT-002；C-SCAN-001、C-SCAN-010（pages.md §6.1 添加报告单，弹窗
@@ -93,9 +97,31 @@ const findings = ref('');
 const conclusion = ref('');
 const note = ref('');
 const locations = ref<ReportLocationInput[]>([]);
-const files = ref<Array<{ fileId: string; name: string }>>([]);
+/** 已上传附件（fileId + 后端真实格式 + 原文件名；格式供预览方式判定）。 */
+const files = ref<Array<{ fileId: string; format: string; name: string }>>([]);
 const uploading = ref(false);
 const showErrors = ref(false);
+
+// ------------------------------ E16-T06 全屏查看器（A-ATT-005 / C-SCAN-006 旋转）
+
+const { hasPermission } = usePermission();
+const watermarkViewer = useWatermarkViewer();
+const canDownloadFile = computed(() => hasPermission('followup:scan:download'));
+const previewOpen = ref(false);
+const previewIndex = ref(0);
+
+/** 「预览」→ 全屏查看器打开该附件（水印不可关闭；下载按 followup:scan:download）。 */
+function openFilePreview(index: number) {
+  previewIndex.value = index;
+  previewOpen.value = true;
+}
+
+async function handlePreviewDownload(fileId: number | string) {
+  const ok = await downloadFileById(fileId);
+  if (!ok) {
+    message.error('下载失败，请稍后重试');
+  }
+}
 
 const currentType = computed(
   () => types.value.find((item) => item.code === typeCode.value) ?? null,
@@ -269,7 +295,11 @@ async function customRequest(options: {
   uploading.value = true;
   try {
     const uploaded = await uploadFile(options.file);
-    files.value.push({ fileId: uploaded.fileId, name: uploaded.originalName });
+    files.value.push({
+      fileId: uploaded.fileId,
+      format: uploaded.format,
+      name: uploaded.originalName,
+    });
     options.onSuccess(uploaded);
   } catch (error) {
     options.onError(error as Error);
@@ -479,6 +509,10 @@ defineExpose({
         >
           <li v-for="(item, index) in files" :key="item.fileId">
             {{ index + 1 }}. {{ item.name }}
+            <!-- E16-T06 / C-SCAN-006：上传后即可全屏预览（缩放 / 旋转 / 翻转 / 水印） -->
+            <Button size="small" type="link" @click="openFilePreview(index)">
+              预览
+            </Button>
             <Button
               :disabled="index === 0"
               size="small"
@@ -526,6 +560,17 @@ defineExpose({
         </Button>
       </div>
     </Form>
+    <!-- E16-T06 全屏查看器：上传后预览（含旋转，C-SCAN-006；水印不可关闭） -->
+    <WatermarkPreview
+      :can-download="canDownloadFile"
+      :files="files"
+      :index="previewIndex"
+      :open="previewOpen"
+      :viewer="watermarkViewer"
+      @download="handlePreviewDownload"
+      @update:index="previewIndex = $event"
+      @update:open="previewOpen = $event"
+    />
   </Modal>
 </template>
 

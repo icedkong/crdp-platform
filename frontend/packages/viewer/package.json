@@ -6,7 +6,9 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@crdp/responsive": "workspace:*",
     "@crdp/tokens": "workspace:*",
+    "ant-design-vue": "catalog:",
     "docx-preview": "catalog:",
     "pdfjs-dist": "catalog:",
     "vue": "catalog:"

@@ -1,0 +1,185 @@
+// E16-T06 / A-ATT-005、C-SCAN-015：全屏查看器外壳——深色全屏遮罩 + 顶部工具栏
+// （下载 / 旋转 / 翻转 / 缩小 / 放大 / 关闭 + 多文件翻页），水印不可关闭；
+// 内容渲染复用 PreviewContent（图片 / PDF / DOCX / 音频 / 仅下载）。
+import { mount } from '@vue/test-utils';
+
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import FullscreenViewer from './fullscreen-viewer.vue';
+
+// pdf.js / docx-preview 懒加载渲染在单测里以替身注入（真实链路由 E10-T04 测试覆盖）
+vi.mock('./renderers', () => ({
+  renderDocxDocument: vi.fn().mockResolvedValue(undefined),
+  renderPdfDocument: vi.fn().mockResolvedValue(1),
+}));
+
+const viewer = {
+  account: 'doctor.demo',
+  displayName: '王医生（示例）',
+  tenantName: '医院 A（示例租户）',
+};
+
+const IMAGE = {
+  fileId: 11,
+  format: 'jpg',
+  mime: 'image/jpeg',
+  name: '超声（示例）.jpg',
+};
+const AUDIO = {
+  fileId: 12,
+  format: 'mp3',
+  mime: 'audio/mpeg',
+  name: '通话录音（示例）.mp3',
+};
+
+const mounted: Array<{ unmount: () => void }> = [];
+
+afterEach(() => {
+  for (const wrapper of mounted.splice(0)) wrapper.unmount();
+  document.body.innerHTML = '';
+});
+
+function mountViewer(props: Record<string, unknown> = {}) {
+  const wrapper = mount(FullscreenViewer, {
+    attachTo: document.body,
+    props: {
+      file: IMAGE,
+      url: '/api/hospital/files/preview/token-1',
+      viewer,
+      ...props,
+    },
+  });
+  mounted.push(wrapper);
+  return wrapper;
+}
+
+function toolbarButton(label: string) {
+  // antd Button 在两个汉字间自动插入空格（旋 转），匹配前先去掉全部空白
+  return [...document.body.querySelectorAll('button')].find((item) =>
+    (item.textContent ?? '').replaceAll(' ', '').includes(label),
+  );
+}
+
+async function click(label: string) {
+  toolbarButton(label)?.dispatchEvent(
+    new MouseEvent('click', { bubbles: true }),
+  );
+  await Promise.resolve();
+}
+
+function stageStyle(): string {
+  const node = document.body.querySelector('[data-testid="viewer-stage"]');
+  return (node as HTMLElement | null)?.style.transform ?? '';
+}
+
+describe('e16-t06 FullscreenViewer（全屏查看器）', () => {
+  it('图片：页内预览 + 工具栏齐全；无下载权限不显示「下载」', () => {
+    mountViewer();
+    const img = document.body.querySelector('.viewer-canvas img');
+    expect(img?.getAttribute('src')).toBe(
+      '/api/hospital/files/preview/token-1',
+    );
+    for (const label of ['旋转', '翻转', '缩小', '放大', '关闭']) {
+      expect(toolbarButton(label)).toBeTruthy();
+    }
+    expect(toolbarButton('下载')).toBeFalsy();
+  });
+
+  it('有下载权限时「下载」可见并抛出 download（带当前文件）', async () => {
+    const wrapper = mountViewer({ canDownload: true });
+    await click('下载');
+    expect(wrapper.emitted('download')?.[0]?.[0]).toMatchObject({
+      fileId: 11,
+    });
+  });
+
+  it('缩放 / 旋转 / 翻转：点击后舞台 transform 变化，百分比随动', async () => {
+    mountViewer();
+    expect(stageStyle()).toBe('none');
+
+    await click('放大');
+    expect(stageStyle()).toContain('scale(1.25)');
+    expect(document.body.textContent).toContain('125%');
+
+    await click('旋转');
+    expect(stageStyle()).toContain('rotate(90deg)');
+
+    await click('翻转');
+    // 镜像在最左（最后应用）：对当前画面做水平翻转
+    expect(stageStyle().startsWith('scaleX(-1)')).toBe(true);
+  });
+
+  it('缩放有上下限：放大封顶 500% 后按钮禁用，缩小触底 50% 后禁用', async () => {
+    mountViewer();
+    for (let i = 0; i < 20; i++) await click('放大');
+    expect(document.body.textContent).toContain('500%');
+    expect(toolbarButton('放大')?.hasAttribute('disabled')).toBe(true);
+
+    for (let i = 0; i < 20; i++) await click('缩小');
+    expect(document.body.textContent).toContain('50%');
+    expect(toolbarButton('缩小')?.hasAttribute('disabled')).toBe(true);
+  });
+
+  it('音频：原生 audio 播放，缩放 / 旋转 / 翻转按钮禁用（不参与变换）', () => {
+    mountViewer({ file: AUDIO });
+    expect(document.body.querySelector('audio')).toBeTruthy();
+    for (const label of ['旋转', '翻转', '缩小', '放大']) {
+      expect(toolbarButton(label)?.hasAttribute('disabled')).toBe(true);
+    }
+  });
+
+  it('翻页：上一份 / 下一份与指示文案，边界禁用；单份不显示翻页', async () => {
+    const wrapper = mountViewer({ fileCount: 3, index: 0 });
+    expect(document.body.textContent).toContain('第 1 / 3 份');
+    expect(toolbarButton('上一份')?.hasAttribute('disabled')).toBe(true);
+
+    await click('下一份');
+    expect(wrapper.emitted('update:index')?.[0]).toEqual([1]);
+
+    await wrapper.setProps({ index: 2 });
+    expect(document.body.textContent).toContain('第 3 / 3 份');
+    expect(toolbarButton('下一份')?.hasAttribute('disabled')).toBe(true);
+
+    // 单份：先卸掉多份查看器再挂载，避免 document.body 里两份并存
+    for (const wrapper of mounted.splice(0)) wrapper.unmount();
+    const single = mountViewer();
+    expect(toolbarButton('上一份')).toBeFalsy();
+    expect(toolbarButton('下一份')).toBeFalsy();
+    expect(single.text()).not.toContain('第 1 / 1 份');
+  });
+
+  it('切换文件后变换复位（每份从 100% 开始）', async () => {
+    const wrapper = mountViewer({ fileCount: 2, index: 0 });
+    await click('旋转');
+    expect(stageStyle()).toContain('rotate(90deg)');
+    await wrapper.setProps({
+      file: { ...AUDIO, fileId: 13, name: '第二份（示例）.mp3' },
+      index: 1,
+    });
+    expect(stageStyle()).toBe('none');
+  });
+
+  it('esc 与「关闭」抛出 close（由父级收起遮罩）', async () => {
+    const wrapper = mountViewer();
+    await click('关闭');
+    expect(wrapper.emitted('close')).toHaveLength(1);
+
+    document.body.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+    );
+    await Promise.resolve();
+    expect(wrapper.emitted('close')).toHaveLength(2);
+  });
+
+  it('水印不可关闭：遮罩上恒有水印层且不拦截点击', () => {
+    mountViewer();
+    const overlay = document.body.querySelector('[data-watermark]');
+    expect(overlay).toBeTruthy();
+    expect((overlay as HTMLElement).style.pointerEvents).toBe('none');
+  });
+
+  it('链接解析中（url=null）显示加载态', () => {
+    mountViewer({ url: null });
+    expect(document.body.textContent).toContain('正在加载预览');
+  });
+});

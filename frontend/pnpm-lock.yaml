@@ -631,6 +631,9 @@ importers:
       '@crdp/tokens':
         specifier: workspace:*
         version: link:../../packages/tokens
+      '@crdp/viewer':
+        specifier: workspace:*
+        version: link:../../packages/viewer
       '@vben/access':
         specifier: workspace:*
         version: link:../../packages/effects/access
@@ -1817,9 +1820,15 @@ importers:
 
   packages/viewer:
     dependencies:
+      '@crdp/responsive':
+        specifier: workspace:*
+        version: link:../responsive
       '@crdp/tokens':
         specifier: workspace:*
         version: link:../tokens
+      ant-design-vue:
+        specifier: 'catalog:'
+        version: 4.2.6(vue@3.5.44(typescript@6.0.3))
       docx-preview:
         specifier: 'catalog:'
         version: 0.4.1

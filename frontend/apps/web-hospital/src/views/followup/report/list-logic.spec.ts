@@ -18,6 +18,7 @@ import {
   LOCATION_SCOPE_OPTIONS,
   patientReportsPath,
   patientSubText,
+  previewFilesOf,
   TABLET_COLUMNS,
   thumbnailOf,
 } from './list-logic';
@@ -119,5 +120,22 @@ describe('e16-t05 列集与行文案', () => {
     expect(patientSubText(row({ visitNo: null }))).toBe('MR****01');
     expect(fileCountText(row({ fileCount: 0 }))).toBe('—');
     expect(fileCountText(row())).toBe('2');
+  });
+});
+
+describe('e16-t06 previewFilesOf（缩略图点击 → 全屏查看器文件清单）', () => {
+  it('首附件映射为查看器文件（fileId + format，名称取报告单名称，缺名称用类型）', () => {
+    expect(previewFilesOf(row())).toEqual([
+      { fileId: '71', format: 'jpg', name: '血常规' },
+    ]);
+    expect(
+      previewFilesOf(
+        row({ name: null, firstFile: { fileId: '72', format: 'pdf' } }),
+      ),
+    ).toEqual([{ fileId: '72', format: 'pdf', name: '检验' }]);
+  });
+
+  it('无附件（firstFile=null）返回 null，点击缩略图不打开查看器', () => {
+    expect(previewFilesOf(row({ firstFile: null }))).toBeNull();
   });
 });

@@ -7,6 +7,7 @@ import type { ReportLocationInput, ReportLocationNode } from '@crdp/api';
 
 import { mount } from '@vue/test-utils';
 
+import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import UploadReportDialog from './upload-report-dialog.vue';
@@ -17,6 +18,7 @@ const fetchReportLocations = vi.fn();
 const createReport = vi.fn();
 const uploadFile = vi.fn();
 const fetchUploadPolicy = vi.fn();
+const getFilePreviewUrl = vi.fn();
 
 vi.mock('#/api/core/report', () => ({
   createReport: (...args: unknown[]) => createReport(...args),
@@ -28,6 +30,7 @@ vi.mock('#/api/core/report', () => ({
 }));
 vi.mock('#/api/core/file', () => ({
   fetchUploadPolicy: (...args: unknown[]) => fetchUploadPolicy(...args),
+  getFilePreviewUrl: (...args: unknown[]) => getFilePreviewUrl(...args),
   uploadFile: (...args: unknown[]) => uploadFile(...args),
 }));
 
@@ -149,6 +152,8 @@ function flush(frames = 3) {
 }
 
 async function mountDialog(props: Record<string, unknown> = {}) {
+  // E16-T06：对话框内 WatermarkPreview 需要 userStore（水印查看人来自 me）
+  setActivePinia(createPinia());
   fetchCatalogReportTypes.mockResolvedValue(TYPES);
   fetchReportLocations.mockResolvedValue(TREE);
   fetchCatalogReportNames.mockResolvedValue(NAMES_LAB);
@@ -378,5 +383,63 @@ describe('e16-t02 UploadReportDialog（添加报告单）', () => {
       ['a.png', 'c.png', 'b.png'],
       '首个再上移不变',
     );
+  });
+
+  // --------------------------- E16-T06 全屏查看器（A-ATT-005 / C-SCAN-006 旋转）
+
+  it('附件「预览」→ 全屏查看器打开（图片直出、水印层常在、多份可翻页）', async () => {
+    getFilePreviewUrl.mockImplementation(async (fileId: string) => ({
+      expiresAt: 4_102_444_800,
+      format: 'png',
+      inlinePlayable: true,
+      mime: 'image/png',
+      originalName: `${fileId}.png`,
+      url: `/api/hospital/files/preview/token-${fileId}`,
+    }));
+    const wrapper = await mountDialog();
+    const vm = wrapper.vm as unknown as {
+      customRequest: (options: {
+        file: File;
+        onError: (error: Error) => void;
+        onSuccess: (body: unknown) => void;
+      }) => Promise<void>;
+    };
+    uploadFile.mockImplementation(async (file: File) => ({
+      fileId: `f-${file.name}`,
+      format: 'png',
+      mime: 'image/png',
+      originalName: file.name,
+      pages: 1,
+      sha256: 'hash',
+      size: file.size,
+    }));
+    for (const name of ['a.png', 'b.png']) {
+      await vm.customRequest({
+        file: new File(['x'], name),
+        onError: () => {},
+        onSuccess: () => {},
+      });
+    }
+
+    const previewButtons = [...document.body.querySelectorAll('button')].filter(
+      (item) => (item.textContent ?? '').replaceAll(' ', '').includes('预览'),
+    );
+    expect(previewButtons).toHaveLength(2);
+    previewButtons[0]?.dispatchEvent(
+      new MouseEvent('click', { bubbles: true }),
+    );
+    await flush();
+
+    const fullscreen = document.body.querySelector(
+      '[data-testid="fullscreen-viewer"]',
+    );
+    expect(fullscreen).toBeTruthy();
+    expect(fullscreen?.querySelector('img')?.getAttribute('src')).toBe(
+      '/api/hospital/files/preview/token-f-a.png',
+    );
+    // 水印不可关闭（遮罩根上恒有水印层）
+    expect(fullscreen?.querySelector('[data-watermark]')).toBeTruthy();
+    // 两份附件 → 翻页控件可见
+    expect(fullscreen?.textContent).toContain('第 1 / 2 份');
   });
 });

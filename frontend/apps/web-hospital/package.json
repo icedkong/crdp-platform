@@ -21,6 +21,7 @@
     "@crdp/rules": "workspace:*",
     "@crdp/status-tag": "workspace:*",
     "@crdp/tokens": "workspace:*",
+    "@crdp/viewer": "workspace:*",
     "@vben/access": "workspace:*",
     "@vben/common-ui": "workspace:*",
     "@vben/constants": "workspace:*",
