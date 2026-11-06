@@ -24,4 +24,22 @@ public interface PatientSummaryMapper {
             """)
     int upsertRecompute(
             @Param("patientId") long patientId, @Param("recomputedBy") Long recomputedBy);
+
+    /**
+     * 写入基线资料完整度（E13-T02 / A-PAT-019：已填基线必填 ÷ 应填，0–100；分类 1–8 的 JSON 必填字段口径见
+     * FormProgressEngine）。行不存在则建行（登记建行外的兜底），已存在只更新本列与重算时间——各写入方各管各的列。
+     */
+    @Insert(
+            """
+            INSERT INTO pt_patient_summary (patient_id, baseline_completeness, recomputed_by)
+            VALUES (#{patientId}, #{completeness}, #{recomputedBy})
+            ON DUPLICATE KEY UPDATE
+              baseline_completeness = VALUES(baseline_completeness),
+              recomputed_at = CURRENT_TIMESTAMP(3),
+              recomputed_by = VALUES(recomputed_by)
+            """)
+    int updateBaselineCompleteness(
+            @Param("patientId") long patientId,
+            @Param("completeness") int completeness,
+            @Param("recomputedBy") Long recomputedBy);
 }
