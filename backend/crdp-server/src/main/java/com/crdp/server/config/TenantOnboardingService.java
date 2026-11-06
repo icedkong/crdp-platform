@@ -3,6 +3,8 @@ package com.crdp.server.config;
 import com.crdp.framework.tenant.TenantContext;
 import com.crdp.framework.web.ApiException;
 import com.crdp.platform.tenant.TenantResourceRow;
+import com.crdp.server.configtemplate.ConfigTemplateExportService;
+import com.crdp.server.configtemplate.ConfigTemplateImportService;
 import com.crdp.server.platform.TenantLifecycleService;
 import java.security.SecureRandom;
 import java.sql.PreparedStatement;
@@ -30,7 +32,9 @@ import org.springframework.stereotype.Component;
  *   <li>resource-row：生成租户库专属账号口令并登记 plt_tenant_resource——已存在则复用原口令，不重复生成；
  *   <li>database：特权连接 CREATE DATABASE / CREATE USER IF NOT EXISTS + GRANT（不重复建库）；
  *   <li>migrate-register：热注册（E02-T02）——建池、跑租户库迁移、注册进路由，已注册则跳过；
- *   <li>admin：租户库内置 TENANT_ADMIN 角色与首个管理员（已存在跳过，口令 Argon2id）。
+ *   <li>admin：租户库内置 TENANT_ADMIN 角色与首个管理员（已存在跳过，口令 Argon2id）；
+ *   <li>config-template（E12-T05 / A-FLD-014）：向导选择的配置模板在模块开通后应用到新租户库 （复用 E12-T02 导入：ID
+ *       重映射、敏感拦截、授权取交集；未选择记 SKIPPED；重试沿用已登记模板）。
  * </ol>
  *
  * <p>全部成功后租户置 TRIAL。对象存储桶与 KMS 主密钥属云资源（由人负责，E01），本编排只覆盖共享 MySQL 实例。平台端向导与进度页是
@@ -85,7 +89,8 @@ public class TenantOnboardingService {
     /**
      * 开通请求：编码与医院名称必填；首个管理员在开通时提供，也可启用前经 E06 补设。 expire 为向导第 2 步的到期设置（E05-T02
      * /PLT-TEN-011），空表示长期有效；重试重入时不会改写已登记租户的到期设置。 modules 为向导第 2 步勾选的 业务模块（E05-T05 /PLT-MOD-004，base
-     * 必开不传），null 表示重试重入——沿用上次已登记模块。
+     * 必开不传），null 表示重试重入——沿用上次已登记模块。 templateId 为向导第 2 步选择的配置模板（E12-T05 / A-FLD-014
+     * 「新建租户时选择模板初始化」），null 表示未选择或重试重入——重入时沿用 plt_tenant.init_template_id 已登记的模板。
      */
     public record OnboardingRequest(
             String code,
@@ -94,7 +99,8 @@ public class TenantOnboardingService {
             String adminDisplayName,
             String adminInitialPassword,
             TenantLifecycleService.ExpiryView expire,
-            List<String> modules) {}
+            List<String> modules,
+            Long templateId) {}
 
     public record StepResult(String step, String status, String error) {}
 
@@ -106,6 +112,14 @@ public class TenantOnboardingService {
     private final ProvisioningProperties properties;
     private final PasswordEncoder passwordEncoder;
     private final com.crdp.server.platform.TenantModuleService tenantModules;
+
+    /**
+     * 配置模板初始化（E12-T05 / A-FLD-014）：templateId 存在性先经导出服务校验（40400）， 应用复用 E12-T02 的导入服务（ID
+     * 重映射、敏感拦截、授权取交集、审计一应俱全），本编排只负责步骤化与可重入。
+     */
+    private final ConfigTemplateExportService templateExport;
+
+    private final ConfigTemplateImportService templateImport;
 
     /**
      * local/dev 的种子演示占位替换器（E06-T12）：启动扫描只覆盖已注册租户，运行中开通的租户在迁移后就地执行， 否则种子演示账号（占位口令哈希 / PENDING
@@ -126,7 +140,9 @@ public class TenantOnboardingService {
             PasswordEncoder passwordEncoder,
             com.crdp.server.platform.TenantModuleService tenantModules,
             org.springframework.beans.factory.ObjectProvider<DemoPasswordInitializer> demoPasswords,
-            org.springframework.beans.factory.ObjectProvider<DemoPhoneInitializer> demoPhones) {
+            org.springframework.beans.factory.ObjectProvider<DemoPhoneInitializer> demoPhones,
+            ConfigTemplateExportService templateExport,
+            ConfigTemplateImportService templateImport) {
         this.platform = platform;
         this.registry = registry;
         this.provisioning = provisioning;
@@ -135,6 +151,8 @@ public class TenantOnboardingService {
         this.tenantModules = tenantModules;
         this.demoPasswords = demoPasswords;
         this.demoPhones = demoPhones;
+        this.templateExport = templateExport;
+        this.templateImport = templateImport;
     }
 
     public OnboardingResult onboard(OnboardingRequest request) {
@@ -174,6 +192,24 @@ public class TenantOnboardingService {
             tenantModules.reopenExistingForRetry(tenantId);
         }
 
+        // 配置模板初始化（E12-T05 / A-FLD-014）：必须在模块开通之后——导入时角色菜单与新租户生效可分配
+        // 范围取交集（TenantScopeService.assignableMenuIds 依赖已开通模块），先应用会把授权整批丢掉。
+        // 复用 E12-T02 导入（单事务、ID 重映射、敏感拦截、审计）；失败记 FAILED 可从本步骤重试。
+        Long templateId = resolveTemplateId(request, tenantId);
+        if (templateId == null) {
+            record(steps, tenantId, "config-template", "SKIPPED", null);
+        } else {
+            long selected = templateId;
+            provision(
+                    steps,
+                    tenantId,
+                    "config-template",
+                    () ->
+                            templateImport.apply(
+                                    selected,
+                                    new ConfigTemplateImportService.ApplyRequest(tenantId)));
+        }
+
         TenantContext.runAsPlatform(
                 () ->
                         platform.update(
@@ -181,6 +217,29 @@ public class TenantOnboardingService {
                                         + " WHERE id = ? AND status = 'PROVISIONING'",
                                 tenantId));
         return new OnboardingResult(tenantId, request.code(), steps);
+    }
+
+    /**
+     * 解析本次开通要应用的配置模板：请求带 templateId 时登记并使用它（新建插入行已带列；重入改选时 更新登记），未带（进度页重试）时沿用
+     * plt_tenant.init_template_id 已登记的模板；两边都空返回 null（步骤记 SKIPPED）。
+     */
+    private Long resolveTemplateId(OnboardingRequest request, long tenantId) {
+        return TenantContext.callAsPlatform(
+                () -> {
+                    Long stored =
+                            platform.queryForObject(
+                                    "SELECT init_template_id FROM plt_tenant WHERE id = ?",
+                                    Long.class,
+                                    tenantId);
+                    if (request.templateId() == null || request.templateId().equals(stored)) {
+                        return stored;
+                    }
+                    platform.update(
+                            "UPDATE plt_tenant SET init_template_id = ? WHERE id = ?",
+                            request.templateId(),
+                            tenantId);
+                    return request.templateId();
+                });
     }
 
     /** 开通进度视图（PLT-TEN-008）：租户状态与逐步结果。 */
@@ -212,6 +271,7 @@ public class TenantOnboardingService {
                             new OnboardingRequest(
                                     String.valueOf(tenant.get("code")),
                                     String.valueOf(tenant.get("name")),
+                                    null,
                                     null,
                                     null,
                                     null,
@@ -276,6 +336,13 @@ public class TenantOnboardingService {
                         || request.adminInitialPassword().isBlank())) {
             throw new ApiException(400, 40001, "填写首个租户管理员时初始口令必填（也可跳过，启用前补设）");
         }
+        if (request.templateId() != null) {
+            if (request.templateId() <= 0) {
+                throw new ApiException(400, 40001, "配置模板 id 不合法");
+            }
+            // 未知模板 40400 先拒绝（不建库、不登记租户）；模板随后被清理的窗口由 config-template 步骤的 FAILED 兜底
+            templateExport.headerOf(request.templateId());
+        }
     }
 
     private static boolean adminProvided(OnboardingRequest request) {
@@ -300,15 +367,17 @@ public class TenantOnboardingService {
                         return insertReturningId(
                                 "INSERT INTO plt_tenant"
                                         + " (code, name, status, expire_type, expire_at,"
-                                        + " remind_days, grace_days, grace_read_only)"
-                                        + " VALUES (?, ?, 'PROVISIONING', ?, ?, ?, ?, ?)",
+                                        + " remind_days, grace_days, grace_read_only,"
+                                        + " init_template_id)"
+                                        + " VALUES (?, ?, 'PROVISIONING', ?, ?, ?, ?, ?, ?)",
                                 request.code(),
                                 request.name(),
                                 expire.expireType(),
                                 expire.expireAt(),
                                 TenantLifecycleService.joinRemindDays(expire.remindDays()),
                                 expire.graceDays(),
-                                expire.graceReadOnly() ? 1 : 0);
+                                expire.graceReadOnly() ? 1 : 0,
+                                request.templateId());
                     } catch (DuplicateKeyException ex) {
                         // 并发插入撞编码时重查可得；重查仍为空说明撞的是医院名称唯一键（E05-T01 起 name 唯一）
                         Long raced =

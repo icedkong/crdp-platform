@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import type { TenantOnboardingResult } from '@crdp/api';
+import type { ConfigTemplateView, TenantOnboardingResult } from '@crdp/api';
 
 import { computed, onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
@@ -22,12 +22,14 @@ import {
   InputPassword,
   Radio,
   RadioGroup,
+  Select,
   Space,
   Steps,
   Switch,
 } from 'ant-design-vue';
 import dayjs from 'dayjs';
 
+import { listConfigTemplates } from '#/api/core/config-template';
 import { listModules } from '#/api/core/module';
 import { createTenant } from '#/api/core/tenant';
 
@@ -39,8 +41,10 @@ import {
 } from './lifecycle';
 import {
   PROVISION_TITLES,
+  provisionSkipText,
   subdomainPreview,
   suggestTenantCode,
+  templateOptionLabel,
   validateInitialPassword,
   validateTenantCode,
 } from './wizard';
@@ -63,6 +67,31 @@ const moduleOptions = ref<
   Array<{ code: string; description: string; name: string }>
 >([]);
 
+// 配置模板选项（E12-T05 / A-FLD-014「新建租户时选择模板初始化」）：
+// 取最近 100 条模板（新→旧），undefined = 不使用模板；列表读失败不挡向导（选项为空）
+const templateId = ref<number | undefined>(undefined);
+const templateOptions = ref<ConfigTemplateView[]>([]);
+
+const templateSelectOptions = computed(() => [
+  { label: '不使用模板', value: -1 },
+  ...templateOptions.value.map((item) => ({
+    label: templateOptionLabel(item),
+    value: item.id,
+  })),
+]);
+
+// Select 绑定值：-1 表示「不使用模板」
+const templateSelection = computed({
+  get: () => templateId.value ?? -1,
+  set: (value: number) => {
+    templateId.value = value === -1 ? undefined : value;
+  },
+});
+
+const selectedTemplate = computed(() =>
+  templateOptions.value.find((item) => item.id === templateId.value),
+);
+
 onMounted(async () => {
   try {
     const catalog = await listModules();
@@ -77,6 +106,12 @@ onMounted(async () => {
   } catch {
     moduleOptions.value = [];
     modules.value = [];
+  }
+  try {
+    const page = await listConfigTemplates(1, 100);
+    templateOptions.value = page.items;
+  } catch {
+    templateOptions.value = [];
   }
 });
 // 到期设置（E05-T02 / PLT-TEN-011，向导第 2 步）：默认长期有效，选择有到期日时展开其余项
@@ -151,6 +186,7 @@ async function submit() {
       code: basic.code.trim(),
       modules: [...modules.value],
       name: basic.name.trim(),
+      templateId: templateId.value,
       ...toCreateExpiry(expiry),
     });
   } catch (error) {
@@ -169,9 +205,11 @@ function stepStatus(status: string): 'error' | 'finish' | 'wait' {
 function stepDescription(step: {
   error: null | string;
   status: string;
+  step: string;
 }): string {
   if (step.status === 'FAILED') return step.error ?? '失败';
-  if (step.status === 'SKIPPED') return '已跳过，启用前补设';
+  // SKIPPED 文案按步骤区分：admin=启用前补设，config-template=未选择模板（E12-T05）
+  if (step.status === 'SKIPPED') return provisionSkipText(step.step);
   return '';
 }
 
@@ -230,7 +268,7 @@ const provisionItems = computed(() => {
         </Alert>
       </Form>
 
-      <!-- 第 2 步：模块与到期设置（模块开通是 E05-T05；到期设置 E05-T02 / PLT-TEN-011） -->
+      <!-- 第 2 步：模块、配置模板与到期设置（模块开通 E05-T05；配置模板 E12-T05 / A-FLD-014；到期设置 E05-T02） -->
       <Form v-show="current === 1" layout="vertical" style="max-width: 480px">
         <FormItem
           label="开通模块"
@@ -246,6 +284,16 @@ const provisionItems = computed(() => {
               {{ item.name }}（{{ item.code }}）
             </Checkbox>
           </CheckboxGroup>
+        </FormItem>
+        <FormItem
+          label="配置模板初始化"
+          help="用已有租户的配置模板初始化新租户：只复制配置（表单、计划、报告单等），不含患者数据与账号；初始化后各租户独立修改"
+        >
+          <Select
+            v-model:value="templateSelection"
+            :options="templateSelectOptions"
+            placeholder="选择配置模板"
+          />
         </FormItem>
         <FormItem label="到期类型" required>
           <RadioGroup v-model:value="expiry.expireType">
@@ -358,6 +406,13 @@ const provisionItems = computed(() => {
         <DescriptionsItem label="开通模块">
           平台基础{{
             moduleNames.length > 0 ? `、${moduleNames.join('、')}` : ''
+          }}
+        </DescriptionsItem>
+        <DescriptionsItem label="配置模板初始化">
+          {{
+            selectedTemplate
+              ? templateOptionLabel(selectedTemplate)
+              : '不使用模板'
           }}
         </DescriptionsItem>
         <DescriptionsItem label="到期设置">

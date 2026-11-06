@@ -97,7 +97,7 @@ class TenantOnboardingServiceMySqlIT {
 
     private static TenantOnboardingService.OnboardingRequest request() {
         return new TenantOnboardingService.OnboardingRequest(
-                CODE, "虚构示例医院丙", "admin", "丙院管理员", INITIAL_PASSWORD, null, null);
+                CODE, "虚构示例医院丙", "admin", "丙院管理员", INITIAL_PASSWORD, null, null, null);
     }
 
     private static TenantOnboardingService service(TenantDataSourceRegistry registryToUse) {
@@ -129,7 +129,10 @@ class TenantOnboardingServiceMySqlIT {
                                 new JdbcTemplate(routing))),
                 // E06-T12：local/dev 演示占位替换器，本 IT 手工装配传空提供者
                 EmptyObjectProvider.get(),
-                EmptyObjectProvider.get());
+                EmptyObjectProvider.get(),
+                // E12-T05：本 IT 不选配置模板（步骤记 SKIPPED），模板头校验与应用服务不会触碰，传 null
+                null,
+                null);
     }
 
     @Test
@@ -170,10 +173,15 @@ class TenantOnboardingServiceMySqlIT {
 
         // 2. 重跑成功：从失败步骤继续，最终 TRIAL
         TenantOnboardingService.OnboardingResult result = service(registry).onboard(request());
-        assertEquals(5, result.steps().size());
+        assertEquals(6, result.steps().size());
         assertTrue(
-                result.steps().stream().allMatch(s -> "SUCCESS".equals(s.status())),
-                () -> result.steps().toString());
+                result.steps().stream()
+                        .allMatch(
+                                s ->
+                                        "SUCCESS".equals(s.status())
+                                                || ("config-template".equals(s.step())
+                                                        && "SKIPPED".equals(s.status()))),
+                "未选模板时 config-template 记 SKIPPED，其余 SUCCESS：" + result.steps());
         assertEquals(
                 "TRIAL",
                 platform.queryForObject(
@@ -286,7 +294,7 @@ class TenantOnboardingServiceMySqlIT {
                         Integer.class),
                 "管理员不重复创建");
         assertEquals(
-                5,
+                6,
                 platform.queryForObject(
                         "SELECT COUNT(*) FROM plt_provision_step WHERE tenant_id ="
                                 + " (SELECT id FROM plt_tenant WHERE code = ?)",

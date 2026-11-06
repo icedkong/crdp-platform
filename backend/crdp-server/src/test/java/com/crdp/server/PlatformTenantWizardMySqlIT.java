@@ -128,9 +128,14 @@ class PlatformTenantWizardMySqlIT {
         createdCodes.add(createdCode);
         assertTrue(createdCode.matches("^t[a-z0-9]{7}$"), "未填编码时应自动生成：" + createdCode);
         List<Map<String, Object>> steps = (List<Map<String, Object>>) data.get("steps");
-        assertEquals(5, steps.size());
+        assertEquals(6, steps.size());
         assertTrue(
-                steps.stream().allMatch(step -> "SUCCESS".equals(step.get("status"))),
+                steps.stream()
+                        .allMatch(
+                                step ->
+                                        "SUCCESS".equals(step.get("status"))
+                                                || ("config-template".equals(step.get("step"))
+                                                        && "SKIPPED".equals(step.get("status")))),
                 () -> steps.toString());
 
         assertEquals(
@@ -207,7 +212,7 @@ class PlatformTenantWizardMySqlIT {
         String code = ((Map<?, ?>) created.get("data")).get("code").toString();
         createdCodes.add(code);
 
-        // 进度页数据：TRIAL + 五步 SUCCESS（admin 已建成）
+        // 进度页数据：TRIAL + 六步（config-template 未选记 SKIPPED，admin 已建成）
         Map<?, ?> view =
                 rest.exchange(
                                 "/api/platform/tenants/" + tenantId + "/provision",
@@ -217,9 +222,9 @@ class PlatformTenantWizardMySqlIT {
                         .getBody();
         Map<?, ?> viewData = (Map<?, ?>) view.get("data");
         assertEquals("TRIAL", viewData.get("status"));
-        assertEquals(5, ((List<?>) viewData.get("steps")).size());
+        assertEquals(6, ((List<?>) viewData.get("steps")).size());
 
-        // 重试：幂等重跑，仍是五步 SUCCESS（admin 已存在不受影响）
+        // 重试：幂等重跑，仍是六步无失败（admin 已存在不受影响）
         Map<?, ?> retried =
                 rest.exchange(
                                 "/api/platform/tenants/" + tenantId + "/retry",
@@ -229,7 +234,7 @@ class PlatformTenantWizardMySqlIT {
                         .getBody();
         List<Map<String, Object>> steps =
                 (List<Map<String, Object>>) ((Map<?, ?>) retried.get("data")).get("steps");
-        assertEquals(5, steps.size());
+        assertEquals(6, steps.size());
         assertTrue(
                 steps.stream().noneMatch(step -> "FAILED".equals(step.get("status"))),
                 () -> steps.toString());
