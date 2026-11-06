@@ -398,7 +398,8 @@ class M2CoreRegressionIT {
             assertEquals(unreadBefore + 1, unreadCount(doctor), "未读数 +1（本链路新消息）");
         }
 
-        // 标已读 → 未读回落
+        // 标已读 → 未读回落（alreadyDelivered 分支的未读基数已含本条：回落到 unreadBefore - 1；
+        // 未先行投递分支本条是标已读前 +1 的新消息：回落到 unreadBefore——两种时序分别收敛）
         assertEquals(
                 0,
                 codeOf(
@@ -406,7 +407,10 @@ class M2CoreRegressionIT {
                                 "/api/hospital/notify/messages/" + message.get("id") + "/read",
                                 doctor,
                                 Map.of())));
-        assertEquals(unreadBefore, unreadCount(doctor), "标已读后未读回落");
+        assertEquals(
+                alreadyDelivered ? unreadBefore - 1 : unreadBefore,
+                unreadCount(doctor),
+                "标已读后未读回落");
 
         // 链路收尾：TaskOpened 无订阅方保持 PENDING（订阅方上线即消费，不丢——OQ-78④ / OQ-60③ 既定口径）
         assertEquals("PENDING", outboxStatusOf(patientId, "TaskOpened"));
