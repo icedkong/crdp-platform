@@ -27,6 +27,7 @@ import com.crdp.framework.security.ScopeSnapshot;
 import com.crdp.framework.security.SessionPrincipal;
 import com.crdp.framework.web.ApiException;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -115,7 +116,9 @@ class ContactLogServiceTest {
                                 "REACHED",
                                 LocalDateTime.of(2026, 11, 5, 9, 0),
                                 null,
-                                LocalDateTime.of(2026, 11, 5, 9, 0).plusDays(1),
+                                // contactTime 缺省取 now(Asia/Shanghai)（服务口径），下次联系时间须晚于它：
+                                // 用同一时区的 now+1 天，避免固定字面量随日期推移越过 now 后必然失败
+                                LocalDateTime.now(ZoneId.of("Asia/Shanghai")).plusDays(1),
                                 "患者诉近期胸闷，建议门诊复查（示例）",
                                 List.of(6001L)));
 
