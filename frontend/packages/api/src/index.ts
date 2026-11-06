@@ -209,6 +209,8 @@ export type {
   TenantParamView,
 } from './config';
 
+// E12-T04 配置模板管理页与导入预览（A-FLD-014，接口随 E12-T01/T02/T03 已交付）
+export * from './config-template';
 // E15-T04 沟通记录与录音（A-FU-006、A-FU-025、C-FU-019；pages.md §4.8）
 export {
   CONTACT_METHOD_OPTIONS,
@@ -343,6 +345,7 @@ export type {
   NotifySettingsUpdate,
 } from './notify';
 export { DEPT_TYPE_OPTIONS, ORG_STATUS_TEXT, orgStatusText } from './org';
+
 export type {
   DeptImpactView,
   DeptNodeView,
@@ -356,7 +359,6 @@ export type {
   OrgTreeView,
   OrgView,
 } from './org';
-
 export {
   PASSWORD_EXPIRY_REMIND_DAYS,
   PASSWORD_HISTORY_COUNT,
@@ -454,6 +456,7 @@ export {
   patientEmptyText,
   patientStatusOptions,
 } from './patient-search';
+
 export type {
   PatientFilterOptions,
   PatientFilterState,
@@ -463,7 +466,6 @@ export type {
   PatientSortSpec,
   PatientWardOption,
 } from './patient-search';
-
 export {
   API_ACTION_TYPE_TEXT,
   API_AUDIT_LEVEL_TEXT,
@@ -480,6 +482,7 @@ export {
   menuSyncActionText,
   menuTypeText,
 } from './perm-resources';
+
 export type {
   ApiMarkRequest,
   ApiResourceItem,
@@ -511,33 +514,6 @@ export {
   planEnrollmentStatusText,
   planLogActionText,
   planStartDateFieldText,
-} from './plan';
-
-export type {
-  PlanCreateRequest,
-  PlanCycleType,
-  PlanDetailView,
-  PlanEnrollmentPage,
-  PlanEnrollmentPatientView,
-  PlanEnrollmentStatus,
-  PlanEnrollMode,
-  PlanLogAction,
-  PlanLogsView,
-  PlanLogView,
-  PlanNodeBasis,
-  PlanNodeInput,
-  PlanNodeView,
-  PlanOffsetUnit,
-  PlanOwnerType,
-  PlanPassedWindowAction,
-  PlanRemindUnit,
-  PlanRepeatMode,
-  PlanSaveNodesRequest,
-  PlanStartDateField,
-  PlanStatus,
-  PlanTaskType,
-  PlanUpdateRequest,
-  PlanView,
 } from './plan';
 
 export interface CreateTenantRequest {
@@ -876,6 +852,32 @@ export interface ModuleOpenLog {
   tenantName: string;
 }
 
+export type {
+  PlanCreateRequest,
+  PlanCycleType,
+  PlanDetailView,
+  PlanEnrollmentPage,
+  PlanEnrollmentPatientView,
+  PlanEnrollmentStatus,
+  PlanEnrollMode,
+  PlanLogAction,
+  PlanLogsView,
+  PlanLogView,
+  PlanNodeBasis,
+  PlanNodeInput,
+  PlanNodeView,
+  PlanOffsetUnit,
+  PlanOwnerType,
+  PlanPassedWindowAction,
+  PlanRemindUnit,
+  PlanRepeatMode,
+  PlanSaveNodesRequest,
+  PlanStartDateField,
+  PlanStatus,
+  PlanTaskType,
+  PlanUpdateRequest,
+  PlanView,
+} from './plan';
 export {
   platformAccountStatusText,
   platformRoleStatusText,
@@ -885,6 +887,7 @@ export {
   validatePlatformAccount,
   validatePlatformRole,
 } from './platform-role';
+
 export type {
   PlatformAccountResetResult,
   PlatformAccountSaveRequest,
@@ -897,7 +900,6 @@ export type {
   PlatformTenantScope,
   PlatformVisibleScope,
 } from './platform-role';
-
 // E04-T08 / PLT-AUTH-012：敏感操作二次认证（明文查看、导出、下载、重置密码）
 export {
   isReauthCancelled,
@@ -909,9 +911,10 @@ export {
   ReauthTokenKeeper,
   runWithReauth,
 } from './reauth';
-export type { ReauthFlowDeps, ReauthResult } from './reauth';
 
+export type { ReauthFlowDeps, ReauthResult } from './reauth';
 export type { OnlineSessionView } from './session';
+
 // E15-T02 / A-FU-004、A-FU-005、C-FU-020：我的任务、任务列表与随访工作台；
 // E15-T06 / A-FU-013、A-FU-026：临时添加任务与站内提醒（无需填表）
 export {
@@ -933,7 +936,6 @@ export {
   TEMP_TASK_DEFAULT_WINDOW_DAYS,
   TEMP_TASK_MAX_WINDOW_DAYS,
 } from './task';
-
 export type {
   BackfillCreateRequest,
   BackfillCreateView,
@@ -959,6 +961,7 @@ export type {
   TempTaskCreateRequest,
   TempTaskView,
 } from './task';
+
 export {
   TENANT_ROLE_SCOPE_OPTIONS,
   tenantFieldPolicyText,
@@ -966,7 +969,6 @@ export {
   tenantRoleTypeHint,
   tenantRoleTypeText,
 } from './tenant-role';
-
 export type {
   FieldPolicy,
   RoleScopeType,
@@ -1016,6 +1018,7 @@ export {
   userOptionLabel,
   userStatusText,
 } from './tenant-user';
+
 export type {
   FieldPolicyPreviewView,
   MenuPreviewNode,
@@ -1037,7 +1040,6 @@ export type {
   UserStatus,
   WardOptionView,
 } from './tenant-user';
-
 export * from './tenant-view';
 export {
   failedUserRows,
