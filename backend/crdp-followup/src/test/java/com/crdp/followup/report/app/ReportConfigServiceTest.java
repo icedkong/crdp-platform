@@ -16,6 +16,7 @@ import static org.mockito.Mockito.when;
 
 import com.crdp.followup.report.infra.mapper.NameInsert;
 import com.crdp.followup.report.infra.mapper.ReportConfigMapper;
+import com.crdp.followup.report.infra.mapper.ReportMapper;
 import com.crdp.followup.report.infra.mapper.TplInsert;
 import com.crdp.followup.report.infra.mapper.TypeInsert;
 import com.crdp.form.field.infra.mapper.FormFieldMapper;
@@ -48,9 +49,11 @@ class ReportConfigServiceTest {
 
     private final ReportConfigMapper mapper = mock(ReportConfigMapper.class);
     private final FormFieldMapper forms = mock(FormFieldMapper.class);
+    private final ReportMapper reports = mock(ReportMapper.class);
     private final AuditLogger audit = mock(AuditLogger.class);
 
-    private final ReportConfigService service = new ReportConfigService(mapper, forms, audit);
+    private final ReportConfigService service =
+            new ReportConfigService(mapper, forms, reports, audit);
 
     @BeforeEach
     void login() {
@@ -256,6 +259,31 @@ class ReportConfigServiceTest {
         service.deleteType(11L);
 
         verify(mapper).deleteType(11L);
+    }
+
+    @Test
+    void deleteTypeBlockedWhileReportsExist() {
+        // OQ-95②（随 E16-T02 落地）：类型被报告单引用 → 40901，可停用不可删
+        when(mapper.findType(11L)).thenReturn(typeRow(11L, "LAB", "检验", "RPT_LAB"));
+        when(reports.countReportsOfType("LAB")).thenReturn(3L);
+
+        ApiException error = assertThrows(ApiException.class, () -> service.deleteType(11L));
+
+        assertEquals(40901, error.code());
+        assertTrue(error.getMessage().contains("3 份报告单"), error.getMessage());
+        verify(mapper, never()).deleteType(anyLong());
+        verify(audit).append(any(AuditEntry.class)); // DENIED 审计
+    }
+
+    @Test
+    void deleteNameBlockedWhileReportsExist() {
+        when(mapper.findName(51L)).thenReturn(nameRow(51L, "LAB", "检验", "凝血四项（示例）", 77L, "凝血四项"));
+        when(reports.countReportsOfName(51L)).thenReturn(2L);
+
+        ApiException error = assertThrows(ApiException.class, () -> service.deleteName(51L));
+
+        assertEquals(40901, error.code());
+        verify(mapper, never()).deleteName(anyLong());
     }
 
     // ---------------------------------------------------------------- 名称（A-ATT-011）

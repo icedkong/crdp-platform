@@ -48,9 +48,9 @@ public class BaselineSectionService {
 
     /**
      * 基线表单编码：医院 A 基线档案（followup V38 种子，分类 1–8）。医院 C 的患者登记表单随 E21 接入时改为按租户解析——
-     * 分节由模板分类决定、字段来自字典（AGENTS §5.8），不在页面硬编码。
+     * 分节由模板分类决定、字段来自字典（AGENTS §5.8），不在页面硬编码。报告单位置树（E16-T02）按同一表单解析基线分类锚点。
      */
-    static final String BASELINE_FORM_CODE = "A_BASELINE";
+    public static final String BASELINE_FORM_CODE = "A_BASELINE";
 
     /** 分节完整度状态（patient.md §4）：未填写 / 部分 / 完成（口径 = 已填必填 ÷ 应填必填，A-PAT-019）。 */
     public static final String STATUS_EMPTY = "EMPTY";

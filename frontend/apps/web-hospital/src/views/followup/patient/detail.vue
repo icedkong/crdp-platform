@@ -8,6 +8,8 @@ import type {
   PatientStatusHistoryRow,
   PatientTimelineEntry,
   PatientWardHistoryItem,
+  ReportLocationInput,
+  ReportRow,
 } from '@crdp/api';
 
 import { computed, onMounted, ref, watch } from 'vue';
@@ -29,6 +31,7 @@ import {
   latestFollowupText,
   nextVisitText,
   PATIENT_STATUS_TEXT,
+  reportLocationText,
   sectionDisplaySchema,
   showBaselineLock,
   showBaselineUnlock,
@@ -50,6 +53,7 @@ import {
   Table,
   TabPane,
   Tabs,
+  Tag,
   Tooltip,
 } from 'ant-design-vue';
 
@@ -63,6 +67,7 @@ import {
   fetchPatientTimeline,
   fetchPatientWardHistory,
 } from '#/api/core/patient';
+import { fetchPatientReports } from '#/api/core/report';
 import { startTask } from '#/api/core/task';
 import {
   categoryHash,
@@ -79,6 +84,7 @@ import ReasonModal from '#/components/followup/reason-modal.vue';
 import TempTaskModal from '#/components/followup/temp-task-modal.vue';
 import TransferWardModal from '#/components/followup/transfer-ward-modal.vue';
 import UnplannedRecordModal from '#/components/followup/unplanned-record-modal.vue';
+import UploadReportDialog from '#/components/followup/upload-report-dialog.vue';
 import { usePermission } from '#/reference/use-permission';
 
 defineOptions({ name: 'FollowupPatientDetail' });
@@ -359,6 +365,85 @@ function handleTransferred() {
   void router.replace('/followup/patient');
 }
 
+// ---------------------------------------------------------------- E16-T02 报告单页签（pages.md §4.6）
+
+/** 上传入口权限（pages.md §6.1：添加报告单 / 页内「上传附件」都按 followup:scan:upload）。 */
+const canUploadReport = computed(() => hasPermission('followup:scan:upload'));
+const reports = ref<ReportRow[]>([]);
+const reportsLoading = ref(false);
+const reportDialogOpen = ref(false);
+/** 页内上传预选位置（基线分类 / 随访记录整条；A-ATT-001「自动预选该位置」）。 */
+const reportPreset = ref<ReportLocationInput[]>([]);
+
+async function loadReports() {
+  reportsLoading.value = true;
+  try {
+    const page = await fetchPatientReports(patientId.value, 'all');
+    reports.value = page.items;
+  } catch {
+    reports.value = [];
+  } finally {
+    reportsLoading.value = false;
+  }
+}
+
+// 切到报告单页签时加载（患者档案的一部分，不随首屏拉取；上传成功后也走这里刷新）
+watch([tab, loading], ([current, isLoading]) => {
+  if (current === 'reports' && !isLoading && overview.value) {
+    void loadReports();
+  }
+});
+
+/** 报告单页签 / 基线分类 / 随访展开记录的添加入口；preset 缺省 = 报告单页签（不预选）。 */
+function openReportUpload(preset?: ReportLocationInput[]) {
+  reportPreset.value = preset ?? [];
+  reportDialogOpen.value = true;
+}
+
+/** 基线分类末尾「上传附件」：预选 {baseline / category / 分类 key / 基线表单版本}。 */
+function baselineUploadPreset(sectionCode: string): ReportLocationInput[] {
+  return [
+    {
+      anchorKey: sectionCode,
+      anchorTemplateVersion: baseline.value?.formVersion ?? 0,
+      anchorType: 'category',
+      linkType: 'baseline',
+    },
+  ];
+}
+
+/** 随访页签「上传附件」：展开的记录预选整条（anchorType=null）。 */
+const followupUploadPreset = computed<ReportLocationInput[] | undefined>(() =>
+  expandedRecordId.value
+    ? [
+        {
+          anchorTemplateVersion: 0,
+          anchorType: null,
+          linkRecordId: expandedRecordId.value,
+          linkType: 'followup_record',
+        },
+      ]
+    : undefined,
+);
+
+function handleReportCreated() {
+  void loadReports();
+}
+
+const reportColumns = [
+  { dataIndex: 'typeName', title: '类型', width: 110 },
+  { dataIndex: 'name', title: '名称' },
+  { dataIndex: 'reportDate', title: '报告时间', width: 110 },
+  { dataIndex: 'locations', title: '位置' },
+  { dataIndex: 'creatorName', title: '上传人', width: 110 },
+  { dataIndex: 'createdAt', title: '上传时间', width: 150 },
+];
+
+/** 位置列：标签「基线 · 病例基本信息」，超过 2 个折叠 +N，悬停看全部（pages.md §4.6）。 */
+function locationTags(row: ReportRow) {
+  return row.locations.map((tag) => reportLocationText(tag));
+}
+
 // ---------------------------------------------------------------- E15-T04 沟通记录页签（pages.md §4.8）
 
 const canEditRecord = computed(() => hasPermission('followup:record:edit'));
@@ -578,6 +663,7 @@ const timelineLegendNote =
     <Tabs v-model:active-key="tab" class="tabs">
       <TabPane key="baseline" tab="基线资料" />
       <TabPane key="followup" tab="随访记录" />
+      <TabPane key="reports" tab="报告单" />
       <TabPane key="contacts" tab="沟通记录" />
     </Tabs>
 
@@ -721,6 +807,16 @@ const timelineLegendNote =
               {{ section.updatedAt?.slice(0, 10) ?? '' }}
             </template>
           </span>
+          <!-- E16-T02 / A-ATT-001：分类内直接添加，预选该分类位置 -->
+          <Button
+            v-if="canUploadReport"
+            class="section-upload"
+            size="small"
+            type="link"
+            @click="openReportUpload(baselineUploadPreset(section.code))"
+          >
+            上传附件
+          </Button>
         </h3>
         <FormRenderer
           :model-value="section.data"
@@ -771,6 +867,22 @@ const timelineLegendNote =
         >
           添加任务
         </Button>
+        <!-- E16-T02 / A-ATT-001：随访记录内直接添加；展开记录时预选整条记录 -->
+        <Tooltip
+          :title="
+            expandedRecordId
+              ? undefined
+              : '先展开一条随访记录，可预选该记录为位置'
+          "
+        >
+          <Button
+            v-if="canUploadReport"
+            data-testid="followup-upload-report"
+            @click="openReportUpload(followupUploadPreset)"
+          >
+            上传附件
+          </Button>
+        </Tooltip>
       </div>
       <FollowupTimeline
         v-model:expanded-record-id="expandedRecordId"
@@ -794,6 +906,60 @@ const timelineLegendNote =
         :patient-id="overview.id"
         @created="onRecordCreated"
       />
+    </div>
+
+    <div v-else-if="tab === 'reports'" class="main" data-testid="reports-panel">
+      <div class="toolbar">
+        <Button
+          v-if="canUploadReport"
+          data-testid="report-create"
+          type="primary"
+          @click="openReportUpload()"
+        >
+          添加报告单
+        </Button>
+      </div>
+      <Table
+        :columns="reportColumns"
+        :data-source="reports"
+        :loading="reportsLoading"
+        :pagination="{ pageSize: 20, showSizeChanger: false }"
+        size="small"
+        data-testid="report-table"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.dataIndex === 'name'">
+            {{ record.name ?? '—' }}
+          </template>
+          <template v-else-if="column.dataIndex === 'locations'">
+            <template v-if="record.locations.length === 0">
+              <span class="unassigned">未指定位置</span>
+            </template>
+            <template v-else>
+              <Tag v-for="text in locationTags(record).slice(0, 2)" :key="text">
+                {{ text }}
+              </Tag>
+              <Tooltip
+                v-if="locationTags(record).length > 2"
+                :title="locationTags(record).join('、')"
+              >
+                <Tag>+{{ locationTags(record).length - 2 }}</Tag>
+              </Tooltip>
+            </template>
+          </template>
+          <template v-else-if="column.dataIndex === 'creatorName'">
+            {{ record.creatorName ?? '—' }}
+          </template>
+          <template v-else-if="column.dataIndex === 'createdAt'">
+            {{ formatDateTime(record.createdAt) }}
+          </template>
+        </template>
+        <template #emptyText> 暂无报告单 </template>
+      </Table>
+      <p class="hint">
+        位置标签「基线 · 分类」「第N年随访 ·
+        分组」；双树浏览、详情与全屏查看器随后续任务开放。
+      </p>
     </div>
 
     <div v-else class="main" data-testid="contacts-panel">
@@ -904,6 +1070,15 @@ const timelineLegendNote =
       @success="handleContactSaved"
     />
 
+    <UploadReportDialog
+      :open="reportDialogOpen"
+      :patient-gender="overview.gender"
+      :patient-id="overview.id"
+      :preset="reportPreset"
+      @created="handleReportCreated"
+      @update:open="reportDialogOpen = $event"
+    />
+
     <TransferWardModal
       v-model:open="transferOpen"
       :current-ward-id="currentWardId"
@@ -939,6 +1114,15 @@ const timelineLegendNote =
 
 .main {
   padding: 16px;
+}
+
+/* E16-T02 基线分类标题旁「上传附件」 */
+.section-upload {
+  margin-left: 8px;
+}
+
+.unassigned {
+  color: #fa8c16;
 }
 
 /* E13-T11 基线分类条：吸顶后与下方锁定横幅留出间距 */

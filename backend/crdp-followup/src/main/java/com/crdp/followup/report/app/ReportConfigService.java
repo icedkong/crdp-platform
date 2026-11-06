@@ -2,6 +2,7 @@ package com.crdp.followup.report.app;
 
 import com.crdp.followup.report.infra.mapper.NameInsert;
 import com.crdp.followup.report.infra.mapper.ReportConfigMapper;
+import com.crdp.followup.report.infra.mapper.ReportMapper;
 import com.crdp.followup.report.infra.mapper.TplInsert;
 import com.crdp.followup.report.infra.mapper.TypeInsert;
 import com.crdp.form.field.infra.mapper.FieldRow;
@@ -67,12 +68,17 @@ public class ReportConfigService {
 
     private final ReportConfigMapper mapper;
     private final FormFieldMapper forms;
+    private final ReportMapper reports;
     private final AuditLogger audit;
 
     public ReportConfigService(
-            ReportConfigMapper mapper, FormFieldMapper forms, AuditLogger audit) {
+            ReportConfigMapper mapper,
+            FormFieldMapper forms,
+            ReportMapper reports,
+            AuditLogger audit) {
         this.mapper = mapper;
         this.forms = forms;
+        this.reports = reports;
         this.audit = audit;
     }
 
@@ -398,11 +404,29 @@ public class ReportConfigService {
         return view;
     }
 
-    /** 删除类型：类型下仍有名称时拦截（40901，先删名称）；写 RPT_TYPE_DELETE 审计。 */
+    /** 删除类型：类型下仍有名称（40901，先删名称）或已被报告单引用（40901，OQ-95② 随 E16-T02 落地）时拦截； 写 RPT_TYPE_DELETE 审计。 */
     @Transactional
     public void deleteType(long id) {
         ReportConfigMapper.TypeRow current = requireType(id);
         long names = mapper.countNamesByTypeCode(current.code());
+        long referenced = reports.countReportsOfType(current.code());
+        if (referenced > 0) {
+            audit.append(
+                    AuditEntry.operation("followup", "RPT_TYPE_DELETE")
+                            .objectType("REPORT_TYPE")
+                            .objectId(current.code())
+                            .description(
+                                    "删除资料类型被阻止："
+                                            + current.name()
+                                            + "，已有 "
+                                            + referenced
+                                            + " 份报告单使用该类型（OQ-95②，可停用不可删）")
+                            .result(AuditResult.DENIED)
+                            .errorCode(40901)
+                            .reason("TYPE_HAS_REPORTS")
+                            .build());
+            throw new ApiException(409, 40901, "已有 " + referenced + " 份报告单使用该类型，不能删除（可停用）");
+        }
         if (names > 0) {
             audit.append(
                     AuditEntry.operation("followup", "RPT_TYPE_DELETE")
@@ -513,6 +537,24 @@ public class ReportConfigService {
     @Transactional
     public void deleteName(long id) {
         ReportConfigMapper.NameRow current = requireName(id);
+        long referenced = reports.countReportsOfName(id);
+        if (referenced > 0) {
+            audit.append(
+                    AuditEntry.operation("followup", "RPT_NAME_DELETE")
+                            .objectType("REPORT_NAME")
+                            .objectId(current.typeCode() + "." + current.name())
+                            .description(
+                                    "删除名称被阻止："
+                                            + current.name()
+                                            + "，已有 "
+                                            + referenced
+                                            + " 份报告单使用该名称（OQ-95②，可停用不可删）")
+                            .result(AuditResult.DENIED)
+                            .errorCode(40901)
+                            .reason("NAME_HAS_REPORTS")
+                            .build());
+            throw new ApiException(409, 40901, "已有 " + referenced + " 份报告单使用该名称，不能删除（可停用）");
+        }
         mapper.deleteName(id);
         audit.append(
                 AuditEntry.operation("followup", "RPT_NAME_DELETE")

@@ -922,6 +922,25 @@ export {
 } from './reauth';
 
 export type { ReauthFlowDeps, ReauthResult } from './reauth';
+// E16-T02 报告单运行时：添加报告单对话框、位置选择（必填多选树）与患者内清单
+export {
+  reportIndicatorFlag,
+  reportLocationText,
+  reportRefRangeFor,
+} from './report';
+
+export type {
+  PatientReportsView,
+  ReportAnchorType,
+  ReportCreatedView,
+  ReportCreateRequest,
+  ReportIndicatorInput,
+  ReportLinkType,
+  ReportLocationInput,
+  ReportLocationNode,
+  ReportLocationTag,
+  ReportRow,
+} from './report';
 // E16-T01 报告单设置：资料类型、名称字典与指标模板（A-ATT-003、011、012、018；C-SCAN-002、003、004）
 export {
   REPORT_CODE_PATTERN,

@@ -12,6 +12,7 @@ export * from './patient';
 export * from './patient-export';
 export * from './plan';
 export * from './profile';
+export * from './report';
 export * from './reportConfig';
 export * from './task';
 export * from './user';

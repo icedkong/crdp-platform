@@ -44,6 +44,7 @@ import {
 import CategoryBar from '#/components/followup/category-bar.vue';
 import ConflictBanner from '#/components/followup/conflict-banner.vue';
 import FormStatusBar from '#/components/followup/form-status-bar.vue';
+import UploadReportDialog from '#/components/followup/upload-report-dialog.vue';
 import { useBreakpoint } from '#/reference/use-breakpoint';
 import { usePermission } from '#/reference/use-permission';
 
@@ -97,6 +98,24 @@ const router = useRouter();
 const userStore = useUserStore();
 const { hasPermission } = usePermission();
 const canEdit = computed(() => hasPermission('followup:record:edit'));
+// E16-T02 / A-ATT-001：随访表单「上传」（pages.md §6.1 入口），预选本记录整条
+const canUploadReport = computed(() => hasPermission('followup:scan:upload'));
+const reportDialogOpen = ref(false);
+const reportPatientId = computed(
+  () => context.value?.patientId ?? patient.value?.patientId ?? null,
+);
+const reportPreset = computed(() =>
+  reportPatientId.value
+    ? [
+        {
+          anchorTemplateVersion: schema.value?.version ?? 0,
+          anchorType: null,
+          linkRecordId: recordId.value,
+          linkType: 'followup_record',
+        },
+      ]
+    : [],
+);
 const { isDesktop, isMobile, isTouch } = useBreakpoint();
 /** 手机底部固定操作栏距视口底部的偏移（键盘弹出时跟随可视区域，E24-T02）。 */
 const keyboardSafeBottom = useKeyboardSafeBottom();
@@ -598,6 +617,15 @@ function handleJump(key: string) {
             下一条 →
           </Button>
         </Space>
+        <Space>
+          <Button
+            v-if="canUploadReport && reportPatientId"
+            data-testid="record-upload-report"
+            @click="reportDialogOpen = true"
+          >
+            上传报告单
+          </Button>
+        </Space>
         <Space v-if="!readonly">
           <Button
             :loading="saving"
@@ -623,6 +651,14 @@ function handleJump(key: string) {
         </Space>
       </div>
     </Card>
+
+    <UploadReportDialog
+      :open="reportDialogOpen"
+      :patient-gender="null"
+      :patient-id="reportPatientId ?? ''"
+      :preset="reportPreset"
+      @update:open="reportDialogOpen = $event"
+    />
 
     <!-- 手机底部固定操作栏：上一条 / 下一条、暂存、提交；随 visualViewport 跟随键盘 -->
     <div
