@@ -19,12 +19,14 @@ import {
 } from 'ant-design-vue';
 
 import {
+  createTenantViewEntryTicket,
   currentTenantView,
   enterTenantView,
   exitTenantView,
 } from '#/api/core/tenant-view';
 
 import {
+  openHospitalView,
   TENANT_VIEW_PURPOSE_OPTIONS,
   tickRemaining,
   toEnterViewModel,
@@ -33,9 +35,10 @@ import {
 } from './view';
 
 /**
- * 进入租户视角弹窗（E20-T01 / PLT-VIEW-001、004 · pages.md §11「进入租户视角」）：
- * 选目的（排障 / 配置核对 / 培训支持 / 其他）+ 必填说明进入；进行中会话显示倒计时与一键退出
- * （单次最长 2 小时、空闲 15 分钟自动退出；视角内的医院端界面与横幅随 E20-T04）。
+ * 进入租户视角弹窗（E20-T01 / PLT-VIEW-001、004 + E20-T04 / PLT-VIEW-002、003 ·
+ * pages.md §11「进入租户视角」）：选目的（排障 / 配置核对 / 培训支持 / 其他）+ 必填说明进入；
+ * 进行中会话可「打开医院端界面」（60 秒一次性凭据新标签页打开医院端视角页，菜单与该院一致、
+ * 顶部视角横幅常驻）并显示倒计时与一键退出（单次最长 2 小时、空闲 15 分钟自动退出）。
  * 同一账号同时只能有一个视角会话：打开弹窗先查进行中会话，有则直接展示。
  */
 const props = defineProps<{
@@ -61,6 +64,7 @@ const active = ref<null | {
   tenantName: string;
 }>(null);
 const exiting = ref(false);
+const opening = ref(false);
 const notice = ref('');
 let timer: null | ReturnType<typeof setInterval> = null;
 
@@ -145,6 +149,25 @@ async function submit() {
   }
 }
 
+/**
+ * 打开医院端界面（E20-T04 / PLT-VIEW-002）：现场签发 60 秒一次性凭据并新标签页打开
+ * 医院端视角页（凭据只在 URL 片段，视角令牌只出现在医院端换取响应）。
+ */
+async function openHospital() {
+  if (!active.value) return;
+  opening.value = true;
+  submitError.value = '';
+  try {
+    await openHospitalView(await createTenantViewEntryTicket());
+    notice.value =
+      '已在新的标签页打开医院端视角（凭据 60 秒内有效，请勿转发链接）';
+  } catch (error) {
+    submitError.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    opening.value = false;
+  }
+}
+
 async function exitView() {
   if (!active.value) return;
   exiting.value = true;
@@ -210,12 +233,20 @@ onUnmounted(stopTimer);
       </DescriptionsItem>
     </Descriptions>
     <p v-if="active" class="hint">
-      视角内的医院端菜单、横幅与脱敏执行随后续任务提供；进入与退出已记录平台审计。
+      「打开医院端界面」以 60
+      秒一次性凭据在新标签页打开该院视角（菜单与该院一致、
+      顶部视角横幅常驻）；进入、退出与被拒操作均记录平台审计（租户不可见）。
     </p>
     <Space v-if="active" class="mt-2">
-      <Button :loading="exiting" danger type="primary" @click="exitView">
-        退出租户视角
+      <Button
+        :loading="opening"
+        data-testid="open-hospital-view"
+        type="primary"
+        @click="openHospital"
+      >
+        打开医院端界面
       </Button>
+      <Button :loading="exiting" danger @click="exitView">退出租户视角</Button>
       <Button @click="emit('update:open', false)">关闭</Button>
     </Space>
 

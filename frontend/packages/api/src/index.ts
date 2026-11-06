@@ -40,7 +40,11 @@ export interface Me {
   passwordExpiresInDays?: null | number;
   permissionVersion: number;
   roles: string[];
-  sessionType: 'HOSPITAL' | 'PLATFORM';
+  /**
+   * 会话类型：医院端 / 平台端登录，或 TENANT_VIEW——平台账号进入租户视角的查看会话
+   * （E20-T04 / PLT-VIEW-002，医院端外壳按视角模式渲染横幅与水印）。
+   */
+  sessionType: 'HOSPITAL' | 'PLATFORM' | 'TENANT_VIEW';
   tenantCode: null | string;
   tenantName: null | string;
   userId: number;

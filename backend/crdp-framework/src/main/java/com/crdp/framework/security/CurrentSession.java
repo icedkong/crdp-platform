@@ -43,4 +43,25 @@ public final class CurrentSession {
         }
         return principal;
     }
+
+    /**
+     * 医院端外壳接口（E20-T04 / PLT-VIEW-002）：登录信息 / 权限码 / 菜单三条「装壳」接口同时 接受医院会话与租户视角会话（SecurityConfig
+     * 已按端别放行）；业务控制器仍用 {@link #requireHospital()}—— 视角令牌对业务接口保持默认拒绝（E20-T03 执行点放开）。
+     */
+    public static SessionPrincipal requireHospitalShell() {
+        SessionPrincipal principal = require();
+        if (!principal.hospital() && !principal.tenantView()) {
+            throw new ApiException(403, 40300, "平台账号不能访问医院端");
+        }
+        return principal;
+    }
+
+    /** 租户视角会话（E20-T04 / PLT-VIEW-003）：横幅会话信息与一键退出只接受视角令牌。 */
+    public static SessionPrincipal requireTenantView() {
+        SessionPrincipal principal = require();
+        if (!principal.tenantView()) {
+            throw new ApiException(403, 40300, "该接口只接受租户视角会话");
+        }
+        return principal;
+    }
 }

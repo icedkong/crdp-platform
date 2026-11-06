@@ -5,6 +5,7 @@
  */
 import {
   TENANT_VIEW_PURPOSE_OPTIONS,
+  tenantViewEntryUrl,
   tenantViewPurposeText,
   tenantViewRemainingText,
   validateTenantViewEnter,
@@ -41,4 +42,20 @@ export function tickRemaining(remainingSeconds: number): number {
 export function viewTimeText(value: null | string): string {
   if (!value) return '—';
   return value.slice(0, 16).replace('T', ' ');
+}
+
+// ---------------------------------------------------------------- E20-T04 / PLT-VIEW-002：打开医院端
+
+/**
+ * 打开医院端视角页：现场签发 60 秒一次性凭据，拼 hospitalUrl + /view/entry#ticket=…
+ * 新标签页打开（凭据只放 URL 片段，不进服务端日志；视角令牌只在医院端换取响应出现一次）。
+ * open 参数可注入（单测），默认 window.open。
+ */
+export async function openHospitalView(
+  ticket: { hospitalUrl: string; ticket: string },
+  open: (url: string) => unknown = (url) => window.open(url, '_blank'),
+): Promise<string> {
+  const url = tenantViewEntryUrl(ticket.hospitalUrl, ticket.ticket);
+  open(url);
+  return url;
 }

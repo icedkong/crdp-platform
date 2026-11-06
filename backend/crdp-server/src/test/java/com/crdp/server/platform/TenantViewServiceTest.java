@@ -47,7 +47,14 @@ class TenantViewServiceTest {
                     public void loginAttempt(String username, boolean success, String message) {}
                 };
         return new TenantViewService(
-                null, STORE, new TokenGenerator(), props(), noopAudit, "http://127.0.0.1:14173");
+                null,
+                STORE,
+                new TokenGenerator(),
+                props(),
+                noopAudit,
+                null,
+                new com.fasterxml.jackson.databind.ObjectMapper(),
+                "http://127.0.0.1:14173");
     }
 
     // ---------------------------------------------------------------- 校验（PLT-VIEW-001）
@@ -195,5 +202,72 @@ class TenantViewServiceTest {
         assertEquals("到时", TenantViewService.endMethodText(TenantViewService.END_TIMEOUT));
         assertEquals("空闲超时", TenantViewService.endMethodText(TenantViewService.END_IDLE));
         assertEquals("权限变更", TenantViewService.endMethodText(TenantViewService.END_PERM_CHANGE));
+    }
+
+    // ---------------------------------------------------------------- 视角菜单（E20-T04 / PLT-VIEW-002）
+
+    /** 种子 V100 的医院端菜单骨架（含迁移追加的隐藏路由与按钮形态）。 */
+    private static List<TenantViewService.MenuLite> hospitalMenus() {
+        return List.of(
+                new TenantViewService.MenuLite(10L, 0L, "MENU", "/dashboard", "base"),
+                new TenantViewService.MenuLite(20L, 0L, "DIR", "/followup", "followup"),
+                new TenantViewService.MenuLite(21L, 20L, "MENU", "/followup/patient", "followup"),
+                new TenantViewService.MenuLite(22L, 20L, "MENU", "/followup/task", "followup"),
+                new TenantViewService.MenuLite(
+                        215L, 21L, "MENU", "/followup/patient/:id", "followup"),
+                new TenantViewService.MenuLite(211L, 21L, "BUTTON", null, "followup"),
+                new TenantViewService.MenuLite(30L, 0L, "DIR", "/system", "base"),
+                new TenantViewService.MenuLite(31L, 30L, "MENU", "/system/user", "base"),
+                // module_code 同为 followup 的配置页（字典 / 通知模板）——在 /system 目录下，仅配置类可见
+                new TenantViewService.MenuLite(37L, 30L, "MENU", "/system/field", "followup"),
+                new TenantViewService.MenuLite(36L, 30L, "MENU", "/system/notice", "followup"));
+    }
+
+    @Test
+    void viewMenusFollowTenantOpenedModules() {
+        // PLT-VIEW-002「按该租户已开通模块」：未开通 followup 的租户只剩 base 菜单
+        List<Long> ids = TenantViewService.viewMenuIds(hospitalMenus(), List.of("base"), false);
+        assertTrue(ids.containsAll(List.of(10L, 30L, 31L)));
+        assertFalse(ids.contains(20L) || ids.contains(21L) || ids.contains(37L));
+    }
+
+    @Test
+    void businessScopeSeesFollowupSubtreeIncludingHiddenRoutes() {
+        // 配置类 + 业务数据：与该院一致（含 /followup 目录、隐藏路由与按钮）
+        List<Long> ids =
+                TenantViewService.viewMenuIds(hospitalMenus(), List.of("base", "followup"), false);
+        assertTrue(ids.containsAll(List.of(10L, 20L, 21L, 22L, 215L, 211L, 30L, 31L, 37L, 36L)));
+    }
+
+    @Test
+    void configOnlyHidesFollowupBusinessSubtreeButKeepsSystemConfigPages() {
+        // 仅配置类（运维角色，种子 V104）：隐藏顶级「随访」目录的全部后代（含隐藏路由 / 按钮），
+        // /system 下的字典与通知配置页保留（platform-spec §8 配置类清单含「系统参数与字典、通知模板」）
+        List<Long> ids =
+                TenantViewService.viewMenuIds(hospitalMenus(), List.of("base", "followup"), true);
+        assertTrue(ids.containsAll(List.of(10L, 30L, 31L, 37L, 36L)));
+        assertFalse(ids.contains(20L) || ids.contains(21L) || ids.contains(215L));
+        assertFalse(ids.contains(211L), "业务按钮（如查看明文）一并隐藏");
+    }
+
+    @Test
+    void missingFollowupDirectoryMeansNothingClassifiedBusiness() {
+        // 目录行缺失（异常态）时不额外隐藏——不把整站菜单误判为业务
+        List<TenantViewService.MenuLite> menus =
+                hospitalMenus().stream()
+                        .filter(row -> row.id() != 20L)
+                        .map(
+                                row ->
+                                        row.parentId() != null && row.parentId() == 20L
+                                                ? new TenantViewService.MenuLite(
+                                                        row.id(),
+                                                        0L,
+                                                        row.type(),
+                                                        row.path(),
+                                                        row.moduleCode())
+                                                : row)
+                        .toList();
+        List<Long> ids = TenantViewService.viewMenuIds(menus, List.of("base", "followup"), true);
+        assertTrue(ids.contains(21L) && ids.contains(215L));
     }
 }

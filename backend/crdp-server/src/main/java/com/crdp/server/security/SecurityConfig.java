@@ -89,6 +89,32 @@ public class SecurityConfig {
                                         // 40307
                                         .requestMatchers(HttpMethod.POST, "/api/notify/sms/receipt")
                                         .permitAll()
+                                        // E20-T04 / PLT-VIEW-002：医院端凭据换视角令牌（平台端签发的
+                                        // 60 秒一次性 ticket；TenantViewExchange 按 IP 每小时限流，
+                                        // 超限 42900）。必须排在 /api/hospital/** 端别判定之前
+                                        .requestMatchers(
+                                                HttpMethod.POST, "/api/hospital/view/enter")
+                                        .permitAll()
+                                        // E20-T04 / PLT-VIEW-002、003：视角令牌只放行医院端「装壳」接口
+                                        // （登录信息 / 权限码 / 菜单与视角会话 / 一键退出）；其余医院端
+                                        // 业务接口仍只接受医院会话（fail closed，E20-T03 执行点放开）
+                                        .requestMatchers(
+                                                HttpMethod.GET,
+                                                "/api/hospital/auth/me",
+                                                "/api/hospital/auth/codes",
+                                                "/api/hospital/menus")
+                                        .hasAnyAuthority(
+                                                TokenAuthenticationFilter
+                                                        .SESSION_HOSPITAL_AUTHORITY,
+                                                TokenAuthenticationFilter.SESSION_VIEW_AUTHORITY)
+                                        .requestMatchers(
+                                                HttpMethod.GET, "/api/hospital/view/session")
+                                        .hasAnyAuthority(
+                                                TokenAuthenticationFilter.SESSION_VIEW_AUTHORITY)
+                                        .requestMatchers(
+                                                HttpMethod.DELETE, "/api/hospital/view/session")
+                                        .hasAnyAuthority(
+                                                TokenAuthenticationFilter.SESSION_VIEW_AUTHORITY)
                                         // E10-T04 / tech-plan §10「预览」：预览内容经应用代理按流返回。pdf.js、
                                         // docx-preview 与原生 <audio> 是浏览器子资源请求，带不了登录令牌，取流凭
                                         // preview-url 签发的 ≤ 5 分钟随机令牌（公开口按 IP 每小时限流，

@@ -97,6 +97,29 @@ const coreRoutes: RouteRecordRaw[] = [
     ],
   },
   {
+    // E20-T04 / PLT-VIEW-002：医院端视角入口（平台端以 hospitalUrl +
+    // /view/entry#ticket=… 打开，60 秒一次性凭据在片段里）。免登录（凭据即凭证），
+    // 不进权限路由生成——换到视角令牌后由守卫按 me / menus 装壳。
+    path: '/view/entry',
+    name: 'TenantViewEntry',
+    component: () => import('#/views/_core/view/entry.vue'),
+    meta: {
+      hideInTab: true,
+      title: '进入租户视角',
+    },
+  },
+  {
+    // E20-T04 / PLT-VIEW-003：视角退出落地页（一键退出 / 到时 / 空闲超时 /
+    // 权限变更 / 令牌失效统一到这，reason 与台账结束方式对应）。
+    path: '/view/exit',
+    name: 'TenantViewExit',
+    component: () => import('#/views/_core/view/exit.vue'),
+    meta: {
+      hideInTab: true,
+      title: '退出租户视角',
+    },
+  },
+  {
     // E04-T05 / PLT-AUTH-010：首次登录 / 密码到期强制改密（pages.md §1）。
     // 需要已登录（带令牌），但不进入权限路由生成（改密期间 menus/codes 返回 40305）。
     component: AuthPageLayout,

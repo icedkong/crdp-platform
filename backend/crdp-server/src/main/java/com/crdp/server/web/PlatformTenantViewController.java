@@ -15,14 +15,15 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 平台端租户视角 API（E20-T01 / PLT-VIEW-001、004，docs/api/platform.md §6）。
+ * 平台端租户视角 API（E20-T01 / PLT-VIEW-001、004；E20-T04 / PLT-VIEW-002、003，docs/api/platform.md §6）。
  *
  * <p>进入：校验平台角色视角授权（PLT-VIEW-005）、租户范围（全部 / 负责的租户 PLT-VIEW-006 / 指定租户）与
- * 租户状态（已注销不可进入），选目的并填说明后签发视角会话（TENANT_VIEW，2 小时 / 空闲 15 分钟）。 视角令牌在医院端界面与执行点的落位随 E20-T04 /
- * T03；进入、退出与被拒的进入尝试写平台访问审计（VIEW_ 前缀，PLT-AUD-004）。
+ * 租户状态（已注销不可进入），选目的并填说明后签发视角会话（TENANT_VIEW，2 小时 / 空闲 15 分钟）。 「打开医院端界面」时为本人的进行中会话签发 60
+ * 秒一次性进入凭据（ticket），医院端 /api/hospital/view/enter 凭它换视角令牌（PLT-VIEW-002）。 进入、退出与被拒的进入尝试写平台访问审计（VIEW_
+ * 前缀，PLT-AUD-004）。
  *
- * <p>接口登记（PLT-PERM-004）：进入绑定 {@code platform:view:enter}；本人会话查询与一键退出是「登录即可访问」的
- * 公共接口（{@code @PublicApi} 登记为 public_access=1，只操作自己的会话），SecurityConfig 仍要求平台会话。
+ * <p>接口登记（PLT-PERM-004）：进入绑定 {@code platform:view:enter}；本人会话查询、进入凭据签发与一键退出是
+ * 「登录即可访问」的公共接口（{@code @PublicApi} 登记为 public_access=1，只操作自己的会话）， SecurityConfig 仍要求平台会话。
  */
 @Tag(name = "平台端租户视角")
 @RestController
@@ -51,6 +52,16 @@ public class PlatformTenantViewController {
     @GetMapping("/current")
     public ApiResponse<TenantViewService.ActiveSession> current() {
         return ApiResponse.ok(viewService.current());
+    }
+
+    @Operation(
+            summary =
+                    "签发医院端进入凭据（E20-T04 / PLT-VIEW-002）：60 秒一次性 ticket，前端拼"
+                            + " hospitalUrl + /view/entry#ticket=… 打开医院端视角页；须先进入视角（40001）")
+    @PublicApi
+    @PostMapping("/current/entry-ticket")
+    public ApiResponse<TenantViewService.EntryTicket> entryTicket() {
+        return ApiResponse.ok(viewService.issueEntryTicket());
     }
 
     @Operation(summary = "退出租户视角（一键退出，PLT-VIEW-003 会话侧）：只允许退自己的进行中会话；他人 / 已结束 40400")

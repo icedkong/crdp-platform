@@ -734,11 +734,12 @@ class PlatformRoleAccountMySqlIT {
                 "DELETE FROM plt_account_role WHERE role_id IN"
                         + " (SELECT id FROM plt_role WHERE code LIKE 'CUSTOM\\_%')");
         platform.update("DELETE FROM plt_role WHERE code LIKE 'CUSTOM\\_%'");
-        // 运维角色默认授权回到 V104 快照（只保留 100/111/112/113）
+        // 运维角色默认授权回到种子快照（V104 的 100/111/112/113 + V107 的视角进入按钮 143；
+        // E20-T04 起租户视角 IT 依赖该授予，只清本 IT 补授的 124）
         platform.update(
                 "DELETE FROM plt_role_menu WHERE role_id ="
                         + " (SELECT id FROM plt_role WHERE code = 'OPERATIONS')"
-                        + " AND menu_id NOT IN (100, 111, 112, 113)");
+                        + " AND menu_id NOT IN (100, 111, 112, 113, 143)");
         // 审计痕迹（Redis 里的会话与登录计数按前缀在首测 @BeforeEach 清理）
         AuditTableMaintenance.delete(
                 platform,

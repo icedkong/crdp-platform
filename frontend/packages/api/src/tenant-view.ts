@@ -1,10 +1,13 @@
 /**
- * E20-T01 / PLT-VIEW-001、004、006：租户视角会话与账号负责租户的前端类型与纯逻辑，
- * 与后端 `com.crdp.server.platform.TenantViewService` / `PlatformAccountService` 视图同构
- * （docs/api/platform.md §6）。
+ * E20-T01 / PLT-VIEW-001、004、006 + E20-T04 / PLT-VIEW-002、003：租户视角会话与账号负责租户的
+ * 前端类型与纯逻辑，与后端 `com.crdp.server.platform.TenantViewService` / `PlatformAccountService`
+ * 视图同构（docs/api/platform.md §6）。
  *
  * 会话时长（PLT-VIEW-004）：单次最长 2 小时（expiresAt = 开始 + 2 小时）、空闲 15 分钟
  * 自动退出（服务端 Redis TTL 执行，前端按 remainingSeconds 倒计时展示）。
+ *
+ * 医院端视角外壳（E20-T04）：进入凭据一次性（60 秒）换视角令牌、横幅（租户名称 / 会话号 /
+ * 剩余时长 / 一键退出）与全页水印（平台账号 + 会话号）的纯逻辑也在这里，平台端与医院端共用。
  */
 
 /** 查看目的（PLT-VIEW-001，进入弹窗单选）。 */
@@ -113,6 +116,114 @@ export interface PlatformResponsibleOwner {
   displayName: string;
   status: string;
   username: string;
+}
+
+// ---------------------------------------------------------------- E20-T04 / PLT-VIEW-002、003：医院端视角外壳
+
+/** 医院端视角入口路由（平台端以 hospitalUrl + 本路径 + #ticket=… 打开）。 */
+export const TENANT_VIEW_ENTRY_PATH = '/view/entry';
+
+/** 医院端视角退出页路由（一键退出 / 到时 / 失效后落地）。 */
+export const TENANT_VIEW_EXIT_PATH = '/view/exit';
+
+/** 进入凭据（60 秒一次性，平台端为本人的进行中会话签发）。 */
+export interface TenantViewEntryTicket {
+  expiresInSeconds: number;
+  hospitalUrl: string;
+  ticket: string;
+}
+
+/**
+ * 医院端视角会话信息（PLT-VIEW-003 横幅与水印口径）：
+ * 会话号、租户、剩余时长与平台账号，GET /api/hospital/view/session 与凭据换取响应同构。
+ */
+export interface TenantViewShellSession {
+  accountDisplayName: string;
+  accountName: string;
+  expiresAt: string;
+  purpose: TenantViewPurpose;
+  remainingSeconds: number;
+  sessionId: number;
+  sessionNo: string;
+  startedAt: string;
+  tenantCode: string;
+  tenantId: number;
+  tenantName: string;
+}
+
+/** 凭据换取结果（视角令牌只在本次响应出现一次）。 */
+export interface TenantViewExchangeResult {
+  expiresInSeconds: number;
+  session: TenantViewShellSession;
+  token: string;
+  tokenType: string;
+}
+
+/** 视角退出原因（退出页提示与台账结束方式对应）。 */
+export type TenantViewExitReason =
+  | 'EXPIRED'
+  | 'IDLE'
+  | 'LOGOUT'
+  | 'PERM_CHANGE'
+  | 'TIMEOUT';
+
+/** 退出原因文案（与后端 endMethodText 同口径 + 令牌失效兜底）。 */
+export function tenantViewExitReasonText(reason: null | string): string {
+  switch (reason) {
+    case 'EXPIRED': {
+      return '视角会话已失效，请从平台端重新进入';
+    }
+    case 'IDLE': {
+      return '视角会话空闲超时（15 分钟无操作），已自动退出';
+    }
+    case 'LOGOUT': {
+      return '你已退出租户视角';
+    }
+    case 'PERM_CHANGE': {
+      return '视角权限已变更，会话立即结束';
+    }
+    case 'TIMEOUT': {
+      return '视角会话已到时（单次最长 2 小时），到时可重新进入';
+    }
+    default: {
+      return '视角会话已结束，请从平台端重新进入';
+    }
+  }
+}
+
+/**
+ * 从 URL 片段解析进入凭据（platform 端打开 /view/entry#ticket=…）。
+ * 只认片段（#），不读查询串——凭据不进服务端访问日志；无凭据返回 null。
+ */
+export function parseTenantViewEntryTicket(hash: string): null | string {
+  const value = hash.startsWith('#') ? hash.slice(1) : hash;
+  const match = /^ticket=([A-Za-z0-9_-]+)$/.exec(value);
+  return match?.[1] ?? null;
+}
+
+/** 拼医院端视角入口地址（片段携带一次性凭据）。 */
+export function tenantViewEntryUrl(
+  hospitalUrl: string,
+  ticket: string,
+): string {
+  const base = hospitalUrl.replace(/\/+$/u, '');
+  return `${base}${TENANT_VIEW_ENTRY_PATH}#ticket=${encodeURIComponent(ticket)}`;
+}
+
+/** 横幅标题（PLT-VIEW-003）：「租户视角：租户名称」。 */
+export function tenantViewBannerTitle(session: TenantViewShellSession): string {
+  return `租户视角：${session.tenantName}`;
+}
+
+/**
+ * 全页水印文案（PLT-VIEW-003「页面水印含平台账号与会话号」）：
+ * `平台账号显示名（账号）· 视角会话 会话号`，与报告单水印「姓名（账号）· …」同款式。
+ */
+export function tenantViewWatermarkText(
+  session: TenantViewShellSession,
+): string {
+  const account = session.accountDisplayName || session.accountName;
+  return `${account}（${session.accountName}）· 视角会话 ${session.sessionNo}`;
 }
 
 /** 说明长度上限（与后端同口径）。 */

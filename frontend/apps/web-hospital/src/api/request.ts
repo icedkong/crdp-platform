@@ -12,7 +12,7 @@ import { useAccessStore } from '@vben/stores';
 import { shouldRefreshPermissions } from '@crdp/rules';
 import { message } from 'ant-design-vue';
 
-import { useAuthStore } from '#/store';
+import { useAuthStore, useTenantViewStore } from '#/store';
 
 import { API_SCOPE } from './scope';
 
@@ -26,6 +26,13 @@ function createRequestClient(baseURL: string, options?: RequestClientOptions) {
 
   async function doReAuthenticate() {
     const accessStore = useAccessStore();
+    // E20-T04 / PLT-VIEW-003：视角令牌失效（空闲 15 分钟 / 2 小时到时 / 权限变更）
+    // 不走医院登录过期弹窗——直接落视角退出页（平台端可重新进入）。
+    const tenantViewStore = useTenantViewStore();
+    if (tenantViewStore.active) {
+      await tenantViewStore.landExit('EXPIRED');
+      return;
+    }
     const authStore = useAuthStore();
     accessStore.setAccessToken(null);
     await authStore.logout();
@@ -71,7 +78,10 @@ function createRequestClient(baseURL: string, options?: RequestClientOptions) {
       // E06-T01 / PLT-PERM-010、OQ-40：40300（缺权限码）/ 40301（模块未开通）时
       // 重新拉取权限码与菜单并重建路由（后端此时已按最新授权重算会话）。
       // 40302 是后端未声明数据范围的缺陷（components.md §1.2），不触发刷新。
-      if (shouldRefreshPermissions(body?.code)) {
+      // E20-T04：视角模式不触发——视角令牌不带业务权限码（fail closed，
+      // E20-T03 执行点放开），刷新只会对每个业务接口空转一次。
+      const tenantViewStore = useTenantViewStore();
+      if (!tenantViewStore.active && shouldRefreshPermissions(body?.code)) {
         const authStore = useAuthStore();
         void authStore.refreshAccess();
       }

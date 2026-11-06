@@ -43,6 +43,12 @@ public class SecurityProperties {
      */
     private int tenantBrandIpHourlyLimit = 120;
 
+    /** 视角进入凭据（ticket）的有效期，秒（E20-T04 / PLT-VIEW-002）：平台端为进行中的视角会话 签发一次性凭据，医院端公开口在窗口内换取视角令牌，取出即作废。 */
+    private int tenantViewEntryTicketTtlSeconds = 60;
+
+    /** 同一 IP 每小时可调多少次视角凭据换取（E20-T04，POST /api/hospital/view/enter 公开口按 IP 限流，AGENTS.md 第 6 节）。 */
+    private int tenantViewEnterIpHourlyLimit = 60;
+
     /** 密码最小长度（平台下限，租户只能加严）。规格：8 位。 */
     private int passwordMinLength = 8;
 
@@ -255,5 +261,21 @@ public class SecurityProperties {
 
     public void setReauthTokenTtlSeconds(int reauthTokenTtlSeconds) {
         this.reauthTokenTtlSeconds = reauthTokenTtlSeconds;
+    }
+
+    public int getTenantViewEntryTicketTtlSeconds() {
+        return tenantViewEntryTicketTtlSeconds;
+    }
+
+    public void setTenantViewEntryTicketTtlSeconds(int tenantViewEntryTicketTtlSeconds) {
+        this.tenantViewEntryTicketTtlSeconds = tenantViewEntryTicketTtlSeconds;
+    }
+
+    public int getTenantViewEnterIpHourlyLimit() {
+        return tenantViewEnterIpHourlyLimit;
+    }
+
+    public void setTenantViewEnterIpHourlyLimit(int tenantViewEnterIpHourlyLimit) {
+        this.tenantViewEnterIpHourlyLimit = tenantViewEnterIpHourlyLimit;
     }
 }

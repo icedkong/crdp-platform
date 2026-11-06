@@ -21,6 +21,7 @@ export function mapMe(me: Me): UserInfo & {
   mustChangePassword?: boolean;
   passwordExpiresInDays?: null | number;
   permissionVersion: number;
+  sessionType: null | string;
   tenantCode: null | string;
   tenantName: null | string;
 } {
@@ -33,6 +34,8 @@ export function mapMe(me: Me): UserInfo & {
     permissionVersion: me.permissionVersion,
     realName: me.displayName,
     roles: me.roles ?? [],
+    // E20-T04 / PLT-VIEW-002：TENANT_VIEW 时外壳按视角模式渲染（横幅 / 水印）。
+    sessionType: me.sessionType ?? null,
     // 会话令牌只放在 accessStore，不复制进用户资料。
     tenantCode: me.tenantCode,
     tenantName: me.tenantName,

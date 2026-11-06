@@ -15,5 +15,6 @@ export * from './profile';
 export * from './reportConfig';
 export * from './task';
 export * from './user';
+export * from './view';
 export * from './ward';
 export * from './webhook';

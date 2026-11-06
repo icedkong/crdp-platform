@@ -44,6 +44,12 @@ public class TokenAuthenticationFilter extends OncePerRequestFilter {
     /** 医院会话的端别权限，SecurityConfig 用它约束 /api/hospital/** 只接受医院会话。 */
     public static final String SESSION_HOSPITAL_AUTHORITY = "SESSION_HOSPITAL";
 
+    /**
+     * 租户视角会话的端别权限（E20-T04 / PLT-VIEW-002、003）：SecurityConfig 只对医院端「装壳」接口 （me / codes / menus /
+     * view/session）放行该权限；其余医院端业务接口仍要求医院会话—— 视角令牌对业务接口保持默认拒绝（E20-T03 执行点放开）。
+     */
+    public static final String SESSION_VIEW_AUTHORITY = "SESSION_VIEW";
+
     private static final Logger log = LoggerFactory.getLogger(TokenAuthenticationFilter.class);
 
     private final SessionStore sessionStore;
@@ -128,8 +134,9 @@ public class TokenAuthenticationFilter extends OncePerRequestFilter {
     private static List<SimpleGrantedAuthority> authorities(SessionPrincipal principal) {
         List<SimpleGrantedAuthority> authorities = new ArrayList<>();
         if (principal.tenantView()) {
-            // 租户视角会话（E20-T01）：不带任何端别权限——医院端菜单 / 页面与执行点随 E20-T04 / T03
-            // 有意放开前，视角令牌不能调 /api/platform/** 与 /api/hospital/** 的任何业务接口（fail closed）。
+            // 租户视角会话（E20-T04）：只带 SESSION_VIEW——SecurityConfig 仅对医院端装壳接口
+            // （me / codes / menus / view/session）放行；业务接口仍要求医院会话（fail closed，E20-T03 放开）。
+            authorities.add(new SimpleGrantedAuthority(SESSION_VIEW_AUTHORITY));
         } else {
             authorities.add(
                     new SimpleGrantedAuthority(
