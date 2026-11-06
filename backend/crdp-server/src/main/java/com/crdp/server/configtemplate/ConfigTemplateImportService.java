@@ -55,7 +55,10 @@ import org.springframework.transaction.support.TransactionTemplate;
  * </ul>
  *
  * <p>导入在目标租户库单个事务内执行（全成或全败，不留断链的中间态）；平台库读取（包、租户、可分配范围）全部在事务外完成——事务内只碰目标租户库。导入后递增该租户全部用户的权限版本（角色授权可能变化，在线会话下次请求重算）。写
- * CONFIG_TEMPLATE_APPLY 审计。包含 / 排除规则与导出侧敏感信息检查随 E12-T03。
+ * CONFIG_TEMPLATE_APPLY 审计。
+ *
+ * <p><b>敏感信息拦截（E12-T03）</b>：应用前对包跑 {@link SensitiveConfigChecker}——含患者 / 业务数据表、未标注表、
+ * 术者取值或疑似患者敏感值的包直接 40901 拒绝（不进事务），并写失败审计。
  */
 @Service
 public class ConfigTemplateImportService {
@@ -182,6 +185,28 @@ public class ConfigTemplateImportService {
                             + "，当前 v"
                             + ConfigTemplateExportService.FORMAT_VERSION);
         }
+        // 敏感信息检查（E12-T03，验收「含敏感信息的包被拦截」）：包可能来自旧版代码或被篡改——
+        // 混入患者 / 业务数据表、未标注表、术者取值、疑似患者敏感值（手机号 / 证件号）→ 应用前拒绝
+        List<SensitiveConfigChecker.Violation> violations = SensitiveConfigChecker.check(pkg);
+        if (!violations.isEmpty()) {
+            String summary = SensitiveConfigChecker.summarize(violations);
+            audit.append(
+                    AuditEntry.operation("platform", "CONFIG_TEMPLATE_APPLY")
+                            .tenantId(request.tenantId())
+                            .objectType("plt_config_template")
+                            .objectId(String.valueOf(templateId))
+                            .description(
+                                    "将 "
+                                            + head.tenantCode()
+                                            + " 配置模板应用到租户 "
+                                            + tenantCode
+                                            + " 被拦截（含敏感信息）")
+                            .fileHash(head.packageHash())
+                            .fail("含敏感信息，导入被拦截：" + summary)
+                            .errorCode(40901)
+                            .build());
+            throw new ApiException(409, 40901, "配置包含敏感信息，导入被拦截：" + summary);
+        }
         Set<Long> assignable = tenantScopes.assignableMenuIds(request.tenantId());
 
         // ---- 目标租户库导入：单事务全成或全败 ----
@@ -265,7 +290,7 @@ public class ConfigTemplateImportService {
         ConfigImportSpec spec = ConfigImportSpecs.of(table);
         ConfigTableEntry entry = ConfigTableRegistry.entry(table);
         if (entry == null) {
-            // 包来自更新 / 更旧的代码版本：未登记的表一律不导不进
+            // 防御深度：E12-T03 敏感检查在应用前已拦截未标注表，这里理论上不可达——保留兜底
             return TableResult.skip(table, "UNKNOWN", packageRows, "表不在配置表注册表内（包与代码版本不一致），未导入");
         }
         String mode = entry.mode().name();

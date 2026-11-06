@@ -15,6 +15,10 @@ import java.util.stream.Collectors;
  * A-FLD-014「复制」清单在当前租户库已存在的表 + 「只复制结构」两类；报告单类型 / 字段集、 首页布局、对比规则等配置表随后续 Epic（E16 / E17 /
  * E24）落地时补充登记。
  *
+ * <p><b>包含与排除规则（E12-T03）</b>：租户库每张表都必须显式分类——登记（{@link #ENTRIES}）或排除（ {@link
+ * #NEVER_EXPORT_TABLES}），完备性由 {@code ConfigTableCoverageTest}（迁移 CREATE TABLE 全量对照）把关，
+ * 杜绝「忘了分类」的灰色表。
+ *
  * <p>双保险：患者与业务数据表（{@link #NEVER_EXPORT_TABLES}）登记即类初始化失败——配置模板的验收是「导出包
  * 只含配置，不含患者数据」，这道闸门在编译期与启动期都要挡住。
  */
@@ -30,7 +34,7 @@ public final class ConfigTableRegistry {
                             "base",
                             "业务字典",
                             "业务字典项：患者类型等取值随模板复制；术者取值按「只复制结构」剔除（A-FLD-014）",
-                            "dict_code = 'surgeon'"),
+                            Map.of("dict_code", "surgeon")),
                     entry("cfg_param", "base", "统计口径参数", "租户参数覆盖（统计口径等，A-FLD-014「统计口径」）"),
                     entry("cfg_feature", "base", "功能开关", "按租户功能开关（医院间差异，A-FLD-014「功能开关」）"),
                     // ---- base：角色模板与权限（用户账号本身不复制）----
@@ -61,8 +65,15 @@ public final class ConfigTableRegistry {
                             "病区 / 中心字典：保留定义不带取值；默认负责人等引用用户的列随取值一并不入包"));
 
     /**
-     * 患者与业务数据表（含账号、审计、作业、文件、日志、密钥、outbox）——A-FLD-014「不复制」清单覆盖的仓库既有表。 登记进 {@link #ENTRIES}
-     * 会在类加载时直接失败（防回归双保险；主闸门是白名单本身）。
+     * 显式排除表（E12-T03 与 {@code ConfigTableCoverageTest} 共同保证租户库表全量分类）。 登记进 {@link #ENTRIES}
+     * 会在类加载时直接失败 （防回归双保险；主闸门是白名单本身）。排除原因分四类：
+     *
+     * <ul>
+     *   <li>患者与业务数据（A-FLD-014「不复制」清单：患者及子表、随访记录与任务、沟通记录、报告单与文件、审计、用户账号）；
+     *   <li>组织架构（sys_org / sys_dept：不在 A-FLD-014 复制清单，科室范围行导入时丢弃，见 E12-T02）；
+     *   <li>租户自身信息（cfg_brand 品牌标识：属新租户自己的配置，不从源租户带过来）；
+     *   <li>凭据与集成密钥（sys_webhook 含 secret_token、加密数据密钥）：凭据绝不随模板复制（OQ-90 ② 定稿）。
+     * </ul>
      */
     public static final Set<String> NEVER_EXPORT_TABLES =
             Set.of(
@@ -90,15 +101,21 @@ public final class ConfigTableRegistry {
                     "sys_user_ward",
                     "sys_user_dept_scope",
                     "sys_password_history",
+                    // 组织架构（不在 A-FLD-014 复制清单；sys_dept 不复制 → 科室范围行导入时丢弃）
+                    "sys_org",
+                    "sys_dept",
+                    // 租户自身信息（品牌标识属新租户自己的配置）
+                    "cfg_brand",
+                    // 凭据与集成（Webhook 含 secret_token，凭据绝不随模板复制）
+                    "sys_webhook",
                     // 通知数据与个人偏好
                     "ntf_message",
                     "ntf_send_log",
                     "ntf_user_pref",
-                    // 审计与作业
+                    // 审计与作业（aud_platform_access_log 在平台库，不属租户库表，不在本清单）
                     "aud_log",
                     "aud_login_log",
                     "aud_data_access_log",
-                    "aud_platform_access_log",
                     "aud_chain_head",
                     "aud_archive",
                     "job_export",
@@ -165,9 +182,13 @@ public final class ConfigTableRegistry {
     }
 
     private static ConfigTableEntry entry(
-            String table, String module, String category, String description, String excludeRows) {
+            String table,
+            String module,
+            String category,
+            String description,
+            Map<String, String> excludeWhen) {
         return new ConfigTableEntry(
-                table, module, ConfigCopyMode.COPY, category, description, excludeRows);
+                table, module, ConfigCopyMode.COPY, category, description, excludeWhen);
     }
 
     private static ConfigTableEntry structure(

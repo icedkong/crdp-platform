@@ -156,8 +156,8 @@ class ConfigTemplateExportServiceTest {
         Map<String, Object> row2 = new LinkedHashMap<>();
         row2.put("id", 12L);
         row2.put("field_code", "height_cm");
-        when(reader.rows(eq("fe_field"), any(), eq((String) null))).thenReturn(List.of(row, row2));
-        when(reader.rows(eq("cfg_dict_item"), any(), eq("dict_code = 'surgeon'")))
+        when(reader.rows(eq("fe_field"), any(), eq(Map.of()))).thenReturn(List.of(row, row2));
+        when(reader.rows(eq("cfg_dict_item"), any(), eq(Map.of("dict_code", "surgeon"))))
                 .thenReturn(List.of());
         AtomicReference<byte[]> storedBody = stubStore();
         // SQL 已含 +1：此处桩值即“下个版本号”
@@ -213,6 +213,95 @@ class ConfigTemplateExportServiceTest {
         assertThat(captor.getValue().action()).isEqualTo("CONFIG_TEMPLATE_EXPORT");
         assertThat(captor.getValue().tenantId()).isEqualTo(1L);
         assertThat(captor.getValue().fileHash()).isEqualTo("hash-it");
+    }
+
+    @Test
+    void userReferenceColumnsAreNulledInPackage() throws Exception {
+        // tech-plan §6「配置模板」：导出前敏感信息检查——配置中引用用户的字段一律置空（账号不随模板复制）
+        tenantRow();
+        when(routing.hasTenant(1L)).thenReturn(true);
+        when(reader.tablePresent(anyString())).thenReturn(false);
+        when(reader.tablePresent("fe_form_version")).thenReturn(true);
+        when(reader.columns("fe_form_version")).thenReturn(List.of("id", "published_by"));
+        when(reader.countRows("fe_form_version")).thenReturn(1L);
+        Map<String, Object> version = new LinkedHashMap<>();
+        version.put("id", 31L);
+        version.put("published_by", 7L);
+        when(reader.rows(eq("fe_form_version"), any(), eq(Map.of()))).thenReturn(List.of(version));
+        AtomicReference<byte[]> storedBody = stubStore();
+        when(digest.hashHex(anyString())).thenReturn("hash-it");
+
+        service.export(new ConfigTemplateExportService.ExportRequest(1L, null));
+
+        when(jdbc.queryForList(contains("package_body"), eq(byte[].class), eq(77L)))
+                .thenAnswer(inv -> List.of(storedBody.get()));
+        ConfigPackage pkg = service.packageOf(77L);
+        ConfigPackage.TableSection section =
+                pkg.tables().stream()
+                        .filter(t -> "fe_form_version".equals(t.table()))
+                        .findFirst()
+                        .orElseThrow();
+        assertThat(section.rows()).hasSize(1);
+        assertThat(section.rows().get(0).get("published_by")).isNull();
+    }
+
+    @Test
+    void exportIsBlockedWhenConfigValueLooksSensitive() {
+        // 导出自检（E12-T03）：配置值里出现疑似患者敏感值（手机号 / 证件号）→ 拦截，不落库，写失败审计
+        tenantRow();
+        when(routing.hasTenant(1L)).thenReturn(true);
+        when(reader.tablePresent(anyString())).thenReturn(false);
+        when(reader.tablePresent("ntf_rule")).thenReturn(true);
+        when(reader.columns("ntf_rule")).thenReturn(List.of("id", "event_type", "remark"));
+        when(reader.countRows("ntf_rule")).thenReturn(1L);
+        Map<String, Object> rule = new LinkedHashMap<>();
+        rule.put("id", 21L);
+        rule.put("event_type", "TASK_OVERDUE");
+        rule.put("remark", "联系 13812345678（示例）");
+        when(reader.rows(eq("ntf_rule"), any(), eq(Map.of()))).thenReturn(List.of(rule));
+        stubStore();
+
+        assertThatThrownBy(
+                        () ->
+                                service.export(
+                                        new ConfigTemplateExportService.ExportRequest(1L, null)))
+                .isInstanceOf(ApiException.class)
+                .satisfies(
+                        ex -> {
+                            assertThat(((ApiException) ex).code()).isEqualTo(40901);
+                            assertThat(ex.getMessage()).contains("敏感");
+                        });
+        // 不落库：INSERT 包体从未执行；审计写 FAIL
+        verify(jdbc, never()).update(any(PreparedStatementCreator.class), any(KeyHolder.class));
+        ArgumentCaptor<AuditEntry> captor = ArgumentCaptor.forClass(AuditEntry.class);
+        verify(audit).append(captor.capture());
+        assertThat(captor.getValue().action()).isEqualTo("CONFIG_TEMPLATE_EXPORT");
+        assertThat(captor.getValue().result()).isEqualTo(com.crdp.framework.audit.AuditResult.FAIL);
+    }
+
+    @Test
+    void exportIsBlockedWhenExcludedSurgeonRowLeaksIn() {
+        // 防御深度：行排除谓词失效（读行侧漏进术者取值）→ 自检拦截导出
+        tenantRow();
+        when(routing.hasTenant(1L)).thenReturn(true);
+        when(reader.tablePresent(anyString())).thenReturn(false);
+        when(reader.tablePresent("cfg_dict_item")).thenReturn(true);
+        when(reader.columns("cfg_dict_item")).thenReturn(List.of("id", "dict_code"));
+        when(reader.countRows("cfg_dict_item")).thenReturn(1L);
+        Map<String, Object> surgeon = new LinkedHashMap<>();
+        surgeon.put("id", 41L);
+        surgeon.put("dict_code", "surgeon");
+        when(reader.rows(eq("cfg_dict_item"), any(), eq(Map.of("dict_code", "surgeon"))))
+                .thenReturn(List.of(surgeon));
+        stubStore();
+
+        assertThatThrownBy(
+                        () ->
+                                service.export(
+                                        new ConfigTemplateExportService.ExportRequest(1L, null)))
+                .isInstanceOf(ApiException.class)
+                .satisfies(ex -> assertThat(((ApiException) ex).code()).isEqualTo(40901));
+        verify(jdbc, never()).update(any(PreparedStatementCreator.class), any(KeyHolder.class));
     }
 
     /** 捕获 INSERT 的包体（setBytes 第 10 参）并让主键固定为 77；版本号缺省取 1（无历史模板）。 */
