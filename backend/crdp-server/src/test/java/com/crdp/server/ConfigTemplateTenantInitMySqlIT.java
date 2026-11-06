@@ -34,7 +34,8 @@ import org.springframework.test.context.ActiveProfiles;
  *       导入：ID 重映射、敏感拦截、授权取交集）；
  *   <li>逐表比对三域配置业务列与 A 一致——表单（fe_form / fe_field / fe_option_set / fe_option / fe_form_version /
  *       fe_form_version_field / fe_rule）、计划（fu_plan / fu_plan_node）、报告单（rpt_type / rpt_name /
- *       rpt_indicator_tpl / rpt_indicator_item）；数值引用不残留源租户 ID（join 到本院行后取值比较）；
+ *       rpt_indicator_tpl / rpt_indicator_item / rpt_mapping / rpt_mapping_item，字段映射随 E23-T03）；
+ *       数值引用不残留源租户 ID（join 到本院行后取值比较）；
  *   <li>只复制配置：新租户库患者与随访业务表为空、配置行不带源租户用户引用；
  *   <li>plt_tenant.init_template_id 登记所选模板；未选模板的租户 config-template 记 SKIPPED；未知模板 40400 先拒绝
  *       （不建库不登记）。
@@ -132,6 +133,20 @@ class ConfigTemplateTenantInitMySqlIT {
             "SELECT n.type_code, n.name, t.name AS tpl_name, n.digitize_status_override,"
                     + " n.sort_no, n.status FROM `{db}`.rpt_name n"
                     + " LEFT JOIN `{db}`.rpt_indicator_tpl t ON t.id = n.indicator_tpl_id"
+        },
+        // ---- 报告单（E23-T03 / A-ATT-013：字段映射随配置模板复制，indicator_tpl_id 数值引用 join 取名）----
+        {
+            "rpt_mapping",
+            "SELECT m.code, m.name, m.type_code, m.target_type, m.target_form_code, m.phase,"
+                    + " t.name AS tpl_name, m.extra_writes, m.sort_no, m.status, m.remark"
+                    + " FROM `{db}`.rpt_mapping m"
+                    + " LEFT JOIN `{db}`.rpt_indicator_tpl t ON t.id = m.indicator_tpl_id"
+        },
+        {
+            "rpt_mapping_item",
+            "SELECT p.code AS mapping_code, i.item_code, i.target_field_key, i.extra_writes,"
+                    + " i.sort_no FROM `{db}`.rpt_mapping_item i"
+                    + " JOIN `{db}`.rpt_mapping p ON p.id = i.mapping_id"
         },
     };
 

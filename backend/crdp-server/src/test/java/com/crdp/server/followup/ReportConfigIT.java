@@ -354,6 +354,69 @@ class ReportConfigIT {
         assertEquals(40400, code(get(CATALOG_NAMES + "?typeCode=NOPE", token)));
     }
 
+    // ---------------------------------------------------------------- 字段映射（E23-T03 / A-ATT-013）
+
+    /**
+     * 心脏超声映射预置（迁移 V64）：三条映射（术前最后一次 / 出院前最后一次 / 第 N 年随访）经配置接口可读，
+     * 项目行目标字段键在目标表单字段字典内、附带写入解析为视图；心脏超声名称经 V64 绑定指标模板， 运行时目录带出项目（验收原文：10 类资料类型与映射可用；10 类见上方用例）。
+     */
+    @Test
+    void echoMappingPresetIsReadable() {
+        String token = hospitalToken("demoa");
+
+        List<Map<?, ?>> mappings = itemsOf(get(BASE + "/mappings", token));
+        assertEquals(3, mappings.size(), "A 预置三条心脏超声映射");
+        Map<?, ?> preop = mappings.get(0);
+        assertEquals("ECHO_PREOP_LAST", preop.get("code"));
+        assertEquals("ECHO", preop.get("typeCode"));
+        assertEquals("BASELINE", preop.get("targetType"));
+        assertEquals("A_BASELINE", preop.get("targetFormCode"));
+        assertEquals("PREOP_LAST", preop.get("phase"));
+        assertEquals("心脏超声指标", preop.get("indicatorTplName"), "绑定的指标模板（一一对应）");
+        assertEquals(19, ((List<?>) preop.get("items")).size(), "术前最后一次：报告时间 + 18 个指标项目");
+
+        Map<?, ?> predischarge = mappings.get(1);
+        assertEquals("ECHO_PREDISCHARGE_LAST", predischarge.get("code"));
+        assertEquals("PREDISCHARGE_LAST", predischarge.get("phase"));
+        assertEquals(17, ((List<?>) predischarge.get("items")).size(), "无报告时间与 IVS 行（规格「—」）");
+
+        Map<?, ?> followup = mappings.get(2);
+        assertEquals("ECHO_FOLLOWUP", followup.get("code"));
+        assertEquals("FOLLOWUP_RECORD", followup.get("targetType"));
+        assertEquals("A_ANNUAL_FU", followup.get("targetFormCode"));
+        assertEquals(null, followup.get("phase"), "随访目标无时相");
+        List<Map<?, ?>> extra = (List<Map<?, ?>>) followup.get("extraWrites");
+        assertEquals("f236", extra.get(0).get("fieldKey"), "附带写入：复查超声置为是");
+        assertEquals("1", extra.get(0).get("value"), "a_yesno 1 = 是");
+        List<Map<?, ?>> items = (List<Map<?, ?>>) followup.get("items");
+        assertEquals("REPORT_DATE", items.get(0).get("itemCode"), "报告时间伪项目");
+        assertEquals("f237", items.get(0).get("targetFieldKey"), "超声检查时间 = 报告时间");
+        assertEquals("超声检查时间", items.get(0).get("targetFieldLabel"), "目标字段显示名联查字段字典");
+        Map<?, ?> ef =
+                items.stream()
+                        .filter(i -> "EF".equals(i.get("itemCode")))
+                        .findFirst()
+                        .orElseThrow();
+        assertEquals("f248", ef.get("targetFieldKey"), "EF → EF 射血分数（验收示例）");
+        Map<?, ?> mr =
+                items.stream()
+                        .filter(i -> "MR_DEGREE".equals(i.get("itemCode")))
+                        .findFirst()
+                        .orElseThrow();
+        assertEquals(
+                "f238",
+                ((Map<?, ?>) ((List<?>) mr.get("extraWrites")).get(0)).get("fieldKey"),
+                "二尖瓣返流程度写入时同时填「有无二尖瓣返流」");
+
+        // V64 绑定后，心脏超声名称在运行时目录带出模板项目（添加报告单时只需填结果，A-ATT-012/013）
+        List<Map<?, ?>> echoNames = itemsOf(get(CATALOG_NAMES + "?typeCode=ECHO", token));
+        assertEquals(3, echoNames.size());
+        for (Map<?, ?> name : echoNames) {
+            assertNotNull(name.get("indicatorTplId"), "心脏超声名称绑定指标模板");
+            assertEquals(18, ((List<?>) name.get("items")).size(), "经胸超声心动图等名称带出 18 个项目");
+        }
+    }
+
     // ---------------------------------------------------------------- 权限 / 模块开关 / 租户隔离
 
     /** 无权限 40300：FOLLOWUP_DOCTOR 无 followup:scan:config；运行时目录按 patient:view 可读。 */
@@ -368,6 +431,7 @@ class ReportConfigIT {
                                 BASE + "/types",
                                 doctor,
                                 Map.of("code", "IT_X", "name", "x", "formCode", "RPT_OTHER"))));
+        assertEquals(40300, code(get(BASE + "/mappings", doctor)), "字段映射清单同码 scan:config");
         assertEquals(0, code(get(CATALOG_TYPES, doctor)), "运行时目录按 followup:patient:view 可读");
     }
 

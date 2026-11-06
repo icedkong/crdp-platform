@@ -66,6 +66,34 @@ public interface ReportConfigMapper {
             String refRangeFemale,
             Integer sortNo) {}
 
+    /** 字段映射行（typeName / targetFormName / indicatorTplName 联查展示用；E23-T03 / A-ATT-013）。 */
+    record MappingRow(
+            Long id,
+            String code,
+            String name,
+            String typeCode,
+            String typeName,
+            String targetType,
+            String targetFormCode,
+            String targetFormName,
+            String phase,
+            Long indicatorTplId,
+            String indicatorTplName,
+            String extraWrites,
+            Integer sortNo,
+            String status,
+            String remark) {}
+
+    /** 字段映射项目行（targetFieldLabel 联查目标表单字段字典；item_code 可为固定 REPORT_DATE）。 */
+    record MappingItemRow(
+            Long id,
+            Long mappingId,
+            String itemCode,
+            String targetFieldKey,
+            String targetFieldLabel,
+            String extraWrites,
+            Integer sortNo) {}
+
     // ---------------------------------------------------------------- rpt_type
 
     /** 全部类型（含停用；按 sort_no、id 升序）。 */
@@ -304,4 +332,38 @@ public interface ReportConfigMapper {
             @Param("refRangeMale") String refRangeMale,
             @Param("refRangeFemale") String refRangeFemale,
             @Param("sortNo") int sortNo);
+
+    // ---------------------------------------------------------------- rpt_mapping /
+    // rpt_mapping_item（E23-T03）
+
+    /** 全部字段映射（含停用，按来源类型、排序号；A-ATT-013 心脏超声 / C-SCAN-005 程控同一机制）。 */
+    @Select(
+            """
+            SELECT m.id, m.code, m.name, m.type_code AS typeCode, t.name AS typeName,
+                   m.target_type AS targetType, m.target_form_code AS targetFormCode,
+                   f.name AS targetFormName, m.phase, m.indicator_tpl_id AS indicatorTplId,
+                   p.name AS indicatorTplName, m.extra_writes AS extraWrites,
+                   m.sort_no AS sortNo, m.status, m.remark
+            FROM rpt_mapping m
+            LEFT JOIN rpt_type t ON t.code = m.type_code
+            LEFT JOIN fe_form f ON f.code = m.target_form_code
+            LEFT JOIN rpt_indicator_tpl p ON p.id = m.indicator_tpl_id
+            ORDER BY m.type_code, m.sort_no, m.id
+            """)
+    List<MappingRow> findMappings();
+
+    /** 某映射的项目行（targetFieldLabel 联查目标表单字段字典：fe_field 按 (form_code, field_key) 唯一，不翻倍）。 */
+    @Select(
+            """
+            SELECT i.id, i.mapping_id AS mappingId, i.item_code AS itemCode,
+                   i.target_field_key AS targetFieldKey, fl.label AS targetFieldLabel,
+                   i.extra_writes AS extraWrites, i.sort_no AS sortNo
+            FROM rpt_mapping_item i
+            JOIN rpt_mapping m ON m.id = i.mapping_id
+            LEFT JOIN fe_field fl
+              ON fl.form_code = m.target_form_code AND fl.field_key = i.target_field_key
+            WHERE i.mapping_id = #{mappingId}
+            ORDER BY i.sort_no, i.id
+            """)
+    List<MappingItemRow> findMappingItems(@Param("mappingId") long mappingId);
 }
