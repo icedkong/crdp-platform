@@ -29,8 +29,9 @@ import org.springframework.stereotype.Service;
  * 的六个字段）、停用、查看持有人。
  *
  * <p>生效语义（platform-spec §1 业务规则）：角色停用后持有者立即失去对应权限——菜单并集在 PlatformMapper.accountMenuIds
- * 只统计启用角色，且每次变更递增持有者权限版本号（PLT-PERM-010， 在线会话下一次请求即重算，OQ-40 ①）。租户范围「指定租户」的租户清单由
- * E20-T01（PLT-VIEW-005） 落地，本任务提交 SPECIFIED 校验失败（暂行口径，见 open-questions OQ-48）。
+ * 只统计启用角色，且每次变更递增持有者权限版本号（PLT-PERM-010， 在线会话下一次请求即重算，OQ-40 ①）。租户范围「指定租户」的清单
+ * （plt_role_view_tenant）与视角会话执行由 E20-T01 落地（PLT-VIEW-005）：SPECIFIED 提交须带非空清单；
+ * 视角六字段或清单变化时，持有者进行中的视角会话按「权限变更」立即结束（platform-spec §8 业务规则）。
  */
 @Service
 public class PlatformRoleService {
@@ -62,12 +63,17 @@ public class PlatformRoleService {
     private final JdbcTemplate platform;
     private final PermissionVersionStore permissionVersions;
     private final AuditLogger audit;
+    private final TenantViewService tenantView;
 
     public PlatformRoleService(
-            JdbcTemplate platform, PermissionVersionStore permissionVersions, AuditLogger audit) {
+            JdbcTemplate platform,
+            PermissionVersionStore permissionVersions,
+            AuditLogger audit,
+            TenantViewService tenantView) {
         this.platform = platform;
         this.permissionVersions = permissionVersions;
         this.audit = audit;
+        this.tenantView = tenantView;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -81,7 +87,7 @@ public class PlatformRoleService {
             boolean canResetPassword,
             boolean canEditBusiness) {}
 
-    /** 角色视图：menuIds 仅详情返回；holderCount 为绑定账号数（含停用账号，展示用）。 */
+    /** 角色视图：menuIds 与 specifiedTenantIds 仅详情返回；holderCount 为绑定账号数（含停用账号，展示用）。 */
     public record RoleView(
             long id,
             String code,
@@ -91,13 +97,14 @@ public class PlatformRoleService {
             String status,
             ViewFields view,
             List<Long> menuIds,
+            List<Long> specifiedTenantIds,
             int holderCount,
             OffsetDateTime createdAt,
             OffsetDateTime updatedAt) {}
 
     /**
      * 新建 / 维护请求（PLT-ROLE-002、003）：预置角色权限可调整（菜单、视角字段、状态），名称与说明 也可维护；自定义角色全量可改；code 创建后不可改（新建时由服务端生成
-     * CUSTOM 前缀码）。
+     * CUSTOM 前缀码）。viewSpecifiedTenantIds：租户范围为 SPECIFIED 时的指定租户清单（必填非空，全部须存在）。
      */
     public record RoleSaveRequest(
             String name,
@@ -107,6 +114,7 @@ public class PlatformRoleService {
             Boolean viewCanEnter,
             String viewVisibleScope,
             String viewTenantScope,
+            List<Long> viewSpecifiedTenantIds,
             Boolean viewCanConfigure,
             Boolean viewCanResetPassword,
             Boolean viewCanEditBusiness) {}
@@ -136,12 +144,12 @@ public class PlatformRoleService {
         Map<Long, Long> holders = holderCounts();
         List<RoleView> result = new ArrayList<>();
         for (Map<String, Object> row : rows) {
-            result.add(toView(row, null, holders));
+            result.add(toView(row, null, null, holders));
         }
         return result;
     }
 
-    /** 角色详情（含已授权的平台端菜单 id）。 */
+    /** 角色详情（含已授权的平台端菜单 id 与「指定租户」清单）。 */
     public RoleView get(long roleId) {
         return TenantContext.callAsPlatform(
                 () -> {
@@ -153,7 +161,13 @@ public class PlatformRoleService {
                                                     + " ORDER BY menu_id",
                                             Long.class,
                                             roleId));
-                    return toView(row, menuIds, holderCounts());
+                    List<Long> specified =
+                            platform.queryForList(
+                                    "SELECT tenant_id FROM plt_role_view_tenant WHERE role_id = ?"
+                                            + " ORDER BY tenant_id",
+                                    Long.class,
+                                    roleId);
+                    return toView(row, menuIds, specified, holderCounts());
                 });
     }
 
@@ -203,6 +217,7 @@ public class PlatformRoleService {
                     validateCommon(request);
                     Set<Long> desired = validateMenuIds(request.menuIds());
                     ViewFields view = validateViewFields(request);
+                    Set<Long> specified = validateSpecifiedTenants(view, request);
                     String code = nextCustomCode();
                     platform.update(
                             "INSERT INTO plt_role (code, name, description, built_in, status,"
@@ -223,6 +238,9 @@ public class PlatformRoleService {
                             platform.queryForObject(
                                     "SELECT id FROM plt_role WHERE code = ?", Long.class, code);
                     saveGrants(roleId, desired);
+                    if (TENANT_SCOPE_SPECIFIED.equals(view.tenantScope())) {
+                        saveSpecified(roleId, specified);
+                    }
                     audit.record(
                             new AuditEvent(
                                     "ROLE_CREATE",
@@ -250,16 +268,26 @@ public class PlatformRoleService {
                     validateCommon(request);
                     Set<Long> desired = validateMenuIds(request.menuIds());
                     ViewFields view = validateViewFields(request);
+                    Set<Long> specified = validateSpecifiedTenants(view, request);
                     Set<Long> beforeMenuIds =
                             new LinkedHashSet<>(
                                     platform.queryForList(
                                             "SELECT menu_id FROM plt_role_menu WHERE role_id = ?",
                                             Long.class,
                                             roleId));
+                    Set<Long> beforeSpecified =
+                            new LinkedHashSet<>(
+                                    platform.queryForList(
+                                            "SELECT tenant_id FROM plt_role_view_tenant WHERE"
+                                                    + " role_id = ?",
+                                            Long.class,
+                                            roleId));
                     String beforeStatus = str(before.get("status"));
                     String afterStatus = statusOf(request.status());
                     boolean grantsChanged = !beforeMenuIds.equals(desired);
                     boolean statusChanged = !beforeStatus.equals(afterStatus);
+                    boolean viewChanged =
+                            viewFieldsChanged(before, view) || !beforeSpecified.equals(specified);
                     platform.update(
                             "UPDATE plt_role SET name = ?, description = ?, status = ?,"
                                     + " view_can_enter = ?, view_visible_scope = ?, view_tenant_scope = ?,"
@@ -280,6 +308,10 @@ public class PlatformRoleService {
                     if (grantsChanged) {
                         saveGrants(roleId, desired);
                     }
+                    if (TENANT_SCOPE_SPECIFIED.equals(view.tenantScope())
+                            && !beforeSpecified.equals(specified)) {
+                        saveSpecified(roleId, specified);
+                    }
                     String detail =
                             updateDetail(
                                     before,
@@ -290,6 +322,17 @@ public class PlatformRoleService {
                                     afterStatus);
                     if (grantsChanged || statusChanged) {
                         refreshHolders(roleId);
+                    }
+                    if (viewChanged) {
+                        // 视角授权变更即时生效：持有者进行中的视角会话按「权限变更」立即结束（platform-spec §8）
+                        List<Long> holders =
+                                platform.queryForList(
+                                        "SELECT account_id FROM plt_account_role WHERE role_id = ?",
+                                        Long.class,
+                                        roleId);
+                        for (Long accountId : holders) {
+                            tenantView.endForAccount(accountId);
+                        }
                     }
                     audit.record(
                             new AuditEvent(
@@ -329,8 +372,8 @@ public class PlatformRoleService {
     }
 
     /**
-     * 租户视角权限校验（platform-spec §8）。租户范围「指定租户」需要租户清单（PLT-VIEW-005 属 E20-T01）， 本任务提交即
-     * 40001（暂行口径，OQ-48）。
+     * 租户视角权限校验（platform-spec §8）。租户范围「指定租户」（PLT-VIEW-005，E20-T01 起可选）须在请求里 带非空清单（清单成员存在性由 {@link
+     * #validateSpecifiedTenants} 查库校验）。
      */
     static ViewFields validateViewFields(RoleSaveRequest request) {
         boolean canEnter = Boolean.TRUE.equals(request.viewCanEnter());
@@ -348,8 +391,10 @@ public class PlatformRoleService {
         if (!TENANT_SCOPES.contains(tenantScope)) {
             throw bad("租户范围只允许 ALL / RESPONSIBLE / SPECIFIED");
         }
-        if (TENANT_SCOPE_SPECIFIED.equals(tenantScope)) {
-            throw bad("租户范围「指定租户」需维护指定租户清单，由租户视角任务（E20-T01）提供，暂不可选");
+        if (TENANT_SCOPE_SPECIFIED.equals(tenantScope)
+                && (request.viewSpecifiedTenantIds() == null
+                        || request.viewSpecifiedTenantIds().isEmpty())) {
+            throw bad("租户范围「指定租户」须选择至少一个租户");
         }
         return new ViewFields(
                 canEnter,
@@ -358,6 +403,38 @@ public class PlatformRoleService {
                 Boolean.TRUE.equals(request.viewCanConfigure()),
                 Boolean.TRUE.equals(request.viewCanResetPassword()),
                 Boolean.TRUE.equals(request.viewCanEditBusiness()));
+    }
+
+    /** 指定租户清单查库校验：SPECIFIED 时全部租户须存在（任何状态均可选，进入时再按租户状态闸门）。 */
+    Set<Long> validateSpecifiedTenants(ViewFields view, RoleSaveRequest request) {
+        if (!TENANT_SCOPE_SPECIFIED.equals(view.tenantScope())) {
+            return Set.of();
+        }
+        Set<Long> desired = new LinkedHashSet<>(request.viewSpecifiedTenantIds());
+        for (Long tenantId : desired) {
+            Integer exists =
+                    platform.queryForObject(
+                            "SELECT COUNT(*) FROM plt_tenant WHERE id = ?",
+                            Integer.class,
+                            tenantId);
+            if (exists == null || exists == 0) {
+                throw bad("指定租户 " + tenantId + " 不存在");
+            }
+        }
+        return desired;
+    }
+
+    /** 视角六字段是否有变化（与更新前快照逐项比对；指定清单单算）。 */
+    private static boolean viewFieldsChanged(Map<String, Object> before, ViewFields view) {
+        return (((Number) before.get("view_can_enter")).intValue() == 1) != view.canEnter()
+                || !str(before.get("view_visible_scope")).equals(view.visibleScope())
+                || !str(before.get("view_tenant_scope")).equals(view.tenantScope())
+                || (((Number) before.get("view_can_configure")).intValue() == 1)
+                        != view.canConfigure()
+                || (((Number) before.get("view_can_reset_password")).intValue() == 1)
+                        != view.canResetPassword()
+                || (((Number) before.get("view_can_edit_business")).intValue() == 1)
+                        != view.canEditBusiness();
     }
 
     /** 授权菜单校验（PLT-ROLE-003「授权平台端菜单」）：必须全部是平台端启用菜单 / 按钮。 */
@@ -404,7 +481,11 @@ public class PlatformRoleService {
 
     // ---------------------------------------------------------------- 内部
 
-    private RoleView toView(Map<String, Object> row, List<Long> menuIds, Map<Long, Long> holders) {
+    private RoleView toView(
+            Map<String, Object> row,
+            List<Long> menuIds,
+            List<Long> specifiedTenantIds,
+            Map<Long, Long> holders) {
         long id = ((Number) row.get("id")).longValue();
         return new RoleView(
                 id,
@@ -421,6 +502,7 @@ public class PlatformRoleService {
                         ((Number) row.get("view_can_reset_password")).intValue() == 1,
                         ((Number) row.get("view_can_edit_business")).intValue() == 1),
                 menuIds,
+                specifiedTenantIds,
                 holders.getOrDefault(id, 0L).intValue(),
                 offsetDateTime(row.get("created_at")),
                 offsetDateTime(row.get("updated_at")));
@@ -458,6 +540,17 @@ public class PlatformRoleService {
         for (Long menuId : menuIds) {
             platform.update(
                     "INSERT INTO plt_role_menu (role_id, menu_id) VALUES (?, ?)", roleId, menuId);
+        }
+    }
+
+    /** 「指定租户」清单整体替换（PLT-VIEW-005，仅 SPECIFIED 角色落清单；其余范围不参与计算、保留原值不动）。 */
+    private void saveSpecified(long roleId, Set<Long> tenantIds) {
+        platform.update("DELETE FROM plt_role_view_tenant WHERE role_id = ?", roleId);
+        for (Long tenantId : tenantIds) {
+            platform.update(
+                    "INSERT INTO plt_role_view_tenant (role_id, tenant_id) VALUES (?, ?)",
+                    roleId,
+                    tenantId);
         }
     }
 

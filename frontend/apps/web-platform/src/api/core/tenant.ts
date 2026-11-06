@@ -1,6 +1,7 @@
 import type {
   CreateTenantRequest,
   PageView,
+  PlatformResponsibleOwner,
   TenantDetail,
   TenantExpireRequest,
   TenantExpireResult,
@@ -98,5 +99,12 @@ export function applyTenantExpiry(tenantId: number, data: TenantExpireRequest) {
   return requestClient.put<TenantExpireResult>(
     apiPath(`/tenants/${tenantId}/expire`),
     data,
+  );
+}
+
+/** 按租户反查负责人（PLT-VIEW-006，E20-T01）：负责该租户的平台账号。 */
+export function listResponsibleOwners(tenantId: number) {
+  return requestClient.get<PlatformResponsibleOwner[]>(
+    apiPath(`/tenants/${tenantId}/responsible-owners`),
   );
 }

@@ -487,6 +487,7 @@ public class AuthService {
                 now,
                 now,
                 hospitalIdleSeconds(tenant, account),
+                0L, // 绝对时长用部署配置的全局值（12 小时）
                 // E07-T04 / PLT-PERM-009：字段策略快照（多角色取最宽松）冻结进会话；角色策略保存递增权限版本后重算即得新值
                 account.fieldPolicies());
     }

@@ -3,6 +3,7 @@ package com.crdp.server.web;
 import com.crdp.framework.security.RequiresPermission;
 import com.crdp.framework.web.ApiResponse;
 import com.crdp.server.config.TenantOnboardingService;
+import com.crdp.server.platform.PlatformAccountService;
 import com.crdp.server.platform.TenantDirectoryService;
 import com.crdp.server.platform.TenantLifecycleService;
 import com.crdp.server.platform.TenantSuspensionService;
@@ -38,17 +39,20 @@ public class PlatformTenantController {
     private final TenantDirectoryService directoryService;
     private final TenantLifecycleService lifecycleService;
     private final TenantSuspensionService suspensionService;
+    private final PlatformAccountService accountService;
     private final SecureRandom random = new SecureRandom();
 
     public PlatformTenantController(
             TenantOnboardingService onboardingService,
             TenantDirectoryService directoryService,
             TenantLifecycleService lifecycleService,
-            TenantSuspensionService suspensionService) {
+            TenantSuspensionService suspensionService,
+            PlatformAccountService accountService) {
         this.onboardingService = onboardingService;
         this.directoryService = directoryService;
         this.lifecycleService = lifecycleService;
         this.suspensionService = suspensionService;
+        this.accountService = accountService;
     }
 
     /** 新建租户请求：到期设置五项可整体省略（默认长期有效）；有到期日时到期日必填且须晚于当天， 提醒节点 / 宽限期缺省取默认值（30、7、1 天与 15 天）。 */
@@ -147,6 +151,14 @@ public class PlatformTenantController {
     public ApiResponse<List<TenantSuspensionService.SuspensionView>> suspensions(
             @PathVariable long tenantId) {
         return ApiResponse.ok(suspensionService.suspensionsOf(tenantId));
+    }
+
+    @Operation(summary = "按租户反查负责人（PLT-VIEW-006）：负责该租户的平台账号（platform-spec §8「平台账号管理 · 负责租户」）")
+    @GetMapping("/{tenantId}/responsible-owners")
+    @RequiresPermission("platform:account:view")
+    public ApiResponse<List<PlatformAccountService.ResponsibleOwner>> responsibleOwners(
+            @PathVariable long tenantId) {
+        return ApiResponse.ok(accountService.responsibleOwners(tenantId));
     }
 
     @Operation(summary = "新建租户：立即触发开通编排（可重入，失败重试即重提交）；到期设置随本任务接入（PLT-TEN-011）")

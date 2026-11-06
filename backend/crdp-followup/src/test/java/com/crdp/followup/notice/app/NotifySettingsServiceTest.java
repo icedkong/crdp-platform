@@ -75,6 +75,7 @@ class NotifySettingsServiceTest {
                 0L,
                 0L,
                 0L,
+                0L,
                 null);
     }
 

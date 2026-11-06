@@ -44,6 +44,7 @@ class TenantDirectoryServiceTest {
     private final TenantRoutingDataSource routing = mock(TenantRoutingDataSource.class);
     private final CryptoService crypto = mock(CryptoService.class);
     private final AuditLogger audit = mock(AuditLogger.class);
+    private final TenantViewService tenantView = mock(TenantViewService.class);
 
     private TenantDirectoryService service;
 
@@ -80,7 +81,7 @@ class TenantDirectoryServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new TenantDirectoryService(platform, routing, crypto, audit);
+        service = new TenantDirectoryService(platform, routing, crypto, audit, tenantView);
         when(routing.hasTenant(anyLong())).thenReturn(false);
     }
 

@@ -64,7 +64,7 @@ export function buildGrantTree(
   return rootLevel;
 }
 
-/** 编辑表单模型（对话框状态）。 */
+/** 编辑表单模型（对话框状态）。viewSpecifiedTenantIds：租户范围为「指定租户」时的清单（E20-T01）。 */
 export interface RoleEditModel {
   description: string;
   menuIds: number[];
@@ -74,6 +74,7 @@ export interface RoleEditModel {
   viewCanEditBusiness: boolean;
   viewCanEnter: boolean;
   viewCanResetPassword: boolean;
+  viewSpecifiedTenantIds: number[];
   viewTenantScope: 'ALL' | 'RESPONSIBLE' | 'SPECIFIED';
   viewVisibleScope: 'CONFIG_AND_BUSINESS' | 'CONFIG_ONLY';
 }
@@ -81,6 +82,7 @@ export interface RoleEditModel {
 export function toRoleEditModel(
   role: null | PlatformRoleView,
   menuIds: number[],
+  specifiedTenantIds: number[] = [],
 ): RoleEditModel {
   if (!role) {
     return {
@@ -92,6 +94,7 @@ export function toRoleEditModel(
       viewCanEditBusiness: false,
       viewCanEnter: false,
       viewCanResetPassword: false,
+      viewSpecifiedTenantIds: [],
       viewTenantScope: 'RESPONSIBLE',
       viewVisibleScope: 'CONFIG_ONLY',
     };
@@ -105,12 +108,13 @@ export function toRoleEditModel(
     viewCanEditBusiness: role.view.canEditBusiness,
     viewCanEnter: role.view.canEnter,
     viewCanResetPassword: role.view.canResetPassword,
+    viewSpecifiedTenantIds: specifiedTenantIds,
     viewTenantScope: role.view.tenantScope,
     viewVisibleScope: role.view.visibleScope,
   };
 }
 
-/** 表单 → 提交请求（新建与维护同一形状；后端拒绝 SPECIFIED，前端在校验层拦）。 */
+/** 表单 → 提交请求（新建与维护同一形状；SPECIFIED 须带非空清单，校验层拦）。 */
 export function toRoleSaveRequest(
   model: RoleEditModel,
 ): PlatformRoleSaveRequest {
@@ -123,6 +127,8 @@ export function toRoleSaveRequest(
     viewCanEditBusiness: model.viewCanEditBusiness,
     viewCanEnter: model.viewCanEnter,
     viewCanResetPassword: model.viewCanResetPassword,
+    viewSpecifiedTenantIds:
+      model.viewTenantScope === 'SPECIFIED' ? model.viewSpecifiedTenantIds : [],
     viewTenantScope: model.viewTenantScope,
     viewVisibleScope: model.viewVisibleScope,
   };

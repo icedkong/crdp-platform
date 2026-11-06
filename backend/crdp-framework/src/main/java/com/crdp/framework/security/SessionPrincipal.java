@@ -20,6 +20,9 @@ import java.util.List;
  * 租户可加严——按登录时的快照存在会话里）；每次请求滑动续期（{@code SessionStore#touch}）。 {@code ip} 是登录来源 IP（在线用户列表展示，取
  * X-Forwarded-For 首段）。
  *
+ * <p>E20-T01 / PLT-VIEW-004：{@code absoluteSeconds} 是**本会话专属**的绝对时长上限（秒；0 = 用部署配置的全局值）。 租户视角会话单次最长
+ * 2 小时，比全局 12 小时短，进入时按 7200 冻结进会话；旧会话 JSON 缺该属性时反序列化为 0，行为不变。
+ *
  * <p>E07-T04 / PLT-PERM-009：{@code fieldPolicies} 是账号的字段策略快照（多角色显式覆盖「取最宽松」合并，无覆盖回落 平台默认）。医院端会话由登录装配
  * 填充，角色策略保存递增权限版本后旧会话下一次请求即重算；平台端会话不消费字段策略（平台 视角的同字段合并取更严，随 E20 落地），兜底填平台默认（全部脱敏， fail closed）。旧会话
  * JSON 反序列化缺该属性时为 null，重算后补齐。
@@ -45,6 +48,7 @@ public record SessionPrincipal(
         long issuedAtEpochSecond,
         long lastActiveAtEpochSecond,
         long idleSeconds,
+        long absoluteSeconds,
         FieldPolicySnapshot fieldPolicies) {
 
     /** 兼容旧调用方的构造器：不限制空闲超时（idleSeconds=0，只受部署配置的绝对时长约束）， 时间戳取当前时刻，不带登录 IP，字段策略取平台默认。 */
@@ -85,6 +89,7 @@ public record SessionPrincipal(
                 null,
                 Instant.now().getEpochSecond(),
                 Instant.now().getEpochSecond(),
+                0L,
                 0L,
                 FieldPolicySnapshot.defaults());
     }
@@ -135,6 +140,7 @@ public record SessionPrincipal(
                 issuedAtEpochSecond,
                 lastActiveAtEpochSecond,
                 idleSeconds,
+                0L,
                 FieldPolicySnapshot.defaults());
     }
 
@@ -144,6 +150,11 @@ public record SessionPrincipal(
 
     public boolean platform() {
         return "PLATFORM".equals(sessionType);
+    }
+
+    /** 租户视角会话（E20-T01 / PLT-VIEW-001）：平台账号进入某租户的查看会话，不借用医院用户身份。 */
+    public boolean tenantView() {
+        return "TENANT_VIEW".equals(sessionType);
     }
 
     /** 对外展示的会话号：令牌哈希前 16 个十六进制字符。单向推导，列表与踢线接口只 出会话号、绝不外露令牌本身（PLT-AUTH-009）。 */
@@ -196,6 +207,7 @@ public record SessionPrincipal(
                 issuedAtEpochSecond,
                 lastActiveAtEpochSecond,
                 idleSeconds,
+                absoluteSeconds,
                 fieldPolicies);
     }
 
@@ -222,6 +234,7 @@ public record SessionPrincipal(
                 issuedAtEpochSecond,
                 nowEpochSecond,
                 idleSeconds,
+                absoluteSeconds,
                 fieldPolicies);
     }
 
@@ -251,6 +264,7 @@ public record SessionPrincipal(
                 issuedAtEpochSecond,
                 lastActiveAtEpochSecond,
                 idleSeconds,
+                absoluteSeconds,
                 draft.fieldPolicies());
     }
 }

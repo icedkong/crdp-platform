@@ -29,6 +29,7 @@ import dayjs from 'dayjs';
 import { listTenants } from '#/api/core/tenant';
 import { usePermission } from '#/reference/use-permission';
 
+import EnterViewDialog from './enter-view-dialog.vue';
 import { canDisable, canEnable, canRenew } from './lifecycle';
 import {
   canOpenProvision,
@@ -49,6 +50,7 @@ const { hasPermission } = usePermission();
 const canCreate = hasPermission('platform:tenant:create');
 const canChangeStatus = hasPermission('platform:tenant:status');
 const canRenewTenant = hasPermission('platform:tenant:renew');
+const canEnterView = hasPermission('platform:view:enter');
 
 const isMobile = ref(false);
 const loading = ref(false);
@@ -66,6 +68,10 @@ const statusAction = ref<'DISABLE' | 'ENABLE'>('DISABLE');
 const statusTarget = ref<null | TenantListItem>(null);
 const renewDialogOpen = ref(false);
 const renewTarget = ref<null | TenantListItem>(null);
+
+// 进入租户视角弹窗（E20-T01 / PLT-VIEW-001）：行内 viewEnterable 由后端按角色授权计算
+const enterViewOpen = ref(false);
+const enterViewTarget = ref<null | TenantListItem>(null);
 
 const columns = [
   { dataIndex: 'index', title: '序号', width: 64 },
@@ -139,6 +145,11 @@ function openStatusDialog(row: TenantListItem, action: TenantStatusAction) {
 function openRenewDialog(row: TenantListItem) {
   renewTarget.value = row;
   renewDialogOpen.value = true;
+}
+
+function openEnterViewDialog(row: TenantListItem) {
+  enterViewTarget.value = row;
+  enterViewOpen.value = true;
 }
 
 function onLifecycleDone() {
@@ -287,6 +298,15 @@ onUnmounted(() => window.removeEventListener('resize', read));
               详情
             </Button>
             <Button
+              v-if="canEnterView && record.viewEnterable"
+              size="small"
+              type="link"
+              data-testid="enter-tenant-view"
+              @click="openEnterViewDialog(record)"
+            >
+              进入视角
+            </Button>
+            <Button
               v-if="canOpenProvision(record.status)"
               size="small"
               type="link"
@@ -340,6 +360,7 @@ onUnmounted(() => window.removeEventListener('resize', read));
       :tenant="renewTarget"
       @done="onLifecycleDone"
     />
+    <EnterViewDialog v-model:open="enterViewOpen" :tenant="enterViewTarget" />
   </Page>
 </template>
 

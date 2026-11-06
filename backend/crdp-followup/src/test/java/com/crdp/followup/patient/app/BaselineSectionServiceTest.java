@@ -443,6 +443,7 @@ class BaselineSectionServiceTest {
                 0L,
                 0L,
                 0L,
+                0L, // 绝对时长用部署配置的全局值,
                 null);
     }
 }

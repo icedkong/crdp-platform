@@ -11,7 +11,10 @@ import com.crdp.server.platform.PlatformRoleService.ViewFields;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
-/** E06-T04（PLT-ROLE-002、003）单元测试：角色保存校验（名称 / 状态、租户视角六字段枚举、 「指定租户」暂行拒绝、平台端菜单边界）。 */
+/**
+ * E06-T04 / E20-T01（PLT-ROLE-002、003、PLT-VIEW-005）单元测试：角色保存校验（名称 / 状态、
+ * 租户视角六字段枚举、「指定租户」须带非空清单（E20-T01 起放开，OQ-48 收敛）、平台端菜单边界）。
+ */
 class PlatformRoleServiceTest {
 
     private static RoleSaveRequest request(
@@ -21,6 +24,7 @@ class PlatformRoleServiceTest {
             Boolean canEnter,
             String visibleScope,
             String tenantScope,
+            List<Long> specifiedTenantIds,
             Boolean configure,
             Boolean reset,
             Boolean edit) {
@@ -32,6 +36,31 @@ class PlatformRoleServiceTest {
                 canEnter,
                 visibleScope,
                 tenantScope,
+                specifiedTenantIds,
+                configure,
+                reset,
+                edit);
+    }
+
+    /** 旧签名（无指定租户清单）快捷构造：清单置 null。 */
+    private static RoleSaveRequest request(
+            String name,
+            String status,
+            List<Long> menuIds,
+            Boolean canEnter,
+            String visibleScope,
+            String tenantScope,
+            Boolean configure,
+            Boolean reset,
+            Boolean edit) {
+        return request(
+                name,
+                status,
+                menuIds,
+                canEnter,
+                visibleScope,
+                tenantScope,
+                null,
                 configure,
                 reset,
                 edit);
@@ -186,9 +215,9 @@ class PlatformRoleServiceTest {
     }
 
     @Test
-    void specifiedTenantScopeIsRejectedUntilE20() {
-        // OQ-48 暂行口径：「指定租户」清单由 E20-T01（PLT-VIEW-005）落地，本任务提交即 40001
-        ApiException specified =
+    void specifiedTenantScopeRequiresNonEmptyList() {
+        // E20-T01（PLT-VIEW-005）起「指定租户」可选：缺清单 / 空清单 → 40001
+        ApiException missing =
                 assertThrows(
                         ApiException.class,
                         () ->
@@ -200,10 +229,61 @@ class PlatformRoleServiceTest {
                                                 true,
                                                 "CONFIG_ONLY",
                                                 "SPECIFIED",
+                                                (List<Long>) null,
                                                 false,
                                                 false,
                                                 false)));
-        assertEquals(40001, specified.code());
-        assertTrue(specified.getMessage().contains("E20-T01"), specified.getMessage());
+        assertEquals(40001, missing.code());
+        assertTrue(missing.getMessage().contains("至少一个租户"), missing.getMessage());
+
+        ApiException empty =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                PlatformRoleService.validateViewFields(
+                                        request(
+                                                "x",
+                                                null,
+                                                null,
+                                                true,
+                                                "CONFIG_ONLY",
+                                                "SPECIFIED",
+                                                List.of(),
+                                                false,
+                                                false,
+                                                false)));
+        assertEquals(40001, empty.code());
+
+        // 带非空清单即通过（清单成员存在性由 validateSpecifiedTenants 查库，IT 覆盖）
+        ViewFields fields =
+                PlatformRoleService.validateViewFields(
+                        request(
+                                "x",
+                                null,
+                                null,
+                                true,
+                                "CONFIG_ONLY",
+                                "SPECIFIED",
+                                List.of(1L, 2L),
+                                false,
+                                false,
+                                false));
+        assertEquals(PlatformRoleService.TENANT_SCOPE_SPECIFIED, fields.tenantScope());
+
+        // 非 SPECIFIED 不要求清单
+        ViewFields all =
+                PlatformRoleService.validateViewFields(
+                        request(
+                                "y",
+                                null,
+                                null,
+                                true,
+                                "CONFIG_AND_BUSINESS",
+                                "ALL",
+                                (List<Long>) null,
+                                false,
+                                false,
+                                false));
+        assertEquals(PlatformRoleService.TENANT_SCOPE_ALL, all.tenantScope());
     }
 }

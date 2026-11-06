@@ -44,7 +44,8 @@ import org.springframework.stereotype.Service;
  * <p>平台管理员至少保留 2 个启用账号（platform-spec §1「平台管理员至少 2 人（已确认）」，双人复核 依赖）：停用或摘除角色导致启用平台管理员不足 2
  * 个时拒绝（40901）。
  *
- * <p>负责租户多选（PLT-VIEW-006）属 E20-T01，本任务不落该字段。
+ * <p>负责租户多选（PLT-VIEW-006，E20-T01）：plt_account_tenant 整体替换；租户范围为「负责的租户」的角色只能进入
+ * 这些租户；负责关系变更即时生效——该账号进行中的视角会话按「权限变更」立即结束（platform-spec §8 业务规则）。 账号角色 / 状态变化与密码重置同样结束视角会话。
  */
 @Service
 public class PlatformAccountService {
@@ -77,6 +78,7 @@ public class PlatformAccountService {
     private final SecurityProperties securityProperties;
     private final PermissionVersionStore permissionVersions;
     private final AuditLogger audit;
+    private final TenantViewService tenantView;
 
     public PlatformAccountService(
             JdbcTemplate platform,
@@ -86,7 +88,8 @@ public class PlatformAccountService {
             LoginRateLimiter rateLimiter,
             SecurityProperties securityProperties,
             PermissionVersionStore permissionVersions,
-            AuditLogger audit) {
+            AuditLogger audit,
+            TenantViewService tenantView) {
         this.platform = platform;
         this.passwordEncoder = passwordEncoder;
         this.cryptoService = cryptoService;
@@ -95,6 +98,7 @@ public class PlatformAccountService {
         this.securityProperties = securityProperties;
         this.permissionVersions = permissionVersions;
         this.audit = audit;
+        this.tenantView = tenantView;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -124,6 +128,16 @@ public class PlatformAccountService {
 
     /** 重置密码结果：临时密码只在本次响应返回一次。 */
     public record ResetPasswordResult(long id, String username, String temporaryPassword) {}
+
+    /** 负责租户视图（PLT-VIEW-006）：账号多选的租户（id + 名称供回显）。 */
+    public record ResponsibleTenant(long tenantId, String tenantCode, String tenantName) {}
+
+    /** 按租户反查负责人（platform-spec §8 主要页面「平台账号管理 · 负责租户」）。 */
+    public record ResponsibleOwner(
+            long accountId, String username, String displayName, String status) {}
+
+    /** 负责租户维护请求：整体替换（空清单 = 清空负责关系）。 */
+    public record ResponsibleTenantsRequest(List<Long> tenantIds) {}
 
     /** 计算模型（校验与保存共用）：请求 + 库内现状快照。 */
     record AccountModel(
@@ -300,6 +314,8 @@ public class PlatformAccountService {
                     }
                     if (model.grantsChanged() || !currentStatus.equals(desiredStatus)) {
                         refreshSessions(id);
+                        // 角色 / 状态变化即时生效：进行中的视角会话按「权限变更」立即结束（platform-spec §8）
+                        tenantView.endForAccount(id);
                     }
                     String detail =
                             "维护平台账号，平台角色 "
@@ -342,6 +358,8 @@ public class PlatformAccountService {
                                 currentHash);
                     }
                     sessionStore.revokeAllForUser(targetPrincipal(id, username, account), null);
+                    // 重置密码后该账号全部会话失效（含进行中的租户视角会话，按权限变更收尾）
+                    tenantView.endForAccount(id);
                     rateLimiter.unlock("P:" + username.toLowerCase(Locale.ROOT));
                     audit.record(
                             new AuditEvent(
@@ -379,6 +397,100 @@ public class PlatformAccountService {
                                     .build());
                     return Map.of("userId", id, "username", username, "unlocked", true);
                 });
+    }
+
+    // ---------------------------------------------------------------- 负责租户（PLT-VIEW-006，E20-T01）
+
+    /** 账号的负责租户（含编码与名称供回显）。 */
+    public List<ResponsibleTenant> responsibleTenants(long accountId) {
+        return TenantContext.callAsPlatform(
+                () -> {
+                    requireAccount(accountId);
+                    return platform.query(
+                            "SELECT t.id, t.code, t.name FROM plt_account_tenant at"
+                                    + " JOIN plt_tenant t ON t.id = at.tenant_id"
+                                    + " WHERE at.account_id = ? ORDER BY t.id",
+                            (rs, rowNum) ->
+                                    new ResponsibleTenant(
+                                            rs.getLong("id"),
+                                            rs.getString("code"),
+                                            rs.getString("name")),
+                            accountId);
+                });
+    }
+
+    /** 维护账号负责租户（整体替换）。负责关系变更即时生效：该账号进行中的视角会话按「权限变更」立即结束 （platform-spec §8 业务规则，PLT-VIEW-006）。 */
+    public List<ResponsibleTenant> saveResponsibleTenants(
+            long accountId, ResponsibleTenantsRequest request) {
+        return TenantContext.callAsPlatform(
+                () -> {
+                    Map<String, Object> account = requireAccount(accountId);
+                    String username = str(account.get("username"));
+                    Set<Long> desired =
+                            request == null || request.tenantIds() == null
+                                    ? Set.of()
+                                    : new LinkedHashSet<>(request.tenantIds());
+                    for (Long tenantId : desired) {
+                        Integer exists =
+                                platform.queryForObject(
+                                        "SELECT COUNT(*) FROM plt_tenant WHERE id = ?",
+                                        Integer.class,
+                                        tenantId);
+                        if (exists == null || exists == 0) {
+                            throw bad("租户 " + tenantId + " 不存在，不能设为负责租户");
+                        }
+                    }
+                    Set<Long> before =
+                            new LinkedHashSet<>(
+                                    platform.queryForList(
+                                            "SELECT tenant_id FROM plt_account_tenant WHERE"
+                                                    + " account_id = ?",
+                                            Long.class,
+                                            accountId));
+                    if (!before.equals(desired)) {
+                        platform.update(
+                                "DELETE FROM plt_account_tenant WHERE account_id = ?", accountId);
+                        for (Long tenantId : desired) {
+                            platform.update(
+                                    "INSERT INTO plt_account_tenant (account_id, tenant_id,"
+                                            + " set_by) VALUES (?, ?, ?)",
+                                    accountId,
+                                    tenantId,
+                                    operatorId());
+                        }
+                        audit.record(
+                                new AuditEvent(
+                                        "ACCOUNT_TENANT_UPDATE",
+                                        operatorId(),
+                                        "UPDATE",
+                                        "plt_account:" + username,
+                                        "维护负责租户："
+                                                + before.size()
+                                                + " 个 → "
+                                                + desired.size()
+                                                + " 个"));
+                        tenantView.endForAccount(accountId);
+                    }
+                    return responsibleTenants(accountId);
+                });
+    }
+
+    /** 按租户反查负责人（platform-spec §8 主要页面「平台账号管理 · 负责租户」）。 */
+    public List<ResponsibleOwner> responsibleOwners(long tenantId) {
+        return TenantContext.callAsPlatform(
+                () ->
+                        platform.query(
+                                "SELECT a.id, a.username, a.display_name, a.status"
+                                        + " FROM plt_account_tenant at"
+                                        + " JOIN plt_account a ON a.id = at.account_id"
+                                        + " WHERE at.tenant_id = ? ORDER BY a.id",
+                                (rs, rowNum) ->
+                                        new ResponsibleOwner(
+                                                rs.getLong("id"),
+                                                rs.getString("username"),
+                                                rs.getString("display_name"),
+                                                rs.getString("status")),
+                                tenantId));
     }
 
     // ---------------------------------------------------------------- 校验（纯函数，供单测）

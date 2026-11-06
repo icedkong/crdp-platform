@@ -91,23 +91,34 @@ PLT-MOD-010/011 为后续规划，不实现。
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| GET / POST / PUT | `/api/platform/accounts[/{id}]` | `platform:account:view` / `edit` | **已实现（E06-T04）**。列表不分页（平台账号量级小）。新建：`{username, displayName, phone(必填，双因素), password(初始密码按平台策略校验 42200), roleIds}`；维护：`{displayName, phone?(留空不换绑，平台库内唯一 40901), roleIds(全部存在且启用), status}`；停用 / 摘除角色导致启用的 PLATFORM_ADMIN 持有账号少于 2 个时 40901（规格 §1「平台管理员至少 2 人，已确认」）；角色或状态变化递增权限版本；负责租户多选（PLT-VIEW-006）属 E20-T01，未实现 |
+| GET / POST / PUT | `/api/platform/accounts[/{id}]` | `platform:account:view` / `edit` | **已实现（E06-T04）**。列表不分页（平台账号量级小）。新建：`{username, displayName, phone(必填，双因素), password(初始密码按平台策略校验 42200), roleIds}`；维护：`{displayName, phone?(留空不换绑，平台库内唯一 40901), roleIds(全部存在且启用), status}`；停用 / 摘除角色导致启用的 PLATFORM_ADMIN 持有账号少于 2 个时 40901（规格 §1「平台管理员至少 2 人，已确认」）；角色或状态变化递增权限版本并结束该账号进行中的视角会话（结束方式=权限变更，E20-T01） |
 | POST | `/api/platform/accounts/{id}/reset-password` | `platform:account:reset` | **已实现（E06-T04）**。生成一次性临时密码（响应 `data.temporaryPassword` 只返回一次），置首次登录强制改密、旧哈希入历史表、该账号全部会话失效并解除登录锁定；写 ACCOUNT_RESET 审计（不落口令）。敏感操作需二次认证：`X-Reauth-Token`（PLT-AUTH-012，E04-T08 已落地；缺头 40304） |
 | POST | `/api/platform/accounts/{id}/unlock` | `platform:account:reset` | **已实现（E06-T04）**。解除登录锁定（连续失败 5 次锁 30 分钟，可提前解锁）；写 ACCOUNT_UNLOCK 审计 |
-| GET / POST / PUT | `/api/platform/roles[/{id}]` | `platform:role:view` / `edit` | **已实现（E06-T04）**。角色视图 `{id, code, name, description, builtIn, status, view{canEnter, visibleScope∈CONFIG_ONLY/CONFIG_AND_BUSINESS, tenantScope∈ALL/RESPONSIBLE/SPECIFIED, canConfigure, canResetPassword, canEditBusiness}, menuIds(详情), holderCount, createdAt, updatedAt}`；新建自定义角色编码服务端生成（`CUSTOM_` 前缀，创建后不可改）；菜单授权只能是平台端启用菜单（40001）；`tenantScope=SPECIFIED` 暂 40001（指定租户清单由 E20-T01 落地，OQ-48）；不提供删除 |
+| GET / POST / PUT | `/api/platform/roles[/{id}]` | `platform:role:view` / `edit` | **已实现（E06-T04；SPECIFIED 清单 E20-T01）**。角色视图 `{id, code, name, description, builtIn, status, view{canEnter, visibleScope∈CONFIG_ONLY/CONFIG_AND_BUSINESS, tenantScope∈ALL/RESPONSIBLE/SPECIFIED, canConfigure, canResetPassword, canEditBusiness}, menuIds(详情), specifiedTenantIds(详情，SPECIFIED 清单), holderCount, createdAt, updatedAt}`；新建自定义角色编码服务端生成（`CUSTOM_` 前缀，创建后不可改）；菜单授权只能是平台端启用菜单（40001）；`tenantScope=SPECIFIED` 须带非空 `viewSpecifiedTenantIds`（全部存在，40001，清单落 plt_role_view_tenant，E20-T01 / PLT-VIEW-005，OQ-48 已收敛）；视角六字段或清单变化即结束持有者进行中的视角会话（结束方式=权限变更）；不提供删除 |
 | GET | `/api/platform/roles/{id}/holders` | `platform:role:view` | **已实现（E06-T04）**。持有人列表（账号、姓名、账号状态） |
 | GET | `/api/platform/roles/menus` | `platform:role:view` | **已实现（E06-T04）**。可授权的平台端启用菜单 / 按钮（平铺带 parentId，角色页授权树数据源；不依赖 `platform:menu:view`） |
+| GET / PUT | `/api/platform/accounts/{id}/responsible-tenants` | `platform:account:view` / `platform:view:grant:edit` | **已实现（E20-T01 / PLT-VIEW-006）**。账号负责租户（含编码与名称）；PUT `{tenantIds}` 整体替换（空清单=清空，未知租户 40001），变更即时生效——该账号进行中的视角会话立即结束（结束方式=权限变更）；写 ACCOUNT_TENANT_UPDATE 审计 |
+| GET | `/api/platform/tenants/{id}/responsible-owners` | `platform:account:view` | **已实现（E20-T01 / PLT-VIEW-006）**。按租户反查负责人（账号、姓名、状态） |
+| GET | `/api/platform/tenant-view/sessions` 系列 | 见 §6 | **已实现（E20-T01 / PLT-VIEW-001、004）** |
 | GET | `/api/platform/role-templates?moduleCode=` | `platform:role:view` | **已实现（E06-T05）**。业务角色模板清单（PLT-ROLE-005）：`{id, moduleCode, code, name, description, sortNo}`，只读；模块开通时下发到租户库成 `TEMPLATE` 角色（见 `system.md` §3.1），租户在医院端「从模板复制」生成自定义角色（PLT-ORG-005） |
 
 ## 6. 租户视角（PLT-VIEW-001..018）
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| POST | `/api/platform/tenant-view/sessions` | `platform:view:enter` | `{ tenantId, purpose: TROUBLESHOOT|CONFIG_CHECK|TRAINING|OTHER, note }` → `{ viewToken, hospitalUrl, expiresAt }`；最长 2 小时、空闲 15 分钟（PLT-VIEW-001、004） |
-| DELETE | `/api/platform/tenant-view/sessions/{id}` | 登录 | 一键退出（PLT-VIEW-003） |
-| GET / PUT | `/api/platform/view-rules` | `platform:view:rule` | 层级规则（全局 / 租户 / 模块 / 字段），版本化；高敏变更进入待复核（PLT-VIEW-007..009、014、015） |
-| POST | `/api/platform/view-rules/preview` | `platform:view:rule` | 效果预览 |
-| POST | `/api/platform/view-rules/reviews/{id}/approve` | `platform:view:rule` | 复核 |
+| POST | `/api/platform/tenant-view/sessions` | `platform:view:enter` | **已实现（E20-T01 / PLT-VIEW-001）**。`{ tenantId, purpose: TROUBLESHOOT\|CONFIG_CHECK\|TRAINING\|OTHER, note(必填 ≤500) }` → `{ sessionId, sessionNo, tenantId/Code/Name, purpose, startedAt, expiresAt(开始+2h), expiresInSeconds, hospitalUrl }`（`hospitalUrl` 取 `crdp.tenant-view.hospital-base-url`，默认 `http://127.0.0.1:14173`；视角令牌本体只存 Redis、响应不再回显）。闸门：角色 `view_can_enter`（多角色并集，40300）→ 租户范围（ALL / RESPONSIBLE=负责租户 / SPECIFIED=指定清单，越范围 40300）→ 已注销租户 40001；同一账号同时只能有一个视角会话（40901）。被拒的进入尝试也写平台访问审计（VIEW_ENTER / DENIED） |
+| GET | `/api/platform/tenant-view/sessions/current` | 登录 | **已实现（E20-T01）**。本人进行中的视角会话 `{ sessionId, sessionNo, tenant…, purpose, note, roleCodes, startedAt, expiresAt, remainingSeconds }`（无则 data=null）；顺带把空闲超时 / 到时的会话按实际结束方式收尾 |
+| DELETE | `/api/platform/tenant-view/sessions/{id}` | 登录 | **已实现（E20-T01；横幅入口随 E20-T04）**。一键退出：只允许退自己的进行中会话（他人 / 已结束 40400）；台账 ENDED / 主动退出，写 VIEW_EXIT 审计；到时可重新进入 |
+| GET / PUT | `/api/platform/view-rules` | `platform:view:rule` | 层级规则（全局 / 租户 / 模块 / 字段），版本化；高敏变更进入待复核（PLT-VIEW-007..009、014、015）——**随 E20-T02** |
+| POST | `/api/platform/view-rules/preview` | `platform:view:rule` | 效果预览——随 E20-T02 |
+| POST | `/api/platform/view-rules/reviews/{id}/approve` | `platform:view:rule` | 复核——随 E20-T02 |
+
+E20-T01 落地口径（PLT-VIEW-001、004、005、006）：
+
+- **会话台账** `plt_view_session`（迁移 V50）：会话号 = 视角令牌 SHA-256 前 16 位（与登录会话号同款单向推导）；进入 / 退出 / 被拒进入写平台访问审计 `aud_platform_access_log`（action=`VIEW_ENTER` / `VIEW_EXIT`，OQ-58 ⑥ 写入侧已接）；页面 / 查询 / 被拒 / 代为操作计数列随 E20-T03 起递增。
+- **会话时长（PLT-VIEW-004）**：单次最长 2 小时（`SessionPrincipal.absoluteSeconds=7200` 冻结进会话，优先于全局 12 小时）、空闲 15 分钟（平台端口径）——由 Redis TTL 执行，令牌到时即失效（下一次请求 40100）；台账收尾（到时 / 空闲超时）由调度 `TenantViewScheduler` 每分钟补记结束方式。
+- **授权（PLT-VIEW-005、006）**：角色六字段 + `plt_role_view_tenant`（SPECIFIED 清单）+ `plt_account_tenant`（账号负责租户，V50）；多角色取并集（任一 ALL → 任意租户；否则 负责租户 ∪ 指定清单）；租户列表 / 详情行带 `viewEnterable`（角色可进入 + 范围内 + 未注销）供前端显隐「进入租户视角」。负责关系、角色视角授权、账号角色 / 状态、密码重置变化 → 进行中的视角会话按「权限变更」立即结束。
+- **视角令牌（TENANT_VIEW）**：平台账号以自身身份进入（不借用医院用户）；医院端菜单 / 页面（PLT-VIEW-002）与横幅（PLT-VIEW-003）随 E20-T04、脱敏 / 设盲 / 只读执行（PLT-VIEW-010..012）随 E20-T03——当前视角令牌不带端别权限，不能调 `/api/platform/**` 与 `/api/hospital/**` 的任何业务接口（fail closed）。权限码 `platform:view:enter`（按钮 143）/ `platform:view:grant:edit`（按钮 144）经 V50 登记、种子 V107 授予全部预置角色（四角色默认「可进入」均为是）。
 
 视角令牌在医院端的执行（PLT-VIEW-010..013、017、018）：
 

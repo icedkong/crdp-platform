@@ -36,6 +36,7 @@ import {
   roleNamesText,
 } from './account-logic';
 import EditDialog from './edit-dialog.vue';
+import ResponsibleDialog from './responsible-dialog.vue';
 
 defineOptions({ name: 'PlatformAccount' });
 
@@ -43,6 +44,7 @@ const router = useRouter();
 const { hasPermission } = usePermission();
 const canEdit = hasPermission('platform:account:edit');
 const canReset = hasPermission('platform:account:reset');
+const canGrantView = hasPermission('platform:view:grant:edit');
 
 const isMobile = ref(false);
 const loading = ref(false);
@@ -51,6 +53,10 @@ const errorMessage = ref('');
 
 const editOpen = ref(false);
 const editTarget = ref<null | PlatformAccountView>(null);
+
+// 负责租户（E20-T01 / PLT-VIEW-006）：多选负责的租户 + 按租户反查负责人
+const responsibleOpen = ref(false);
+const responsibleTarget = ref<null | PlatformAccountView>(null);
 
 // 重置密码：二次确认 → 一次性临时密码展示（确认已保存才关闭）
 const resetConfirm = ref<null | PlatformAccountView>(null);
@@ -70,7 +76,7 @@ const columns = [
     dataIndex: 'action',
     fixed: 'right' as const,
     title: '操作',
-    width: canEdit ? 200 : 120,
+    width: canEdit || canGrantView ? 260 : 120,
   },
 ];
 
@@ -100,6 +106,11 @@ function openCreate() {
 function openEdit(row: PlatformAccountView) {
   editTarget.value = row;
   editOpen.value = true;
+}
+
+function openResponsible(row: PlatformAccountView) {
+  responsibleTarget.value = row;
+  responsibleOpen.value = true;
 }
 
 async function confirmReset() {
@@ -236,6 +247,15 @@ onUnmounted(() => window.removeEventListener('resize', read));
               重置密码
             </Button>
             <Button
+              v-if="canGrantView"
+              size="small"
+              type="link"
+              data-testid="account-responsible"
+              @click="openResponsible(record as PlatformAccountView)"
+            >
+              负责租户
+            </Button>
+            <Button
               v-if="canReset"
               size="small"
               type="link"
@@ -249,6 +269,11 @@ onUnmounted(() => window.removeEventListener('resize', read));
     </Card>
 
     <EditDialog v-model:open="editOpen" :account="editTarget" @done="load" />
+    <ResponsibleDialog
+      v-model:open="responsibleOpen"
+      :account="responsibleTarget"
+      @done="load"
+    />
 
     <Modal
       :open="resetConfirm !== null && resetResult === null"

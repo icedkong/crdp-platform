@@ -46,6 +46,7 @@ class PlatformAccountServiceTest {
     private final SecurityProperties properties = new SecurityProperties();
     private final PermissionVersionStore permissionVersions = mock(PermissionVersionStore.class);
     private final AuditLogger audit = mock(AuditLogger.class);
+    private final TenantViewService tenantView = mock(TenantViewService.class);
 
     private PlatformAccountService service;
 
@@ -61,7 +62,8 @@ class PlatformAccountServiceTest {
                         rateLimiter,
                         properties,
                         permissionVersions,
-                        audit);
+                        audit,
+                        tenantView);
     }
 
     @AfterEach

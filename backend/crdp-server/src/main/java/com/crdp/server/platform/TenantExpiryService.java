@@ -290,9 +290,35 @@ public class TenantExpiryService {
                                 rs.getString("display_name")
                             });
                 });
-        // 平台负责人：负责租户多选随 PLT-VIEW-006 落地，当前回落到全部启用的 PLATFORM_ADMIN（OQ-44）
+        // 平台负责人：按租户指定（PLT-VIEW-006 负责租户，plt_account_tenant）；未指定时回落到全部
+        // 启用的 PLATFORM_ADMIN（OQ-44 ②，E20-T01 起收敛）
         TenantContext.runAsPlatform(
-                () ->
+                () -> {
+                    Integer specified =
+                            jdbc.queryForObject(
+                                    "SELECT COUNT(*) FROM plt_account_tenant pat"
+                                            + " JOIN plt_account a ON a.id = pat.account_id"
+                                            + " WHERE pat.tenant_id = ? AND a.status = 'ENABLED'",
+                                    Integer.class,
+                                    tenantId);
+                    if (specified != null && specified > 0) {
+                        jdbc.query(
+                                "SELECT a.id, a.display_name FROM plt_account a"
+                                        + " JOIN plt_account_tenant pat ON pat.account_id = a.id"
+                                        + " WHERE pat.tenant_id = ? AND a.status = 'ENABLED'",
+                                rs -> {
+                                    rows.add(
+                                            new Object[] {
+                                                tenantId,
+                                                date,
+                                                daysLeft,
+                                                "PLATFORM_OWNER",
+                                                rs.getLong("id"),
+                                                rs.getString("display_name")
+                                            });
+                                },
+                                tenantId);
+                    } else {
                         jdbc.query(
                                 """
                                 SELECT a.id, a.display_name FROM plt_account a
@@ -310,7 +336,9 @@ public class TenantExpiryService {
                                                 rs.getLong("id"),
                                                 rs.getString("display_name")
                                             });
-                                }));
+                                });
+                    }
+                });
         if (rows.isEmpty()) {
             log.warn("到期提醒无接收人 tenantId={} date={}", tenantId, date);
             return;

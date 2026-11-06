@@ -190,10 +190,11 @@ class PlatformRoleAccountMySqlIT {
         String supportToken = loginWithForcedChange("it.support.demo");
         List<String> codes = itemsOf(get("/api/platform/auth/codes", supportToken));
         assertTrue(codes.contains("platform:tenant:view"), "客服可看租户（进入负责租户视角的入口）");
+        assertTrue(codes.contains("platform:view:enter"), "客服默认可进入租户视角（种子 V107，PLT-VIEW-001）");
         assertEquals(
-                1,
+                2,
                 codes.stream().filter(code -> code.startsWith("platform:")).count(),
-                "客服默认只有租户查看一个平台权限码，实际 " + codes);
+                "客服默认只有租户查看与进入视角两个平台权限码，实际 " + codes);
     }
 
     // ---------------------------------------------------------------- 3. 预置角色权限可调整且即时生效
@@ -261,18 +262,51 @@ class PlatformRoleAccountMySqlIT {
         assertTrue(code.length() <= 64);
         assertEquals(Boolean.FALSE, view.get("builtIn"));
 
-        // 「指定租户」暂行拒绝（OQ-48：清单由 E20-T01 落地）
-        Map<?, ?> specified =
+        // 「指定租户」（PLT-VIEW-005，E20-T01 起可选）：缺清单 40001；带存在的租户清单可建（OQ-48 收敛）
+        Map<?, ?> noList =
                 post(
                         Map.of(
-                                "name", "指定租户角色（示例）",
+                                "name", "指定租户缺清单（示例）",
                                 "menuIds", List.of(),
                                 "viewCanEnter", true,
                                 "viewVisibleScope", "CONFIG_ONLY",
                                 "viewTenantScope", "SPECIFIED"),
                         "/api/platform/roles",
                         token);
-        assertEquals(40001, codeOf(specified));
+        assertEquals(40001, codeOf(noList));
+        assertTrue(String.valueOf(noList.get("message")).contains("至少一个租户"));
+
+        long demoTenantId =
+                platformDirect()
+                        .queryForObject(
+                                "SELECT id FROM plt_tenant WHERE code = ?", Long.class, "demoa");
+        Map<?, ?> withList =
+                post(
+                        Map.of(
+                                "name",
+                                "指定租户角色（示例）",
+                                "menuIds",
+                                List.of(),
+                                "viewCanEnter",
+                                true,
+                                "viewVisibleScope",
+                                "CONFIG_ONLY",
+                                "viewTenantScope",
+                                "SPECIFIED",
+                                "viewSpecifiedTenantIds",
+                                List.of(demoTenantId)),
+                        "/api/platform/roles",
+                        token);
+        assertEquals(0, codeOf(withList), String.valueOf(withList.get("message")));
+        // JSON 反序列化为 Integer，按数值比较（避免 Long/Integer equals 失真）
+        Object echoed =
+                dataOf(get("/api/platform/roles/" + dataOf(withList).get("id"), token))
+                        .get("specifiedTenantIds");
+        assertTrue(
+                echoed instanceof List<?> echoedList
+                        && echoedList.size() == 1
+                        && ((Number) echoedList.get(0)).longValue() == demoTenantId,
+                "详情回显指定租户清单，实际 " + echoed);
 
         // 越界菜单不能授权
         Map<?, ?> badMenu =
@@ -690,6 +724,9 @@ class PlatformRoleAccountMySqlIT {
                         + " (SELECT id FROM plt_account WHERE username LIKE 'it.%')");
         platform.update("DELETE FROM plt_account WHERE username LIKE 'it.%'");
         // 自定义角色与授权
+        platform.update(
+                "DELETE FROM plt_role_view_tenant WHERE role_id IN"
+                        + " (SELECT id FROM plt_role WHERE code LIKE 'CUSTOM\\_%')");
         platform.update(
                 "DELETE FROM plt_role_menu WHERE role_id IN"
                         + " (SELECT id FROM plt_role WHERE code LIKE 'CUSTOM\\_%')");

@@ -1,8 +1,8 @@
 import type { PlatformGrantMenuNode, PlatformRoleView } from '@crdp/api';
 
 /**
- * E06-T04 平台角色页纯逻辑测试：授权树组装（含孤儿挂根）、表单模型往返、校验口径
- * （名称 / 说明 / 视角字段枚举 / SPECIFIED 暂不可选）。
+ * E06-T04 / E20-T04 平台角色页纯逻辑测试：授权树组装（含孤儿挂根）、表单模型往返（含指定租户清单）、
+ * 校验口径（名称 / 说明 / 视角字段枚举 / SPECIFIED 须带非空清单）。
  */
 import { describe, expect, it } from 'vitest';
 
@@ -95,9 +95,40 @@ describe('toRoleEditModel / toRoleSaveRequest', () => {
       viewCanEditBusiness: true,
       viewCanEnter: true,
       viewCanResetPassword: true,
+      viewSpecifiedTenantIds: [],
       viewTenantScope: 'ALL',
       viewVisibleScope: 'CONFIG_AND_BUSINESS',
     });
+  });
+
+  it('sPECIFIED 角色带指定租户清单往返；非 SPECIFIED 提交时清单置空', () => {
+    const role = {
+      builtIn: false,
+      code: 'CUSTOM_AB12CD34',
+      createdAt: null,
+      description: null,
+      id: 9,
+      menuIds: [100, 111],
+      name: '指定租户角色（示例）',
+      specifiedTenantIds: [2, 5],
+      status: 'ENABLED',
+      updatedAt: null,
+      view: {
+        canConfigure: false,
+        canEditBusiness: false,
+        canEnter: true,
+        canResetPassword: false,
+        tenantScope: 'SPECIFIED',
+        visibleScope: 'CONFIG_ONLY',
+      },
+    } as unknown as PlatformRoleView;
+    const model = toRoleEditModel(role, [100, 111], role.specifiedTenantIds);
+    expect(model.viewSpecifiedTenantIds).toEqual([2, 5]);
+    expect(toRoleSaveRequest(model).viewSpecifiedTenantIds).toEqual([2, 5]);
+
+    // 切回全部租户：清单不参与提交
+    model.viewTenantScope = 'ALL';
+    expect(toRoleSaveRequest(model).viewSpecifiedTenantIds).toEqual([]);
   });
 });
 
@@ -121,14 +152,33 @@ describe('validateRoleModel', () => {
     );
   });
 
-  it('sPECIFIED 暂不可选（OQ-48：指定租户清单由 E20-T01 落地）', () => {
-    const model: Parameters<typeof validateRoleModel>[0] = {
+  it('sPECIFIED 须带非空指定租户清单（E20-T01 / PLT-VIEW-005，OQ-48 收敛）', () => {
+    const empty: Parameters<typeof validateRoleModel>[0] = {
+      ...toRoleEditModel(null, []),
+      name: 'x',
+      viewSpecifiedTenantIds: [],
+      viewTenantScope: 'SPECIFIED',
+    };
+    expect(validateRoleModel(empty)).toContain(
+      '租户范围「指定租户」须选择至少一个租户',
+    );
+
+    const missing: Parameters<typeof validateRoleModel>[0] = {
       ...toRoleEditModel(null, []),
       name: 'x',
       viewTenantScope: 'SPECIFIED',
     };
-    const errors = validateRoleModel(model);
-    expect(errors.join(',')).toContain('指定租户');
+    expect(validateRoleModel(missing)).toContain(
+      '租户范围「指定租户」须选择至少一个租户',
+    );
+
+    const withList: Parameters<typeof validateRoleModel>[0] = {
+      ...toRoleEditModel(null, []),
+      name: 'x',
+      viewSpecifiedTenantIds: [2],
+      viewTenantScope: 'SPECIFIED',
+    };
+    expect(validateRoleModel(withList)).toEqual([]);
   });
 
   it('合法模型通过', () => {

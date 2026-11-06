@@ -415,6 +415,72 @@ class SessionStoreTest {
                 "权限码按新授权计算");
     }
 
+    // ---- E20-T01 / PLT-VIEW-004：会话专属绝对时长（租户视角单次最长 2 小时） ----
+
+    @Test
+    void perSessionAbsoluteSecondsCapsTheViewSessionAtTwoHours() {
+        long now = now();
+        // 视角会话：签发 1 小时前、30 秒前活跃、空闲 15 分钟、专属绝对时长 2 小时（全局配置 12 小时）
+        SessionPrincipal view =
+                principalWithAbsolute("view-token", now - 3_600L, now - 30L, 900L, 7_200L);
+        sessionStore.save(view);
+        assertTrue(sessionStore.find("view-token").isPresent(), "2 小时未到、15 分钟内活跃：仍有效");
+        long ttl = sessionStore.effectiveTtl(sessionStore.find("view-token").get()).toSeconds();
+        assertTrue(ttl > 0 && ttl <= 7_200L - 3_600L, "剩余有效期按 2 小时上限而非全局 12 小时计算，实际 " + ttl);
+
+        // 签发 2 小时前（未到全局 12 小时、也不空闲）：专属上限到时即失效
+        SessionPrincipal expired =
+                principalWithAbsolute("view-token-2", now - 7_200L, now - 30L, 900L, 7_200L);
+        sessionStore.save(expired);
+        assertTrue(sessionStore.find("view-token-2").isEmpty(), "单次 2 小时到时，会话自动退出（40100）");
+    }
+
+    @Test
+    void zeroAbsoluteSecondsKeepsTheGlobalConfiguredLimit() {
+        long now = now();
+        // 普通会话（absoluteSeconds=0）：仍按部署配置的全局绝对时长（默认 12 小时）
+        SessionPrincipal platform =
+                principalWithAbsolute("platform-token", now - 7_200L, now - 30L, 900L, 0L);
+        sessionStore.save(platform);
+        assertTrue(
+                sessionStore.find("platform-token").isPresent(),
+                "absoluteSeconds=0 时 2 小时不封顶，按全局 12 小时");
+        assertEquals(900L, sessionStore.find("platform-token").get().idleSeconds());
+        assertEquals(0L, sessionStore.find("platform-token").get().absoluteSeconds());
+    }
+
+    private static SessionPrincipal principalWithAbsolute(
+            String token,
+            long issuedAt,
+            long lastActiveAt,
+            long idleSeconds,
+            long absoluteSeconds) {
+        SessionPrincipal base = principal(token);
+        return new SessionPrincipal(
+                base.token(),
+                base.sessionType(),
+                base.tenantId(),
+                base.tenantCode(),
+                base.tenantName(),
+                base.userId(),
+                base.username(),
+                base.displayName(),
+                base.roles(),
+                base.menuIds(),
+                base.permissionCodes(),
+                base.openedModules(),
+                base.permissionVersion(),
+                base.scope(),
+                base.mustChangePassword(),
+                base.passwordExpiresAtEpochSecond(),
+                "203.0.113.9",
+                issuedAt,
+                lastActiveAt,
+                idleSeconds,
+                absoluteSeconds,
+                base.fieldPolicies());
+    }
+
     private static long now() {
         return Instant.now().getEpochSecond();
     }

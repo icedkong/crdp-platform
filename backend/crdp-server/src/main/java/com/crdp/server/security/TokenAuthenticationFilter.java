@@ -82,7 +82,7 @@ public class TokenAuthenticationFilter extends OncePerRequestFilter {
                                                 principal, null, authorities);
                                 SecurityContextHolder.getContext()
                                         .setAuthentication(authentication);
-                                if (principal.hospital()) {
+                                if (principal.hospital() || principal.tenantView()) {
                                     TenantContext.useTenant(
                                             principal.tenantId(), principal.tenantCode());
                                 } else {
@@ -127,11 +127,16 @@ public class TokenAuthenticationFilter extends OncePerRequestFilter {
     /** 权限码 + 会话端别权限；端别权限供 SecurityConfig 做跨端拒绝（PLT-AUTH-005）。 */
     private static List<SimpleGrantedAuthority> authorities(SessionPrincipal principal) {
         List<SimpleGrantedAuthority> authorities = new ArrayList<>();
-        authorities.add(
-                new SimpleGrantedAuthority(
-                        principal.hospital()
-                                ? SESSION_HOSPITAL_AUTHORITY
-                                : SESSION_PLATFORM_AUTHORITY));
+        if (principal.tenantView()) {
+            // 租户视角会话（E20-T01）：不带任何端别权限——医院端菜单 / 页面与执行点随 E20-T04 / T03
+            // 有意放开前，视角令牌不能调 /api/platform/** 与 /api/hospital/** 的任何业务接口（fail closed）。
+        } else {
+            authorities.add(
+                    new SimpleGrantedAuthority(
+                            principal.hospital()
+                                    ? SESSION_HOSPITAL_AUTHORITY
+                                    : SESSION_PLATFORM_AUTHORITY));
+        }
         principal.permissionCodes().stream()
                 .map(SimpleGrantedAuthority::new)
                 .forEach(authorities::add);
