@@ -545,6 +545,9 @@
 | 租户详情 | `/platform/tenant/:id` | `platform:tenant:view` | PLT-TEN-009、011、015、022；PLT-MOD-004、005、006；PLT-SCOPE-001、002、005 | 页签：基本信息 / 模块 / 授权范围 / 资源信息（脱敏只读）/ 管理员 / 到期设置 / 操作记录 |
 | 状态变更对话框 | — | `platform:tenant:status` / `renew` | PLT-TEN-010、013、016 | 二次确认 + 原因；展示影响（在线用户数、进行中任务） |
 | 注销与数据处理 | `/platform/tenant/:id/cancel` | `platform:tenant:cancel` / `export` / `destroy` / `retain` | PLT-TEN-018、019、020、021 | 书面确认上传、审批、冷静期倒计时、迁出包、签收、封存清单、销毁证明 |
+| 配置模板 | `/platform/config-template` | 接口读 `platform:tenant:view`（菜单行不带独立权限码，可见性由角色授予决定）；导出 / 应用按钮 `platform:tenant:create` | A-FLD-014（E12-T04） | 列表（新→旧）：名称、源租户、版本、配置表数、入包行数、包哈希、导出时间；操作：详情、应用到租户；「导出范围」抽屉 = 配置表注册表（表 / 模块 / 复制方式 / 类别 / 说明）；「导出模板」弹窗选源租户、可命名（≤128 字） |
+| 配置模板详情 | `/platform/config-template/:id`（隐藏） | `platform:tenant:view` | A-FLD-014（E12-T04） | 头信息（名称、源租户、版本、包结构版本、表数、行数、导出时间、SHA-256）；分表元信息（复制方式、包内行数与剔除行数、包内状态）；下载配置包 JSON（写审计）；应用到租户 |
+| 应用到租户（导入预览）弹窗 | — | `platform:tenant:create` | A-FLD-014（E12-T04，验收「导入前预览差异」） | 选目标租户（排除源租户，注销中 / 已注销置灰）→ 逐表预览「导入时会发生什么」（将导入 n 行：自然键相同被覆盖 / 只复制结构 / 空节跳过）+ 导入口径（源值胜、整组替换、取交集、用户引用置空、权限版本递增）→ 勾选确认才可提交；应用结果回显实际新增 / 覆盖 / 跳过 / 丢弃计数 |
 | 模块目录 | `/platform/module` | `platform:module:view` / `edit` | PLT-MOD-001、002、003、007、008、009 | 版本历史、菜单与权限码清单、依赖；升级批次（`platform:upgrade:execute`） |
 | 菜单资源 | `/platform/menu` | `platform:menu:view` / `edit` | PLT-PERM-001、002、003、011、012 | 切换平台端 / 医院端菜单树；目录、菜单、按钮；路由字段、权限码、排序、隐藏 |
 | 接口资源 | `/platform/api` | `platform:api:view` / `edit` | PLT-PERM-004 | 未绑定权限码的接口高亮 |

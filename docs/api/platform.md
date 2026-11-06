@@ -149,7 +149,7 @@ E20-T01 落地口径（PLT-VIEW-001、004、005、006）：
 | 系统公告 | `/api/platform/announcements` | `platform:notice:edit` |
 | 文件上传配置 | `/api/platform/params/upload`（格式、大小上限） | `platform:param:edit` |
 | 安全策略下限 | `/api/platform/security-policy`（密码策略、锁定、会话、二次认证场景） | `platform:security:edit` |
-| 配置模板 | 见 §7.1（导出已实现 E12-T01；应用 / 导入随 E12-T02） | 导出 `platform:tenant:create`，读 `platform:tenant:view` |
+| 配置模板 | 见 §7.1（导出 E12-T01、应用 E12-T02、敏感检查 E12-T03 均已实现；管理页与导入预览已随 E12-T04 落地，见 `docs/design/pages.md` §11） | 导出 `platform:tenant:create`，读 `platform:tenant:view` |
 
 配置变更写记录并说明生效方式（PLT-CFG-011）：字典 / 参数保存即作废平台定义缓存（`PlatformConfigCache`，60 秒 TTL + 保存即 evict，M1 单实例），租户端下一次读取即见新值；全部写操作写平台审计（DICT_* / PARAM_*）。
 
@@ -167,8 +167,10 @@ E20-T01 落地口径（PLT-VIEW-001、004、005、006）：
 | GET | `/api/platform/config-templates` | `platform:tenant:view` | **已实现**。模板分页（新→旧）：`{items[同导出视图],total,pageNo,pageSize}` |
 | GET | `/api/platform/config-templates/{id}` | `platform:tenant:view` | **已实现**。详情：`{template, tables[{table,module,mode,category,present,rowCount,excludedRowCount,sourceRowCount,columns}]}`（不带行数据；未知 40400） |
 | GET | `/api/platform/config-templates/{id}/package` | `platform:tenant:view` | **已实现**。读回完整包（gzip 解压后的 JSON 结构，`formatVersion/tenantCode/tenantName/exportedAt/tables[]`，行值已归一化）；写 `CONFIG_TEMPLATE_DOWNLOAD` 审计 |
-| GET | `/api/platform/config-templates/registry` | `platform:tenant:view` | **已实现**。配置表注册表清单（table / module / mode / category / description / excludeWhen），预览「会导出什么」用（管理页随 E12-T04） |
+| GET | `/api/platform/config-templates/registry` | `platform:tenant:view` | **已实现**。配置表注册表清单（table / module / mode / category / description / excludeWhen），预览「会导出什么」用（管理页「导出范围」抽屉，E12-T04） |
 | POST | `/api/platform/config-templates/{id}/apply` | `platform:tenant:create` | **已实现（E12-T02）**。应用到目标租户：`{tenantId}`（不能是源租户 40001；租户库未注册 40901；未知租户 / 模板 40400；包结构版本不支持 40901；含敏感信息 40901——`SensitiveConfigChecker` 应用前拦截，见上，E12-T03）→ `{templateId,templateName,templateVersion,templateHash,sourceTenantId,sourceTenantCode,tenantId,tenantCode,tenantName,appliedAt,insertedRows,mergedRows,skippedRows,droppedRows,tables[{table,mode,imported,packageRows,inserted,merged,skipped,dropped,note}]}`；写 `CONFIG_TEMPLATE_APPLY` 审计（含包哈希），并递增目标租户全部用户权限版本（角色授权可能变化） |
+
+**管理页与导入预览（E12-T04，验收「导入前预览差异」）**：`/platform/config-template`（菜单 V52：菜单行不带独立权限码——`plt_menu.perm_code` 全库唯一、`platform:tenant:view` 已被 111 占用，可见性由角色授予决定；接口读 `platform:tenant:view`，导出 / 应用按钮按 `platform:tenant:create` 显隐）。应用前预览基于**模板详情（分表元信息）+ 上面的导入规则在前端推演**——逐表给出「将导入 n 行（自然键相同被覆盖、其余新增） / 只复制结构 / 空节跳过」，并列出导入口径（源值胜、整组替换、取交集、用户引用置空、权限版本递增），勾选确认后才能提交；**无后端 dry-run 接口**，确切的新增 / 覆盖 / 跳过 / 丢弃计数以 apply 结果回显为准（暂行口径见 OQ-94）。
 
 应用（导入）口径（A-FLD-014「导入时重新分配 ID 并重写引用」，验收「导入后引用关系正确」）：
 
