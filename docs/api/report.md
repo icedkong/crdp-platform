@@ -2,7 +2,7 @@
 
 > 后端：`crdp-followup`（报告单子域，A-ATT-018 平台通用、按租户配置）+ 文件服务（OSS + 预览代理）。表：`rpt_report`、`rpt_report_link`（位置，见 OQ-02：统一用 `rpt_report_link`）、`rpt_report_file`、`rpt_type`、`rpt_name`、`rpt_indicator_tpl`、`rpt_mapping` / `rpt_mapping_item`（字段映射，E23-T03）、`sys_file`。
 > 页面：`docs/design/pages.md` §4（报告单页签、左栏附件导航）、§6（上传、H5、批量、全院报告单）；组件：AttachmentNav、LocationPicker、WatermarkPreview、ReportFormModal。
-> 路径除各表已标注「已实现」的接口（E10 文件、E16-T01 配置与目录、E16-T02 创建 / 患者内清单 / 位置树）外，其余 **推断，待确认**。权限：上传 `followup:scan:upload`、下载 `followup:scan:download`、删除 `followup:scan:delete`、配置 `followup:scan:config`；全院报告单菜单种子是 `followup:report:view`，与规格待统一（见 OQ-12）。
+> 路径除各表已标注「已实现」的接口（E10 文件、E16-T01 配置与目录、E16-T02 创建 / 患者内清单 / 位置树、E16-T07 映射预览与确认写入）外，其余 **推断，待确认**。权限：上传 `followup:scan:upload`、下载 `followup:scan:download`、删除 `followup:scan:delete`、配置 `followup:scan:config`；全院报告单菜单种子是 `followup:report:view`，与规格待统一（见 OQ-12）。
 
 ## 1. 文件
 
@@ -49,9 +49,11 @@
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| POST | `/api/hospital/followup/reports/{id}/mapping/preview` | `followup:scan:upload` | 返回将写入的目标记录、字段、原值、新值；目标必须是报告单位置之一，多条可映射时返回候选让用户选 |
-| POST | `/api/hospital/followup/reports/{id}/mapping/confirm` | `followup:scan:upload` + 目标记录写权限 | `{ targetRecordId, targetVersion, fieldKeys[] }`；逐项确认后写入并留字段历史；冲突 409 |
+| POST | `/api/hospital/followup/reports/{id}/mapping/preview` | `followup:scan:upload` | **已实现（E16-T07）**：返回将写入的目标记录、字段、原值、新值；目标必须是报告单位置之一，多条可映射时返回候选让用户选。响应 `{ reportId, typeCode, typeName, name, reportDate, mappings: [{ mappingId, code, name, phase, targetType, targetFormCode, targetFormName, blockedReason?, candidates: [{ linkRecordId, recordLabel, recordStatus, targetRecordId, targetVersion, categoryKey?, categoryLabel?, writes: [{ source: ITEM\|EXTRA, itemCode?, result?, fieldKey, fieldLabel, oldValue, newValue, conflict, error? }], conflictCount }] }] }`。映射取 `rpt_mapping`（V64，按报告单类型、只取 ENABLED）：基线映射（BASELINE + phase）候选 = 目标分类（按映射字段所属分类推导，A 为「超声检查」）的 `pt_baseline_section`（未建分节 `targetRecordId=null`、`targetVersion=0`，术前 / 出院前两条映射并列由用户选时相）；随访映射候选 = 位置中该映射表单的 `fu_record`（整条或分组都算，多条逐一列出选一条）。`itemCode=REPORT_DATE` 的行 newValue = 报告时间；值按目标字段类型转换（数值 / 日期 / 选项名→编码 /「长×宽」pair），转换失败该行带 `error`（确认该键 40001）；附带写入（映射级「复查超声=是」、项目级「有无…返流=有」）以 `source=EXTRA` 一并列出。`conflict=true` = 原值非空且与新值不同（冲突提示，须逐项确认覆盖）。`blockedReason`：报告时间晚于手术 / 出院日期（时相边界，V64 remark 由写入侧校验）、基线已锁定（A-PAT-006）、映射配置问题。位置中无映射目标 → mappings 为空（前端隐藏映射步骤）；越范围 / 不存在 / 已删报告单 40400 |
+| POST | `/api/hospital/followup/reports/{id}/mapping/confirm` | `followup:scan:upload` | **已实现（E16-T07）**：`{ mappingId, linkRecordId?, targetVersion, fieldKeys[] }`——`fieldKeys` 为确认写入的键（**原值不同的须逐项确认覆盖**：预览 `conflict=true` 的键须用户勾选后进 fieldKeys，未勾选的跳过并在响应 `skippedConflicts` 回告，不写、保留原值）；只写 fieldKeys 内的键，其余目标记录值不动（参数只存映射目标记录，报告单不另存一份，A-ATT-013 / C-SCAN-005）。同一事务写 `fe_field_history`（`source=REPORT`，原因「报告单映射写入：类型 · 名称（报告单 id）」）与 `RPT_MAPPING_WRITE` 审计；目标记录 version + 1（随访记录状态不变——录入即写入）。响应 `{ mappingId, targetType, targetRecordId, targetVersion, writtenFields, skippedConflicts, fieldChanges }`。目标记录版本过期 40900（重新预览，AGENTS §5.10 乐观锁）；基线锁定 40901（需先解锁）；时相越界 / fieldKeys 为空或不在写入清单 / 值转换失败 / 映射停用或不属于该类型 / 目标不在位置中 40001；越范围报告单 40400 |
 | POST | `/api/hospital/followup/reports/{id}/digitize-status` | `followup:scan:upload` | C：`{ status: PENDING|DONE|NO_ENTRY }`；转录提交后自动变“已电子化” |
+
+映射写入后录入侧的对比标红（A-FU-027，E17）按目标记录现值计算，天然生效；基线写入经 `BaselineSectionService.applyMappingWrite`（锁定校验 + 写入闸门 + 完整度重算 A-PAT-019），随访写入经 `FollowupRecordService.applyMappingWrite`（写入闸门 + 乐观锁）。 |
 
 ## 4. 待归档区（C-SCAN-009，P1；开关 `report_inbox` 推断）
 
@@ -98,7 +100,7 @@ token 过期或已用：返回 40101，前端显示“二维码已过期，请�
 |---|---|---|
 | GET | `/api/hospital/followup/report-config/mappings` | 映射清单（含停用，按来源类型与排序号）：`{ id, code, name, typeCode, typeName, targetType: BASELINE\|FOLLOWUP_RECORD\|IMPLANT_RECORD, targetFormCode, targetFormName, phase: PREOP_LAST\|PREDISCHARGE_LAST\|null, indicatorTplId, indicatorTplName, extraWrites: [{fieldKey, value}], sortNo, status, remark, items: [{ itemCode, targetFieldKey, targetFieldLabel, extraWrites, sortNo }] }`；`itemCode` 为指标模板项目代码或固定 `REPORT_DATE`（报告时间，如随访目标「超声检查时间 = 报告时间」）；A 预置 `ECHO_PREOP_LAST` / `ECHO_PREDISCHARGE_LAST` / `ECHO_FOLLOWUP` 三条（迁移 V64），V64 同时把心脏超声名称绑定「心脏超声指标」模板（经 `report-names` 带出 18 个项目）；C 程控报告单映射同一机制（E23-T21） |
 
-映射维护（增删改，审计 `RPT_MAPPING_*`）与映射写入（`POST /reports/{id}/mapping/preview|confirm`，见 §3）随 E16-T07。`.../file-policy` 不单独设口——格式与大小是平台参数 `file.upload.*`（平台库 V33）+ 租户覆盖，机构设置 → 租户参数维护（E10-T01 已实现 `GET /api/hospital/files/policy` 读取生效值）。
+映射写入（`POST /reports/{id}/mapping/preview|confirm`）已随 E16-T07 实现（见 §3）；映射维护（增删改，审计 `RPT_MAPPING_*`）暂未排期——A 预置三条随 V64 发布，改动经数据库变更（配置表在配置模板注册表内，E12 导出 / 导入已支持）。`.../file-policy` 不单独设口——格式与大小是平台参数 `file.upload.*`（平台库 V33）+ 租户覆盖，机构设置 → 租户参数维护（E10-T01 已实现 `GET /api/hospital/files/policy` 读取生效值）。
 
 ## 7. 测试要点
 
@@ -108,3 +110,4 @@ token 过期或已用：返回 40101，前端显示“二维码已过期，请�
 - 越范围患者的报告单在全院列表不出现，按 id 访问 40400；重复文件提示不泄露范围外患者。
 - 伪造扩展名的 exe → 被拒；超大文件 → 40001。
 - H5 token：过期、重复使用、换患者均失败。
+- 映射写入（E16-T07）：预览 conflict 字段未进 fieldKeys → 跳过并回告 `skippedConflicts`、原值保留；确认后 `fe_field_history` 有 `source=REPORT` 行（旧值 → 新值）且 `aud_log` 有 `RPT_MAPPING_WRITE`；目标版本过期 40900、基线锁定 40901、报告时间晚于手术 / 出院日期 40001；位置中无映射目标 → mappings 空；无映射类型（检验）→ mappings 空；无 `scan:upload` 40300、跨租户 40400。

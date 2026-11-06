@@ -92,6 +92,22 @@ public interface FollowupRecordMapper {
             @Param("dataMeta") String dataMeta,
             @Param("updatedBy") long updatedBy);
 
+    /**
+     * 报告单映射写入（E16-T07 / C-SCAN-005「录入即写入」）：把映射合并值经写入闸门后写回， 状态不变（DRAFT 仍是 DRAFT、SUBMITTED 仍是
+     * SUBMITTED——修改已提交记录的专门流程随 E21-T11），乐观锁 version + 1； 0 行 = 版本已前进（服务层 40900）。
+     */
+    @Update(
+            """
+            UPDATE fu_record
+            SET data = #{data}, version = version + 1, updated_by = #{updatedBy}
+            WHERE id = #{id} AND version = #{baseVersion}
+            """)
+    int applyMappingWrite(
+            @Param("id") long id,
+            @Param("baseVersion") int baseVersion,
+            @Param("data") String data,
+            @Param("updatedBy") long updatedBy);
+
     /** 患者的无任务记录（历史补录 / 计划外；任务录入记录经任务节点展示，A-FU-023 时间轴口径）：按随访日期升序。 */
     @com.crdp.framework.datascope.DataScope(resource = "patient")
     @Select(

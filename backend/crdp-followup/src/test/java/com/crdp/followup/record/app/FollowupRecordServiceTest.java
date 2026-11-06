@@ -112,6 +112,82 @@ class FollowupRecordServiceTest {
         assertNull(captor.getValue().getTaskId(), "补录不需要任务（C-FU-013）");
     }
 
+    // ---------------------------------------------------------------- 报告单映射写入（E16-T07 /
+    // C-SCAN-005「录入即写入」）
+
+    @Test
+    void applyMappingWriteGatesMergesAndKeepsStatus() {
+        FollowupRecordMapper.RecordRowRaw submitted =
+                new FollowupRecordMapper.RecordRowRaw(
+                        701L,
+                        301L,
+                        9001L,
+                        "TASK",
+                        null,
+                        "A_ANNUAL_FU",
+                        1,
+                        "SUBMITTED",
+                        2,
+                        "{\"f248\":50}",
+                        "{}",
+                        7L,
+                        LocalDateTime.of(2026, 11, 1, 9, 0),
+                        8L,
+                        LocalDateTime.of(2026, 11, 5, 10, 0));
+        FollowupRecordMapper.RecordRowRaw after =
+                new FollowupRecordMapper.RecordRowRaw(
+                        701L,
+                        301L,
+                        9001L,
+                        "TASK",
+                        null,
+                        "A_ANNUAL_FU",
+                        1,
+                        "SUBMITTED",
+                        3,
+                        "{\"f248\":55,\"f236\":1}",
+                        "{}",
+                        7L,
+                        LocalDateTime.of(2026, 11, 1, 9, 0),
+                        7L,
+                        LocalDateTime.of(2026, 11, 6, 10, 0));
+        when(recordMapper.findRecord(701L)).thenReturn(submitted, after);
+        when(formService.writeGateData(eq("A_ANNUAL_FU"), eq(1), any()))
+                .thenAnswer(
+                        invocation ->
+                                new java.util.LinkedHashMap<>(
+                                        invocation.getArgument(2, Map.class)));
+        when(recordMapper.applyMappingWrite(eq(701L), eq(2), any(), eq(7L))).thenReturn(1);
+
+        FollowupRecordService.MappingWriteOutcome outcome =
+                service.applyMappingWrite(
+                        701L, 2, new java.util.LinkedHashMap<>(Map.of("f248", 55, "f236", 1)));
+
+        assertEquals(Map.of("f248", 50), outcome.before(), "返回写入前值（字段历史 before 用）");
+        assertEquals(3, outcome.after().version(), "写入后 version + 1");
+        assertEquals("SUBMITTED", outcome.after().status(), "状态不变（录入即写入，不改提交态）");
+        assertEquals(55, outcome.after().data().get("f248"));
+        ArgumentCaptor<String> dataCaptor = ArgumentCaptor.forClass(String.class);
+        verify(recordMapper).applyMappingWrite(eq(701L), eq(2), dataCaptor.capture(), eq(7L));
+        assertTrue(dataCaptor.getValue().contains("\"f248\":55"), dataCaptor.getValue());
+        assertTrue(dataCaptor.getValue().contains("\"f236\":1"), dataCaptor.getValue());
+    }
+
+    @Test
+    void applyMappingWriteSurfacesVersionConflict() {
+        when(recordMapper.findRecord(701L)).thenReturn(ROW); // version 2
+        when(formService.writeGateData(eq("A_ANNUAL_FU"), eq(1), any()))
+                .thenAnswer(invocation -> invocation.getArgument(2, Map.class));
+        when(recordMapper.applyMappingWrite(eq(701L), eq(2), any(), eq(7L))).thenReturn(0);
+
+        ApiException thrown =
+                assertThrows(
+                        ApiException.class,
+                        () -> service.applyMappingWrite(701L, 2, Map.of("f248", 55)));
+
+        assertEquals(40900, thrown.code(), "乐观锁冲突 409（AGENTS §5.10）");
+    }
+
     @Test
     void saveDraftMergesChangesAndClearsNullKeys() {
         when(recordMapper.findRecord(701L)).thenReturn(ROW);

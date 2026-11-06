@@ -352,6 +352,22 @@ public interface ReportConfigMapper {
             """)
     List<MappingRow> findMappings();
 
+    /** 单条映射（E16-T07 写入口解析所选映射；配置查询不涉患者数据）。 */
+    @Select(
+            """
+            SELECT m.id, m.code, m.name, m.type_code AS typeCode, t.name AS typeName,
+                   m.target_type AS targetType, m.target_form_code AS targetFormCode,
+                   f.name AS targetFormName, m.phase, m.indicator_tpl_id AS indicatorTplId,
+                   p.name AS indicatorTplName, m.extra_writes AS extraWrites,
+                   m.sort_no AS sortNo, m.status, m.remark
+            FROM rpt_mapping m
+            LEFT JOIN rpt_type t ON t.code = m.type_code
+            LEFT JOIN fe_form f ON f.code = m.target_form_code
+            LEFT JOIN rpt_indicator_tpl p ON p.id = m.indicator_tpl_id
+            WHERE m.id = #{id}
+            """)
+    MappingRow findMapping(@Param("id") long id);
+
     /** 某映射的项目行（targetFieldLabel 联查目标表单字段字典：fe_field 按 (form_code, field_key) 唯一，不翻倍）。 */
     @Select(
             """
