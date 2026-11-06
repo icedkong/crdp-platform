@@ -323,7 +323,7 @@ class ConfigTemplateImportMySqlIT {
                                 targetVersionId))
                 .isEqualTo(1L);
         // ---- fu_plan_node：plan_id / parent_id 全部改写到 demob 的版本行，结构保持 子计划 → 节点 ----
-        //（注：CI 全新库两侧种子一致、自增 ID 恰好相同，「目标 ID ≠ 源 ID」不可断言；重映射正确性由
+        // （注：CI 全新库两侧种子一致、自增 ID 恰好相同，「目标 ID ≠ 源 ID」不可断言；重映射正确性由
         // 引用挂接断言保证——节点挂在本库查得的 plan / subplan 行上，而非包内源 ID）
         Long targetPlanId = queryId(demob, "SELECT id FROM fu_plan WHERE code = '" + PLAN + "'");
         assertThat(targetPlanId).isNotNull();
