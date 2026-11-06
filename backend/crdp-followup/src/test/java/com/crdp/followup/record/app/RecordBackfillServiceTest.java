@@ -14,6 +14,7 @@ import com.crdp.form.record.app.FormService;
 import com.crdp.framework.audit.AuditLogger;
 import com.crdp.framework.web.ApiException;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -39,7 +40,10 @@ class RecordBackfillServiceTest {
             new RecordBackfillService(
                     patientScope, recordService, recordMapper, formService, audit);
 
-    private static final LocalDate PAST = LocalDate.now().minusDays(30);
+    /** 业务日期口径：服务端按北京时间（Asia/Shanghai）判定「今天 / 未来」，测试同口径才不受运行时区影响。 */
+    private static final ZoneId BEIJING = ZoneId.of("Asia/Shanghai");
+
+    private static final LocalDate PAST = LocalDate.now(BEIJING).minusDays(30);
 
     @Test
     void createsBackfillDraftWithDerivedFormAndAudit() {
@@ -164,7 +168,7 @@ class RecordBackfillServiceTest {
                                 301L,
                                 null,
                                 "UNPLANNED",
-                                LocalDate.now(),
+                                LocalDate.now(BEIJING),
                                 "A_ANNUAL_FU",
                                 1,
                                 "DRAFT",
@@ -178,7 +182,7 @@ class RecordBackfillServiceTest {
                 service.create(
                         301L,
                         new RecordBackfillService.BackfillCommand(
-                                "UNPLANNED", LocalDate.now(), null));
+                                "UNPLANNED", LocalDate.now(BEIJING), null));
 
         assertEquals("801", view.recordId());
         ArgumentCaptor<FollowupRecordService.CreateCommand> captor =
@@ -212,7 +216,7 @@ class RecordBackfillServiceTest {
                                                 301L,
                                                 new RecordBackfillService.BackfillCommand(
                                                         "UNPLANNED",
-                                                        LocalDate.now().plusDays(1),
+                                                        LocalDate.now(BEIJING).plusDays(1),
                                                         null)))
                         .code(),
                 "未来日期拒绝（未来随访由计划排期）");
@@ -226,7 +230,9 @@ class RecordBackfillServiceTest {
                                             service.create(
                                                     301L,
                                                     new RecordBackfillService.BackfillCommand(
-                                                            "UNPLANNED", LocalDate.now(), null)))
+                                                            "UNPLANNED",
+                                                            LocalDate.now(BEIJING),
+                                                            null)))
                             .code(),
                     "患者不在随访中（" + status + "）不能新建计划外随访");
         }
@@ -255,7 +261,7 @@ class RecordBackfillServiceTest {
                                         service.create(
                                                 301L,
                                                 new RecordBackfillService.BackfillCommand(
-                                                        "BACKFILL", LocalDate.now(), null)))
+                                                        "BACKFILL", LocalDate.now(BEIJING), null)))
                         .code(),
                 "补录随访日期必须是过去的日期（当天走任务 / 工作台）");
     }
