@@ -57,16 +57,19 @@ public class TenantDirectoryService {
     private final TenantRoutingDataSource routing;
     private final CryptoService crypto;
     private final AuditLogger audit;
+    private final TenantViewService tenantView;
 
     public TenantDirectoryService(
             JdbcTemplate platform,
             TenantRoutingDataSource routing,
             CryptoService crypto,
-            AuditLogger audit) {
+            AuditLogger audit,
+            TenantViewService tenantView) {
         this.platform = platform;
         this.routing = routing;
         this.crypto = crypto;
         this.audit = audit;
+        this.tenantView = tenantView;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -92,7 +95,10 @@ public class TenantDirectoryService {
 
     public record ModuleRef(String code, String name) {}
 
-    /** 列表行（PLT-TEN-001）：到期日长期有效时 expireAt 为空；用户数取不到时为空。 */
+    /**
+     * 列表行（PLT-TEN-001）：到期日长期有效时 expireAt 为空；用户数取不到时为空。
+     * viewEnterable：当前平台账号能否进入该租户视角（PLT-VIEW-001，角色可进入 + 租户范围内 + 未注销）。
+     */
     public record TenantListItem(
             long id,
             String code,
@@ -103,6 +109,7 @@ public class TenantDirectoryService {
             LocalDate expireAt,
             List<ModuleRef> modules,
             Long userCount,
+            boolean viewEnterable,
             OffsetDateTime createdAt) {}
 
     /**
@@ -128,6 +135,7 @@ public class TenantDirectoryService {
             List<Integer> remindDays,
             Integer graceDays,
             boolean graceReadOnly,
+            boolean viewEnterable,
             OffsetDateTime createdAt,
             OffsetDateTime updatedAt) {}
 
@@ -176,6 +184,7 @@ public class TenantDirectoryService {
                                             + " LIMIT ? OFFSET ?",
                                     pageArgs.toArray());
                     Map<Long, List<ModuleRef>> modules = modulesOf(rows);
+                    TenantViewService.EnterAuthorization view = viewAuthorization();
                     List<TenantListItem> items =
                             rows.stream()
                                     .map(
@@ -185,7 +194,8 @@ public class TenantDirectoryService {
                                                             modules.getOrDefault(
                                                                     ((Number) row.get("id"))
                                                                             .longValue(),
-                                                                    List.of())))
+                                                                    List.of()),
+                                                            view))
                                     .toList();
                     return new PageView<>(items, total == null ? 0 : total, pageNo, pageSize);
                 });
@@ -195,8 +205,25 @@ public class TenantDirectoryService {
         return TenantContext.callAsPlatform(
                 () -> {
                     Map<String, Object> row = requireRow(tenantId);
-                    return toDetail(row, decryptPhone(row.get("contact_phone")));
+                    return toDetail(
+                            row, decryptPhone(row.get("contact_phone")), viewAuthorization());
                 });
+    }
+
+    /** 当前平台账号的进入授权（PLT-VIEW-001）：非平台会话（如作业）一律不可进入。 */
+    private TenantViewService.EnterAuthorization viewAuthorization() {
+        return CurrentSession.current()
+                .filter(java.util.Objects::nonNull)
+                .filter(principal -> principal.platform())
+                .map(principal -> tenantView.authorizationOf(principal.userId()))
+                .orElseGet(() -> new TenantViewService.EnterAuthorization(false, false, Set.of()));
+    }
+
+    /** 进入口径（PLT-VIEW-001）：可进入 + 在范围内 + 未注销（停用 / 宽限 / 注销中可进入排障）。 */
+    private static boolean enterable(
+            TenantViewService.EnterAuthorization view, Map<String, Object> row) {
+        long id = ((Number) row.get("id")).longValue();
+        return view.enterable(id) && !"CANCELLED".equals(str(row.get("status")));
     }
 
     // ---------------------------------------------------------------- 维护
@@ -439,7 +466,10 @@ public class TenantDirectoryService {
         }
     }
 
-    private TenantListItem toListItem(Map<String, Object> row, List<ModuleRef> modules) {
+    private TenantListItem toListItem(
+            Map<String, Object> row,
+            List<ModuleRef> modules,
+            TenantViewService.EnterAuthorization view) {
         long id = ((Number) row.get("id")).longValue();
         return new TenantListItem(
                 id,
@@ -451,10 +481,12 @@ public class TenantDirectoryService {
                 localDate(row.get("expire_at")),
                 modules,
                 countUsers(id, str(row.get("code"))),
+                enterable(view, row),
                 offsetDateTime(row.get("created_at")));
     }
 
-    private TenantDetail toDetail(Map<String, Object> row, String phone) {
+    private TenantDetail toDetail(
+            Map<String, Object> row, String phone, TenantViewService.EnterAuthorization view) {
         return new TenantDetail(
                 ((Number) row.get("id")).longValue(),
                 str(row.get("code")),
@@ -474,6 +506,7 @@ public class TenantDirectoryService {
                 TenantLifecycleService.parseRemindDays(str(row.get("remind_days"))),
                 row.get("grace_days") == null ? null : ((Number) row.get("grace_days")).intValue(),
                 ((Number) row.get("grace_read_only")).intValue() == 1,
+                enterable(view, row),
                 offsetDateTime(row.get("created_at")),
                 offsetDateTime(row.get("updated_at")));
     }

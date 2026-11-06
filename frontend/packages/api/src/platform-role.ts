@@ -1,16 +1,17 @@
 /**
- * E06-T04 / PLT-ROLE-001..003：平台角色与平台账号类型，与后端
+ * E06-T04 / PLT-ROLE-001..003、E20-T01 / PLT-VIEW-005、006：平台角色与平台账号类型，与后端
  * `com.crdp.server.platform.PlatformRoleService` / `PlatformAccountService` 视图同构
  * （docs/api/platform.md §5）。
  *
  * 账号类型模型（PLT-ROLE-001）：平台账号存平台库、只能绑平台角色；租户账号存各自租户库。
- * 视角六字段（PLT-VIEW-005 的存储与配置）随平台角色维护；视角会话与「指定租户」清单属 E20-T01。
+ * 视角六字段（PLT-VIEW-005）随平台角色维护；租户范围「指定租户」须带非空清单（E20-T01 起可选，OQ-48 收敛）；
+ * 账号负责租户（PLT-VIEW-006）见 `responsible-tenants` 接口类型（本文件 AccountView 之外）。
  */
 
 /** 可见范围（PLT-VIEW-005）：仅配置类 / 配置类 + 业务数据。 */
 export type PlatformVisibleScope = 'CONFIG_AND_BUSINESS' | 'CONFIG_ONLY';
 
-/** 租户范围（PLT-VIEW-005）：全部 / 负责的租户 / 指定租户（清单 E20-T01 落地前不可选）。 */
+/** 租户范围（PLT-VIEW-005）：全部 / 负责的租户 / 指定租户（清单必填非空）。 */
 export type PlatformTenantScope = 'ALL' | 'RESPONSIBLE' | 'SPECIFIED';
 
 /** 角色上的租户视角权限（平台规格 §8「关键字段 · 平台角色视角权限」）。 */
@@ -23,7 +24,7 @@ export interface PlatformRoleViewFields {
   visibleScope: PlatformVisibleScope;
 }
 
-/** 平台角色（预置 + 自定义）。menuIds 仅详情返回；持有人数为绑定账号数（含停用账号）。 */
+/** 平台角色（预置 + 自定义）。menuIds 与 specifiedTenantIds 仅详情返回；持有人数为绑定账号数（含停用账号）。 */
 export interface PlatformRoleView {
   builtIn: boolean;
   code: string;
@@ -33,12 +34,13 @@ export interface PlatformRoleView {
   id: number;
   menuIds?: number[];
   name: string;
+  specifiedTenantIds?: number[];
   status: 'DISABLED' | 'ENABLED';
   updatedAt: null | string;
   view: PlatformRoleViewFields;
 }
 
-/** 新建 / 维护平台角色。预置角色权限（菜单、视角字段、状态）可调整；不提供删除。 */
+/** 新建 / 维护平台角色。预置角色权限（菜单、视角字段、状态）可调整；不提供删除。 viewSpecifiedTenantIds：租户范围为 SPECIFIED 时必填非空（全部存在的租户）。 */
 export interface PlatformRoleSaveRequest {
   description?: null | string;
   menuIds: number[];
@@ -48,6 +50,7 @@ export interface PlatformRoleSaveRequest {
   viewCanEditBusiness?: boolean;
   viewCanEnter?: boolean;
   viewCanResetPassword?: boolean;
+  viewSpecifiedTenantIds?: number[];
   viewTenantScope?: PlatformTenantScope;
   viewVisibleScope?: PlatformVisibleScope;
 }
@@ -147,12 +150,13 @@ export function platformRoleViewSummary(view: PlatformRoleViewFields): string {
 
 /**
  * 平台角色保存校验（前端先行，与后端 validateCommon / validateViewFields 同口径）：
- * 名称必填 ≤64、说明 ≤255、视角字段枚举、租户范围 SPECIFIED 暂不可选（OQ-48，E20-T01 落地）。
+ * 名称必填 ≤64、说明 ≤255、视角字段枚举、租户范围 SPECIFIED 须带非空指定租户清单（E20-T01，OQ-48 收敛）。
  * 返回错误信息（空数组 = 通过）。
  */
 export function validatePlatformRole(model: {
   description?: null | string;
   name: string;
+  viewSpecifiedTenantIds?: number[];
   viewTenantScope?: PlatformTenantScope;
   viewVisibleScope?: PlatformVisibleScope;
 }): string[] {
@@ -181,9 +185,10 @@ export function validatePlatformRole(model: {
     errors.push('租户范围只允许 全部 / 负责的租户 / 指定租户');
   }
   if (model.viewTenantScope === 'SPECIFIED') {
-    errors.push(
-      '租户范围「指定租户」需维护指定租户清单，由租户视角任务提供，暂不可选',
-    );
+    const count = model.viewSpecifiedTenantIds?.length ?? 0;
+    if (count === 0) {
+      errors.push('租户范围「指定租户」须选择至少一个租户');
+    }
   }
   return errors;
 }

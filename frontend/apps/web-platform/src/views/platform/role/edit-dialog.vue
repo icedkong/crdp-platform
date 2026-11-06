@@ -1,5 +1,9 @@
 <script lang="ts" setup>
-import type { PlatformGrantMenuNode, PlatformRoleView } from '@crdp/api';
+import type {
+  PlatformGrantMenuNode,
+  PlatformRoleView,
+  TenantListItem,
+} from '@crdp/api';
 
 import type { GrantTreeNode, RoleEditModel } from './logic';
 
@@ -13,6 +17,7 @@ import {
   Modal,
   RadioButton,
   RadioGroup,
+  Select,
   Switch,
   TabPane,
   Tabs,
@@ -26,6 +31,7 @@ import {
   listGrantableMenus,
   updateRole,
 } from '#/api/core/role';
+import { listTenants } from '#/api/core/tenant';
 
 import {
   buildGrantTree,
@@ -37,7 +43,7 @@ import {
 /**
  * 新建 / 维护平台角色（E06-T04 / PLT-ROLE-002、003 · pages.md §11 平台角色）：
  * 三个页签——基本信息、平台端菜单授权、租户视角权限（platform-spec §8 六字段）。
- * 预置角色权限可调整；「指定租户」清单由租户视角任务（E20-T01）提供，选项禁用。
+ * 预置角色权限可调整；租户范围「指定租户」（E20-T01 / PLT-VIEW-005）须选择非空清单。
  */
 const props = defineProps<{
   open: boolean;
@@ -51,6 +57,8 @@ const emit = defineEmits<{
 
 const form = ref<RoleEditModel>(toRoleEditModel(null, []));
 const grantNodes = ref<PlatformGrantMenuNode[]>([]);
+/** 指定租户下拉选项（租户量级小，一页取足；进入时再按租户状态与授权闸门）。 */
+const tenantOptions = ref<{ label: string; value: number }[]>([]);
 const grantTree = computed<GrantTreeNode[]>(() =>
   buildGrantTree(grantNodes.value),
 );
@@ -78,10 +86,23 @@ watch(
       grantNodes.value = [];
       loadError.value = error instanceof Error ? error.message : String(error);
     }
+    try {
+      const page = await listTenants({ pageNo: 1, pageSize: 100 });
+      tenantOptions.value = page.items.map((tenant: TenantListItem) => ({
+        label: `${tenant.name}（${tenant.code}）`,
+        value: tenant.id,
+      }));
+    } catch {
+      tenantOptions.value = [];
+    }
     if (props.role) {
       try {
         const detail = await getRole(props.role.id);
-        form.value = toRoleEditModel(detail, detail.menuIds ?? []);
+        form.value = toRoleEditModel(
+          detail,
+          detail.menuIds ?? [],
+          detail.specifiedTenantIds ?? [],
+        );
       } catch {
         form.value = toRoleEditModel(props.role, []);
       }
@@ -214,16 +235,33 @@ async function submit() {
             <RadioGroup
               v-model:value="form.viewTenantScope"
               :disabled="!form.viewCanEnter"
+              @change="onFormChange"
             >
               <RadioButton value="ALL">全部</RadioButton>
               <RadioButton value="RESPONSIBLE">负责的租户</RadioButton>
-              <RadioButton value="SPECIFIED" disabled>指定租户</RadioButton>
+              <RadioButton value="SPECIFIED">指定租户</RadioButton>
             </RadioGroup>
             <p v-if="!form.viewCanEnter" class="hint">
               关闭「可进入」后，租户视角配置暂存但不生效。
             </p>
-            <p v-if="form.viewTenantScope === 'SPECIFIED'" class="hint">
-              指定租户清单由租户视角任务（E20-T01）提供，当前暂不可选。
+          </FormItem>
+          <FormItem
+            v-if="form.viewTenantScope === 'SPECIFIED'"
+            label="指定租户"
+            required
+          >
+            <Select
+              v-model:value="form.viewSpecifiedTenantIds"
+              :options="tenantOptions"
+              allow-clear
+              mode="multiple"
+              placeholder="选择该角色可进入的租户（至少一个）"
+              show-search
+              option-filter-prop="label"
+              @change="onFormChange"
+            />
+            <p class="hint">
+              持有该角色的账号只能进入清单内的租户（多角色按并集放宽）。
             </p>
           </FormItem>
           <FormItem label="可代为配置">

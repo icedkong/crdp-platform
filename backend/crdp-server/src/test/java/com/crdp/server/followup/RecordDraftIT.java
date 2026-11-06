@@ -645,6 +645,7 @@ class RecordDraftIT {
                 0L,
                 0L,
                 0L,
+                0L,
                 null);
     }
 

@@ -152,7 +152,7 @@ public class SessionStore {
                 principal.idleSeconds() > 0
                         ? principal.idleSeconds() - (now - principal.lastActiveAtEpochSecond())
                         : Long.MAX_VALUE;
-        long absolute = properties.getSessionAbsoluteSeconds();
+        long absolute = absoluteSeconds(principal);
         long absoluteRemain =
                 absolute > 0 ? absolute - (now - principal.issuedAtEpochSecond()) : Long.MAX_VALUE;
         long remain = Math.min(idleRemain, absoluteRemain);
@@ -167,8 +167,15 @@ public class SessionStore {
                 && now - principal.lastActiveAtEpochSecond() >= principal.idleSeconds()) {
             return true;
         }
-        long absolute = properties.getSessionAbsoluteSeconds();
+        long absolute = absoluteSeconds(principal);
         return absolute > 0 && now - principal.issuedAtEpochSecond() >= absolute;
+    }
+
+    /** 绝对时长（秒）：会话自带专属上限（E20-T01 租户视角 2 小时）优先，0 表示用部署配置的全局值（12 小时）。 */
+    private long absoluteSeconds(SessionPrincipal principal) {
+        return principal.absoluteSeconds() > 0
+                ? principal.absoluteSeconds()
+                : properties.getSessionAbsoluteSeconds();
     }
 
     private List<SessionPrincipal> collect(String indexKey) {

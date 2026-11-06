@@ -287,6 +287,7 @@ class FollowupTaskAssignServiceTest {
                 0L,
                 0L,
                 0L,
+                0L,
                 null);
     }
 }

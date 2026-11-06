@@ -10,4 +10,5 @@ export * from './platform-account';
 export * from './role';
 export * from './tenant';
 export * from './tenant-module';
+export * from './tenant-view';
 export * from './user';

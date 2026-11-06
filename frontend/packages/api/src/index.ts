@@ -645,7 +645,7 @@ export interface TenantModuleRef {
   name: string;
 }
 
-/** 租户列表行（PLT-TEN-001）：长期有效时 expireAt 为空；用户数取不到时为空。 */
+/** 租户列表行（PLT-TEN-001）：长期有效时 expireAt 为空；用户数取不到时为空。 viewEnterable：当前平台账号能否进入该租户视角（PLT-VIEW-001，E20-T01）。 */
 export interface TenantListItem {
   code: string;
   createdAt: string;
@@ -657,6 +657,7 @@ export interface TenantListItem {
   shortName: null | string;
   status: TenantStatus;
   userCount: null | number;
+  viewEnterable: boolean;
 }
 
 /** 租户详情（PLT-TEN-009）：电话仅详情返回（编辑场景），列表不返回；到期设置字段见 PLT-TEN-011。 */
@@ -681,6 +682,7 @@ export interface TenantDetail {
   shortName: null | string;
   status: TenantStatus;
   updatedAt: null | string;
+  viewEnterable: boolean;
 }
 
 /** 信息维护提交（PLT-TEN-009）：编码、状态、到期不在此列。 */
@@ -1014,7 +1016,6 @@ export {
   userOptionLabel,
   userStatusText,
 } from './tenant-user';
-
 export type {
   FieldPolicyPreviewView,
   MenuPreviewNode,
@@ -1036,6 +1037,8 @@ export type {
   UserStatus,
   WardOptionView,
 } from './tenant-user';
+
+export * from './tenant-view';
 export {
   failedUserRows,
   USER_IMPORT_COLUMNS,

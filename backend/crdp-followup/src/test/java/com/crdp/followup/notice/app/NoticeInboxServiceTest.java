@@ -374,6 +374,7 @@ class NoticeInboxServiceTest {
                 0L,
                 0L,
                 0L,
+                0L,
                 null);
     }
 }

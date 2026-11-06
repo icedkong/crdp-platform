@@ -59,6 +59,7 @@ class PolicyMaskedSerializerTest {
                         0L,
                         0L,
                         0L,
+                        0L,
                         policies);
         SecurityContextHolder.getContext()
                 .setAuthentication(

@@ -823,6 +823,7 @@ class FollowupWorkbenchIT {
                 0L,
                 0L,
                 0L,
+                0L,
                 null);
     }
 

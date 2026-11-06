@@ -80,4 +80,24 @@ public class PlatformAccountController {
     public ApiResponse<Map<String, Object>> unlock(@PathVariable long accountId) {
         return ApiResponse.ok(accountService.unlock(accountId));
     }
+
+    @Operation(summary = "账号负责租户（PLT-VIEW-006）：账号多选的负责租户（含编码与名称）；租户范围为「负责的租户」的角色只能进入这些租户")
+    @GetMapping("/{accountId}/responsible-tenants")
+    @RequiresPermission("platform:account:view")
+    public ApiResponse<List<PlatformAccountService.ResponsibleTenant>> responsibleTenants(
+            @PathVariable long accountId) {
+        return ApiResponse.ok(accountService.responsibleTenants(accountId));
+    }
+
+    @Operation(
+            summary =
+                    "维护账号负责租户（整体替换，PLT-VIEW-006，权限 platform:view:grant:edit）：负责关系变更即时生效，"
+                            + "该账号进行中的视角会话立即结束（结束方式=权限变更）；写 ACCOUNT_TENANT_UPDATE 审计")
+    @PutMapping("/{accountId}/responsible-tenants")
+    @RequiresPermission("platform:view:grant:edit")
+    public ApiResponse<List<PlatformAccountService.ResponsibleTenant>> saveResponsibleTenants(
+            @PathVariable long accountId,
+            @RequestBody PlatformAccountService.ResponsibleTenantsRequest request) {
+        return ApiResponse.ok(accountService.saveResponsibleTenants(accountId, request));
+    }
 }

@@ -238,6 +238,7 @@ class DataScopeRuntimeChainTest {
                         0L,
                         0L,
                         0L,
+                        0L,
                         FieldPolicySnapshot.defaults());
         SecurityContextHolder.getContext()
                 .setAuthentication(
