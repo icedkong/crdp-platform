@@ -108,7 +108,11 @@ PLT-MOD-010/011 为后续规划，不实现。
 |---|---|---|---|
 | POST | `/api/platform/tenant-view/sessions` | `platform:view:enter` | **已实现（E20-T01 / PLT-VIEW-001）**。`{ tenantId, purpose: TROUBLESHOOT\|CONFIG_CHECK\|TRAINING\|OTHER, note(必填 ≤500) }` → `{ sessionId, sessionNo, tenantId/Code/Name, purpose, startedAt, expiresAt(开始+2h), expiresInSeconds, hospitalUrl }`（`hospitalUrl` 取 `crdp.tenant-view.hospital-base-url`，默认 `http://127.0.0.1:14173`；视角令牌本体只存 Redis、响应不再回显）。闸门：角色 `view_can_enter`（多角色并集，40300）→ 租户范围（ALL / RESPONSIBLE=负责租户 / SPECIFIED=指定清单，越范围 40300）→ 已注销租户 40001；同一账号同时只能有一个视角会话（40901）。被拒的进入尝试也写平台访问审计（VIEW_ENTER / DENIED） |
 | GET | `/api/platform/tenant-view/sessions/current` | 登录 | **已实现（E20-T01）**。本人进行中的视角会话 `{ sessionId, sessionNo, tenant…, purpose, note, roleCodes, startedAt, expiresAt, remainingSeconds }`（无则 data=null）；顺带把空闲超时 / 到时的会话按实际结束方式收尾 |
-| DELETE | `/api/platform/tenant-view/sessions/{id}` | 登录 | **已实现（E20-T01；横幅入口随 E20-T04）**。一键退出：只允许退自己的进行中会话（他人 / 已结束 40400）；台账 ENDED / 主动退出，写 VIEW_EXIT 审计；到时可重新进入 |
+| DELETE | `/api/platform/tenant-view/sessions/{id}` | 登录 | **已实现（E20-T01）**。平台端一键退出：只允许退自己的进行中会话（他人 / 已结束 40400）；台账 ENDED / 主动退出，写 VIEW_EXIT 审计；到时可重新进入 |
+| POST | `/api/platform/tenant-view/sessions/current/entry-ticket` | 登录 | **已实现（E20-T04 / PLT-VIEW-002）**。为本人的进行中视角会话签发** 60 秒一次性进入凭据** `{ ticket, hospitalUrl, expiresInSeconds }`；无进行中会话 40001。前端拼 `hospitalUrl + /view/entry#ticket=…` 打开医院端视角页（凭据只放 URL 片段，不进服务端日志） |
+| POST | `/api/hospital/view/enter` | 公开（按 IP 限流 60/时） | **已实现（E20-T04 / PLT-VIEW-002）**。`{ ticket }` 换视角令牌（取出即作废、伪造 / 过期 / 会话已结束统一 40001）→ `{ token, tokenType=Bearer, expiresInSeconds, session{…同 /view/session} }`；**视角令牌只在本次响应出现一次**（与双因素第二步同口径） |
+| GET | `/api/hospital/view/session` | 视角令牌 | **已实现（E20-T04 / PLT-VIEW-003）**。横幅与水印口径：`{ sessionId, sessionNo, tenantId/Code/Name, purpose, accountName, accountDisplayName, startedAt, expiresAt, remainingSeconds }`；会话已收尾（令牌仍在）时先按实际结束方式关账再 40100 |
+| DELETE | `/api/hospital/view/session` | 视角令牌 | **已实现（E20-T04 / PLT-VIEW-003）**。医院端横幅「一键退出」：只退自己的会话；台账 ENDED / 主动退出，写 VIEW_EXIT 审计 |
 | GET / PUT | `/api/platform/view-rules` | `platform:view:rule` | 层级规则（全局 / 租户 / 模块 / 字段），版本化；高敏变更进入待复核（PLT-VIEW-007..009、014、015）——**随 E20-T02** |
 | POST | `/api/platform/view-rules/preview` | `platform:view:rule` | 效果预览——随 E20-T02 |
 | POST | `/api/platform/view-rules/reviews/{id}/approve` | `platform:view:rule` | 复核——随 E20-T02 |
@@ -118,11 +122,17 @@ E20-T01 落地口径（PLT-VIEW-001、004、005、006）：
 - **会话台账** `plt_view_session`（迁移 V50）：会话号 = 视角令牌 SHA-256 前 16 位（与登录会话号同款单向推导）；进入 / 退出 / 被拒进入写平台访问审计 `aud_platform_access_log`（action=`VIEW_ENTER` / `VIEW_EXIT`，OQ-58 ⑥ 写入侧已接）；页面 / 查询 / 被拒 / 代为操作计数列随 E20-T03 起递增。
 - **会话时长（PLT-VIEW-004）**：单次最长 2 小时（`SessionPrincipal.absoluteSeconds=7200` 冻结进会话，优先于全局 12 小时）、空闲 15 分钟（平台端口径）——由 Redis TTL 执行，令牌到时即失效（下一次请求 40100）；台账收尾（到时 / 空闲超时）由调度 `TenantViewScheduler` 每分钟补记结束方式。
 - **授权（PLT-VIEW-005、006）**：角色六字段 + `plt_role_view_tenant`（SPECIFIED 清单）+ `plt_account_tenant`（账号负责租户，V50）；多角色取并集（任一 ALL → 任意租户；否则 负责租户 ∪ 指定清单）；租户列表 / 详情行带 `viewEnterable`（角色可进入 + 范围内 + 未注销）供前端显隐「进入租户视角」。负责关系、角色视角授权、账号角色 / 状态、密码重置变化 → 进行中的视角会话按「权限变更」立即结束。
-- **视角令牌（TENANT_VIEW）**：平台账号以自身身份进入（不借用医院用户）；医院端菜单 / 页面（PLT-VIEW-002）与横幅（PLT-VIEW-003）随 E20-T04、脱敏 / 设盲 / 只读执行（PLT-VIEW-010..012）随 E20-T03——当前视角令牌不带端别权限，不能调 `/api/platform/**` 与 `/api/hospital/**` 的任何业务接口（fail closed）。权限码 `platform:view:enter`（按钮 143）/ `platform:view:grant:edit`（按钮 144）经 V50 登记、种子 V107 授予全部预置角色（四角色默认「可进入」均为是）。
+- **视角令牌（TENANT_VIEW）**：平台账号以自身身份进入（不借用医院用户）；医院端装壳（菜单 / 横幅 / 退出）已由 **E20-T04** 落地（下节），脱敏 / 设盲 / 只读执行（PLT-VIEW-010..012）随 E20-T03——视角令牌带 `SESSION_VIEW` 端别权限，只能调医院端装壳接口（me / codes / menus / view/session），对其余 `/api/hospital/**` 业务接口与 `/api/platform/**` 一律 40300（fail closed）。权限码 `platform:view:enter`（按钮 143）/ `platform:view:grant:edit`（按钮 144）经 V50 登记、种子 V107 授予全部预置角色（四角色默认「可进入」均为是）。
+
+E20-T04 落地口径（PLT-VIEW-002、003）：
+
+- **进入医院端**：平台端弹窗「打开医院端界面」→ 签发 60 秒一次性凭据（Redis `crdp:view-ticket:*`，取出即作废）→ 浏览器打开 `hospitalUrl + /view/entry#ticket=…` → 医院端公开口换取视角令牌（只在换取响应出现一次；`TenantViewEnterIpHourlyLimit` 按 IP 每小时限流，超限 42900）。
+- **与租户一致的菜单（PLT-VIEW-002）**：`GET /api/hospital/menus` 对视角令牌实时计算「启用医院端菜单 ∩ 该院已开通模块 ∩ 平台角色可见范围」；可见范围取账号全部可进入角色的并集（任一 CONFIG_AND_BUSINESS 即含业务），仅配置类时隐藏顶级「随访」目录（path=/followup）的全部后代——患者 / 计划 / 任务 / 报告单等业务页与按钮；`/system` 下的字典、通知模板等配置页保留（module_code 同为 followup）。租户开通 / 停用模块的下一次菜单请求即生效。
+- **横幅与水印（PLT-VIEW-003）**：视角中医院端顶部常驻 `TenantViewBanner`（components.md §13，橙色、不可关闭）：「租户视角：{租户名称}」+ 会话号 + 剩余时长（`remainingSeconds` 倒计时，到时自动退出）+ 一键退出按钮；全页水印 `平台账号显示名（账号）· 视角会话 {会话号}`（watermark-js-plus）。退出（横幅 / 到时 / 空闲 15 分钟 / 权限变更）后令牌即失效（40100），回到医院端退出页。
 
 视角令牌在医院端的执行（PLT-VIEW-010..013、017、018）：
 
-- 视角令牌访问 `/api/hospital/**` 时会话类型为 `TENANT_VIEW`（推断，待确认）；菜单与页面与租户一致（PLT-VIEW-002）。
+- 视角令牌访问 `/api/hospital/**` 时会话类型为 `TENANT_VIEW`（OQ-09 已定论）；菜单与页面与租户一致（PLT-VIEW-002，E20-T04）。
 - 字段脱敏、设盲、只读在**后端**执行；写接口默认返回 40303，除非平台角色允许“代为配置”“代重置密码”“编辑业务数据”。
 - 视角审计**只写平台库**，不写租户审计（PLT-VIEW-016）。
 

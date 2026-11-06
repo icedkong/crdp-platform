@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.crdp.server.platform.TenantViewService;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -45,6 +46,10 @@ import org.springframework.test.context.ActiveProfiles;
  *   <li>超时收尾（PLT-VIEW-004，验收：超时自动退出）：视角会话冻结 2 小时 / 空闲 15 分钟（单测覆盖机制）； 调度收尾把超过 2 小时的 ACTIVE
  *       台账按「到时」关账并写 VIEW_EXIT 审计。
  *   <li>权限边界：无 platform:view:enter 的角色 40300 + 被拒尝试也写平台访问审计；退出他人会话 40400。
+ *   <li>医院端视角外壳（E20-T04 / PLT-VIEW-002、003，验收：视角中页面顶部常驻标识）：进入凭据一次性（60 秒）→ 医院端凭 ticket 换视角令牌（只出现一次）→
+ *       me/codes/menus 装壳（TENANT_VIEW、菜单与该院一致、无业务权限码）→ 横幅会话信息 → 一键退出（ENDED / 主动退出 + VIEW_EXIT）；业务接口
+ *       40300（fail closed，E20-T03 放开）。
+ *   <li>仅配置类（E20-T04 / PLT-VIEW-002）：运维角色菜单裁掉随访业务子树、保留系统管理与配置页；平台 / 视角令牌端别互斥。
  * </ol>
  *
  * <p>门控 CRDP_IT_MYSQL_PORT（docker compose 的 MySQL 与 Redis），自建自清（删除本 IT 建的账号、自定义角色、 视角会话行与审计事件）。
@@ -412,6 +417,179 @@ class PlatformTenantViewMySqlIT {
                                         new HttpEntity<>(new HttpHeaders()),
                                         Map.class)
                                 .getBody()));
+    }
+
+    // ---------------------------------------------------------------- 6. 医院端视角外壳（E20-T04 /
+    // PLT-VIEW-002、003，验收：视角中页面顶部常驻标识）
+
+    @Test
+    @Order(6)
+    void hospitalViewShellWithConsistentMenusAndExit() {
+        String adminToken = login(ADMIN_USERNAME, ADMIN_PASSWORD);
+        dataOf(enter(demoaId, "TROUBLESHOOT", "排查菜单一致性（示例）", adminToken));
+
+        // 进入凭据（60 秒一次性）：平台端「打开医院端界面」时签发，响应带医院端入口
+        Map<?, ?> ticket =
+                dataOf(
+                        post(
+                                Map.of(),
+                                "/api/platform/tenant-view/sessions/current/entry-ticket",
+                                adminToken));
+        assertTrue(
+                ((Number) ticket.get("expiresInSeconds")).longValue() > 0
+                        && ((Number) ticket.get("expiresInSeconds")).longValue() <= 60,
+                "进入凭据 60 秒一次性");
+        assertEquals("http://127.0.0.1:14173", ticket.get("hospitalUrl"));
+
+        // 凭 ticket 换视角令牌（公开口）：令牌只在本次响应出现一次；响应带横幅口径
+        // （会话号 / 租户 / 剩余时长 / 平台账号，PLT-VIEW-003 横幅与水印同源）
+        Map<?, ?> exchanged =
+                dataOf(
+                        post(
+                                Map.of("ticket", ticket.get("ticket")),
+                                "/api/hospital/view/enter",
+                                null));
+        String viewToken = (String) exchanged.get("token");
+        assertFalse(viewToken.isBlank(), "视角令牌只在换取响应出现一次");
+        assertEquals("Bearer", exchanged.get("tokenType"));
+        Map<?, ?> shell = (Map<?, ?>) exchanged.get("session");
+        Map<?, ?> current = dataOf(get("/api/platform/tenant-view/sessions/current", adminToken));
+        assertEquals(current.get("sessionNo"), shell.get("sessionNo"), "与平台侧同一会话");
+        assertEquals("demoa", shell.get("tenantCode"));
+        assertTrue(((Number) shell.get("remainingSeconds")).longValue() > 0, "剩余时长（横幅倒计时）");
+        assertEquals(ADMIN_USERNAME, shell.get("accountName"), "水印含平台账号（PLT-VIEW-003）");
+
+        // ticket 一次性 + 伪造凭据：统一 40001（不暴露差异，防探测）
+        assertEquals(
+                40001,
+                codeOf(
+                        post(
+                                Map.of("ticket", ticket.get("ticket")),
+                                "/api/hospital/view/enter",
+                                null)),
+                "进入凭据取出即作废");
+        assertEquals(
+                40001,
+                codeOf(post(Map.of("ticket", "forged-ticket"), "/api/hospital/view/enter", null)),
+                "伪造凭据同样 40001");
+
+        // 装壳接口接受视角令牌（PLT-VIEW-002）：me 会话类型 TENANT_VIEW、租户为被查看医院、平台账号自身身份
+        Map<?, ?> me = dataOf(get("/api/hospital/auth/me", viewToken));
+        assertEquals("TENANT_VIEW", me.get("sessionType"));
+        assertEquals("demoa", me.get("tenantCode"));
+        assertEquals(ADMIN_USERNAME, me.get("username"), "不借用任何医院用户身份");
+        assertTrue(
+                itemsOf(get("/api/hospital/auth/codes", viewToken)).isEmpty(),
+                "视角令牌不带业务权限码（fail closed，E20-T03 执行点放开）");
+
+        // 菜单与该院一致（PLT-VIEW-002）：管理员可见范围=配置类+业务数据 → 随访目录与系统管理都在
+        Set<String> paths = menuPaths(menuTree(viewToken), new HashSet<>());
+        assertTrue(paths.contains("/followup") && paths.contains("/followup/patient"), "业务菜单可见");
+        assertTrue(paths.contains("/system") && paths.contains("/system/user"), "配置菜单可见");
+        assertTrue(paths.contains("/dashboard"), "与该院一致的工作台");
+
+        // 横幅会话信息（PLT-VIEW-003）：会话号 / 租户 / 剩余时长；页面水印同口径
+        Map<?, ?> session = dataOf(get("/api/hospital/view/session", viewToken));
+        assertEquals(shell.get("sessionNo"), session.get("sessionNo"));
+        assertEquals("虚构示例医院甲", session.get("tenantName"));
+        assertEquals("TROUBLESHOOT", session.get("purpose"));
+
+        // 业务接口保持默认拒绝（视角令牌无医院会话端别权限，E20-T03 执行点放开前 fail closed）
+        assertEquals(
+                40300,
+                codeOf(get("/api/hospital/system/users?pageNo=1&pageSize=20", viewToken)),
+                "视角令牌不能调医院端业务接口");
+
+        // 一键退出（医院端横幅按钮）：台账 ENDED / 主动退出 + VIEW_EXIT 审计；令牌随即失效
+        Map<?, ?> exit = delete("/api/hospital/view/session", viewToken);
+        assertEquals(0, codeOf(exit), String.valueOf(exit.get("message")));
+        Map<String, Object> ended =
+                platformDirect()
+                        .queryForMap(
+                                "SELECT status, end_method FROM plt_view_session WHERE session_no = ?",
+                                shell.get("sessionNo"));
+        assertEquals("ENDED", ended.get("status"));
+        assertEquals("LOGOUT", ended.get("end_method"));
+        assertEquals(40100, codeOf(get("/api/hospital/view/session", viewToken)), "退出后视角令牌失效");
+    }
+
+    // ---------------------------------------------------------------- 7. 仅配置类裁剪与令牌边界（E20-T04 /
+    // PLT-VIEW-002）
+
+    @Test
+    @Order(7)
+    void configOnlyRoleHidesBusinessMenus() {
+        // 仅配置类可见范围：自建角色（CONFIG_ONLY、租户范围全部）——不依赖预置角色的
+        // 授权快照（PlatformRoleAccountMySqlIT 会调整运维角色的菜单授予），菜单带平台
+        // 工作台与视角进入按钮 143（种子 V107 口径）
+        String adminToken = login(ADMIN_USERNAME, ADMIN_PASSWORD);
+        Map<?, ?> created =
+                post(
+                        Map.of(
+                                "name",
+                                "视角仅配置类角色（示例）",
+                                "menuIds",
+                                List.of(100L, 143L),
+                                "viewCanEnter",
+                                true,
+                                "viewVisibleScope",
+                                "CONFIG_ONLY",
+                                "viewTenantScope",
+                                "ALL"),
+                        "/api/platform/roles",
+                        adminToken);
+        assertEquals(0, codeOf(created), String.valueOf(created.get("message")));
+        long roleId = ((Number) dataOf(created).get("id")).longValue();
+        createAccount(adminToken, "it.view.ops", "运维视角账号（示例）", roleId);
+        createdUsernames.add("it.view.ops");
+        String opsToken = loginWithForcedChange("it.view.ops");
+
+        Map<?, ?> entered = dataOf(enter(demoaId, "CONFIG_CHECK", "核对租户配置（示例）", opsToken));
+        assertEquals(demoaId, ((Number) entered.get("tenantId")).longValue(), "进入成功");
+        Map<?, ?> ticket =
+                dataOf(
+                        post(
+                                Map.of(),
+                                "/api/platform/tenant-view/sessions/current/entry-ticket",
+                                opsToken));
+        Map<?, ?> exchanged =
+                dataOf(
+                        post(
+                                Map.of("ticket", ticket.get("ticket")),
+                                "/api/hospital/view/enter",
+                                null));
+        String viewToken = (String) exchanged.get("token");
+
+        // 仅配置类：随访业务子树（目录与页面）整体隐藏，系统管理与配置页（字段字典）保留
+        Set<String> paths = menuPaths(menuTree(viewToken), new HashSet<>());
+        assertFalse(paths.contains("/followup") || paths.contains("/followup/patient"), "业务目录隐藏");
+        assertTrue(paths.contains("/system") && paths.contains("/system/user"), "配置类保留");
+        assertTrue(paths.contains("/system/field"), "module_code=followup 的配置页（字段字典）保留");
+        assertTrue(paths.contains("/dashboard"), "工作台属装壳页，两种可见范围都在");
+
+        // 端别权限互斥：平台令牌不可调医院端视角接口；视角令牌不可调平台端接口
+        assertEquals(40300, codeOf(get("/api/hospital/view/session", opsToken)), "平台令牌不可调医院端视角接口");
+        assertEquals(
+                40300,
+                codeOf(get("/api/platform/tenant-view/sessions/current", viewToken)),
+                "视角令牌不可调平台端接口");
+        assertEquals(0, codeOf(delete("/api/hospital/view/session", viewToken)), "收尾退出");
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> menuTree(String viewToken) {
+        return itemsOf(get("/api/hospital/menus", viewToken));
+    }
+
+    private static Set<String> menuPaths(List<Map<String, Object>> nodes, Set<String> collected) {
+        for (Map<String, Object> node : nodes) {
+            collected.add((String) node.get("path"));
+            Object children = node.get("children");
+            if (children instanceof List<?> list && !list.isEmpty()) {
+                menuPaths((List<Map<String, Object>>) list, collected);
+            }
+        }
+        return collected;
     }
 
     // ---------------------------------------------------------------- 辅助

@@ -14,6 +14,7 @@ import com.crdp.server.auth.PasswordResetService;
 import com.crdp.server.auth.ReauthService;
 import com.crdp.server.auth.SessionAdminService;
 import com.crdp.server.auth.TenantIdentifier;
+import com.crdp.server.platform.TenantViewService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
@@ -45,6 +46,7 @@ public class HospitalAuthController {
     private final SecurityProperties securityProperties;
     private final SessionAdminService sessionAdminService;
     private final LoginBrandService loginBrandService;
+    private final TenantViewService tenantViewService;
 
     public HospitalAuthController(
             AuthService authService,
@@ -56,7 +58,8 @@ public class HospitalAuthController {
             CaptchaStore captchaStore,
             SecurityProperties securityProperties,
             SessionAdminService sessionAdminService,
-            LoginBrandService loginBrandService) {
+            LoginBrandService loginBrandService,
+            TenantViewService tenantViewService) {
         this.authService = authService;
         this.passwordChangeService = passwordChangeService;
         this.passwordResetService = passwordResetService;
@@ -67,6 +70,7 @@ public class HospitalAuthController {
         this.securityProperties = securityProperties;
         this.sessionAdminService = sessionAdminService;
         this.loginBrandService = loginBrandService;
+        this.tenantViewService = tenantViewService;
     }
 
     @Operation(
@@ -195,19 +199,26 @@ public class HospitalAuthController {
 
     @GetMapping("/api/hospital/auth/me")
     public ApiResponse<MeResponse> me() {
-        return ApiResponse.ok(toMe(CurrentSession.requireHospital(), securityProperties));
+        return ApiResponse.ok(toMe(CurrentSession.requireHospitalShell(), securityProperties));
     }
 
     @GetMapping("/api/hospital/auth/codes")
     public ApiResponse<List<String>> codes() {
-        return ApiResponse.ok(CurrentSession.requireHospital().permissionCodes());
+        return ApiResponse.ok(CurrentSession.requireHospitalShell().permissionCodes());
     }
 
-    @Operation(summary = "按角色下发医院端菜单，字段对齐 Vben 后端权限模式。")
+    @Operation(
+            summary =
+                    "医院端菜单，字段对齐 Vben 后端权限模式。租户视角会话（E20-T04 / PLT-VIEW-002）按"
+                            + "「该院已开通模块 ∩ 平台角色可见范围」实时计算，与该院一致的菜单树。")
     @GetMapping("/api/hospital/menus")
     public ApiResponse<List<com.crdp.platform.menu.MenuNode>> menus() {
-        SessionPrincipal principal = CurrentSession.requireHospital();
-        return ApiResponse.ok(menuQuery.tree("HOSPITAL", principal.menuIds()));
+        SessionPrincipal principal = CurrentSession.requireHospitalShell();
+        List<Long> menuIds =
+                principal.tenantView()
+                        ? tenantViewService.viewMenuIds(principal.tenantId(), principal.userId())
+                        : principal.menuIds();
+        return ApiResponse.ok(menuQuery.tree("HOSPITAL", menuIds));
     }
 
     @Operation(summary = "本人在线会话（PLT-AUTH-008 / PLT-ORG-011）。只返回会话号，不返回令牌。")

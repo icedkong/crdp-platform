@@ -12,13 +12,17 @@ import com.crdp.framework.security.SessionStore;
 import com.crdp.framework.security.TokenGenerator;
 import com.crdp.framework.tenant.TenantContext;
 import com.crdp.framework.web.ApiException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -27,14 +31,20 @@ import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 /**
- * 租户视角会话（E20-T01 / PLT-VIEW-001、004、005、006，docs/api/platform.md §6）。
+ * 租户视角会话（E20-T01 / PLT-VIEW-001、004、005、006；E20-T04 / PLT-VIEW-002、003，docs/api/platform.md §6）。
  *
  * <p>进入（PLT-VIEW-001）：平台账号在租户列表选择医院，选目的（排障 / 配置核对 / 培训支持 / 其他）并填说明， 签发视角令牌——会话类型 {@code
- * TENANT_VIEW}，平台账号以自身身份访问，不借用任何医院用户；菜单 / 脱敏 / 设盲 / 只读的执行 随 E20-T03 / T04，本任务先落授权闸门与生命周期。
+ * TENANT_VIEW}，平台账号以自身身份访问，不借用任何医院用户；脱敏 / 设盲 / 只读的执行随 E20-T03。
+ *
+ * <p>医院端视角外壳（E20-T04 / PLT-VIEW-002、003）：进入成功后平台端签发一次性进入凭据（ticket，60 秒、 取出即作废），医院端公开口凭 ticket
+ * 换取视角令牌（令牌只在本次响应出现一次，不落 URL 与日志）； 医院端三条装壳接口（me / codes / menus）接受视角令牌——菜单按「该院已开通模块 ∩ 平台角色可见范围」
+ * 实时计算（仅配置类时隐藏随访业务子树，PLT-VIEW-002）；横幅（会话号 / 剩余时长）与一键退出 在
+ * /api/hospital/view/session。视角令牌对其余医院端业务接口保持默认拒绝（fail closed，E20-T03 执行点放开）。
  *
  * <p>授权（PLT-VIEW-005、006）：能否进入由平台角色的视角六字段决定，多角色取并集（已确认）——任一可进入角色 租户范围为「全部」→ 任意租户可进；「负责的租户」→ 只能进
  * {@code plt_account_tenant} 分配的租户（PLT-VIEW-006）； 「指定租户」→ 只能进 {@code plt_role_view_tenant}
@@ -90,7 +100,12 @@ public class TenantViewService {
 
     private final AuditLogger audit;
 
-    /** 医院端入口（进入成功后前端用视角令牌打开；视角界面本体随 E20-T04）。 */
+    /** 进入凭据（ticket）与公开口限流计数都在 Redis（E20-T04）。 */
+    private final StringRedisTemplate redis;
+
+    private final ObjectMapper json;
+
+    /** 医院端入口（进入成功后前端带一次性凭据打开医院端视角页）。 */
     private final String hospitalBaseUrl;
 
     public TenantViewService(
@@ -99,6 +114,8 @@ public class TenantViewService {
             TokenGenerator tokens,
             SecurityProperties securityProperties,
             AuditLogger audit,
+            StringRedisTemplate redis,
+            ObjectMapper json,
             @Value("${crdp.tenant-view.hospital-base-url:http://127.0.0.1:14173}")
                     String hospitalBaseUrl) {
         this.platform = platform;
@@ -106,6 +123,8 @@ public class TenantViewService {
         this.tokens = tokens;
         this.securityProperties = securityProperties;
         this.audit = audit;
+        this.redis = redis;
+        this.json = json;
         this.hospitalBaseUrl = hospitalBaseUrl;
     }
 
@@ -182,6 +201,36 @@ public class TenantViewService {
 
     /** 退出结果（结束方式回显，前端提示用）。 */
     public record ExitResult(long sessionId, String sessionNo, String endMethod) {}
+
+    /**
+     * 进入凭据（E20-T04 / PLT-VIEW-002）：平台端为本人进行中的视角会话签发，医院端在 TTL 内凭它换视角令牌； 凭据一次性（取出即作废），只用于拼进 URL
+     * 片段（#ticket=…），不进服务端日志。
+     */
+    public record EntryTicket(String ticket, String hospitalUrl, long expiresInSeconds) {}
+
+    /** 医院端视角会话信息（E20-T04 / PLT-VIEW-003 横幅与水印口径）：会话号、租户、剩余时长与平台账号。 */
+    public record ViewShellSession(
+            long sessionId,
+            String sessionNo,
+            long tenantId,
+            String tenantCode,
+            String tenantName,
+            String purpose,
+            String accountName,
+            String accountDisplayName,
+            OffsetDateTime startedAt,
+            OffsetDateTime expiresAt,
+            long remainingSeconds) {}
+
+    /** 凭据换取结果（E20-T04）：视角令牌只在本次响应出现一次（与双因素第二步同口径）， 前端放进内存会话后不再回显。 */
+    public record ExchangeResult(
+            String token, String tokenType, long expiresInSeconds, ViewShellSession session) {}
+
+    /** 进入凭据在 Redis 里的载荷：签发时的台账行定位（账号 + 会话号双重核对）。 */
+    private record TicketPayload(long accountId, String sessionNo) {}
+
+    /** 医院端菜单的轻量行（视角菜单计算用，只取裁剪需要的列）。 */
+    record MenuLite(long id, Long parentId, String type, String path, String moduleCode) {}
 
     /**
      * 台账行（内部读取用）。{@code startedAtEpoch} 是到时判定的唯一依据（epoch 秒， 跨时区安全，见 V51 迁移注释）；DATETIME 字段只做展示回显。
@@ -338,6 +387,255 @@ public class TenantViewService {
                 });
     }
 
+    // ---------------------------------------------------------------- 医院端视角外壳（E20-T04 /
+    // PLT-VIEW-002、003）
+
+    /**
+     * 签发进入凭据（PLT-VIEW-002）：平台端「打开医院端界面」时调用——只对本人的进行中视角会话签发， Redis 60 秒一次性凭据（取出即作废）。没有进行中会话
+     * 40001（先进入视角）。
+     */
+    public EntryTicket issueEntryTicket() {
+        SessionPrincipal caller = currentCaller();
+        return TenantContext.callAsPlatform(
+                () -> {
+                    SessionRow row = findActiveRow(caller.userId());
+                    if (row == null || viewTokenAlive(row) == null) {
+                        throw new ApiException(400, 40001, "没有进行中的视角会话，请先进入（PLT-VIEW-001）");
+                    }
+                    String ticket = tokens.generate();
+                    writeTicket(ticket, new TicketPayload(row.accountId(), row.sessionNo()));
+                    log.info(
+                            "tenant view entry ticket issued account={} tenant={} session={}",
+                            row.accountName(),
+                            row.tenantId(),
+                            row.sessionNo());
+                    return new EntryTicket(
+                            ticket,
+                            hospitalBaseUrl,
+                            securityProperties.getTenantViewEntryTicketTtlSeconds());
+                });
+    }
+
+    /**
+     * 医院端凭据换取视角令牌（PLT-VIEW-002，公开口，按 IP 限流）：凭据一次性且 60 秒有效； 换取时核对台账仍 ACTIVE、会话号一致且 Redis 令牌仍在，任一不成立
+     * 40001（不暴露差异，防探测）。 令牌只在本次响应出现一次。
+     */
+    public ExchangeResult exchangeTicket(String ticket, String clientIp) {
+        rateLimitExchange(clientIp);
+        TicketPayload payload = consumeTicket(ticket);
+        if (payload == null) {
+            throw new ApiException(400, 40001, "进入凭据无效或已过期，请从平台端重新进入");
+        }
+        return TenantContext.callAsPlatform(
+                () -> {
+                    SessionRow row = findActiveRow(payload.accountId());
+                    if (row == null || !row.sessionNo().equals(payload.sessionNo())) {
+                        throw new ApiException(400, 40001, "进入凭据无效或已过期，请从平台端重新进入");
+                    }
+                    SessionPrincipal alive = viewTokenAlive(row);
+                    if (alive == null) {
+                        // 令牌已被 Redis 逐出（空闲超时 / 权限变更收尾）——先按实际结束方式关账再拒绝
+                        finalizeRow(row);
+                        throw new ApiException(400, 40001, "视角会话已结束，请从平台端重新进入");
+                    }
+                    log.info(
+                            "tenant view token exchanged account={} tenant={} session={}",
+                            row.accountName(),
+                            row.tenantId(),
+                            row.sessionNo());
+                    return new ExchangeResult(
+                            alive.token(),
+                            "Bearer",
+                            sessionStore.effectiveTtl(alive).toSeconds(),
+                            shellOf(row, alive));
+                });
+    }
+
+    /** 医院端横幅会话信息（PLT-VIEW-003）：会话号 / 租户 / 剩余时长 / 平台账号（水印同口径）。 */
+    public ViewShellSession hospitalCurrent(SessionPrincipal view) {
+        return TenantContext.callAsPlatform(
+                () -> {
+                    SessionRow row = requireOwnActiveRow(view);
+                    SessionPrincipal alive = viewTokenAlive(row);
+                    if (alive == null) {
+                        finalizeRow(row);
+                        throw new ApiException(401, 40100, "视角会话已失效，请从平台端重新进入");
+                    }
+                    return shellOf(row, alive);
+                });
+    }
+
+    /** 医院端一键退出（PLT-VIEW-003）：视角令牌只允许退出自己的会话；台账 ENDED / 主动退出并写 VIEW_EXIT 审计。 */
+    public ExitResult hospitalExit(SessionPrincipal view) {
+        return TenantContext.callAsPlatform(
+                () -> {
+                    SessionRow row = requireOwnActiveRow(view);
+                    closeSession(row, END_LOGOUT, LocalDateTime.now(ZONE));
+                    return new ExitResult(row.id(), row.sessionNo(), END_LOGOUT);
+                });
+    }
+
+    /**
+     * 视角菜单（PLT-VIEW-002）：与该院一致的医院端菜单 = 启用菜单 ∩ 该院已开通模块 ∩ 平台角色可见范围 ——可见范围取账号全部可进入角色的并集（任一「配置类 +
+     * 业务数据」即含业务），仅配置类时隐藏随访业务子树 （患者 / 计划 / 任务 / 报告单等，platform-spec §8「业务数据均属 followup 模块」）。每次实时计算，
+     * 租户开通 / 停用模块的下一次菜单请求即生效。
+     */
+    public List<Long> viewMenuIds(long tenantId, long accountId) {
+        return TenantContext.callAsPlatform(
+                () ->
+                        viewMenuIds(
+                                menuLites(),
+                                platform.queryForList(
+                                        "SELECT module_code FROM plt_tenant_module"
+                                                + " WHERE tenant_id = ? AND status = 'OPEN'",
+                                        String.class,
+                                        tenantId),
+                                configOnly(accountId)));
+    }
+
+    /**
+     * 视角菜单裁剪的纯函数（供单测）：先按已开通模块过滤，再在仅配置类时剔除业务子树。
+     *
+     * <p>业务子树 = 顶级「随访」目录（path=/followup，种子 V100 的 DIR 20）的全部后代（含隐藏路由与按钮）； 系统管理目录下的字典 / 通知 /
+     * 病区等配置页（module_code 同为 followup）不在子树内，仅配置类仍可见。 找不到该目录时业务集合为空（不额外隐藏）。
+     */
+    static List<Long> viewMenuIds(
+            List<MenuLite> menus, List<String> openedModules, boolean configOnly) {
+        Set<String> opened = new HashSet<>(openedModules);
+        Set<Long> business = configOnly ? businessSubtree(menus) : Set.of();
+        return menus.stream()
+                .filter(row -> opened.contains(row.moduleCode()))
+                .filter(row -> !business.contains(row.id()))
+                .map(MenuLite::id)
+                .toList();
+    }
+
+    /** 顶级 /followup 目录的全部后代 id（含自身）。 */
+    private static Set<Long> businessSubtree(List<MenuLite> menus) {
+        Map<Long, List<MenuLite>> byParent = new java.util.HashMap<>();
+        Set<Long> roots = new HashSet<>();
+        for (MenuLite row : menus) {
+            if (row.parentId() != null) {
+                byParent.computeIfAbsent(row.parentId(), key -> new ArrayList<>()).add(row);
+            }
+            if (row.parentId() == null || row.parentId() == 0L) {
+                if ("/followup".equals(row.path())) {
+                    roots.add(row.id());
+                }
+            }
+        }
+        Set<Long> subtree = new HashSet<>();
+        Deque<Long> pending = new ArrayDeque<>(roots);
+        while (!pending.isEmpty()) {
+            long id = pending.poll();
+            if (!subtree.add(id)) {
+                continue;
+            }
+            for (MenuLite child : byParent.getOrDefault(id, List.of())) {
+                pending.add(child.id());
+            }
+        }
+        return subtree;
+    }
+
+    /** 账号可见范围是否收敛为「仅配置类」：全部可进入角色均为 CONFIG_ONLY（任一 CONFIG_AND_BUSINESS 即含业务）。 */
+    private boolean configOnly(long accountId) {
+        List<String> scopes =
+                platform.queryForList(
+                        "SELECT r.view_visible_scope FROM plt_role r"
+                                + " JOIN plt_account_role ar ON ar.role_id = r.id"
+                                + " WHERE ar.account_id = ? AND r.status = 'ENABLED'"
+                                + " AND r.view_can_enter = 1",
+                        String.class,
+                        accountId);
+        return !scopes.isEmpty() && scopes.stream().allMatch("CONFIG_ONLY"::equals);
+    }
+
+    private List<MenuLite> menuLites() {
+        return platform.query(
+                "SELECT id, parent_id, type, path, module_code FROM plt_menu"
+                        + " WHERE side = 'HOSPITAL' AND status = 'ENABLED' ORDER BY sort_no, id",
+                (rs, rowNum) ->
+                        new MenuLite(
+                                rs.getLong("id"),
+                                (Long) rs.getObject("parent_id"),
+                                rs.getString("type"),
+                                rs.getString("path"),
+                                rs.getString("module_code")));
+    }
+
+    /** 按视角令牌定位本人 ACTIVE 台账行：会话号不匹配（他人令牌 / 已换会话）按已结束处理 40400。 */
+    private SessionRow requireOwnActiveRow(SessionPrincipal view) {
+        SessionRow row = findActiveRow(view.userId());
+        if (row == null || !row.sessionNo().equals(view.sessionId())) {
+            throw new ApiException(404, 40400, "视角会话不存在或已结束");
+        }
+        return row;
+    }
+
+    private ViewShellSession shellOf(SessionRow row, SessionPrincipal alive) {
+        return new ViewShellSession(
+                row.id(),
+                row.sessionNo(),
+                row.tenantId(),
+                tenantColumnOf(row.tenantId(), "code"),
+                tenantColumnOf(row.tenantId(), "name"),
+                row.purpose(),
+                row.accountName(),
+                row.displayName(),
+                offsetDateTime(row.startedAt()),
+                offsetDateTime(row.endsAt()),
+                sessionStore.effectiveTtl(alive).toSeconds());
+    }
+
+    private void writeTicket(String ticket, TicketPayload payload) {
+        try {
+            redis.opsForValue()
+                    .set(
+                            ticketKey(ticket),
+                            json.writeValueAsString(payload),
+                            Duration.ofSeconds(
+                                    securityProperties.getTenantViewEntryTicketTtlSeconds()));
+        } catch (com.fasterxml.jackson.core.JsonProcessingException ex) {
+            throw new ApiException(500, 50000, "系统繁忙，请稍后再试");
+        }
+    }
+
+    /** 取出并删除（一次性）；不存在 / 过期 / 载荷损坏都返回 null（统一 40001，不暴露差异）。 */
+    private TicketPayload consumeTicket(String ticket) {
+        if (ticket == null || ticket.isBlank()) {
+            return null;
+        }
+        String raw = redis.opsForValue().getAndDelete(ticketKey(ticket));
+        if (raw == null) {
+            return null;
+        }
+        try {
+            return json.readValue(raw, TicketPayload.class);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException ex) {
+            return null;
+        }
+    }
+
+    private static String ticketKey(String ticket) {
+        return "crdp:view-ticket:" + ticket;
+    }
+
+    /** 公开口按 IP 每小时限流（AGENTS.md 第 6 节，与登录页租户识别同款实现）。 */
+    private void rateLimitExchange(String clientIp) {
+        if (clientIp == null) {
+            return;
+        }
+        String key = "crdp:view-enter:ip:" + clientIp;
+        Long count = redis.opsForValue().increment(key);
+        if (count != null && count == 1L) {
+            redis.expire(key, Duration.ofHours(1));
+        }
+        if (count != null && count > securityProperties.getTenantViewEnterIpHourlyLimit()) {
+            throw new ApiException(429, 42900, "尝试次数过多，请稍后再试");
+        }
+    }
+
     /** 权限变更即时生效（platform-spec §8 业务规则）：负责关系、平台角色视角权限、账号角色 / 状态或密码 重置变化时调用——视角令牌立即失效，台账按「权限变更」收尾。 */
     public void endForAccount(long accountId) {
         TenantContext.runAsPlatform(
@@ -436,8 +734,9 @@ public class TenantViewService {
     // ---------------------------------------------------------------- 会话草稿与收尾（内部）
 
     /**
-     * 视角会话草稿（PLT-VIEW-001、004）：平台账号身份 + 被查看租户；空闲 15 分钟（平台端口径）与 2 小时上限 冻结进会话；菜单 / 权限码为空（医院端菜单与执行随
-     * E20-T03 / T04，视角令牌当前不落任何业务接口）。
+     * 视角会话草稿（PLT-VIEW-001、004）：平台账号身份 + 被查看租户；空闲 15 分钟（平台端口径）与 2 小时上限 冻结进会话；菜单 / 权限码为空——菜单在
+     * /api/hospital/menus 按该院开通模块与平台角色可见范围 实时计算（E20-T04），业务接口权限随 E20-T03 执行点放开（此前视角令牌调业务接口一律
+     * 40300，fail closed）。
      */
     SessionPrincipal viewDraft(SessionPrincipal caller, Map<String, Object> tenant) {
         long now = Instant.now().getEpochSecond();
