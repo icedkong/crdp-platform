@@ -33,9 +33,11 @@ const detailNode = node({
 });
 
 describe('menuNodesToRoutes 隐藏菜单 activePath 派生', () => {
-  it('隐藏子路由的 activePath 指向父菜单路径', () => {
+  it('隐藏子路由提升到顶层，activePath 指向父菜单路径', () => {
     const routes = menuNodesToRoutes([node({ children: [detailNode] })]);
-    const hidden = routes[0]?.children?.[0];
+    // E15-T11：全隐藏子路由不再挂在父路由下（见下个 describe），提升到顶层
+    expect(routes[0]?.children).toBeUndefined();
+    const hidden = routes[1];
     expect(hidden).toBeDefined();
     expect(hidden?.meta.activePath).toBe('/followup/patient');
     expect(hidden?.meta.hideInMenu).toBe(true);
@@ -78,6 +80,97 @@ describe('menuNodeToRoute 基础转换不回归', () => {
 });
 
 /**
+ * E15-T11（M2 验收发现）：Vben generateAccessible 会给所有带子路由的父路由自动加
+ * `redirect = firstChild.path`（packages/effects/access accessible.ts）。列表页菜单
+ * （我的任务 /followup/task、患者档案 /followup/patient、随访计划 /followup/plan）
+ * 的唯一子路由都是隐藏详情路由（/followup/record/:recordId 等），点击菜单被重定向到
+ * 字面量参数死路由，M2 主流程侧栏导航全断。转换层修正：隐藏子路由提升到顶层
+ * （绝对路径本就全局匹配，activePath 保持侧栏高亮），父路由不再带 children，
+ * 也就不会被 Vben 自动加 redirect。
+ */
+describe('menuNodesToRoutes 全隐藏子路由提升（E15-T11 导航修复）', () => {
+  const recordFormNode = node({
+    component: 'followup/record/form',
+    id: 223,
+    meta: { hideInMenu: true, order: 30, title: '随访录入' },
+    name: 'FollowupRecordForm',
+    path: '/followup/record/:recordId',
+  });
+  const taskNode = node({
+    component: 'followup/task/index',
+    id: 22,
+    meta: { hideInMenu: false, order: 15, title: '我的任务' },
+    name: 'FollowupTask',
+    path: '/followup/task',
+    children: [recordFormNode],
+  });
+
+  it('父路由不带 children（Vben 不会加 redirect 到字面量参数路径）', () => {
+    const routes = menuNodesToRoutes([taskNode]);
+    const task = routes[0];
+    expect(task?.name).toBe('FollowupTask');
+    expect(task?.children).toBeUndefined();
+  });
+
+  it('隐藏路由提升到顶层且 activePath 指向父菜单', () => {
+    const routes = menuNodesToRoutes([taskNode]);
+    const hidden = routes.at(-1);
+    expect(hidden?.name).toBe('FollowupRecordForm');
+    expect(hidden?.path).toBe('/followup/record/:recordId');
+    expect(hidden?.meta.hideInMenu).toBe(true);
+    expect(hidden?.meta.activePath).toBe('/followup/task');
+  });
+
+  it('混合子路由：可见子保持嵌套，隐藏子提升顶层', () => {
+    const routes = menuNodesToRoutes([
+      node({
+        children: [
+          node({ id: 216, name: 'Visible', path: '/followup/patient/visible' }),
+          detailNode,
+        ],
+      }),
+    ]);
+    expect(routes[0]?.children?.map((c) => c.name)).toEqual(['Visible']);
+    const hidden = routes.at(-1);
+    expect(hidden?.name).toBe('FollowupPatientDetail');
+    expect(hidden?.meta.activePath).toBe('/followup/patient');
+  });
+
+  it('深层隐藏路由提升到顶层（随访计划 → 计划详情）', () => {
+    const planDetailNode = node({
+      component: 'followup/plan/detail',
+      id: 25,
+      meta: { hideInMenu: true, order: 20, title: '计划详情' },
+      name: 'FollowupPlanDetail',
+      path: '/followup/plan/:planId',
+    });
+    const planNode = node({
+      component: 'followup/plan/index',
+      id: 24,
+      meta: { hideInMenu: false, order: 15, title: '随访计划' },
+      name: 'FollowupPlan',
+      path: '/followup/plan',
+      children: [planDetailNode],
+    });
+    const groupNode = node({
+      children: [planNode],
+      component: 'LAYOUT',
+      id: 20,
+      meta: { hideInMenu: false, order: 20, title: '随访' },
+      name: 'Followup',
+      path: '/followup',
+    });
+    const routes = menuNodesToRoutes([groupNode]);
+    // 随访组只保留可见子；随访计划叶子化；计划详情在顶层
+    expect(routes[0]?.children?.map((c) => c.name)).toEqual(['FollowupPlan']);
+    expect(routes[0]?.children?.[0]?.children).toBeUndefined();
+    const hidden = routes.at(-1);
+    expect(hidden?.name).toBe('FollowupPlanDetail');
+    expect(hidden?.meta.activePath).toBe('/followup/plan');
+  });
+});
+
+/**
  * E24-T02 / NFR-RESP-002：响应式路由放行名单。手机（<768）访问 meta
  * responsive !== true 的路由会被响应式守卫整页替换为 MobileBlocker
  * （E24-T01）；已适配的页面（E24-T02 起逐页打开）按路由名登记，转换时
@@ -98,11 +191,11 @@ describe('menuNodesToRoutes 响应式名单（E24-T02）', () => {
       ],
       new Set(['FollowupRecordForm']),
     );
-    const record = routes[1];
+    const record = routes.find((r) => r.name === 'FollowupRecordForm');
     expect(record?.meta.responsive).toBe(true);
-    // 名单外（含隐藏路由）保持 undefined → 手机仍被守卫拦下
+    // 名单外（含提升到顶层的隐藏路由）保持 undefined → 手机仍被守卫拦下
     expect(routes[0]?.meta.responsive).toBeUndefined();
-    expect(routes[0]?.children?.[0]?.meta.responsive).toBeUndefined();
+    expect(routes[0]?.children).toBeUndefined();
   });
 
   it('不传名单时全部保持默认（不响应式，行为不回归）', () => {

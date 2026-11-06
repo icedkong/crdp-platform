@@ -31,12 +31,35 @@ export function toIconifyIcon(icon?: null | string) {
 
 export function menuNodeToRoute(
   node: MenuNode,
-  parentPath?: string,
-  responsiveNames?: ReadonlySet<string>,
+  parentPath?: null | string,
+  responsiveNames?: null | ReadonlySet<string>,
 ): VbenMenuRoute {
-  const children = (node.children ?? []).map((child) =>
-    menuNodeToRoute(child, node.path, responsiveNames),
+  // 单节点转换：隐藏子路由不挂在本节点下（提升口径见 menuNodesToRoutes），
+  // hoisted 收集后丢弃——整树转换请用 menuNodesToRoutes。
+  const hoisted: VbenMenuRoute[] = [];
+  return convertNode(
+    node,
+    parentPath ?? null,
+    responsiveNames ?? null,
+    hoisted,
   );
+}
+
+/**
+ * E15-T11（M2 验收发现）：可见路由只嵌套可见子路由，隐藏子路由收集到 hoisted
+ * 由 {@link menuNodesToRoutes} 提升到顶层。原因：Vben generateAccessible 会给所有
+ * 带子路由的父路由自动加 `redirect = firstChild.path`——列表页菜单（我的任务、
+ * 患者档案、随访计划）的唯一子路由都是隐藏详情路由（如 /followup/record/:recordId），
+ * 点击菜单会被重定向到字面量参数死路由，主流程侧栏导航全断。隐藏路由路径为绝对
+ * 路径，本就全局匹配，提升到顶层不影响可达性；meta.activePath 保持侧栏高亮指向
+ * 原父菜单。代价：详情页面包屑只剩本页一级（route.matched 不再含父路由）。
+ */
+function convertNode(
+  node: MenuNode,
+  parentPath: null | string,
+  responsiveNames: null | ReadonlySet<string>,
+  hoisted: VbenMenuRoute[],
+): VbenMenuRoute {
   const hideInMenu = Boolean(node.meta?.hideInMenu);
   const route: VbenMenuRoute = {
     component: node.component === 'LAYOUT' ? 'BasicLayout' : node.component,
@@ -59,8 +82,29 @@ export function menuNodeToRoute(
   if (responsiveNames?.has(node.name)) {
     route.meta.responsive = true;
   }
-  if (children.length > 0) {
-    route.children = children;
+
+  if (hideInMenu) {
+    // 隐藏路由整棵子树保持嵌套（子树必然不可见），随根一起提升到顶层
+    const children = (node.children ?? []).map((child) =>
+      convertNode(child, node.path, responsiveNames, hoisted),
+    );
+    if (children.length > 0) {
+      route.children = children;
+    }
+    return route;
+  }
+
+  const visibleChildren: VbenMenuRoute[] = [];
+  for (const child of node.children ?? []) {
+    const childRoute = convertNode(child, node.path, responsiveNames, hoisted);
+    if (childRoute.meta.hideInMenu) {
+      hoisted.push(childRoute);
+    } else {
+      visibleChildren.push(childRoute);
+    }
+  }
+  if (visibleChildren.length > 0) {
+    route.children = visibleChildren;
   }
   return route;
 }
@@ -69,5 +113,9 @@ export function menuNodesToRoutes(
   nodes: MenuNode[],
   responsiveNames?: ReadonlySet<string>,
 ) {
-  return nodes.map((node) => menuNodeToRoute(node, undefined, responsiveNames));
+  const hoisted: VbenMenuRoute[] = [];
+  const routes = nodes.map((node) =>
+    convertNode(node, null, responsiveNames ?? null, hoisted),
+  );
+  return [...routes, ...hoisted];
 }
