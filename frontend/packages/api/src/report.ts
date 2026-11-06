@@ -81,6 +81,43 @@ export interface ReportCreatedView {
   typeName: string;
 }
 
+/**
+ * E16-T03 批量上传（A-ATT-014、C-SCAN-007，POST /followup/reports/batch-create）：
+ * 先统一选择类型与位置（至少 1 个，可逐份调整），ONE_PER_FILE 每个文件一份、
+ * MERGE 合并为一份多页资料；一次最多 50 个文件，单份上限沿用上传策略 maxFilesPerReport。
+ */
+export type ReportBatchMode = 'MERGE' | 'ONE_PER_FILE';
+
+/** 逐份调整（ONE_PER_FILE；未填的项沿用公共值）。 */
+export interface ReportBatchItemOverride {
+  fileId: string;
+  locations?: ReportLocationInput[];
+  nameId?: null | string;
+  reportDate?: string;
+}
+
+/** 批量上传请求（公共类型 / 名称 / 报告时间 / 位置 + 文件清单与逐份调整）。 */
+export interface ReportBatchCreateRequest {
+  fileIds: string[];
+  items?: ReportBatchItemOverride[];
+  locations: ReportLocationInput[];
+  /** 每个文件一份 / 合并为一份多页资料 */
+  mode: ReportBatchMode;
+  nameId?: null | string;
+  patientId: string;
+  reportDate: string;
+  typeCode: string;
+}
+
+/** 批量上传结果（reports 顺序与文件一致；MERGE 为单元素）。 */
+export interface ReportBatchCreatedView {
+  fileCount: number;
+  mode: ReportBatchMode;
+  reportCount: number;
+  /** 首份报告单 id（汇总审计objectId 同值）；reports 为全部创建结果 */
+  reports: ReportCreatedView[];
+}
+
 /** 患者内报告单行（报告单页签列表；左栏附件导航完整形态随 E16-T14）。 */
 export interface ReportRow {
   conclusion: null | string;

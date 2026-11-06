@@ -3,7 +3,11 @@
  * 预览短时链接每次预览重新获取（≤ 5 分钟、写审计），前端不缓存；
  * 取流地址是相对路径，拼 API 基地址后给 pdf.js / docx-preview / 原生 audio 直用。
  */
-import type { FileDownloadGrant, FilePreviewGrant } from '@crdp/api';
+import type {
+  FileDownloadGrant,
+  FilePreviewGrant,
+  FileUploadPolicy,
+} from '@crdp/api';
 
 import { apiPath, requestClient } from '#/api/request';
 
@@ -26,6 +30,14 @@ export function uploadFile(file: File) {
   const form = new FormData();
   form.append('file', file);
   return requestClient.post<FileUploadResult>(apiPath('/files'), form);
+}
+
+/**
+ * 本院上传策略（E10-T01 / PLT-CFG-010，登录即可）：格式白名单、各类别大小上限与
+ * 每份报告单文件数上限——上传对话框做前置提示与数量拦截（E16-T03 / A-ATT-004）。
+ */
+export function fetchUploadPolicy() {
+  return requestClient.get<FileUploadPolicy>(apiPath('/files/policy'));
 }
 
 /** 取预览短时链接（登录即可 + followup 模块开通；文件不存在 / 已删除 40400）。 */

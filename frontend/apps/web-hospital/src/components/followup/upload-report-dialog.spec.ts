@@ -1,6 +1,8 @@
 // E16-T02 / A-ATT-001、A-ATT-002；C-SCAN-001、C-SCAN-010（pages.md §6.1）：
 // 添加报告单对话框——类型→名称→指标带出、按类型显示所见/结论、位置必填（空时「请至少选择
 // 1 个位置」且不提交）、预选位置随载荷回传、附件上传后 fileId 一并提交、成功提示并 emit created
+// E16-T03 / A-ATT-004、C-SCAN-006：附件超过每份上限（A 默认 10 个）直接拦截不上传，
+// 计数提示「已选 x / 10 个附件」，可上移 / 下移调整顺序
 import type { ReportLocationInput, ReportLocationNode } from '@crdp/api';
 
 import { mount } from '@vue/test-utils';
@@ -14,6 +16,7 @@ const fetchCatalogReportNames = vi.fn();
 const fetchReportLocations = vi.fn();
 const createReport = vi.fn();
 const uploadFile = vi.fn();
+const fetchUploadPolicy = vi.fn();
 
 vi.mock('#/api/core/report', () => ({
   createReport: (...args: unknown[]) => createReport(...args),
@@ -24,6 +27,7 @@ vi.mock('#/api/core/report', () => ({
   fetchReportLocations: (...args: unknown[]) => fetchReportLocations(...args),
 }));
 vi.mock('#/api/core/file', () => ({
+  fetchUploadPolicy: (...args: unknown[]) => fetchUploadPolicy(...args),
   uploadFile: (...args: unknown[]) => uploadFile(...args),
 }));
 
@@ -148,6 +152,12 @@ async function mountDialog(props: Record<string, unknown> = {}) {
   fetchCatalogReportTypes.mockResolvedValue(TYPES);
   fetchReportLocations.mockResolvedValue(TREE);
   fetchCatalogReportNames.mockResolvedValue(NAMES_LAB);
+  fetchUploadPolicy.mockResolvedValue({
+    formats: [],
+    maxAudioMb: 50,
+    maxDocumentMb: 20,
+    maxFilesPerReport: 10,
+  });
   const wrapper = mount(UploadReportDialog, {
     attachTo: document.body,
     props: { open: true, patientId: '301', ...props },
@@ -275,5 +285,98 @@ describe('e16-t02 UploadReportDialog（添加报告单）', () => {
     expect(payload.indicators).toEqual([
       { itemCode: 'WBC', refRange: '3.5–9.5', result: '3.2' },
     ]);
+  });
+
+  // --------------------------- E16-T03 多附件（A-ATT-004 超限拦截、C-SCAN-006 顺序）
+
+  it('附件到每份上限（10 个）后，第 11 个直接拦截不上传并提示', async () => {
+    const wrapper = await mountDialog();
+    const vm = wrapper.vm as unknown as {
+      customRequest: (options: {
+        file: File;
+        onError: (error: Error) => void;
+        onSuccess: (body: unknown) => void;
+      }) => Promise<void>;
+      files: Array<{ fileId: string; name: string }>;
+    };
+    uploadFile.mockImplementation(async (file: File) => ({
+      fileId: `f-${file.name}`,
+      format: 'png',
+      mime: 'image/png',
+      originalName: file.name,
+      pages: 1,
+      sha256: 'hash',
+      size: file.size,
+    }));
+    for (let i = 0; i < 10; i++) {
+      const file = new File(['x'], `扫描件-${i}.png`);
+      await vm.customRequest({
+        file,
+        onError: () => {},
+        onSuccess: () => {},
+      });
+    }
+    expect(vm.files).toHaveLength(10);
+    expect(bodyText()).toContain('已选 10 / 10 个附件');
+
+    const calls = uploadFile.mock.calls.length;
+    let rejected: null | string = null;
+    await vm.customRequest({
+      file: new File(['x'], '扫描件-10.png'),
+      onError: (error) => {
+        rejected = error.message;
+      },
+      onSuccess: () => {},
+    });
+    expect(uploadFile).toHaveBeenCalledTimes(calls, '第 11 个不再调用上传接口');
+    expect(vm.files).toHaveLength(10);
+    // 拦截文案与后端 40001 同口径（纯函数 attachmentOverLimit 单测锁定）
+    expect(rejected).toBe('附件数量超过上限（每份报告单最多 10 个）');
+  });
+
+  it('附件可上移 / 下移调整顺序（顺序随提交落 sortNo）', async () => {
+    const wrapper = await mountDialog();
+    const vm = wrapper.vm as unknown as {
+      customRequest: (options: {
+        file: File;
+        onError: (error: Error) => void;
+        onSuccess: (body: unknown) => void;
+      }) => Promise<void>;
+      files: Array<{ fileId: string; name: string }>;
+      moveFile: (fileId: string, delta: -1 | 1) => void;
+    };
+    uploadFile.mockImplementation(async (file: File) => ({
+      fileId: `f-${file.name}`,
+      format: 'png',
+      mime: 'image/png',
+      originalName: file.name,
+      pages: 1,
+      sha256: 'hash',
+      size: file.size,
+    }));
+    for (const name of ['a.png', 'b.png', 'c.png']) {
+      await vm.customRequest({
+        file: new File(['x'], name),
+        onError: () => {},
+        onSuccess: () => {},
+      });
+    }
+    expect(vm.files.map((item) => item.name)).toEqual([
+      'a.png',
+      'b.png',
+      'c.png',
+    ]);
+
+    vm.moveFile('f-c.png', -1);
+    expect(vm.files.map((item) => item.name)).toEqual(
+      ['a.png', 'c.png', 'b.png'],
+      '下移 / 上移交换相邻顺序',
+    );
+
+    vm.moveFile('f-a.png', -1);
+    expect(vm.files.map((item) => item.name)).toEqual(
+      ['a.png', 'c.png', 'b.png'],
+      '首个再上移不变',
+    );
   });
 });

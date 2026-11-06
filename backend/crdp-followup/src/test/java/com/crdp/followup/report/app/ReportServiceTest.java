@@ -7,9 +7,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -26,6 +28,7 @@ import com.crdp.framework.audit.AuditLogger;
 import com.crdp.framework.security.SessionPrincipal;
 import com.crdp.framework.web.ApiException;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
@@ -787,6 +790,177 @@ class ReportServiceTest {
         ApiException bad =
                 assertThrows(ApiException.class, () -> service.reportsOf(PATIENT, "nope"));
         assertEquals(40001, bad.code());
+    }
+
+    // ---------------------------------------------- 批量上传（E16-T03 / A-ATT-014、C-SCAN-007）
+
+    /** 批量请求桩：公共类型 / 名称 / 报告时间 / 位置 + fileIds 与逐份调整（可空）。 */
+    private static ReportService.BatchCreateRequest batch(
+            String mode, List<String> fileIds, List<ReportService.BatchItemOverride> items) {
+        return new ReportService.BatchCreateRequest(
+                mode,
+                "LAB",
+                null,
+                LocalDate.of(2026, 10, 28),
+                List.of(new ReportService.LocationInput("baseline", null, "category", "basic", 3)),
+                fileIds,
+                items);
+    }
+
+    /** 文件台账桩（全部可挂）+ 报告单自增 ID 桩（900 起）。 */
+    private void readyFiles(long... ids) {
+        for (long id : ids) {
+            when(files.find(id)).thenReturn(file(id, "扫描件-" + id + ".pdf（示例）"));
+            when(files.markAttached(id)).thenReturn(1);
+        }
+        when(mapper.insertReport(any()))
+                .thenAnswer(
+                        invocation -> {
+                            invocation.getArgument(0, ReportInsert.class).setId(900L);
+                            return 1;
+                        });
+    }
+
+    @Test
+    void batchMergeRejectsFileCountOverPerReportLimit() {
+        readyTypeAndName();
+        readyFiles(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11);
+
+        List<String> eleven = List.of("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11");
+        ApiException over =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.batchCreate(
+                                        PATIENT,
+                                        batch(ReportService.BATCH_MODE_MERGE, eleven, null)));
+
+        assertEquals(40001, over.code(), "验收：单份最多 10 个文件，超限拦截");
+        assertTrue(over.getMessage().contains("最多 10 个"), over.getMessage());
+        verify(mapper, never()).insertReport(any());
+    }
+
+    @Test
+    void batchMergeCreatesOneReportWithAllFilesInOrder() {
+        readyTypeAndName();
+        readyFiles(1, 2, 3);
+
+        ReportService.BatchCreatedView view =
+                service.batchCreate(
+                        PATIENT,
+                        batch(ReportService.BATCH_MODE_MERGE, List.of("1", "2", "3"), null));
+
+        assertEquals("MERGE", view.mode());
+        assertEquals(1, view.reportCount(), "合并为一份多页资料");
+        assertEquals(3, view.fileCount());
+        assertEquals(3, view.reports().get(0).fileCount());
+        verify(mapper, times(1)).insertReport(any());
+        ArgumentCaptor<ReportMapper.FileInsert> fileRows =
+                ArgumentCaptor.forClass(ReportMapper.FileInsert.class);
+        verify(mapper, times(3)).insertFile(fileRows.capture());
+        assertEquals(
+                List.of(0, 1, 2),
+                fileRows.getAllValues().stream().map(ReportMapper.FileInsert::sortNo).toList(),
+                "合并模式按提交顺序排 sortNo（C-SCAN-006 可调整顺序）");
+        assertTrue(auditActions().contains("RPT_BATCH_CREATE"));
+    }
+
+    @Test
+    void batchOnePerFileCreatesReportPerFileWithOverrides() {
+        readyTypeAndName();
+        readyFiles(601, 602, 603);
+        ReportConfigMapper.NameRow urine = nameRow(13L, "LAB", "尿常规（示例）", null, null);
+        when(config.findName(13L)).thenReturn(urine);
+
+        ReportService.BatchCreatedView view =
+                service.batchCreate(
+                        PATIENT,
+                        batch(
+                                ReportService.BATCH_MODE_ONE_PER_FILE,
+                                List.of("601", "602", "603"),
+                                List.of(
+                                        new ReportService.BatchItemOverride(
+                                                "602", "13", LocalDate.of(2026, 9, 9), null))));
+
+        assertEquals("ONE_PER_FILE", view.mode());
+        assertEquals(3, view.reportCount(), "每个文件一份");
+        assertEquals(3, view.fileCount());
+        verify(mapper, times(3)).insertReport(any());
+        assertNull(view.reports().get(0).name(), "公共未选名称时该份无名称");
+        assertEquals("尿常规（示例）", view.reports().get(1).name(), "逐份调整名称（A-ATT-014）");
+        assertEquals(LocalDate.of(2026, 9, 9), view.reports().get(1).reportDate(), "逐份调整报告时间");
+        assertEquals(LocalDate.of(2026, 10, 28), view.reports().get(2).reportDate(), "未调整沿用公共值");
+        assertTrue(auditActions().contains("RPT_BATCH_CREATE"));
+    }
+
+    @Test
+    void batchRejectsOverFiftyFilesEmptyFilesAndUnknownMode() {
+        readyTypeAndName();
+
+        List<String> fiftyOne = new ArrayList<>();
+        for (long id = 1; id <= 51; id++) {
+            fiftyOne.add(String.valueOf(id));
+        }
+        ApiException overFifty =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.batchCreate(
+                                        PATIENT,
+                                        batch(
+                                                ReportService.BATCH_MODE_ONE_PER_FILE,
+                                                fiftyOne,
+                                                null)));
+        assertEquals(40001, overFifty.code(), "一次最多 50 个文件（A-ATT-014）");
+        assertTrue(overFifty.getMessage().contains("50"), overFifty.getMessage());
+
+        ApiException empty =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.batchCreate(
+                                        PATIENT,
+                                        batch(
+                                                ReportService.BATCH_MODE_ONE_PER_FILE,
+                                                List.of(),
+                                                null)));
+        assertEquals(40001, empty.code());
+
+        ApiException unknownMode =
+                assertThrows(
+                        ApiException.class,
+                        () -> service.batchCreate(PATIENT, batch("SIDEWAYS", List.of("1"), null)));
+        assertEquals(40001, unknownMode.code());
+        verify(mapper, never()).insertReport(any());
+    }
+
+    @Test
+    void batchRejectsOverrideOutsideFileList() {
+        readyTypeAndName();
+        readyFiles(601);
+
+        ApiException error =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.batchCreate(
+                                        PATIENT,
+                                        batch(
+                                                ReportService.BATCH_MODE_ONE_PER_FILE,
+                                                List.of("601"),
+                                                List.of(
+                                                        new ReportService.BatchItemOverride(
+                                                                "999", "13", null, null)))));
+
+        assertEquals(40001, error.code());
+        verify(mapper, never()).insertReport(any());
+    }
+
+    /** 已追加的审计动作清单（含每份 RPT_CREATE 与批量的 RPT_BATCH_CREATE）。 */
+    private List<String> auditActions() {
+        ArgumentCaptor<AuditEntry> captor = ArgumentCaptor.forClass(AuditEntry.class);
+        verify(audit, atLeastOnce()).append(captor.capture());
+        return captor.getAllValues().stream().map(AuditEntry::action).toList();
     }
 
     // ---------------------------------------------------------------- 桩与工具

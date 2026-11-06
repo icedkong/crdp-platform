@@ -6,6 +6,8 @@
  */
 import type {
   PatientReportsView,
+  ReportBatchCreatedView,
+  ReportBatchCreateRequest,
   ReportCatalogName,
   ReportCatalogType,
   ReportCreatedView,
@@ -51,6 +53,18 @@ export function fetchPatientReports(
 export function createReport(payload: ReportCreateRequest) {
   return requestClient.post<ReportCreatedView>(
     apiPath('/followup/reports'),
+    payload,
+  );
+}
+
+/**
+ * 批量上传（E16-T03 / A-ATT-014、C-SCAN-007）：先统一类型与位置（≥ 1），可逐份调整
+ * 名称与报告时间；ONE_PER_FILE 每个文件一份、MERGE 合并为一份多页资料；一次 ≤ 50 个
+ * 文件，单份 ≤ 每份上限（超限 40001，拦截在后端）。
+ */
+export function batchCreateReports(payload: ReportBatchCreateRequest) {
+  return requestClient.post<ReportBatchCreatedView>(
+    apiPath('/followup/reports/batch-create'),
     payload,
   );
 }

@@ -27,7 +27,7 @@ import {
 } from 'ant-design-vue';
 import dayjs from 'dayjs';
 
-import { uploadFile } from '#/api/core/file';
+import { fetchUploadPolicy, uploadFile } from '#/api/core/file';
 import {
   createReport,
   fetchCatalogReportNames,
@@ -37,10 +37,13 @@ import {
 
 import LocationPicker from './location-picker.vue';
 import {
+  attachmentCountText,
+  attachmentOverLimit,
   buildIndicatorRows,
   hasReportFormError,
   indicatorPayload,
   initialLocations,
+  moveItem,
   reportConclusionLabel,
   reportDateLabel,
   reportFindingsLabel,
@@ -54,8 +57,11 @@ import {
  * E16-T02 / A-ATT-001、A-ATT-002；C-SCAN-001、C-SCAN-010（pages.md §6.1 添加报告单，弹窗
  * 800–960）：先选类型 → 名称（名称字典）/ 报告时间 / 指标表（按名称绑定模板自动带出）/ 所见与结论
  * （按类型显示）/ 位置（LocationPicker 必填可多选，从分类或分组内打开已预选）/ 附件 / 备注。
- * 心脏超声映射确认（A-ATT-013）随 E16-T07；批量上传（A-ATT-014）与手机扫码（A-ATT-015）
- * 随 E16-T03 / T10。
+ * 心脏超声映射确认（A-ATT-013）随 E16-T07；手机扫码（A-ATT-015）随 E16-T10。
+ *
+ * E16-T03 / A-ATT-004、C-SCAN-006：多附件——打开时取上传策略，超过每份上限（A 默认
+ * 10 个）的选择直接拦截并提示（服务端同口径 40001 兜底）；附件可上移 / 下移调整顺序
+ * （顺序随 sortNo 落库）、可移除。
  */
 const props = defineProps<{
   open: boolean;
@@ -73,6 +79,7 @@ const emit = defineEmits<{
 
 const types = ref<ReportCatalogType[]>([]);
 const typesLoading = ref(false);
+const maxFilesPerReport = ref(0);
 const names = ref<ReportCatalogName[]>([]);
 const namesLoading = ref(false);
 const treeOptions = ref<ReportLocationNode[]>([]);
@@ -140,9 +147,20 @@ watch(
     resetForm();
     void loadTypes();
     void loadTree();
+    void loadPolicy();
   },
   { immediate: true },
 );
+
+/** 上传策略（E16-T03）：每份报告单文件数上限，选择附件时前置拦截（后端 40001 兜底）。 */
+async function loadPolicy() {
+  try {
+    const policy = await fetchUploadPolicy();
+    maxFilesPerReport.value = policy.maxFilesPerReport;
+  } catch {
+    maxFilesPerReport.value = 0;
+  }
+}
 
 function resetForm() {
   typeCode.value = null;
@@ -237,6 +255,17 @@ async function customRequest(options: {
   onError: (error: Error) => void;
   onSuccess: (body: unknown) => void;
 }) {
+  // A-ATT-004 / C-SCAN-006：超过每份上限的选择直接拦截，不上传（后端同口径 40001 兜底）
+  const over = attachmentOverLimit(
+    files.value.length,
+    1,
+    maxFilesPerReport.value,
+  );
+  if (over) {
+    message.warning(over);
+    options.onError(new Error(over));
+    return;
+  }
   uploading.value = true;
   try {
     const uploaded = await uploadFile(options.file);
@@ -252,6 +281,16 @@ async function customRequest(options: {
 function removeFile(fileId: string) {
   files.value = files.value.filter((item) => item.fileId !== fileId);
 }
+
+/** 附件顺序调整（C-SCAN-006「可调整顺序」）：顺序随提交落 sortNo。 */
+function moveFile(fileId: string, delta: -1 | 1) {
+  const index = files.value.findIndex((item) => item.fileId === fileId);
+  files.value = moveItem(files.value, index, delta);
+}
+
+const fileCountHint = computed(() =>
+  attachmentCountText(files.value.length, maxFilesPerReport.value),
+);
 
 function beforeUpload() {
   // 由 customRequest 接管，阻止 antd 自动上传（与 ContactLogModal 同口径）
@@ -295,6 +334,9 @@ function handleCancel() {
 // 测试驱动口（对话框内容经 Modal teleport，事件从 DOM 直取不便）
 defineExpose({
   indicatorRows,
+  customRequest,
+  files,
+  moveFile,
   onNameChange,
   onResultInput,
   onTypeChange,
@@ -435,8 +477,24 @@ defineExpose({
           class="file-list"
           data-testid="report-files"
         >
-          <li v-for="item in files" :key="item.fileId">
-            {{ item.name }}
+          <li v-for="(item, index) in files" :key="item.fileId">
+            {{ index + 1 }}. {{ item.name }}
+            <Button
+              :disabled="index === 0"
+              size="small"
+              type="link"
+              @click="moveFile(item.fileId, -1)"
+            >
+              上移
+            </Button>
+            <Button
+              :disabled="index === files.length - 1"
+              size="small"
+              type="link"
+              @click="moveFile(item.fileId, 1)"
+            >
+              下移
+            </Button>
             <Button
               danger
               size="small"
@@ -447,8 +505,8 @@ defineExpose({
             </Button>
           </li>
         </ul>
-        <p class="hint">
-          格式与大小按租户配置；数量上限在保存时校验（真实类型以后端检测为准）。
+        <p class="hint" data-testid="report-file-count">
+          {{ fileCountHint }}；格式与大小按租户配置（真实类型以后端检测为准）。
         </p>
       </FormItem>
 

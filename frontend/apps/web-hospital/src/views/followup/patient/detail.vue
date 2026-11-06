@@ -76,6 +76,7 @@ import {
 } from '#/components/followup/anchor-nav';
 import AudioPlayer from '#/components/followup/audio-player.vue';
 import BackfillRecordModal from '#/components/followup/backfill-record-modal.vue';
+import BatchUploadDialog from '#/components/followup/batch-upload-dialog.vue';
 import CategoryBar from '#/components/followup/category-bar.vue';
 import ContactLogModal from '#/components/followup/contact-log-modal.vue';
 import FollowupTimeline from '#/components/followup/followup-timeline.vue';
@@ -372,6 +373,8 @@ const canUploadReport = computed(() => hasPermission('followup:scan:upload'));
 const reports = ref<ReportRow[]>([]);
 const reportsLoading = ref(false);
 const reportDialogOpen = ref(false);
+/** E16-T03 批量上传对话框（A-ATT-014 / C-SCAN-007；与添加报告单同权限）。 */
+const batchDialogOpen = ref(false);
 /** 页内上传预选位置（基线分类 / 随访记录整条；A-ATT-001「自动预选该位置」）。 */
 const reportPreset = ref<ReportLocationInput[]>([]);
 
@@ -398,6 +401,11 @@ watch([tab, loading], ([current, isLoading]) => {
 function openReportUpload(preset?: ReportLocationInput[]) {
   reportPreset.value = preset ?? [];
   reportDialogOpen.value = true;
+}
+
+/** E16-T03 批量上传入口（pages.md §4.6 / §6.3；沿用当前预选位置）。 */
+function openBatchUpload() {
+  batchDialogOpen.value = true;
 }
 
 /** 基线分类末尾「上传附件」：预选 {baseline / category / 分类 key / 基线表单版本}。 */
@@ -912,6 +920,13 @@ const timelineLegendNote =
       <div class="toolbar">
         <Button
           v-if="canUploadReport"
+          data-testid="report-batch-upload"
+          @click="openBatchUpload()"
+        >
+          批量上传
+        </Button>
+        <Button
+          v-if="canUploadReport"
           data-testid="report-create"
           type="primary"
           @click="openReportUpload()"
@@ -1077,6 +1092,14 @@ const timelineLegendNote =
       :preset="reportPreset"
       @created="handleReportCreated"
       @update:open="reportDialogOpen = $event"
+    />
+
+    <BatchUploadDialog
+      :open="batchDialogOpen"
+      :patient-id="overview.id"
+      :preset="reportPreset"
+      @created="handleReportCreated"
+      @update:open="batchDialogOpen = $event"
     />
 
     <TransferWardModal

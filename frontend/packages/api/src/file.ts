@@ -41,3 +41,24 @@ export interface FileDownloadGrant {
   /** 签名下载路径（相对路径，拼 API 基地址后 window.location 打开）。 */
   url: string;
 }
+
+/**
+ * GET /api/hospital/files/policy 的返回（E10-T01 / PLT-CFG-010）：本院生效的上传策略。
+ * 格式与大小按租户配置（A：文档 20 MB、录音 50 MB、每份 10 个；C 经租户覆盖调整）；
+ * 上传对话框据此做前置提示与数量拦截，服务端仍强制校验（A-ATT-004 / C-SCAN-006）。
+ */
+export interface FileFormatPolicy {
+  category: 'AUDIO' | 'DOCUMENT' | string;
+  extensions: string[];
+  format: string;
+  label: string;
+  maxBytes: number;
+}
+
+export interface FileUploadPolicy {
+  formats: FileFormatPolicy[];
+  maxAudioMb: number;
+  maxDocumentMb: number;
+  /** 每份报告单文件数上限（A 默认 10、C 50，租户参数 file.upload.max.files.per.report） */
+  maxFilesPerReport: number;
+}
