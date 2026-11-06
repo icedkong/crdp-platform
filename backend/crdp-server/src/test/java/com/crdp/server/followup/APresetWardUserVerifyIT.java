@@ -360,16 +360,27 @@ class APresetWardUserVerifyIT {
                                     "SELECT COUNT(*) FROM ward WHERE code LIKE 'W-A-%'",
                                     Integer.class),
                             "demob 预置病区数");
+                    // demob 侧账号的角色与负责病区在本库解析（行落在各自租户库；跨库无关联，
+                    // 不比对自增 id——CI 全新库两侧插入序列一致、id 巧合相等，664f14c 同口径）
+                    assertEquals(
+                            1,
+                            jdbc.queryForObject(
+                                    "SELECT COUNT(*) FROM sys_user_role ur"
+                                            + " JOIN sys_user u ON u.id = ur.user_id"
+                                            + " JOIN sys_role r ON r.id = ur.role_id"
+                                            + " WHERE u.username = 'a.cvs1.doc01' AND r.code = 'A_WARD_DOCTOR'",
+                                    Integer.class),
+                            "demob 侧角色分配落在 demob 库");
+                    assertEquals(
+                            1,
+                            jdbc.queryForObject(
+                                    "SELECT COUNT(*) FROM sys_user_ward uw"
+                                            + " JOIN sys_user u ON u.id = uw.user_id"
+                                            + " JOIN ward w ON w.id = uw.ward_id"
+                                            + " WHERE u.username = 'a.cvs1.doc01' AND w.code = 'W-A-CVS1'",
+                                    Integer.class),
+                            "demob 侧负责病区落在 demob 库");
                 });
-        long demoaId = userIdOf("a.cvs1.doc01");
-        long demobId =
-                runInTenant(
-                        "demob",
-                        () ->
-                                jdbc.queryForObject(
-                                        "SELECT id FROM sys_user WHERE username = 'a.cvs1.doc01'",
-                                        Long.class));
-        assertTrue(demoaId != demobId, "同一账号在两库是不同用户行（每院独立库）");
     }
 
     // ---------------------------------------------------------------- 辅助
