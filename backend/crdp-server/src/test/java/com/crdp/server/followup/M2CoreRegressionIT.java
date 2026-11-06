@@ -374,6 +374,9 @@ class M2CoreRegressionIT {
     @Order(6)
     void item6_notificationReceivedInDoctorInbox() {
         String doctor = hospitalToken("demoa", "doctor.demo");
+        // 标准⑤落库的跟进事件可能已被 5 秒一次的 outbox 定时分发（OutboxDispatchScheduler）
+        // 先行消费——先看投递是否已发生，未读断言按两种时序分别收敛（竞态容错）
+        boolean alreadyDelivered = inboxHasTarget(doctor, followupTaskId);
         long unreadBefore = unreadCount(doctor);
 
         // 分发 → 通知规则引擎消费跟进事件（负责人已认领 → 通知医生本人）
@@ -389,7 +392,11 @@ class M2CoreRegressionIT {
                 patientName.startsWith("周") && !patientName.contains("随访"),
                 "患者姓名脱敏：" + patientName);
         assertEquals(Boolean.FALSE, message.get("read"), "新消息未读");
-        assertEquals(unreadBefore + 1, unreadCount(doctor), "未读数 +1（本链路新消息）");
+        if (alreadyDelivered) {
+            assertEquals(unreadBefore, unreadCount(doctor), "定时分发已先行投递：未读数不重复 +1");
+        } else {
+            assertEquals(unreadBefore + 1, unreadCount(doctor), "未读数 +1（本链路新消息）");
+        }
 
         // 标已读 → 未读回落
         assertEquals(
@@ -640,6 +647,20 @@ class M2CoreRegressionIT {
                 String.class,
                 eventType,
                 patientId);
+    }
+
+    /** 通知中心 HTTP：落点为该任务的本人消息是否已存在（定时分发可能先行投递，竞态容错用）。 */
+    private boolean inboxHasTarget(String token, long taskId) {
+        Map<?, ?> page = get("/api/hospital/notify/messages?pageSize=50", token);
+        for (Map<?, ?> message : (List<Map<?, ?>>) (List<?>) data(page).get("items")) {
+            Map<?, ?> target = (Map<?, ?>) message.get("target");
+            if (target != null
+                    && "TASK".equals(target.get("type"))
+                    && String.valueOf(taskId).equals(String.valueOf(target.get("id")))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** 通知中心 HTTP：找落点为该任务的本人消息（找不到 fail）。 */
