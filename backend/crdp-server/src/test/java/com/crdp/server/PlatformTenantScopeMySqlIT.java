@@ -416,7 +416,8 @@ class PlatformTenantScopeMySqlIT {
     void revokeShrinksTenantRolesAndSessions() {
         connect();
         // 前置归一（本机持久库重跑用；CI 全新库天然满足）：补齐种子授予——22 六角色、
-        // 223 隐藏路由（管理员与随访医生，followup V55 / 平台库种子 V106，E15-T02）。
+        // 223 隐藏路由（管理员与随访医生，followup V55 / 平台库种子 V106，E15-T02）；
+        // E23-T04 起医院 A 预置角色也持 22（病区医生 / 随访员 / 科主任），病区医生与随访员另持 223。
         // 上一次运行到 Order(3) 会把 22/223 一并收回，重跑前先还原。
         root.update(
                 """
@@ -429,7 +430,12 @@ class PlatformTenantScopeMySqlIT {
                       UNION ALL SELECT 'FOLLOWUP_NURSE', 22
                       UNION ALL SELECT 'FOLLOWUP_DUTY_DOCTOR', 22
                       UNION ALL SELECT 'FOLLOWUP_RESEARCHER', 22
-                      UNION ALL SELECT 'FOLLOWUP_CRC', 22) m ON m.code = r.code
+                      UNION ALL SELECT 'FOLLOWUP_CRC', 22
+                      UNION ALL SELECT 'A_WARD_DOCTOR', 223
+                      UNION ALL SELECT 'A_WARD_DOCTOR', 22
+                      UNION ALL SELECT 'A_FOLLOWUP_NURSE', 223
+                      UNION ALL SELECT 'A_FOLLOWUP_NURSE', 22
+                      UNION ALL SELECT 'A_DIRECTOR', 22) m ON m.code = r.code
                 WHERE NOT EXISTS (SELECT 1 FROM t_demoa.sys_role_menu rm
                                   WHERE rm.role_id = r.id AND rm.menu_id = m.menu_id)
                 """);
@@ -465,10 +471,13 @@ class PlatformTenantScopeMySqlIT {
                         .orElseThrow();
         assertEquals("followup:task:view", taskRemoved.get("permCode"));
         List<Map<String, Object>> roles = (List<Map<String, Object>>) preview.get("affectedRoles");
-        // E06-T05 起，随访模板（随访员 / 责任医生 / 研究者 / CRC）默认也持有 22，共 6 个角色受影响
-        assertEquals(6, roles.size(), "TENANT_ADMIN、FOLLOWUP_DOCTOR 与 4 个随访模板都持有 22");
+        // E06-T05 起，随访模板（随访员 / 责任医生 / 研究者 / CRC）默认也持有 22；
+        // E23-T04 起，医院 A 预置角色（病区医生 / 随访员 / 科主任）也持有 22，共 9 个角色受影响
+        assertEquals(9, roles.size(), "TENANT_ADMIN、FOLLOWUP_DOCTOR、4 个随访模板与 3 个 A 预置角色都持有 22");
         assertEquals(
-                2, ((Number) preview.get("affectedUserCount")).intValue(), "模板无成员，受影响用户仍是 2 人");
+                30,
+                ((Number) preview.get("affectedUserCount")).intValue(),
+                "2 名演示用户 + 28 名 A 预置用户（16 病区医生 + 8 随访员 + 4 科主任）受影响");
 
         // 保存（PLT-SCOPE-006、008）：自动收回租户库角色授权 + 受影响用户权限版本递增 + 变更记录
         Map<String, Object> change =
@@ -484,11 +493,14 @@ class PlatformTenantScopeMySqlIT {
                         .stream().map(n -> ((Number) n).intValue()).sorted().toList(),
                 "收回 22 连带其下隐藏路由 223（E15-T02 随访录入）");
         assertEquals(
-                8,
+                13,
                 ((Number) change.get("revokedGrants")).intValue(),
-                "6 个角色（含 4 个模板）的 22 授权同步收回；E15-T02 起 TENANT_ADMIN / FOLLOWUP_DOCTOR 另持 223");
-        assertEquals(6, ((Number) change.get("revokedRoles")).intValue());
-        assertEquals(2, ((Number) change.get("refreshedUsers")).intValue(), "模板无成员，权限版本只递增 2 名用户");
+                "9 个角色的 22 授权同步收回；TENANT_ADMIN / FOLLOWUP_DOCTOR / 病区医生 / 随访员另持 223");
+        assertEquals(9, ((Number) change.get("revokedRoles")).intValue());
+        assertEquals(
+                30,
+                ((Number) change.get("refreshedUsers")).intValue(),
+                "2 名演示用户 + 28 名 A 预置用户权限版本递增");
         assertEquals(
                 0,
                 root.queryForObject(
