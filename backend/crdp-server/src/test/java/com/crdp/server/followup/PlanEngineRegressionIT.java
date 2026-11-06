@@ -67,6 +67,10 @@ class PlanEngineRegressionIT {
             runInTenant(
                     tenant,
                     () -> {
+                        // E23-T02 预置计划常驻自动入组（A_ANNUAL_FU_PLAN）：本类按「单计划世界」断言，
+                        // 先关掉它的自动入组；预置规格与行为由 APresetPlanSqlTest / APresetPlanVerifyIT 锁定
+                        jdbc.update(
+                                "UPDATE fu_plan SET auto_enroll = 0 WHERE code = 'A_ANNUAL_FU_PLAN'");
                         AuditTableMaintenance.delete(
                                 jdbc,
                                 "DELETE FROM aud_log WHERE (event_type LIKE 'PLAN_%'"
