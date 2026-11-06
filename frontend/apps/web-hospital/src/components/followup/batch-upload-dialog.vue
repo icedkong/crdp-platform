@@ -34,6 +34,8 @@ import {
   fetchCatalogReportTypes,
   fetchReportLocations,
 } from '#/api/core/report';
+import { usePermission } from '#/reference/use-permission';
+import { useWatermarkViewer } from '#/reference/use-watermark-viewer';
 
 import {
   acceptBatchFiles,
@@ -42,8 +44,10 @@ import {
   buildBatchPayload,
   validateBatchForm,
 } from './batch-upload-logic';
+import { downloadFileById } from './file-download';
 import LocationPicker from './location-picker.vue';
 import { initialLocations, sameReportLocation } from './report-dialog-logic';
+import WatermarkPreview from './watermark-preview.vue';
 
 /**
  * E16-T03 / A-ATT-014、C-SCAN-007（pages.md §6.3 批量上传，仅桌面 / 平板）：
@@ -83,6 +87,41 @@ const expandedUid = ref<null | string>(null);
 const pendingFiles = new Map<string, File>();
 const uploadingAny = ref(false);
 const submitting = ref(false);
+
+// ------------------------------ E16-T06 全屏查看器（A-ATT-005 / C-SCAN-006 旋转）
+
+const { hasPermission } = usePermission();
+const watermarkViewer = useWatermarkViewer();
+const canDownloadFile = computed(() => hasPermission('followup:scan:download'));
+const previewOpen = ref(false);
+const previewIndex = ref(0);
+
+/** 已上传完成的行 → 查看器文件清单（按提交顺序）。 */
+const previewFiles = computed(() =>
+  rows.value
+    .filter((row) => row.status === 'done' && row.fileId)
+    .map((row) => ({
+      fileId: row.fileId as string,
+      name: row.name,
+    })),
+);
+
+/** 「预览」→ 全屏查看器打开该行文件（水印不可关闭；下载按 followup:scan:download）。 */
+function openFilePreview(row: BatchFileRow) {
+  const index = previewFiles.value.findIndex(
+    (item) => item.fileId === row.fileId,
+  );
+  if (index === -1) return;
+  previewIndex.value = index;
+  previewOpen.value = true;
+}
+
+async function handlePreviewDownload(fileId: number | string) {
+  const ok = await downloadFileById(fileId);
+  if (!ok) {
+    message.error('下载失败，请稍后重试');
+  }
+}
 const showErrors = ref(false);
 
 const currentType = computed(
@@ -566,6 +605,15 @@ defineExpose({
               </span>
             </template>
             <template v-else-if="column.dataIndex === 'actions'">
+              <!-- E16-T06：上传完成后可全屏预览（缩放 / 旋转 / 翻转 / 水印，C-SCAN-006） -->
+              <Button
+                v-if="record.status === 'done' && record.fileId"
+                size="small"
+                type="link"
+                @click="openFilePreview(record as BatchFileRow)"
+              >
+                预览
+              </Button>
               <Button
                 v-if="record.status === 'failed'"
                 size="small"
@@ -620,6 +668,17 @@ defineExpose({
         </Button>
       </div>
     </Form>
+    <!-- E16-T06 全屏查看器：上传完成后预览（含旋转，C-SCAN-006；水印不可关闭） -->
+    <WatermarkPreview
+      :can-download="canDownloadFile"
+      :files="previewFiles"
+      :index="previewIndex"
+      :open="previewOpen"
+      :viewer="watermarkViewer"
+      @download="handlePreviewDownload"
+      @update:index="previewIndex = $event"
+      @update:open="previewOpen = $event"
+    />
   </Modal>
 </template>
 

@@ -27,7 +27,11 @@ import {
 
 import { getFilePreviewUrl } from '#/api/core/file';
 import { searchReports } from '#/api/core/report';
+import { downloadFileById } from '#/components/followup/file-download';
+import WatermarkPreview from '#/components/followup/watermark-preview.vue';
 import { useBreakpoint } from '#/reference/use-breakpoint';
+import { usePermission } from '#/reference/use-permission';
+import { useWatermarkViewer } from '#/reference/use-watermark-viewer';
 
 import {
   buildSearchPayload,
@@ -39,6 +43,7 @@ import {
   PAGE_SIZE,
   patientReportsPath,
   patientSubText,
+  previewFilesOf,
   TABLET_COLUMNS,
   thumbnailOf,
 } from './list-logic';
@@ -173,6 +178,34 @@ function digitizeText(row: ReportSearchRow): null | string {
 function openPatientReports(row: ReportSearchRow) {
   window.open(patientReportsPath(row.patientId), '_blank');
 }
+
+// ---------------------------------------------------------------- E16-T06 全屏查看器（A-ATT-005）
+
+const { hasPermission } = usePermission();
+const viewer = useWatermarkViewer();
+/** 下载是敏感权限（followup:scan:download，A-ATT-006）：无权限时查看器不显示下载按钮。 */
+const canDownloadFile = computed(() => hasPermission('followup:scan:download'));
+
+const previewOpen = ref(false);
+const previewFiles = ref<
+  Array<{ fileId: string; format: string; name: string }>
+>([]);
+
+/** 点缩略图 / 文件类型图标 → 全屏查看器打开首附件（缩放 / 旋转 / 翻转 / 水印）。 */
+function openPreview(row: ReportSearchRow) {
+  const files = previewFilesOf(row);
+  if (!files) return;
+  previewFiles.value = files;
+  previewOpen.value = true;
+}
+
+/** 查看器「下载」：换 5 分钟签名链接（后端写 DOWNLOAD 审计）交给浏览器。 */
+async function handlePreviewDownload(fileId: number | string) {
+  const ok = await downloadFileById(fileId);
+  if (!ok) {
+    message.error('下载失败，请稍后重试');
+  }
+}
 </script>
 
 <template>
@@ -290,18 +323,24 @@ function openPatientReports(row: ReportSearchRow) {
           @click="openPatientReports(row)"
         >
           <div class="card-line">
+            <!-- 点缩略图 / 类型图标 → 全屏查看器（E16-T06）；点卡片其余区域进患者页签 -->
             <img
               v-if="thumbnailSrc(row)"
-              alt=""
-              class="card-thumb"
+              alt="打开预览"
+              class="card-thumb clickable"
+              data-testid="report-card-thumb"
               loading="lazy"
               :src="thumbnailSrc(row)"
+              @click.stop="openPreview(row)"
             />
-            <span v-else class="card-file">
-              {{
-                thumbView(row)?.kind === 'file' ? thumbView(row)?.label : '—'
-              }}
+            <span
+              v-else-if="thumbView(row)?.kind === 'file'"
+              class="card-file clickable"
+              @click.stop="openPreview(row)"
+            >
+              {{ thumbView(row)?.label }}
             </span>
+            <span v-else class="card-file">—</span>
             <span class="card-patient">
               {{ row.patientName }}
               <small>{{ patientSubText(row) }}</small>
@@ -349,16 +388,20 @@ function openPatientReports(row: ReportSearchRow) {
       >
         <template #bodyCell="{ column, record }">
           <template v-if="column.dataIndex === 'thumb'">
+            <!-- 点缩略图 / 类型图标 → 全屏查看器（E16-T06，A-ATT-005） -->
             <img
               v-if="thumbnailSrc(record)"
-              alt=""
-              class="thumb"
+              alt="打开预览"
+              class="thumb clickable"
+              data-testid="report-row-thumb"
               loading="lazy"
               :src="thumbnailSrc(record)"
+              @click="openPreview(record)"
             />
             <span
               v-else-if="thumbView(record)?.kind === 'file'"
-              class="file-badge"
+              class="file-badge clickable"
+              @click="openPreview(record)"
             >
               {{ thumbView(record)?.label }}
             </span>
@@ -420,9 +463,19 @@ function openPatientReports(row: ReportSearchRow) {
       <p class="hint">
         共
         {{ total }}
-        份；缩略图取首附件。「未指定位置」的报告单可在患者档案内补指定位置（随修改位置功能开放）。
+        份；缩略图取首附件，点击可在全屏查看器打开（带水印）。「未指定位置」的报告单可在患者档案内补指定位置（随修改位置功能开放）。
       </p>
     </Card>
+
+    <!-- E16-T06 / A-ATT-005：全屏查看器（缩放 / 旋转 / 翻转 / 翻页 / 水印，不可关闭） -->
+    <WatermarkPreview
+      :can-download="canDownloadFile"
+      :files="previewFiles"
+      :open="previewOpen"
+      :viewer="viewer"
+      @download="handlePreviewDownload"
+      @update:open="previewOpen = $event"
+    />
   </Page>
 </template>
 
@@ -441,6 +494,15 @@ function openPatientReports(row: ReportSearchRow) {
   height: 64px;
   object-fit: cover;
   border-radius: 4px;
+}
+
+/* 点缩略图 / 类型图标打开全屏查看器（E16-T06） */
+.clickable {
+  cursor: pointer;
+}
+
+.clickable:hover {
+  opacity: 0.8;
 }
 
 .file-badge {

@@ -6,6 +6,7 @@ import type { ReportLocationInput, ReportLocationNode } from '@crdp/api';
 
 import { mount } from '@vue/test-utils';
 
+import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import BatchUploadDialog from './batch-upload-dialog.vue';
@@ -16,6 +17,7 @@ const fetchReportLocations = vi.fn();
 const batchCreateReports = vi.fn();
 const uploadFile = vi.fn();
 const fetchUploadPolicy = vi.fn();
+const getFilePreviewUrl = vi.fn();
 
 vi.mock('#/api/core/report', () => ({
   batchCreateReports: (...args: unknown[]) => batchCreateReports(...args),
@@ -27,6 +29,7 @@ vi.mock('#/api/core/report', () => ({
 }));
 vi.mock('#/api/core/file', () => ({
   fetchUploadPolicy: (...args: unknown[]) => fetchUploadPolicy(...args),
+  getFilePreviewUrl: (...args: unknown[]) => getFilePreviewUrl(...args),
   uploadFile: (...args: unknown[]) => uploadFile(...args),
 }));
 
@@ -100,6 +103,8 @@ function flush(frames = 3) {
 }
 
 async function mountDialog(props: Record<string, unknown> = {}) {
+  // E16-T06：对话框内 WatermarkPreview 需要 userStore（水印查看人来自 me）
+  setActivePinia(createPinia());
   fetchCatalogReportTypes.mockResolvedValue(TYPES);
   fetchCatalogReportNames.mockResolvedValue(NAMES);
   fetchReportLocations.mockResolvedValue(TREE);
@@ -290,5 +295,52 @@ describe('e16-t03 BatchUploadDialog（批量上传）', () => {
     await clickSubmit();
     expect(document.body.textContent ?? '').toContain('请至少选择 1 个位置');
     expect(batchCreateReports).not.toHaveBeenCalled();
+  });
+
+  // --------------------------- E16-T06 全屏查看器（A-ATT-005 / C-SCAN-006 旋转）
+
+  it('上传完成的行「预览」→ 全屏查看器打开（图片直出、水印层常在）', async () => {
+    getFilePreviewUrl.mockImplementation(async (fileId: string) => ({
+      expiresAt: 4_102_444_800,
+      format: 'png',
+      inlinePlayable: true,
+      mime: 'image/png',
+      originalName: `${fileId}.png`,
+      url: `/api/hospital/files/preview/token-${fileId}`,
+    }));
+    const wrapper = await mountDialog();
+    const vm = wrapper.vm as DialogVm;
+    await vm.onTypeChange('LAB');
+    await flush(1);
+    vm.onNameChange('12');
+    vm.enqueueFiles(files(1));
+    uploadFile.mockImplementation(async (file: File) => ({
+      fileId: `f-${file.name}`,
+      format: 'png',
+      mime: 'image/png',
+      originalName: file.name,
+      pages: 1,
+      sha256: 'hash',
+      size: file.size,
+    }));
+    await vm.startUpload();
+    await flush(2);
+
+    const previewButton = [...document.body.querySelectorAll('button')].find(
+      (item) => (item.textContent ?? '').replaceAll(' ', '').includes('预览'),
+    );
+    expect(previewButton).toBeTruthy();
+    previewButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flush();
+
+    const fullscreen = document.body.querySelector(
+      '[data-testid="fullscreen-viewer"]',
+    );
+    expect(fullscreen).toBeTruthy();
+    expect(fullscreen?.querySelector('img')?.getAttribute('src')).toBe(
+      '/api/hospital/files/preview/token-f-扫描件-0.png',
+    );
+    // 水印不可关闭（遮罩根上恒有水印层）
+    expect(fullscreen?.querySelector('[data-watermark]')).toBeTruthy();
   });
 });

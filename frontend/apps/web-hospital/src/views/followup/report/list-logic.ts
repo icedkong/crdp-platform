@@ -95,6 +95,24 @@ export function thumbnailOf(row: ReportSearchRow): ThumbnailKind {
   return { kind: 'file', label: row.firstFile.format.toUpperCase() };
 }
 
+/**
+ * E16-T06 / A-ATT-005：缩略图（或文件类型图标）点击 → 全屏查看器打开首附件
+ * （WatermarkPreview 的 files；列表行只带 firstFile，其余附件随报告单详情接口）。
+ * 无附件返回 null（点击不打开）。
+ */
+export function previewFilesOf(
+  row: ReportSearchRow,
+): Array<{ fileId: string; format: string; name: string }> | null {
+  if (!row.firstFile) return null;
+  return [
+    {
+      fileId: row.firstFile.fileId,
+      format: row.firstFile.format,
+      name: row.name ?? row.typeName,
+    },
+  ];
+}
+
 /** 后端时间串（「2026-10-28 09:30:00[.fff]」或 ISO T 分隔）→「YYYY-MM-DD HH:mm」。 */
 export function formatUploadedAt(value: string): string {
   const normalized = value.replaceAll('T', ' ').replaceAll(' ', 'T');
