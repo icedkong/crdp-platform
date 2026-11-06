@@ -45,6 +45,7 @@ public class FileDownloadService {
     private final FileDownloadProperties properties;
     private final StringRedisTemplate redis;
     private final FilePreviewService.ContactAudioScopePort contactScope;
+    private final ReportFileScopePort reportScope;
 
     public FileDownloadService(
             SysFileMapper files,
@@ -53,7 +54,8 @@ public class FileDownloadService {
             AuditLogger audit,
             FileDownloadProperties properties,
             StringRedisTemplate redis,
-            FilePreviewService.ContactAudioScopePort contactScope) {
+            FilePreviewService.ContactAudioScopePort contactScope,
+            ReportFileScopePort reportScope) {
         this.files = files;
         this.storage = storage;
         this.signer = signer;
@@ -61,6 +63,7 @@ public class FileDownloadService {
         this.properties = properties;
         this.redis = redis;
         this.contactScope = contactScope;
+        this.reportScope = reportScope;
     }
 
     /** 签发结果：短时签名链接 + 展示所需字段（前端不缓存，用完即弃）。 */
@@ -75,7 +78,10 @@ public class FileDownloadService {
     /** 取流结果：原始字节 + MIME + 文件名（附件返回，不缓存）。 */
     public record DownloadContent(byte[] body, String mime, String originalName) {}
 
-    /** 签发下载短时链接（登录医院会话 + followup:scan:download，敏感权限在控制器注解校验）； 文件不存在 / 已删除 → 40400（不暴露存在性）。 */
+    /**
+     * 签发下载短时链接（登录医院会话 + followup:scan:download，敏感权限在控制器注解校验）； 文件不存在 / 已删除 → 40400（不暴露存在性）。
+     * E16-T09：挂在报告单上的文件按患者数据范围校验（OQ-62① 的报告单部分），审计描述带「哪份报告单的哪个文件」 （A-ATT-006：谁、何时、哪份报告单的哪个文件）。
+     */
     public DownloadGrant downloadUrl(long fileId) {
         SessionPrincipal principal = CurrentSession.requireHospital();
         SysFileRow row = files.find(fileId);
@@ -84,6 +90,8 @@ public class FileDownloadService {
         }
         // E15-T04：挂在沟通记录上的录音按患者数据范围校验（A-FU-025 下载走敏感权限 + 患者范围双闸）
         contactScope.requireAudioPlayable(fileId);
+        // E16-T09：挂在报告单上的文件按患者数据范围校验（越范围 40400），并取报告单上下文进审计描述
+        ReportFileScopePort.ReportFileView report = reportScope.requireReportFileReadable(fileId);
         relativeKeyOf(row.getObjectKey(), principal.tenantCode());
         Instant expiresAt = Instant.now().plusSeconds(properties.effectiveTtlSeconds());
         String token = signer.sign(principal.tenantId(), principal.tenantCode(), fileId, expiresAt);
@@ -98,7 +106,8 @@ public class FileDownloadService {
                                         + row.getOriginalName()
                                         + "（真实类型 "
                                         + row.getFormatCode()
-                                        + "）")
+                                        + "）"
+                                        + reportSuffix(report))
                         .success()
                         .build());
         log.info(
@@ -149,6 +158,18 @@ public class FileDownloadService {
     }
 
     // ---------------------------------------------------------------- 私有
+
+    /** 报告单上下文后缀（A-ATT-006 审计「哪份报告单的哪个文件」）：未挂报告单（沟通录音等）为空串。 */
+    private static String reportSuffix(ReportFileScopePort.ReportFileView report) {
+        if (report == null) {
+            return "";
+        }
+        String label =
+                report.nameSnapshot() == null
+                        ? report.typeName()
+                        : report.typeName() + " · " + report.nameSnapshot();
+        return "，报告单：" + label + "（#" + report.reportId() + "）";
+    }
 
     /**
      * 校验台账对象键确在签名租户前缀下并剥出相对键（与 FilePreviewService 同一隔离规则）： 前缀对不上说明签名与台账不是同一租户 → 40400（E10-T02

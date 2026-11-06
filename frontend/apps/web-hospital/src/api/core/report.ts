@@ -12,6 +12,7 @@ import type {
   ReportCatalogType,
   ReportCreatedView,
   ReportCreateRequest,
+  ReportDeletedView,
   ReportLocationNode,
   ReportSearchPage,
   ReportSearchRequest,
@@ -80,5 +81,35 @@ export function batchCreateReports(payload: ReportBatchCreateRequest) {
   return requestClient.post<ReportBatchCreatedView>(
     apiPath('/followup/reports/batch-create'),
     payload,
+  );
+}
+
+// ---------------------------------------------------------------- E16-T09 删除（A-ATT-007 / C-SCAN-016）
+
+/**
+ * 删除整份报告单（软删除）：reason 必填（40001）；附件台账一并软删（预览 / 下载随即
+ * 40400），数据保留并写 RPT_DELETE 审计；越范围 40400、重复删除 40400。权限
+ * followup:scan:delete（按钮 plt_menu 233）。
+ */
+export function deleteReport(reportId: number | string, reason: string) {
+  return requestClient.delete<ReportDeletedView>(
+    apiPath(`/followup/reports/${reportId}`),
+    { data: { reason } },
+  );
+}
+
+/**
+ * 删除报告单中的单个文件（软删除）：报告单保留、fileCount 递减，写 RPT_FILE_DELETE
+ * 审计；文件不在该报告单 / 已删 40400。逐文件入口随报告单详情面板（E16-T14 附件导航
+ * ⋮ 菜单）开放，接口先行。
+ */
+export function deleteReportFile(
+  reportId: number | string,
+  fileId: number | string,
+  reason: string,
+) {
+  return requestClient.delete<ReportDeletedView>(
+    apiPath(`/followup/reports/${reportId}/files/${fileId}`),
+    { data: { reason } },
   );
 }

@@ -339,6 +339,19 @@ class MenuSyncServiceTest {
                         "followup:scan:download",
                         20,
                         "ENABLED"),
+                // E16-T09 删除报告单按钮（followup:scan:delete，平台库 V55 同构）：
+                // 报告单菜单下的非敏感 followup 项（普通权限，进授权范围模板）
+                manifestRow(
+                        233L,
+                        23L,
+                        "BUTTON",
+                        "删除报告单",
+                        null,
+                        null,
+                        null,
+                        "followup:scan:delete",
+                        30,
+                        "ENABLED"),
                 // E13-T08 转病区按钮（平台库 V40 同构）：患者档案菜单下的 followup 按钮
                 manifestRow(
                         216L,

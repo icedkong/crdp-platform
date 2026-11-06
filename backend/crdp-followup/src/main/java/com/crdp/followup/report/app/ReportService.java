@@ -17,6 +17,7 @@ import com.crdp.followup.report.infra.mapper.ReportMapper.ReportRow;
 import com.crdp.form.record.app.FormService;
 import com.crdp.framework.audit.AuditEntry;
 import com.crdp.framework.audit.AuditLogger;
+import com.crdp.framework.audit.AuditResult;
 import com.crdp.framework.security.CurrentSession;
 import com.crdp.framework.web.ApiException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -312,6 +313,144 @@ public class ReportService {
                 locations.size(),
                 fileIds.size());
         return view;
+    }
+
+    // ---------------------------------------------------------------- 删除（E16-T09 /
+    // A-ATT-007、C-SCAN-016）
+
+    /** 删除请求：原因必填、≤ 255 字（A-ATT-007「须填写原因」）。 */
+    public record DeleteRequest(String reason) {}
+
+    /** 删除结果（报告单与单个文件同形；前端随后刷新患者内清单）。 */
+    public record DeletedView(String id, String status) {}
+
+    /**
+     * 删除整份报告单（软删除，A-ATT-007 / C-SCAN-016）：原因必填（40001）→ 患者数据范围校验 （越范围 / 不存在 40400 不暴露存在，写 DENIED
+     * 审计）→ status=DELETED + 原因 / 删除人 / 删除时间 落列（followup V65），附件台账 sys_file 一并软删（预览 / 下载随即
+     * 40400）；数据长期保留、无物理删除。 审计 RPT_DELETE 带原因与附件计数。
+     */
+    @Transactional
+    public DeletedView delete(long reportId, DeleteRequest request) {
+        String reason = requireDeleteReason(request == null ? null : request.reason());
+        ReportMapper.ReportHeadRow report = requireReportInScope(reportId, "RPT_DELETE");
+        List<ReportMapper.ReportFileRow> fileRows = mapper.fileRowsOfReport(reportId);
+        long operator = CurrentSession.requireHospital().userId();
+        if (mapper.softDeleteReport(reportId, reason, operator) == 0) {
+            // 并发兜底：校验与更新之间被他人删除
+            throw new ApiException(409, 40901, "报告单已被删除，无需重复操作");
+        }
+        for (ReportMapper.ReportFileRow file : fileRows) {
+            files.markDeleted(file.fileId());
+        }
+        audit.append(
+                AuditEntry.operation("followup", "RPT_DELETE")
+                        .objectType("REPORT")
+                        .objectId(String.valueOf(reportId))
+                        .description(
+                                "删除报告单："
+                                        + report.typeName()
+                                        + (report.nameSnapshot() == null
+                                                ? ""
+                                                : " · " + report.nameSnapshot())
+                                        + "（报告时间 "
+                                        + report.reportDate()
+                                        + "），附件 "
+                                        + fileRows.size()
+                                        + " 个；原因："
+                                        + reason)
+                        .beforeJson("{\"status\":\"NORMAL\"}")
+                        .afterJson(
+                                "{\"status\":\"DELETED\",\"reason\":\""
+                                        + reason
+                                        + "\",\"fileCount\":"
+                                        + fileRows.size()
+                                        + "}")
+                        .result(AuditResult.SUCCESS)
+                        .build());
+        log.info(
+                "报告单已删除（E16-T09）：reportId={} patientId={} fileCount={} operator={}",
+                reportId,
+                report.patientId(),
+                fileRows.size(),
+                operator);
+        return new DeletedView(String.valueOf(reportId), "DELETED");
+    }
+
+    /**
+     * 删除报告单中的单个文件（软删除，A-ATT-007）：报告单保留、只软删该文件的 sys_file 台账 （关联行保留作归属台账；预览 / 下载随即 40400）；文件不在该报告单 /
+     * 已删 40400。审计 RPT_FILE_DELETE 带报告单（类型 · 名称）与文件名、原因。
+     */
+    @Transactional
+    public DeletedView deleteFile(long reportId, long fileId, DeleteRequest request) {
+        String reason = requireDeleteReason(request == null ? null : request.reason());
+        ReportMapper.ReportHeadRow report = requireReportInScope(reportId, "RPT_FILE_DELETE");
+        ReportMapper.ReportFileRow file = mapper.findFileOfReport(reportId, fileId);
+        if (file == null) {
+            // 不区分「不在该报告单 / 已删除」，统一 40400 不暴露存在
+            throw new ApiException(404, 40400, "文件不存在或不在该报告单中");
+        }
+        files.markDeleted(fileId);
+        audit.append(
+                AuditEntry.operation("followup", "RPT_FILE_DELETE")
+                        .objectType("REPORT")
+                        .objectId(String.valueOf(reportId))
+                        .description(
+                                "删除报告单附件："
+                                        + report.typeName()
+                                        + (report.nameSnapshot() == null
+                                                ? ""
+                                                : " · " + report.nameSnapshot())
+                                        + " · "
+                                        + file.originalName()
+                                        + "；原因："
+                                        + reason)
+                        .afterJson(
+                                "{\"fileId\":"
+                                        + fileId
+                                        + ",\"status\":\"DELETED\",\"reason\":\""
+                                        + reason
+                                        + "\"}")
+                        .result(AuditResult.SUCCESS)
+                        .build());
+        log.info(
+                "报告单附件已删除（E16-T09）：reportId={} fileId={} operator={}",
+                reportId,
+                fileId,
+                CurrentSession.requireHospital().userId());
+        return new DeletedView(String.valueOf(reportId), "DELETED");
+    }
+
+    /** 删除原因必填（去首尾空白后非空；≤ 255 字与列宽一致）。 */
+    private static String requireDeleteReason(String raw) {
+        String reason = trimToNull(raw);
+        if (reason == null) {
+            throw bad("请填写删除原因");
+        }
+        if (reason.length() > 255) {
+            throw bad("删除原因不能超过 255 字");
+        }
+        return reason;
+    }
+
+    /**
+     * 删除入口的患者数据范围校验（@DataScope 出行的 findReport）：越范围 / 不存在 / 已删一律 40400， 并按删除患者同口径写 DENIED 审计（action
+     * 传入 RPT_DELETE / RPT_FILE_DELETE）。
+     */
+    private ReportMapper.ReportHeadRow requireReportInScope(long reportId, String deniedAction) {
+        ReportMapper.ReportHeadRow report = mapper.findReport(reportId);
+        if (report == null) {
+            audit.append(
+                    AuditEntry.operation("followup", deniedAction)
+                            .objectType("REPORT")
+                            .objectId(String.valueOf(reportId))
+                            .description("删除报告单被拒绝：报告单不在操作者数据范围内或已删除")
+                            .result(AuditResult.DENIED)
+                            .errorCode(40400)
+                            .reason("OUT_OF_SCOPE")
+                            .build());
+            throw new ApiException(404, 40400, "报告单不存在或不在您的数据范围内");
+        }
+        return report;
     }
 
     // ---------------------------------------------------------------- 批量上传（E16-T03 /

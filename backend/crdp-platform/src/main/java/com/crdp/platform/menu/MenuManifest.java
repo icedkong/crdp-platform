@@ -195,6 +195,21 @@ public class MenuManifest {
                             "followup:scan:download",
                             null,
                             20),
+                    // E16-T09 / A-ATT-007、C-SCAN-016：报告单页签下的删除按钮（平台库 V55 同构）。
+                    // 普通权限（A / C 规格权限表），进授权范围模板、种子 V125 授 TENANT_ADMIN
+                    new MenuManifestItem(
+                            "followup",
+                            "HOSPITAL",
+                            "BUTTON",
+                            "followup:scan:delete",
+                            "FollowupReport",
+                            "删除报告单",
+                            null,
+                            null,
+                            null,
+                            "followup:scan:delete",
+                            null,
+                            30),
                     // E13-T01 / A-PAT-003、C-PAT-001：新建患者隐藏路由（患者档案下，平台库 V37 同构；
                     // hidden 是平台端维护值，不在清单结构字段里）
                     new MenuManifestItem(

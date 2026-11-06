@@ -144,6 +144,14 @@ export interface PatientReportsView {
   scope: 'all' | 'baseline' | 'followup';
 }
 
+// ---------------------------------------------------------------- E16-T09 删除（A-ATT-007 / C-SCAN-016）
+
+/** 删除结果（软删除：status=DELETED，数据保留、写 RPT_DELETE / RPT_FILE_DELETE 审计）。 */
+export interface ReportDeletedView {
+  id: string;
+  status: 'DELETED';
+}
+
 // ---------------------------------------------------------------- E16-T05 全院报告单（A-ATT-016 / C-SCAN-014）
 
 /** 位置筛选（A-ATT-016「位置（含『未指定位置』）」）：不传 = 全部。 */

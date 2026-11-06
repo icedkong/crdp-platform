@@ -48,6 +48,7 @@ public class FilePreviewService {
     private final FilePreviewProperties properties;
     private final StringRedisTemplate redis;
     private final ContactAudioScopePort contactScope;
+    private final ReportFileScopePort reportScope;
 
     public FilePreviewService(
             SysFileMapper files,
@@ -56,7 +57,8 @@ public class FilePreviewService {
             AuditLogger audit,
             FilePreviewProperties properties,
             StringRedisTemplate redis,
-            ContactAudioScopePort contactScope) {
+            ContactAudioScopePort contactScope,
+            ReportFileScopePort reportScope) {
         this.files = files;
         this.storage = storage;
         this.tokens = tokens;
@@ -64,6 +66,7 @@ public class FilePreviewService {
         this.properties = properties;
         this.redis = redis;
         this.contactScope = contactScope;
+        this.reportScope = reportScope;
     }
 
     /**
@@ -96,8 +99,10 @@ public class FilePreviewService {
             throw notFound();
         }
         // E15-T04：挂在沟通记录上的录音按患者数据范围校验（OQ-62① 的沟通录音部分提前收紧）；
-        // 未挂沟通记录的文件维持「登录 + 本院台账」口径，报告单文件的范围随 E16 报告单子域
+        // 未挂沟通记录的文件维持「登录 + 本院台账」口径
         contactScope.requireAudioPlayable(fileId);
+        // E16-T09：挂在报告单上的文件按患者数据范围校验（OQ-62① 的报告单部分——报告单子域已落地）
+        reportScope.requireReportFileReadable(fileId);
         relativeKeyOf(row.getObjectKey(), principal.tenantCode());
         String token = tokens.issue(principal.tenantId(), principal.tenantCode(), fileId);
         audit.append(

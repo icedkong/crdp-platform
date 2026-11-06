@@ -9,6 +9,7 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Options;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
 /**
  * 报告单运行时表 rpt_report / rpt_report_link / rpt_report_file / rpt_indicator_value（E16-T02 /
@@ -177,13 +178,17 @@ public interface ReportMapper {
             """)
     List<LinkRow> linksOfPatient(@Param("patientId") long patientId);
 
-    /** 某患者的附件计数（@DataScope 出行；按报告单分组）。 */
+    /**
+     * 某患者的附件计数（@DataScope 出行；按报告单分组）。文件可见性以 sys_file.status 为准——
+     * 删除单个文件（E16-T09）软删台账后不再计数，关联行保留作归属台账。
+     */
     @DataScope(resource = "patient")
     @Select(
             """
             SELECT f.report_id AS reportId, COUNT(*) AS fileCount
             FROM rpt_report_file f
             JOIN pt_patient pt ON pt.id = f.patient_id AND pt.deleted = 0
+            JOIN sys_file sf ON sf.id = f.file_id AND sf.status <> 'DELETED'
             WHERE f.patient_id = #{patientId}
             GROUP BY f.report_id
             """)
@@ -258,6 +263,82 @@ public interface ReportMapper {
             WHERE p.id = #{patientId} AND p.deleted = 0
             """)
     PatientDatesRow patientDates(@Param("patientId") long patientId);
+
+    // ---------------------------------------------------------------- 删除（E16-T09 /
+    // A-ATT-007、C-SCAN-016）
+
+    /** 报告单附件行（删除整份时连带软删 sys_file；original_name 进审计描述）。 */
+    record ReportFileRow(long fileId, String originalName) {}
+
+    /** 某报告单的全部附件行（删除整份报告单用）。调用方已经 findReport（@DataScope）确认报告单可见， 本句只取附件清单、不吐患者数据。 */
+    @IgnoreScope(
+            reason =
+                    "报告单附件清单（E16-T09 删除）：调用方已经 findReport（@DataScope）确认报告单可见，"
+                            + "只取附件 id 与文件名不吐患者数据")
+    @Select(
+            """
+            SELECT f.file_id AS fileId, sf.original_name AS originalName
+            FROM rpt_report_file f
+            JOIN sys_file sf ON sf.id = f.file_id
+            WHERE f.report_id = #{reportId}
+            ORDER BY f.sort_no, f.id
+            """)
+    List<ReportFileRow> fileRowsOfReport(@Param("reportId") long reportId);
+
+    /**
+     * 报告单的某个附件行（删除单个文件用）：不在该报告单 / 文件已删（sys_file DELETED）→ null。 调用方已经
+     * findReport（@DataScope）确认报告单可见。
+     */
+    @IgnoreScope(
+            reason =
+                    "报告单单附件定位（E16-T09 删除单个文件）：调用方已经 findReport（@DataScope）确认报告单可见，"
+                            + "只取附件 id 与文件名不吐患者数据")
+    @Select(
+            """
+            SELECT f.file_id AS fileId, sf.original_name AS originalName
+            FROM rpt_report_file f
+            JOIN sys_file sf ON sf.id = f.file_id AND sf.status <> 'DELETED'
+            WHERE f.report_id = #{reportId} AND f.file_id = #{fileId}
+            """)
+    ReportFileRow findFileOfReport(@Param("reportId") long reportId, @Param("fileId") long fileId);
+
+    /**
+     * 软删除报告单（E16-T09 / A-ATT-007）：status NORMAL → DELETED，原因 / 删除人 / 删除时间落列 （V65）；0 行更新 =
+     * 并发已被他人删除（40901 由服务层转译）。调用方已经 findReport（@DataScope） 确认报告单可见。
+     */
+    @IgnoreScope(reason = "报告单软删除（E16-T09）：调用方已经 findReport（@DataScope）确认报告单可见（越范围 40400）")
+    @Update(
+            """
+            UPDATE rpt_report
+            SET status = 'DELETED', delete_reason = #{reason}, deleted_by = #{operator},
+                deleted_at = CURRENT_TIMESTAMP(3), updated_by = #{operator}
+            WHERE id = #{id} AND status = 'NORMAL'
+            """)
+    int softDeleteReport(
+            @Param("id") long id, @Param("reason") String reason, @Param("operator") long operator);
+
+    /**
+     * 文件挂的报告单上下文（E16-T09 下载 / 预览权限收紧，OQ-62① 的报告单部分）：归属是事实查询
+     * **不能按数据范围过滤**（越范围文件会被误判为未挂报告单而放行），患者可见性由 ReportFileScopeGuard 显式校验；文件未挂任何在册报告单（含报告单已删）→
+     * null，维持文件服务既有口径。
+     */
+    @IgnoreScope(
+            reason =
+                    "报告单附件归属查找（E16-T09 预览 / 下载范围收紧）：归属是事实查询不能按范围过滤"
+                            + "（越范围文件会被误判为未挂报告单而放行），患者可见性由 ReportFileScopeGuard 显式校验")
+    @Select(
+            """
+            SELECT f.report_id AS reportId, r.patient_id AS patientId, r.type_code AS typeCode,
+                   r.type_name AS typeName, r.name_snapshot AS nameSnapshot
+            FROM rpt_report_file f
+            JOIN rpt_report r ON r.id = f.report_id AND r.status = 'NORMAL'
+            WHERE f.file_id = #{fileId}
+            """)
+    ReportFileContextRow reportFileContext(@Param("fileId") long fileId);
+
+    /** 文件归属报告单的上下文行（下载审计「哪份报告单的哪个文件」，A-ATT-006）。 */
+    record ReportFileContextRow(
+            long reportId, long patientId, String typeCode, String typeName, String nameSnapshot) {}
 
     // ---------------------------------------------------------------- 配置删除守卫（OQ-95②）
 

@@ -89,7 +89,8 @@ class FilePreviewServiceTest {
                         audit,
                         properties,
                         redis,
-                        (FilePreviewService.ContactAudioScopePort) fileId -> {});
+                        (FilePreviewService.ContactAudioScopePort) fileId -> {},
+                        (ReportFileScopePort) fileId -> null);
         lenient().when(redis.opsForValue()).thenReturn(valueOps);
     }
 
@@ -185,7 +186,8 @@ class FilePreviewServiceTest {
                         audit,
                         loose,
                         redis,
-                        (FilePreviewService.ContactAudioScopePort) fileId -> {});
+                        (FilePreviewService.ContactAudioScopePort) fileId -> {},
+                        (ReportFileScopePort) fileId -> null);
         stubRow(row("t/demoa/files/202611/x.pdf", "pdf", "application/pdf", "PENDING"));
         capped.previewUrl(FILE_ID);
         verify(valueOps)
@@ -269,6 +271,34 @@ class FilePreviewServiceTest {
         ApiException error =
                 assertThrows(ApiException.class, () -> service.content(issuedToken(), "10.0.0.8"));
         assertEquals(40400, error.code());
+    }
+
+    // ---------------------------------------------------------------- E16-T09 报告单附件范围（OQ-62①
+    // 报告单部分）
+
+    /** 挂在越范围患者报告单上的文件：预览范围守卫 40400 → 不签发、不写审计（不暴露存在）。 */
+    @Test
+    void previewOfReportFileOutOfScopeRejected() {
+        stubRow(row("t/demoa/files/202611/x.pdf", "pdf", "application/pdf", "ATTACHED"));
+        FilePreviewProperties properties = new FilePreviewProperties();
+        properties.setTtlSeconds(300);
+        FilePreviewService withReport =
+                new FilePreviewService(
+                        files,
+                        storage,
+                        tokens,
+                        audit,
+                        properties,
+                        redis,
+                        (FilePreviewService.ContactAudioScopePort) fileId -> {},
+                        (ReportFileScopePort)
+                                fileId -> {
+                                    throw new ApiException(404, 40400, "文件不存在或无权访问");
+                                });
+
+        ApiException error = assertThrows(ApiException.class, () -> withReport.previewUrl(FILE_ID));
+        assertEquals(40400, error.code());
+        verify(audit, never()).append(any(AuditEntry.class));
     }
 
     // ---------------------------------------------------------------- 工具

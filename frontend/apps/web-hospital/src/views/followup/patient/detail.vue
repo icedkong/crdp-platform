@@ -67,7 +67,7 @@ import {
   fetchPatientTimeline,
   fetchPatientWardHistory,
 } from '#/api/core/patient';
-import { fetchPatientReports } from '#/api/core/report';
+import { deleteReport, fetchPatientReports } from '#/api/core/report';
 import { startTask } from '#/api/core/task';
 import {
   categoryHash,
@@ -82,6 +82,10 @@ import ContactLogModal from '#/components/followup/contact-log-modal.vue';
 import FollowupTimeline from '#/components/followup/followup-timeline.vue';
 import PatientHeader from '#/components/followup/patient-header.vue';
 import ReasonModal from '#/components/followup/reason-modal.vue';
+import {
+  reportDeleteLabel,
+  reportDeleteNote,
+} from '#/components/followup/report-delete-logic';
 import {
   buildReportTree,
   findTreeNode,
@@ -495,11 +499,45 @@ const reportColumns = [
   { dataIndex: 'locations', title: '位置' },
   { dataIndex: 'creatorName', title: '上传人', width: 110 },
   { dataIndex: 'createdAt', title: '上传时间', width: 150 },
+  { dataIndex: 'action', title: '操作', width: 70 },
 ];
 
 /** 位置列：标签「基线 · 病例基本信息」，超过 2 个折叠 +N，悬停看全部（pages.md §4.6）。 */
 function locationTags(row: ReportRow) {
   return row.locations.map((tag) => reportLocationText(tag));
+}
+
+// ------------------------------ E16-T09 删除（A-ATT-007 / C-SCAN-016：软删除、原因必填、记审计）
+
+/** 删除权限（followup:scan:delete，按钮 plt_menu 233）：无权限不显示入口（design-system §9）。 */
+const canDeleteReport = computed(() => hasPermission('followup:scan:delete'));
+const reportDeleteOpen = ref(false);
+const reportDeleteTarget = ref<null | ReportRow>(null);
+const reportDeleteSubmitting = ref(false);
+
+function openReportDelete(row: ReportRow) {
+  reportDeleteTarget.value = row;
+  reportDeleteOpen.value = true;
+}
+
+/**
+ * 确认删除：原因必填由 ReasonModal 校验（≤ 255 字）；软删除成功关弹窗并刷新清单，
+ * 失败保持打开可改原因重试（提示由统一拦截器弹出，后端 message 即中文文案）。
+ */
+async function handleReportDelete(reason: string) {
+  const target = reportDeleteTarget.value;
+  if (!target || reportDeleteSubmitting.value) return;
+  reportDeleteSubmitting.value = true;
+  try {
+    await deleteReport(target.id, reason);
+    message.success('已删除报告单（数据保留可审计）');
+    reportDeleteOpen.value = false;
+    await loadReports();
+  } catch {
+    // 提示由统一拦截器弹出（如「请填写删除原因」「报告单已被删除，无需重复操作」）
+  } finally {
+    reportDeleteSubmitting.value = false;
+  }
 }
 
 // ---------------------------------------------------------------- E15-T04 沟通记录页签（pages.md §4.8）
@@ -1038,12 +1076,23 @@ const timelineLegendNote =
               <template v-else-if="column.dataIndex === 'createdAt'">
                 {{ formatDateTime(record.createdAt) }}
               </template>
+              <template v-else-if="column.dataIndex === 'action'">
+                <!-- E16-T09 / A-ATT-007：删除（followup:scan:delete；无权限不显示，软删除须填原因） -->
+                <a
+                  v-if="canDeleteReport"
+                  class="report-delete"
+                  data-testid="report-row-delete"
+                  @click.prevent="openReportDelete(record)"
+                >
+                  删除
+                </a>
+              </template>
             </template>
             <template #emptyText> 暂无报告单 </template>
           </Table>
           <p class="hint">
             位置标签「基线 · 分类」「第N年随访 ·
-            分组」；行内预览与右侧详情需报告单文件清单接口（随后续任务）。全屏查看器已就绪：上传对话框内「预览」、全院报告单列表点缩略图可用（E16-T06）。
+            分组」；行内预览与右侧详情需报告单文件清单接口（随后续任务）；行内「删除」为软删除、须填原因（E16-T09），删除单个附件的入口随附件导航（E16-T14）。
           </p>
         </div>
       </div>
@@ -1190,6 +1239,17 @@ const timelineLegendNote =
       placeholder="必填，如：发现录入错误需要修正"
       @confirm="handleUnlock"
     />
+
+    <!-- E16-T09 / A-ATT-007、C-SCAN-016：删除报告单（软删除，原因必填；后端写 RPT_DELETE 审计） -->
+    <ReasonModal
+      v-if="reportDeleteTarget"
+      v-model:open="reportDeleteOpen"
+      confirm-text="删除"
+      :label="reportDeleteLabel(reportDeleteTarget)"
+      :note="reportDeleteNote(reportDeleteTarget)"
+      placeholder="必填，如：上传错误，重复上传"
+      @confirm="handleReportDelete"
+    />
   </div>
 </template>
 
@@ -1218,6 +1278,11 @@ const timelineLegendNote =
 
 .unassigned {
   color: #fa8c16;
+}
+
+/* E16-T09 报告单行「删除」：破坏性操作红色（design-system §9，与患者列表删除同色） */
+.report-delete {
+  color: #ff4d4f;
 }
 
 /* E13-T11 基线分类条：吸顶后与下方锁定横幅留出间距 */
