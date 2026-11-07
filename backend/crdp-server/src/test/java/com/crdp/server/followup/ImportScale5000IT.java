@@ -571,9 +571,11 @@ class ImportScale5000IT {
     }
 
     private static LocalDate dischargeDate() {
-        // 出院 = 今天 − 4 年 + 30 天：第 1–3 年窗口已结束（第 1、2 年有数据，第 3 年 HIST_MISSED）、
-        // 第 4 年窗口未结束不生成记录 → 每名患者恰好 3 条年度记录。
-        return LocalDate.now().minusYears(4).plusDays(30);
+        // 出院 = 北京时间今天 − 4 年 + 30 天：第 1–3 年窗口已结束（第 1、2 年有数据，第 3 年 HIST_MISSED）、
+        // 第 4 年窗口未结束不生成记录 → 每名患者恰好 3 条年度记录。窗口判定按服务端
+        // PlanDateCalculator.businessToday（Asia/Shanghai，AGENTS §6），造数取同一时区——
+        // UTC 运行器上 LocalDate.now() 会比业务日早一天。
+        return LocalDate.now(java.time.ZoneId.of("Asia/Shanghai")).minusYears(4).plusDays(30);
     }
 
     private static String ymd(LocalDate date) {

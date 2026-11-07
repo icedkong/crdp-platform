@@ -356,9 +356,10 @@ class ImportCommitServiceTest {
         assertEquals("IMPORT", insertedContacts.get(0).getSource());
         assertEquals("enc:13800138000", insertedContacts.get(0).getPhoneCipher());
         assertEquals(
-                LocalDate.now(),
+                LocalDate.now(java.time.ZoneId.of("Asia/Shanghai")),
                 insertedContacts.get(0).getEffectiveDate(),
-                "生效日期默认导入当天（与 PatientContactService.addVersion 缺省同口径）");
+                "生效日期默认导入当天（与 PatientContactService.addVersion 缺省同口径；"
+                        + "业务日期按北京时间，CI 的 UTC 运行器上 LocalDate.now() 会差一天）");
     }
 
     @Test
