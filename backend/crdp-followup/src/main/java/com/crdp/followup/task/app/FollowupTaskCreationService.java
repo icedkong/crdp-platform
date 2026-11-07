@@ -490,8 +490,11 @@ public class FollowupTaskCreationService {
         return open != null && open > 0;
     }
 
-    /** 存储行 → 排期输入（null 列回落 PlanNodeRule 的默认值：基准起算、单位 YEAR/DAY、数值 0）； E14-T07 重算入口（同包）共用。 */
-    static List<NodeDef> nodeDefs(List<PlanMapper.NodeRow> rows) {
+    /**
+     * 存储行 → 排期输入（null 列回落 PlanNodeRule 的默认值：基准起算、单位 YEAR/DAY、数值 0）； E14-T07
+     * 重算入口（同包）与历史导入年度排期（E18-T05 importer app）共用。
+     */
+    public static List<NodeDef> nodeDefs(List<PlanMapper.NodeRow> rows) {
         return rows.stream()
                 .map(
                         row ->

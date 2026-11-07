@@ -39,12 +39,14 @@ public class ImportFieldRuleLoader {
         this.dictionary = dictionary;
     }
 
-    /** 一套校验规则：基线与随访两份 + 病案号、病区/中心字段键。 */
+    /** 一套校验规则：基线与随访两份 + 病案号、病区/中心字段键 + 两张表单编码（E18-T05 提交写分节 / 记录用）。 */
     public record ImportFieldRules(
             List<ImportFieldRule> baselineRules,
             List<ImportFieldRule> followupRules,
             String mrnFieldKey,
-            String wardFieldKey) {
+            String wardFieldKey,
+            String baselineFormCode,
+            String followupFormCode) {
 
         public ImportFieldRules {
             baselineRules = List.copyOf(baselineRules);
@@ -92,7 +94,8 @@ public class ImportFieldRuleLoader {
                         .findFirst()
                         .map(ImportFieldRule::fieldKey)
                         .orElse(null);
-        return new ImportFieldRules(baseline, followup, mrnKey, wardKey);
+        return new ImportFieldRules(
+                baseline, followup, mrnKey, wardKey, baselineForm, followupForm);
     }
 
     private String firstFormCode(String usage) {
@@ -129,6 +132,8 @@ public class ImportFieldRuleLoader {
                 field.key(),
                 field.label(),
                 originalHeader(field.help()),
+                field.categoryKey(),
+                field.storage(),
                 "ENABLED".equals(field.status()),
                 FieldType.ofCode(field.type())
                         .orElseThrow(() -> new IllegalStateException("未知字段类型：" + field.type())),

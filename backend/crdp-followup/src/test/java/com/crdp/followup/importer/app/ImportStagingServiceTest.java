@@ -414,7 +414,9 @@ class ImportStagingServiceTest {
                         rule("f217", "死亡随访时间", FieldType.DATE, false, false, null),
                         rule("f257", "EF", FieldType.NUMBER, false, false, null)),
                 "f002",
-                null);
+                null,
+                "A_BASELINE（示例）",
+                "A_ANNUAL_FU（示例）");
     }
 
     private static ImportFieldRule rule(
@@ -425,8 +427,8 @@ class ImportStagingServiceTest {
             boolean sensitive,
             Map<Integer, String> options) {
         return new ImportFieldRule(
-                fieldKey, label, label, true, type, null, null, 0.0, 75.0, 20.0, 70.0, required,
-                sensitive, options, null);
+                fieldKey, label, label, null, "json", true, type, null, null, 0.0, 75.0, 20.0, 70.0,
+                required, sensitive, options, null);
     }
 
     private static ImportFieldCatalog catalog() {
@@ -478,6 +480,8 @@ class ImportStagingServiceTest {
             String fileSha256;
             String layout;
             String status;
+            String optionsJson;
+            String scopeJson;
             long stagedRows;
             String layoutProblems;
             String failReason;
@@ -527,6 +531,8 @@ class ImportStagingServiceTest {
                             null,
                             job.layout,
                             job.status,
+                            job.optionsJson,
+                            job.scopeJson,
                             job.stagedRows,
                             job.layoutProblems,
                             job.failReason,

@@ -29,8 +29,8 @@ class ImportCellValidatorTest {
             Double softMax,
             Map<Integer, String> options) {
         return new ImportFieldRule(
-                "f001", "EF（示例）", "EF", true, type, null, 0, hardMin, hardMax, softMin, softMax,
-                false, false, options, null);
+                "f001", "EF（示例）", "EF", null, "json", true, type, null, 0, hardMin, hardMax,
+                softMin, softMax, false, false, options, null);
     }
 
     private static List<String> codes(Checked checked, Level level) {
@@ -88,6 +88,8 @@ class ImportCellValidatorTest {
                         "f001",
                         "桥血管数量（示例）",
                         "桥血管数量",
+                        null,
+                        "json",
                         true,
                         FieldType.NUMBER,
                         null,
@@ -261,6 +263,8 @@ class ImportCellValidatorTest {
                         "f001",
                         "是否死亡（示例）",
                         "死亡",
+                        null,
+                        "json",
                         true,
                         FieldType.RADIO,
                         null,
@@ -297,6 +301,8 @@ class ImportCellValidatorTest {
                         "f002",
                         "病案号（示例）",
                         "病案号",
+                        null,
+                        "json",
                         true,
                         FieldType.SELECT,
                         null,

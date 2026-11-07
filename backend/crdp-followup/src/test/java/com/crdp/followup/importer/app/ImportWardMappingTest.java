@@ -183,7 +183,9 @@ class ImportWardMappingTest {
                 baseline,
                 List.of(rule("f214", "随访日期", FieldType.DATE, false)),
                 "f002",
-                wardFieldKey);
+                wardFieldKey,
+                "A_BASELINE（示例）",
+                "A_ANNUAL_FU（示例）");
     }
 
     private static ImportFieldRule rule(
@@ -192,6 +194,8 @@ class ImportWardMappingTest {
                 fieldKey,
                 label,
                 label,
+                null,
+                "json",
                 true,
                 type,
                 null,
@@ -295,6 +299,8 @@ class ImportWardMappingTest {
             long id;
             String layout;
             String status = "UPLOADED";
+            String optionsJson;
+            String scopeJson;
             long stagedRows;
         }
 
@@ -323,6 +329,8 @@ class ImportWardMappingTest {
                             null,
                             job.layout,
                             job.status,
+                            job.optionsJson,
+                            job.scopeJson,
                             job.stagedRows,
                             null,
                             null,

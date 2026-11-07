@@ -13,6 +13,9 @@ import java.util.Map;
  * @param fieldKey 稳定键
  * @param label 显示名（问题清单的表头列）
  * @param originalHeader 原表列名锚点（宽表列）
+ * @param category 分类锚点键（fe_field.category_key；E18-T05 提交按它把基线 JSON 字段分组写 pt_baseline_section）
+ * @param storage 存储方式（column 主档实体列 / json 表单 JSON / encrypted 敏感加密存储——E18-T05 提交按它分流：column 写
+ *     pt_patient 实体列、json 写分节 / 记录 data、encrypted 不进明文 JSON，由各自信列承载）
  * @param enabled 是否启用（停用字段仍是宽表列，校验照做——历史数据按导入时的字典口径）
  * @param type 字段类型
  * @param unit 单位（数值 / 范围提示里带上，如 mmHg）
@@ -29,6 +32,8 @@ public record ImportFieldRule(
         String fieldKey,
         String label,
         String originalHeader,
+        String category,
+        String storage,
         boolean enabled,
         FieldType type,
         String unit,
