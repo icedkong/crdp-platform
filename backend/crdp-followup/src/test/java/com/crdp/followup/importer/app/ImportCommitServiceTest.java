@@ -349,11 +349,17 @@ class ImportCommitServiceTest {
         assertEquals(3, insertedSections.get(0).getTemplateVersion());
         assertEquals(1, insertedSections.get(0).getVersion(), "正式保存口径 version 1");
 
-        // 联系方式：电话1 → 版本表（source=IMPORT，E13-T03 版本语义）
+        // 联系方式：电话1 → 版本表（source=IMPORT，E13-T03 版本语义；生效日期非空——
+        // E18-T07 压测演练发现真库 NOT NULL 列漏设会整批失败，此处钉住回归）
         assertEquals(1, insertedContacts.size());
         assertEquals("PHONE_1", insertedContacts.get(0).getSlot());
         assertEquals("IMPORT", insertedContacts.get(0).getSource());
         assertEquals("enc:13800138000", insertedContacts.get(0).getPhoneCipher());
+        assertEquals(
+                LocalDate.now(java.time.ZoneId.of("Asia/Shanghai")),
+                insertedContacts.get(0).getEffectiveDate(),
+                "生效日期默认导入当天（与 PatientContactService.addVersion 缺省同口径；"
+                        + "业务日期按北京时间，CI 的 UTC 运行器上 LocalDate.now() 会差一天）");
     }
 
     @Test
