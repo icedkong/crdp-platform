@@ -5,6 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 
 /**
  * E18-T01 / A-PAT-008 长表版面适配器：新模板两张工作表——「基线」一个患者一行、「随访记录」一次随访一行， 用「病案号 + 随访年度」确定是哪位患者的第几年（A 规格
@@ -42,25 +43,107 @@ public final class LongLayoutAdapter implements ImportLayoutAdapter {
 
     @Override
     public ImportParseResult parse(ImportWorkbookData workbook, ImportFieldCatalog catalog) {
-        ImportSheetData baselineSheet =
-                workbook.sheet(BASELINE_SHEET)
-                        .orElseThrow(
-                                () ->
-                                        new ImportLayoutException(
-                                                "长表导入需要「基线」与「随访记录」两张工作表",
-                                                List.of("缺少「" + BASELINE_SHEET + "」工作表")));
-        ImportSheetData followupSheet =
-                workbook.sheet(FOLLOWUP_SHEET)
-                        .orElseThrow(
-                                () ->
-                                        new ImportLayoutException(
-                                                "长表导入需要「基线」与「随访记录」两张工作表",
-                                                List.of("缺少「" + FOLLOWUP_SHEET + "」工作表")));
+        // 一次性模型 = 流式产出的收集 + 跨行关联（同一病案号的随访行并入第一行基线骨架）
+        List<ImportPatientRecord> skeletons = new ArrayList<>();
+        streamBaseline(workbook, catalog, skeletons::add);
+        List<ImportFollowup> allFollowups = new ArrayList<>();
+        streamFollowups(workbook, catalog, allFollowups::add);
 
+        Map<String, Integer> firstIndexByMrn = new LinkedHashMap<>();
+        for (int i = 0; i < skeletons.size(); i++) {
+            String mrn = skeletons.get(i).mrn();
+            if (mrn != null && !firstIndexByMrn.containsKey(mrn)) {
+                firstIndexByMrn.put(mrn, i);
+            }
+        }
+        List<List<ImportFollowup>> attached = new ArrayList<>();
+        for (int i = 0; i < skeletons.size(); i++) {
+            attached.add(new ArrayList<>());
+        }
+        for (ImportFollowup followup : allFollowups) {
+            Integer index =
+                    followup.mrnCell() == null || followup.mrnCell().isBlank()
+                            ? null
+                            : firstIndexByMrn.get(followup.mrnCell().normalized());
+            if (index != null) {
+                attached.get(index).add(followup);
+            }
+        }
+
+        List<ImportPatientRecord> patients = new ArrayList<>();
+        for (int i = 0; i < skeletons.size(); i++) {
+            ImportPatientRecord skeleton = skeletons.get(i);
+            patients.add(
+                    new ImportPatientRecord(
+                            skeleton.mrnCell(),
+                            skeleton.legacyNoCell(),
+                            Map.of(),
+                            skeleton.baseline(),
+                            attached.get(i),
+                            skeleton.rowNo()));
+        }
+
+        List<ImportFollowup> unmatched =
+                allFollowups.stream()
+                        .filter(
+                                followup ->
+                                        followup.mrnCell() == null
+                                                || followup.mrnCell().isBlank()
+                                                || !firstIndexByMrn.containsKey(
+                                                        followup.mrnCell().normalized()))
+                        .toList();
+        return new ImportParseResult(ImportLayout.LONG, patients, unmatched);
+    }
+
+    /**
+     * 长表流式解析之一（E18-T02 暂存管道，验收「大文件不占满内存」）：「基线」表逐行回调患者骨架（前置列恒空、 随访行不并入——跨行「病案号 +
+     * 随访年度」关联属校验阶段，按暂存行的病案号盲索引做，tech-plan §12「每行写入暂存表」）。 表头映射与 {@link #parse} 同一套（缺列 / 未知列 /
+     * 重复列整体报错，在任何行回调之前）。
+     */
+    public void streamBaseline(
+            ImportWorkbookData workbook,
+            ImportFieldCatalog catalog,
+            Consumer<ImportPatientRecord> sink) {
+        ImportSheetData baselineSheet = requireSheet(workbook, BASELINE_SHEET);
         List<ImportFieldCatalog.CatalogField> baselineFields = enabled(catalog.baselineFields());
-        List<ImportFieldCatalog.CatalogField> followupFields = enabled(catalog.followupFields());
         HeaderMap baselineHeader =
                 mapHeader(baselineSheet, baselineFields, Set.of(), Set.of(LEGACY_NO_COLUMN), "基线");
+        baselineSheet.dataRows(
+                (rowNo, cells) -> {
+                    if (isBlankRow(cells)) {
+                        return;
+                    }
+                    Map<String, ImportCell> baseline = new LinkedHashMap<>();
+                    for (ImportFieldCatalog.CatalogField field : baselineFields) {
+                        putValue(
+                                baseline,
+                                field.fieldKey(),
+                                cells,
+                                rowNo,
+                                baselineHeader.column(field.fieldKey()));
+                    }
+                    int legacyCol = baselineHeader.columnOrNull(LEGACY_NO_COLUMN);
+                    ImportCell legacyNoCell =
+                            legacyCol < 0
+                                    ? null
+                                    : new ImportCell(cell(cells, legacyCol), rowNo, legacyCol);
+                    ImportCell mrnCell = baseline.get(catalog.mrnFieldKey().orElse(null));
+                    sink.accept(
+                            new ImportPatientRecord(
+                                    mrnCell, legacyNoCell, Map.of(), baseline, List.of(), rowNo));
+                });
+    }
+
+    /**
+     * 长表流式解析之二：「随访记录」表逐行回调一次随访（含病案号不在基线表的行——数据级问题留给 E18-T03 校验报告， 这里不丢行；年度解析不了保留原文、{@code year} 为
+     * null）。
+     */
+    public void streamFollowups(
+            ImportWorkbookData workbook,
+            ImportFieldCatalog catalog,
+            Consumer<ImportFollowup> sink) {
+        ImportSheetData followupSheet = requireSheet(workbook, FOLLOWUP_SHEET);
+        List<ImportFieldCatalog.CatalogField> followupFields = enabled(catalog.followupFields());
         HeaderMap followupHeader =
                 mapHeader(
                         followupSheet,
@@ -68,16 +151,6 @@ public final class LongLayoutAdapter implements ImportLayoutAdapter {
                         Set.of(MRN_COLUMN, YEAR_COLUMN),
                         Set.of(),
                         "随访记录");
-
-        // 「基线」行 → 患者骨架；「随访记录」行按病案号并入（同一病案号多行「基线」时并入第一行，
-        // 重复「基线」行由 E18-T03 校验报告报错）
-        record Skeleton(
-                ImportCell mrnCell,
-                ImportCell legacyNoCell,
-                Map<String, ImportCell> baseline,
-                int rowNo) {}
-
-        List<ImportFollowup> allFollowups = new ArrayList<>();
         followupSheet.dataRows(
                 (rowNo, cells) -> {
                     if (isBlankRow(cells)) {
@@ -102,78 +175,19 @@ public final class LongLayoutAdapter implements ImportLayoutAdapter {
                                 rowNo,
                                 followupHeader.column(field.fieldKey()));
                     }
-                    allFollowups.add(
+                    sink.accept(
                             new ImportFollowup(
                                     parseYear(yearCell), yearCell, mrnCell, rowNo, values));
                 });
+    }
 
-        List<Skeleton> skeletons = new ArrayList<>();
-        Map<String, Integer> firstIndexByMrn = new LinkedHashMap<>();
-        baselineSheet.dataRows(
-                (rowNo, cells) -> {
-                    if (isBlankRow(cells)) {
-                        return;
-                    }
-                    Map<String, ImportCell> baseline = new LinkedHashMap<>();
-                    for (ImportFieldCatalog.CatalogField field : baselineFields) {
-                        putValue(
-                                baseline,
-                                field.fieldKey(),
-                                cells,
-                                rowNo,
-                                baselineHeader.column(field.fieldKey()));
-                    }
-                    int legacyCol = baselineHeader.columnOrNull(LEGACY_NO_COLUMN);
-                    ImportCell legacyNoCell =
-                            legacyCol < 0
-                                    ? null
-                                    : new ImportCell(cell(cells, legacyCol), rowNo, legacyCol);
-                    ImportCell mrnCell = baseline.get(catalog.mrnFieldKey().orElse(null));
-                    if (mrnCell != null
-                            && !mrnCell.isBlank()
-                            && !firstIndexByMrn.containsKey(mrnCell.normalized())) {
-                        firstIndexByMrn.put(mrnCell.normalized(), skeletons.size());
-                    }
-                    skeletons.add(new Skeleton(mrnCell, legacyNoCell, baseline, rowNo));
-                });
-
-        List<List<ImportFollowup>> attached = new ArrayList<>();
-        for (int i = 0; i < skeletons.size(); i++) {
-            attached.add(new ArrayList<>());
-        }
-        for (ImportFollowup followup : allFollowups) {
-            Integer index =
-                    followup.mrnCell() == null || followup.mrnCell().isBlank()
-                            ? null
-                            : firstIndexByMrn.get(followup.mrnCell().normalized());
-            if (index != null) {
-                attached.get(index).add(followup);
-            }
-        }
-
-        List<ImportPatientRecord> patients = new ArrayList<>();
-        for (int i = 0; i < skeletons.size(); i++) {
-            Skeleton skeleton = skeletons.get(i);
-            patients.add(
-                    new ImportPatientRecord(
-                            skeleton.mrnCell(),
-                            skeleton.legacyNoCell(),
-                            Map.of(),
-                            skeleton.baseline(),
-                            attached.get(i),
-                            skeleton.rowNo()));
-        }
-
-        List<ImportFollowup> unmatched =
-                allFollowups.stream()
-                        .filter(
-                                followup ->
-                                        followup.mrnCell() == null
-                                                || followup.mrnCell().isBlank()
-                                                || !firstIndexByMrn.containsKey(
-                                                        followup.mrnCell().normalized()))
-                        .toList();
-        return new ImportParseResult(ImportLayout.LONG, patients, unmatched);
+    /** 取指定工作表；缺表整体报错（版面不完整，不做猜测）。 */
+    private static ImportSheetData requireSheet(ImportWorkbookData workbook, String name) {
+        return workbook.sheet(name)
+                .orElseThrow(
+                        () ->
+                                new ImportLayoutException(
+                                        "长表导入需要「基线」与「随访记录」两张工作表", List.of("缺少「" + name + "」工作表")));
     }
 
     // ---------------------------------------------------------------- 表头映射

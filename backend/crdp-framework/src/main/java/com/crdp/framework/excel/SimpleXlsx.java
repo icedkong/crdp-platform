@@ -290,6 +290,11 @@ public final class SimpleXlsx {
         return letters.toString();
     }
 
+    /** 列下标 → Excel 列字母（公开口径，E18-T02 流式读取与测试共用同一算法）。 */
+    public static String columnLettersOf(int index) {
+        return columnLetters(index);
+    }
+
     private static XMLInputFactory factory() {
         XMLInputFactory factory = XMLInputFactory.newFactory();
         // 外部实体解析一律关闭（上传文件是不可信输入）

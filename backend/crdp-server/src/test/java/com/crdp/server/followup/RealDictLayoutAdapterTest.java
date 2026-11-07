@@ -45,6 +45,20 @@ class RealDictLayoutAdapterTest {
 
     @BeforeAll
     static void buildCatalogFromMigration() {
+        realDictCatalog();
+    }
+
+    /** E18-T02 流式暂存测试共用：真实 V38 字典目录（懒构建，与 @BeforeAll 同一构建逻辑）。 */
+    static ImportFieldCatalog realDictCatalog() {
+        synchronized (RealDictLayoutAdapterTest.class) {
+            if (catalog == null) {
+                buildFromMigration();
+            }
+            return catalog;
+        }
+    }
+
+    private static void buildFromMigration() {
         List<String[]> rows = parseFieldRows(readMigration());
         List<ImportFieldCatalog.CatalogField> baseline = new ArrayList<>();
         List<ImportFieldCatalog.CatalogField> followup = new ArrayList<>();
