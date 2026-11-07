@@ -71,7 +71,7 @@
 | OQ-13 | 🟡 | C 没有 `followup:plan:view/publish/enroll` | C 的计划与入组相关一律用 `followup:plan:edit` |
 | OQ-14 | 🟡 | 修改已提交随访记录：A 用 `followup:record:edit`，C 用 `followup:record:edit-submitted`；A 是否要求填写修改原因 | 按租户权限表各用各的码；C 原因必填，A 暂定必填（待医院 A 确认） |
 | OQ-15 | 🟡 | C 停止随访 / 标记失访用哪个权限 | `followup:patient:edit`（推断） |
-| OQ-16 | 🟡 | A 规格没有对比规则配置码（C 有 `followup:abnormal:config`） | 给 A 也授 `followup:abnormal:config`（新增到 A 角色模板） |
+| OQ-16 | 🟡 | A 规格没有对比规则配置码（C 有 `followup:abnormal:config`） | 给 A 也授 `followup:abnormal:config`（新增到 A 角色模板）；E17-T01 已按此落地（菜单 plt_menu 40 / 平台库 V57，TENANT_ADMIN 授予 followup V67 + 种子 V127），待产品确认后关闭 |
 | OQ-17 | 🟡 | A 没有删除患者权限码（C 有 `followup:patient:delete`）；有已提交记录的患者能否删除 | 新增同名码给 A；有已提交记录时仍允许软删除，须填原因、二次认证 |
 | OQ-18 | 🟡 | 批量指定责任医生的权限 | `followup:task:assign`（推断） |
 | OQ-19 | ⚪ | 患者“操作日志”页签只读用户是否可见；统计菜单权限 | 可见；统计页用 `followup:dashboard:view`（推断） |

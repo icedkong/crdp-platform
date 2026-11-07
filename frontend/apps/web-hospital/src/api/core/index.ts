@@ -2,6 +2,7 @@ export * from './audit';
 export * from './auth';
 export * from './baseline';
 export * from './brand';
+export * from './compareRule';
 export * from './config';
 export * from './contact';
 export * from './file';

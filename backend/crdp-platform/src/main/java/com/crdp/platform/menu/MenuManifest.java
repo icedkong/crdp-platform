@@ -150,6 +150,21 @@ public class MenuManifest {
                             "followup:scan:config",
                             null,
                             55),
+                    // E17-T01 / A-FU-027、C-FU-011（随 E21）：对比规则（挂 base 的系统设置目录下，
+                    // 平台库 V57 同构；权限码 C 规格原有，A 按 OQ-16 同授，内置角色只授 TENANT_ADMIN）
+                    new MenuManifestItem(
+                            "followup",
+                            "HOSPITAL",
+                            "MENU",
+                            "FollowupAbnormalRule",
+                            "HospitalSystem",
+                            "对比规则",
+                            "FollowupAbnormalRule",
+                            "/system/abnormal-rule",
+                            "followup/rule/index",
+                            "followup:abnormal:config",
+                            null,
+                            56),
                     // E13-T08 / A-WARD-001、A-WARD-008：病区管理（挂 base 的系统设置目录下，平台库 V40 同构；
                     // A-WARD-001「租户管理员维护」，内置角色只授 TENANT_ADMIN）
                     new MenuManifestItem(

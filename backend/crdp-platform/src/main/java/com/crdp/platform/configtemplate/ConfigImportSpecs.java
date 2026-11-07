@@ -108,7 +108,9 @@ public final class ConfigImportSpecs {
                     ConfigImportSpec.copy(
                             "rpt_mapping_item",
                             List.of("mapping_id", "item_code"),
-                            Map.of("mapping_id", "rpt_mapping")));
+                            Map.of("mapping_id", "rpt_mapping")),
+                    // ---- followup：对比标红规则（E17-T01；form_code 为编码引用不改写，与 fe_rule 同口径）----
+                    ConfigImportSpec.copy("fu_compare_rule", List.of("form_code", "rule_code")));
 
     private static final Map<String, ConfigImportSpec> BY_TABLE = index(SPECS);
 
