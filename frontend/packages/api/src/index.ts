@@ -1126,6 +1126,7 @@ export type {
 } from './user-import';
 export { menuNodesToRoutes, menuNodeToRoute, toIconifyIcon } from './vben-menu';
 export type { VbenMenuRoute } from './vben-menu';
+export * from './view-rule';
 export {
   buildTransferPayload,
   buildWardPayload,

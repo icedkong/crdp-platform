@@ -185,7 +185,13 @@ class WebhookDeliveryIT {
         assertTrue(body.contains("\"objectType\":\"TASK\""), body);
         assertTrue(body.contains("\"objectId\":\"4021\""), body);
         assertTrue(body.contains("\"tenantCode\":\"demoa\""), body);
-        assertTrue(!body.contains("张三") && !body.contains("77"), "投递负载不含患者姓名与患者 ID");
+        // 患者信息泄漏检查按「患者字段与姓名」判（E20-T02 附带修复：原断言用裸子串 "77"，
+        // 与 occurredAt 毫秒位 077/77x 碰撞随机失败——时间戳含 "77" 不是泄漏）
+        assertTrue(
+                !body.contains("张三")
+                        && !body.contains("patientId")
+                        && !body.contains("patientName"),
+                "投递负载不含患者姓名与患者字段");
         // 独立验签（接收方实现）：v1=hex(HMAC-SHA256(secret, ts + "." + body))
         String timestamp = request.headers().get("x-crdp-timestamp");
         String signature = request.headers().get("x-crdp-signature");

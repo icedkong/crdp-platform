@@ -108,6 +108,9 @@ public class TenantViewService {
     /** 医院端入口（进入成功后前端带一次性凭据打开医院端视角页）。 */
     private final String hospitalBaseUrl;
 
+    /** 视角规则（E20-T02）：进入时盖「生效规则版本」戳（ACTIVE 规则集内容哈希）。 */
+    private final ViewRuleService viewRules;
+
     public TenantViewService(
             JdbcTemplate platform,
             SessionStore sessionStore,
@@ -117,7 +120,8 @@ public class TenantViewService {
             StringRedisTemplate redis,
             ObjectMapper json,
             @Value("${crdp.tenant-view.hospital-base-url:http://127.0.0.1:14173}")
-                    String hospitalBaseUrl) {
+                    String hospitalBaseUrl,
+            ViewRuleService viewRules) {
         this.platform = platform;
         this.sessionStore = sessionStore;
         this.tokens = tokens;
@@ -126,6 +130,7 @@ public class TenantViewService {
         this.redis = redis;
         this.json = json;
         this.hospitalBaseUrl = hospitalBaseUrl;
+        this.viewRules = viewRules;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -289,11 +294,14 @@ public class TenantViewService {
         LocalDateTime now = LocalDateTime.now(ZONE);
         LocalDateTime endsAt = now.plusSeconds(MAX_SESSION_SECONDS);
         long startedAtEpoch = view.issuedAtEpochSecond();
+        // 生效规则版本（PLT-VIEW-009 / V50 口径，E20-T02 起写实值）：进入时的 ACTIVE 规则集内容哈希；
+        // 规则变更不结束会话——进行中的会话在下一次请求按新规则执行，版本戳供审计对账。
+        String ruleVersion = viewRules.activeRuleVersion();
         platform.update(
                 "INSERT INTO plt_view_session (session_no, account_id, account_name, display_name,"
                         + " role_codes, tenant_id, purpose, note, started_at_epoch, rule_version,"
                         + " status, started_at, ends_at)"
-                        + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'DEFAULT', 'ACTIVE', ?, ?)",
+                        + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)",
                 sessionNo,
                 caller.userId(),
                 caller.username(),
@@ -303,6 +311,7 @@ public class TenantViewService {
                 purpose,
                 note,
                 startedAtEpoch,
+                ruleVersion,
                 now,
                 endsAt);
         Long rowId =

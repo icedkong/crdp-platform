@@ -113,9 +113,12 @@ PLT-MOD-010/011 为后续规划，不实现。
 | POST | `/api/hospital/view/enter` | 公开（按 IP 限流 60/时） | **已实现（E20-T04 / PLT-VIEW-002）**。`{ ticket }` 换视角令牌（取出即作废、伪造 / 过期 / 会话已结束统一 40001）→ `{ token, tokenType=Bearer, expiresInSeconds, session{…同 /view/session} }`；**视角令牌只在本次响应出现一次**（与双因素第二步同口径） |
 | GET | `/api/hospital/view/session` | 视角令牌 | **已实现（E20-T04 / PLT-VIEW-003）**。横幅与水印口径：`{ sessionId, sessionNo, tenantId/Code/Name, purpose, accountName, accountDisplayName, startedAt, expiresAt, remainingSeconds }`；会话已收尾（令牌仍在）时先按实际结束方式关账再 40100 |
 | DELETE | `/api/hospital/view/session` | 视角令牌 | **已实现（E20-T04 / PLT-VIEW-003）**。医院端横幅「一键退出」：只退自己的会话；台账 ENDED / 主动退出，写 VIEW_EXIT 审计 |
-| GET / PUT | `/api/platform/view-rules` | `platform:view:rule` | 层级规则（全局 / 租户 / 模块 / 字段），版本化；高敏变更进入待复核（PLT-VIEW-007..009、014、015）——**随 E20-T02** |
-| POST | `/api/platform/view-rules/preview` | `platform:view:rule` | 效果预览——随 E20-T02 |
-| POST | `/api/platform/view-rules/reviews/{id}/approve` | `platform:view:rule` | 复核——随 E20-T02 |
+| GET | `/api/platform/view-rules` | `platform:view:rule:view` | **已实现（E20-T02 / PLT-VIEW-007）**。规则列表（量级小不分页）：`?layer=&status=&tenantId=&moduleCode=&resource=` 过滤；行 `{ id, code(服务端生成 VR-00001，种子规则带语义编号), name, layer∈GLOBAL/TENANT/MODULE/FIELD, tenantId/Code/Name(空=全部租户), moduleCode/Name(空=全部模块), resource/field(字段层，field 空=整个资源对象), resourceLabel/fieldLabel, roleCodes(空=全部平台角色), visibility∈PLAIN/MASKED/BLINDED/HIDDEN, maskRule(MASKED 必填：name/phone/idCard/medicalRecordNo/address/generic，沿用第 4 章脱敏规则), operation∈READONLY/EDITABLE, allowExport(默认否), status∈ACTIVE/DISABLED(PENDING_REVIEW 随 E20-T05), version(每次变更+1), updatedAt }`；高敏变更第二人复核与版本链回滚随 E20-T05（PLT-VIEW-014、015），本任务普通变更即时生效 |
+| GET | `/api/platform/view-rules/catalog` | `platform:view:rule:view` | **已实现（E20-T02）**。视角字段目录（FIELD 层引用与预览用）：`{ fields[{resource, field(空=资源整体), label, moduleCode(空=不限模块，如 RCT 字段), key}], maskRules[] }`——患者 5 敏感字段 + 用户手机号 / 证件号 + 报告单与电子化资料原件 + 通话录音 + RCT 分组 / 随机表 / 揭盲信息（M1 代码目录，与 SensitiveFieldCatalog 同口径） |
+| POST | `/api/platform/view-rules` | `platform:view:rule:edit` | **已实现（E20-T02 / PLT-VIEW-007）**。新建：`{ name(必填 ≤128), layer, tenantId?, moduleCode?, resource?, field?, roleIds(空=全部角色), visibility, maskRule?, operation, allowExport, status? }`；层级形状校验（GLOBAL 不带选择器 / TENANT 必带租户 / MODULE 必带模块 / FIELD 必带目录内资源与字段）40001、引用不存在（租户 / 模块 / 角色）40001；写平台访问审计 `VIEW_RULE_CREATE` |
+| PUT | `/api/platform/view-rules/{id}` | `platform:view:rule:edit` | **已实现（E20-T02 / PLT-VIEW-007）**。维护（含停用 / 启用）：版本 +1、角色清单整体替换；未知规则 40400；停用 / 启用写审计 `VIEW_RULE_DISABLE` / `VIEW_RULE_UPDATE`；停用即从解析中消失（进行中的视角会话下一次请求按剩余规则执行） |
+| POST | `/api/platform/view-rules/preview` | `platform:view:rule:view` | **已实现（E20-T02 / PLT-VIEW-009，验收「预览与实际执行一致」）**。`{ tenantId, roleIds(非空，多选) }` → `{ tenant…, roleCodes[], modules[{moduleCode, moduleName, opened(该院是否已开通), visibility, maskRule, operation, allowExport, matched[](最具体层命中，预览「由哪条规则决定」), overridden[](更低层命中)}], fields[](目录逐项同构) }`；与执行点（E20-T03）共用同一解析器 `ViewRuleResolver`——匹配「字段 > 模块 > 租户 > 全局默认，越具体越优先；同层多条命中（如账号有多个平台角色）取更严：隐藏 > 设盲 > 脱敏 > 明文、只读 > 可编辑、禁止导出 > 允许导出」；无命中回落系统初始默认（可见、只读、禁止导出，与全局默认规则同值）。租户不存在 40400、角色必选 40001 |
+| POST | `/api/platform/view-rules/reviews/{id}/approve` | `platform:view:rule:review` | 复核高敏变更（PLT-VIEW-014）——随 **E20-T05**（权限码 `platform:view:rule:review` 届时登记） |
 
 E20-T01 落地口径（PLT-VIEW-001、004、005、006）：
 
@@ -129,6 +132,14 @@ E20-T04 落地口径（PLT-VIEW-002、003）：
 - **进入医院端**：平台端弹窗「打开医院端界面」→ 签发 60 秒一次性凭据（Redis `crdp:view-ticket:*`，取出即作废）→ 浏览器打开 `hospitalUrl + /view/entry#ticket=…` → 医院端公开口换取视角令牌（只在换取响应出现一次；`TenantViewEnterIpHourlyLimit` 按 IP 每小时限流，超限 42900）。
 - **与租户一致的菜单（PLT-VIEW-002）**：`GET /api/hospital/menus` 对视角令牌实时计算「启用医院端菜单 ∩ 该院已开通模块 ∩ 平台角色可见范围」；可见范围取账号全部可进入角色的并集（任一 CONFIG_AND_BUSINESS 即含业务），仅配置类时隐藏顶级「随访」目录（path=/followup）的全部后代——患者 / 计划 / 任务 / 报告单等业务页与按钮；`/system` 下的字典、通知模板等配置页保留（module_code 同为 followup）。租户开通 / 停用模块的下一次菜单请求即生效。
 - **横幅与水印（PLT-VIEW-003）**：视角中医院端顶部常驻 `TenantViewBanner`（components.md §13，橙色、不可关闭）：「租户视角：{租户名称}」+ 会话号 + 剩余时长（`remainingSeconds` 倒计时，到时自动退出）+ 一键退出按钮；全页水印 `平台账号显示名（账号）· 视角会话 {会话号}`（watermark-js-plus）。退出（横幅 / 到时 / 空闲 15 分钟 / 权限变更）后令牌即失效（40100），回到医院端退出页。
+
+E20-T02 落地口径（PLT-VIEW-007、008、009）：
+
+- **规则存储** `plt_view_rule` + `plt_view_rule_role`（迁移 V56）：层级 GLOBAL/TENANT/MODULE/FIELD 与租户 / 模块 / 资源字段选择器（空 = 全部）；可见性 PLAIN/MASKED/BLINDED/HIDDEN + 脱敏规则码（沿用第 4 章 `SensitiveValueMasker`）；操作 READONLY/EDITABLE；允许导出默认否；版本每次变更 +1（完整版本链与回滚随 E20-T05）。规则编号服务端生成（VR-00001），种子默认规则带语义编号（VR-GLOBAL-DEFAULT 等）便于幂等补种。
+- **默认规则（PLT-VIEW-008）**：种子 V109 预置 16 条——全局默认（可见、只读、禁止导出）、配置类（base）与业务数据（followup）模块默认只读、患者 5 敏感字段脱敏、用户手机号 / 证件号脱敏、报告单与电子化资料原件隐藏、通话录音隐藏、RCT 分组 / 随机表 / 揭盲信息设盲（模块留空 = 全部模块，rct 上线即命中）；平台管理员预置一条 followup「可编辑」规则（绑 PLATFORM_ADMIN）。默认规则即普通规则行，可修改 / 停用。同层「更严合并」会吞掉同层的放宽（OQ-99），故业务数据只读默认只绑「实施 + 客服」——平台管理员经模块层可编辑规则（模块 > 全局默认）生效，其余角色回落全局默认。
+- **优先级与预览（PLT-VIEW-009）**：解析只有 `ViewRuleResolver` 一个实现，效果预览接口与 E20-T03 执行点（脱敏 / 设盲 / 只读）喂同一批 ACTIVE 规则即得同一效果（PlatformViewRuleMySqlIT 逐维比对锁定）；无命中回落系统初始默认（与全局默认规则同值，停用全部规则不放开权限）。
+- **生效规则版本**：进入视角时 `plt_view_session.rule_version` 写 ACTIVE 规则集内容哈希（SHA-256 前 16 位，V50 预留列写实值），规则一变即换值供审计对账；规则变更不结束进行中的会话（下一次请求按新规则执行，platform-spec §8）。
+- **权限码**：`platform:view:rule:view`（菜单 147）/ `platform:view:rule:edit`（按钮 148）经 V56 登记、种子 V109 授予 PLATFORM_ADMIN（默认仅平台管理员配置，V104 职责口径）；变更写平台访问审计 `VIEW_RULE_*`（审计中心「视角规则变更」页签，OQ-56 ④）。
 
 视角令牌在医院端的执行（PLT-VIEW-010..013、017、018）：
 
@@ -182,7 +193,7 @@ E20-T04 落地口径（PLT-VIEW-002、003）：
 
 **管理页与导入预览（E12-T04，验收「导入前预览差异」）**：`/platform/config-template`（菜单 V52：菜单行不带独立权限码——`plt_menu.perm_code` 全库唯一、`platform:tenant:view` 已被 111 占用，可见性由角色授予决定；接口读 `platform:tenant:view`，导出 / 应用按钮按 `platform:tenant:create` 显隐）。应用前预览基于**模板详情（分表元信息）+ 上面的导入规则在前端推演**——逐表给出「将导入 n 行（自然键相同被覆盖、其余新增） / 只复制结构 / 空节跳过」，并列出导入口径（源值胜、整组替换、取交集、用户引用置空、权限版本递增），勾选确认后才能提交；**无后端 dry-run 接口**，确切的新增 / 覆盖 / 跳过 / 丢弃计数以 apply 结果回显为准（暂行口径见 OQ-94）。
 
-**用 A 配置初始化测试租户演练（E12-T05，验收「新租户表单、计划、报告单配置与 A 一致」）**：新建租户向导第 2 步可选配置模板（`POST /api/platform/tenants` 带 `templateId`），开通编排新增 `config-template` 步骤在模块开通后直接复用上面的 apply（同一套 ID 重映射、敏感拦截、授权取交集与审计）；医院 B 正式初始化（E23-T15）走同一路径。演练的自动化承载是 `ConfigTemplateTenantInitMySqlIT`：从 demoa（医院 A 的本地化身）导出模板 → 带 `templateId` 开通测试租户 → 表单（fe_* 七表）、计划（fu_plan / fu_plan_node）、报告单（rpt_type / rpt_name / rpt_indicator_tpl / rpt_indicator_item）三域配置业务列逐表与 A 比对一致（数值引用 join 到本院行取值比较），并断言患者 / 随访业务数据为空、配置行不带源租户用户引用（暂行口径见 OQ-96）。
+**用 A 配置初始化测试租户演练（E12-T05，验收「新租户表单、计划、报告单配置与 A 一致」）**：新建租户向导第 2 步可选配置模板（`POST /api/platform/tenants` 带 `templateId`），开通编排新增 `config-template` 步骤在模块开通后直接复用上面的 apply（同一套 ID 重映射、敏感拦截、授权取交集与审计）；医院 B 正式初始化（E23-T15）走同一路径。演练的自动化承载是 `ConfigTemplateTenantInitMySqlIT`：从 demoa（医院 A 的本地化身）导出模板 → 带 `templateId` 开通测试租户 → 表单（fe_* 七表）、计划（fu_plan / fu_plan_node）、报告单（rpt_type / rpt_name / rpt_indicator_tpl / rpt_indicator_item）三域配置业务列逐表与 A 比对一致（数值引用 join 到本院行取值比较），并断言患者 / 随访业务数据为空、配置行不带源租户用户引用（暂行口径见 OQ-99）。
 
 应用（导入）口径（A-FLD-014「导入时重新分配 ID 并重写引用」，验收「导入后引用关系正确」）：
 

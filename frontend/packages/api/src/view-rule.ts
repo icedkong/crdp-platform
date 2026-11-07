@@ -1,0 +1,401 @@
+/**
+ * E20-T02 / PLT-VIEW-007、008、009：平台视角规则的前端类型与纯逻辑，
+ * 与后端 `com.crdp.server.platform.ViewRuleService` / `ViewRuleResolver` 视图同构
+ * （docs/api/platform.md §6）。匹配口径（已确认）：字段 > 模块 > 租户 > 全局默认，
+ * 越具体越优先；同层多条命中（如账号有多个平台角色）按更严合并——
+ * 隐藏 > 设盲 > 脱敏 > 明文、只读 > 可编辑、禁止导出 > 允许导出。
+ * 效果预览与实际执行共用后端同一解析器，预览值即执行值（验收口径）。
+ */
+
+/** 规则层级（匹配优先级：字段 > 模块 > 租户 > 全局默认）。 */
+export type ViewRuleLayer = 'FIELD' | 'GLOBAL' | 'MODULE' | 'TENANT';
+
+/** 可见性。 */
+export type ViewRuleVisibility = 'BLINDED' | 'HIDDEN' | 'MASKED' | 'PLAIN';
+
+/** 操作。 */
+export type ViewRuleOperation = 'EDITABLE' | 'READONLY';
+
+/** 状态（待复核 PENDING_REVIEW 随 E20-T05）。 */
+export type ViewRuleStatus = 'ACTIVE' | 'DISABLED';
+
+/** 层级选项（配置页左栏顺序：全局默认 → 租户 → 模块 → 字段）。 */
+export const VIEW_RULE_LAYER_OPTIONS: {
+  hint: string;
+  label: string;
+  value: ViewRuleLayer;
+}[] = [
+  {
+    label: '全局默认',
+    value: 'GLOBAL',
+    hint: '全部租户、模块与字段的兜底规则',
+  },
+  { label: '租户', value: 'TENANT', hint: '指定租户整体（可选收紧单家医院）' },
+  {
+    label: '模块',
+    value: 'MODULE',
+    hint: '配置类 / 业务数据等模块（可选限定租户）',
+  },
+  { label: '字段', value: 'FIELD', hint: '目录内的资源对象与字段（最优先）' },
+];
+
+/** 层级文案。 */
+export function viewRuleLayerText(layer: null | string): string {
+  return (
+    VIEW_RULE_LAYER_OPTIONS.find((option) => option.value === layer)?.label ??
+    layer ??
+    '—'
+  );
+}
+
+/** 可见性选项。 */
+export const VIEW_RULE_VISIBILITY_OPTIONS: {
+  label: string;
+  value: ViewRuleVisibility;
+}[] = [
+  { label: '明文', value: 'PLAIN' },
+  { label: '脱敏', value: 'MASKED' },
+  { label: '设盲', value: 'BLINDED' },
+  { label: '隐藏', value: 'HIDDEN' },
+];
+
+/** 可见性文案。 */
+export function viewRuleVisibilityText(visibility: null | string): string {
+  return (
+    VIEW_RULE_VISIBILITY_OPTIONS.find((option) => option.value === visibility)
+      ?.label ??
+    visibility ??
+    '—'
+  );
+}
+
+/** 操作文案。 */
+export function viewRuleOperationText(operation: null | string): string {
+  switch (operation) {
+    case 'EDITABLE': {
+      return '可编辑';
+    }
+    case 'READONLY': {
+      return '只读';
+    }
+    default: {
+      return operation ?? '—';
+    }
+  }
+}
+
+/** 状态文案。 */
+export function viewRuleStatusText(status: null | string): string {
+  switch (status) {
+    case 'ACTIVE': {
+      return '生效';
+    }
+    case 'DISABLED': {
+      return '停用';
+    }
+    default: {
+      return status ?? '—';
+    }
+  }
+}
+
+/** 脱敏规则码文案（沿用第 4 章脱敏规则；maskRuleText 用于选项与预览）。 */
+export const VIEW_RULE_MASK_OPTIONS: { label: string; value: string }[] = [
+  { label: '姓名（首尾保留）', value: 'name' },
+  { label: '手机号（前 3 后 4）', value: 'phone' },
+  { label: '证件号（前 6 后 4）', value: 'idCard' },
+  { label: '病案号 / 病历号（前 2 后 2）', value: 'medicalRecordNo' },
+  { label: '住址（前 6 字）', value: 'address' },
+  { label: '通用（首尾保留）', value: 'generic' },
+];
+
+/** 脱敏码文案。 */
+export function viewRuleMaskText(maskRule: null | string): string {
+  return (
+    VIEW_RULE_MASK_OPTIONS.find((option) => option.value === maskRule)?.label ??
+    maskRule ??
+    ''
+  );
+}
+
+/** 规则行（列表与详情；roleCodes 为空 = 全部平台角色）。 */
+export interface ViewRuleItem {
+  allowExport: boolean;
+  code: string;
+  field: null | string;
+  fieldLabel: null | string;
+  id: number;
+  layer: ViewRuleLayer;
+  maskRule: null | string;
+  moduleCode: null | string;
+  moduleName: null | string;
+  name: string;
+  operation: ViewRuleOperation;
+  resource: null | string;
+  resourceLabel: null | string;
+  roleCodes: string[];
+  status: ViewRuleStatus;
+  tenantCode: null | string;
+  tenantId: null | number;
+  tenantName: null | string;
+  updatedAt: string;
+  version: number;
+  visibility: ViewRuleVisibility;
+}
+
+/** 新建 / 维护请求。 */
+export interface ViewRuleSaveRequest {
+  allowExport: boolean;
+  field?: null | string;
+  layer: ViewRuleLayer;
+  maskRule?: null | string;
+  moduleCode?: null | string;
+  name: string;
+  operation: ViewRuleOperation;
+  resource?: null | string;
+  roleIds: number[];
+  status?: ViewRuleStatus;
+  tenantId?: null | number;
+  visibility: ViewRuleVisibility;
+}
+
+/** 视角字段目录项。 */
+export interface ViewRuleCatalogField {
+  field: null | string;
+  key: string;
+  label: string;
+  moduleCode: null | string;
+  resource: string;
+}
+
+/** 目录（FIELD 层引用与预览用）。 */
+export interface ViewRuleCatalog {
+  fields: ViewRuleCatalogField[];
+  maskRules: string[];
+}
+
+/** 命中规则回显（预览「由哪条规则决定 / 哪些被覆盖」）。 */
+export interface ViewRuleTrace {
+  code: string;
+  id: number;
+  layer: ViewRuleLayer;
+  name: string;
+}
+
+/** 模块（页面）级效果。 */
+export interface ViewRuleModuleEffect {
+  allowExport: boolean;
+  maskRule: null | string;
+  matched: ViewRuleTrace[];
+  moduleCode: string;
+  moduleName: string;
+  operation: ViewRuleOperation;
+  overridden: ViewRuleTrace[];
+  visibility: ViewRuleVisibility;
+}
+
+/** 字段级效果。 */
+export interface ViewRuleFieldEffect {
+  allowExport: boolean;
+  field: null | string;
+  label: string;
+  maskRule: null | string;
+  matched: ViewRuleTrace[];
+  moduleCode: null | string;
+  operation: ViewRuleOperation;
+  overridden: ViewRuleTrace[];
+  resource: string;
+  visibility: ViewRuleVisibility;
+}
+
+/** 效果预览结果。 */
+export interface ViewRulePreviewResult {
+  fields: ViewRuleFieldEffect[];
+  modules: ViewRuleModuleEffect[];
+  roleCodes: string[];
+  tenantCode: string;
+  tenantId: number;
+  tenantName: string;
+}
+
+/** 效果预览请求：平台角色（多选，非空）+ 租户。 */
+export interface ViewRulePreviewRequest {
+  roleIds: number[];
+  tenantId: number;
+}
+
+// ---------------------------------------------------------------- 表单模型与校验
+
+/** 编辑表单模型（对话框状态；resourceWhole 表示 FIELD 层选「整个资源对象」）。 */
+export interface ViewRuleEditModel {
+  allowExport: boolean;
+  field: string;
+  layer: ViewRuleLayer;
+  maskRule: string;
+  moduleCode: string;
+  name: string;
+  operation: ViewRuleOperation;
+  resource: string;
+  resourceWhole: boolean;
+  roleIds: number[];
+  status: ViewRuleStatus;
+  tenantId: null | number;
+  visibility: ViewRuleVisibility;
+}
+
+/** 新建默认模型（全局默认层、可见只读禁止导出——系统初始默认口径）。 */
+export function newViewRuleModel(): ViewRuleEditModel {
+  return {
+    allowExport: false,
+    field: '',
+    layer: 'GLOBAL',
+    maskRule: '',
+    moduleCode: '',
+    name: '',
+    operation: 'READONLY',
+    resource: '',
+    resourceWhole: false,
+    roleIds: [],
+    status: 'ACTIVE',
+    tenantId: null,
+    visibility: 'PLAIN',
+  };
+}
+
+/** 规则行 → 编辑模型。 */
+export function toViewRuleEditModel(rule: ViewRuleItem): ViewRuleEditModel {
+  return {
+    allowExport: rule.allowExport,
+    field: rule.field ?? '',
+    layer: rule.layer,
+    maskRule: rule.maskRule ?? '',
+    moduleCode: rule.moduleCode ?? '',
+    name: rule.name,
+    operation: rule.operation,
+    resource: rule.resource ?? '',
+    resourceWhole: rule.layer === 'FIELD' && rule.field === null,
+    roleIds: [],
+    status: rule.status,
+    tenantId: rule.tenantId,
+    visibility: rule.visibility,
+  };
+}
+
+/** 编辑模型 → 提交请求（不属当前层级的选择器一律置空，与后端形状校验同口径）。 */
+export function toViewRuleSaveRequest(
+  model: ViewRuleEditModel,
+): ViewRuleSaveRequest {
+  const isGlobal = model.layer === 'GLOBAL';
+  const isModule = model.layer === 'MODULE';
+  return {
+    allowExport: model.allowExport,
+    field:
+      model.layer === 'FIELD' && !model.resourceWhole
+        ? model.field || null
+        : null,
+    layer: model.layer,
+    maskRule: model.visibility === 'MASKED' ? model.maskRule : null,
+    moduleCode: isModule ? model.moduleCode : null,
+    name: model.name.trim(),
+    operation: model.operation,
+    resource: model.layer === 'FIELD' ? model.resource || null : null,
+    roleIds: model.roleIds,
+    status: model.status,
+    tenantId: isGlobal ? null : (model.tenantId ?? null),
+    visibility: model.visibility,
+  };
+}
+
+/**
+ * 保存校验（前端先行，与后端 ViewRuleService.validate 同口径；返回错误信息，空数组 = 通过）。
+ * FIELD 层的资源与字段是否在目录内由页面用目录数据校验（见页面 logic.ts）。
+ */
+export function validateViewRule(model: ViewRuleEditModel): string[] {
+  const errors: string[] = [];
+  if (!model.name.trim()) {
+    errors.push('请填写规则名称');
+  } else if (model.name.trim().length > 128) {
+    errors.push('规则名称过长（最多 128 个字符）');
+  }
+  switch (model.layer) {
+    case 'FIELD': {
+      if (!model.resource) errors.push('字段层级必须选择资源对象');
+      if (!model.resourceWhole && !model.field) {
+        errors.push('字段层级必须选择字段（或勾选「整个资源对象」）');
+      }
+      break;
+    }
+    case 'GLOBAL': {
+      break;
+    }
+    case 'MODULE': {
+      if (!model.moduleCode) errors.push('模块层级必须选择模块');
+      break;
+    }
+    case 'TENANT': {
+      if (!model.tenantId) errors.push('租户层级必须选择租户');
+      break;
+    }
+    default: {
+      errors.push('请选择层级');
+    }
+  }
+  if (model.visibility === 'MASKED') {
+    if (!model.maskRule) {
+      errors.push('可见性为脱敏时必须选择脱敏规则');
+    }
+  } else if (model.maskRule) {
+    errors.push('只有脱敏可见性才允许选择脱敏规则');
+  }
+  return errors;
+}
+
+// ---------------------------------------------------------------- 列表与预览文案
+
+/** 规则的作用范围摘要（列表「范围」列）：租户 / 模块 / 字段选择器组合。 */
+export function viewRuleScopeText(rule: ViewRuleItem): string {
+  const parts: string[] = [
+    rule.tenantId ? `${rule.tenantName ?? rule.tenantCode}` : '全部租户',
+  ];
+  if (rule.layer === 'MODULE' || rule.layer === 'FIELD') {
+    parts.push(
+      rule.moduleCode ? (rule.moduleName ?? rule.moduleCode) : '全部模块',
+    );
+  }
+  if (rule.layer === 'FIELD') {
+    parts.push(
+      rule.field
+        ? `${rule.resourceLabel ?? rule.resource} · ${rule.fieldLabel ?? rule.field}`
+        : `${rule.resourceLabel ?? rule.resource}（整体）`,
+    );
+  }
+  return parts.join(' / ');
+}
+
+/** 适用角色摘要（空 = 全部平台角色）。 */
+export function viewRuleRolesText(rule: ViewRuleItem): string {
+  return rule.roleCodes.length === 0 ? '全部角色' : rule.roleCodes.join('、');
+}
+
+/** 效果摘要（预览行内「可见性 · 操作 · 导出」一句话）。 */
+export function viewRuleEffectText(effect: {
+  allowExport: boolean;
+  maskRule: null | string;
+  operation: null | string;
+  visibility: null | string;
+}): string {
+  const visibility =
+    viewRuleVisibilityText(effect.visibility) +
+    (effect.visibility === 'MASKED' && effect.maskRule
+      ? `（${viewRuleMaskText(effect.maskRule)}）`
+      : '');
+  return `${visibility} · ${viewRuleOperationText(effect.operation)} · ${
+    effect.allowExport ? '允许导出' : '禁止导出'
+  }`;
+}
+
+/** 命中规则回显（Tooltip「由哪条规则决定」）。 */
+export function viewRuleDecidedByText(traces: ViewRuleTrace[]): string {
+  if (traces.length === 0) return '系统初始默认（无命中规则）';
+  return traces.map((trace) => `${trace.code} ${trace.name}`).join('；');
+}
