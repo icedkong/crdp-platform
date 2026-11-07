@@ -8,6 +8,8 @@
 
 import type { ConditionTree, CrossFieldRule } from '@crdp/rules';
 
+import type { CompareRule } from './compare-rule';
+
 /** 表单摘要（GET /api/hospital/form/forms；完整模板见 FormSchema，E11-T02）。 */
 export interface FormSummary {
   code: string;
@@ -225,6 +227,13 @@ export function matchFieldKeyword(
 export interface FormSchema {
   categories: FormSchemaCategory[];
   code: string;
+  /**
+   * 对比标红规则（E17-T03 / A-FU-027，components.md §10.1）：租户配置（fu_compare_rule 启用行），
+   * FormRenderer 实时求值命中标红。规则属随访域（fe_form 不落库），由记录详情（GET
+   * /followup/records/{id} 的 compareRules）下发、记录页并入本字段；功能开关 compare_highlight
+   * 关闭时后端不下发（null），前端不标红。求值见 @crdp/rules 的 evaluateCompareRules。
+   */
+  compareRules?: CompareRule[] | null;
   name: string;
   /** fe_rule 跨字段校验（E11-T04）：severity=HARD 违反拦截（后端提交 42200），SOFT 黄色提示可保存。 */
   rules: CrossFieldRule[];

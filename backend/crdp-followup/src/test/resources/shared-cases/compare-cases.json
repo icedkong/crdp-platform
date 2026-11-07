@@ -1,0 +1,721 @@
+{
+  "cases": [
+    {
+      "name": "EF 56 → 45 下降 11 ≥ 10 个百分点（Q41 示例，FOLLOWUP）",
+      "rules": [
+        {
+          "ruleCode": "ef_drop",
+          "categoryKey": "fu_echo",
+          "targetField": "f248",
+          "ruleType": "DIFF",
+          "params": { "direction": "DROP", "threshold": 10 },
+          "unit": "%",
+          "baselineField": "f102",
+          "message": "EF 比上次（或出院前）下降 ≥ 10 个百分点"
+        }
+      ],
+      "current": { "f248": 45 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f248": 56 } },
+      "ordinals": {},
+      "expectedHits": [
+        {
+          "ruleId": "ef_drop",
+          "key": "f248",
+          "categoryKey": "fu_echo",
+          "message": "EF 比上次（或出院前）下降 ≥ 10 个百分点",
+          "previousValue": 56,
+          "change": -11,
+          "changeText": "下降 11 个百分点"
+        }
+      ]
+    },
+    {
+      "name": "第 1 年无上一次随访：回落基线出院前 EF（BASELINE）",
+      "rules": [
+        {
+          "ruleCode": "ef_drop",
+          "categoryKey": "fu_echo",
+          "targetField": "f248",
+          "ruleType": "DIFF",
+          "params": { "direction": "DROP", "threshold": 10 },
+          "unit": "%",
+          "baselineField": "f102",
+          "message": "EF 比上次（或出院前）下降 ≥ 10 个百分点"
+        }
+      ],
+      "current": { "f248": 44 },
+      "previous": { "kind": "BASELINE", "values": { "f102": 55, "f103": 52 } },
+      "ordinals": {},
+      "expectedHits": [
+        {
+          "ruleId": "ef_drop",
+          "key": "f248",
+          "categoryKey": "fu_echo",
+          "message": "EF 比上次（或出院前）下降 ≥ 10 个百分点",
+          "previousValue": 55,
+          "change": -11,
+          "changeText": "下降 11 个百分点"
+        }
+      ]
+    },
+    {
+      "name": "EF 55 → 46 下降 9 < 10：不标红",
+      "rules": [
+        {
+          "ruleCode": "ef_drop",
+          "categoryKey": "fu_echo",
+          "targetField": "f248",
+          "ruleType": "DIFF",
+          "params": { "direction": "DROP", "threshold": 10 },
+          "unit": "%",
+          "baselineField": "f102",
+          "message": "EF 比上次（或出院前）下降 ≥ 10 个百分点"
+        }
+      ],
+      "current": { "f248": 46 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f248": 55 } },
+      "ordinals": {},
+      "expectedHits": []
+    },
+    {
+      "name": "上一次该字段为空：跳过该条规则（A-FU-027）",
+      "rules": [
+        {
+          "ruleCode": "ef_drop",
+          "categoryKey": "fu_echo",
+          "targetField": "f248",
+          "ruleType": "DIFF",
+          "params": { "direction": "DROP", "threshold": 10 },
+          "unit": "%",
+          "baselineField": "f102",
+          "message": "EF 比上次（或出院前）下降 ≥ 10 个百分点"
+        }
+      ],
+      "current": { "f248": 30 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f249": 58 } },
+      "ordinals": {},
+      "expectedHits": []
+    },
+    {
+      "name": "本次字段未填：差值规则不标红（OUT_OF_RANGE 也不会命中空值）",
+      "rules": [
+        {
+          "ruleCode": "ef_drop",
+          "categoryKey": "fu_echo",
+          "targetField": "f248",
+          "ruleType": "DIFF",
+          "params": { "direction": "DROP", "threshold": 10 },
+          "unit": "%",
+          "baselineField": "f102",
+          "message": "EF 比上次（或出院前）下降 ≥ 10 个百分点"
+        },
+        {
+          "ruleCode": "ef_low",
+          "categoryKey": "fu_echo",
+          "targetField": "f248",
+          "ruleType": "OUT_OF_RANGE",
+          "params": { "op": "LT", "value": 40 },
+          "unit": "%",
+          "message": "EF < 40%"
+        }
+      ],
+      "current": {},
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f248": 56 } },
+      "ordinals": {},
+      "expectedHits": []
+    },
+    {
+      "name": "LVDd 52 → 58 增加 6 ≥ 5 mm（RISE）",
+      "rules": [
+        {
+          "ruleCode": "lvdd_rise",
+          "categoryKey": "fu_echo",
+          "targetField": "f249",
+          "ruleType": "DIFF",
+          "params": { "direction": "RISE", "threshold": 5 },
+          "unit": "mm",
+          "baselineField": "f103",
+          "message": "LVDd 比上次（或出院前）增加 ≥ 5 mm"
+        }
+      ],
+      "current": { "f249": 58 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f249": 52 } },
+      "ordinals": {},
+      "expectedHits": [
+        {
+          "ruleId": "lvdd_rise",
+          "key": "f249",
+          "categoryKey": "fu_echo",
+          "message": "LVDd 比上次（或出院前）增加 ≥ 5 mm",
+          "previousValue": 52,
+          "change": 6,
+          "changeText": "增加 6 mm"
+        }
+      ]
+    },
+    {
+      "name": "EF 55.5 → 44.2 下降 11.3：小数差值保留 1 位（两位以内原样）",
+      "rules": [
+        {
+          "ruleCode": "ef_drop",
+          "categoryKey": "fu_echo",
+          "targetField": "f248",
+          "ruleType": "DIFF",
+          "params": { "direction": "DROP", "threshold": 10 },
+          "unit": "%",
+          "baselineField": "f102",
+          "message": "EF 比上次（或出院前）下降 ≥ 10 个百分点"
+        }
+      ],
+      "current": { "f248": 44.2 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f248": 55.5 } },
+      "ordinals": {},
+      "expectedHits": [
+        {
+          "ruleId": "ef_drop",
+          "key": "f248",
+          "categoryKey": "fu_echo",
+          "message": "EF 比上次（或出院前）下降 ≥ 10 个百分点",
+          "previousValue": 55.5,
+          "change": -11.3,
+          "changeText": "下降 11.3 个百分点"
+        }
+      ]
+    },
+    {
+      "name": "同一字段命中多条规则：按规则顺序输出两条（DIFF + OUT_OF_RANGE）",
+      "rules": [
+        {
+          "ruleCode": "ef_drop",
+          "categoryKey": "fu_echo",
+          "targetField": "f248",
+          "ruleType": "DIFF",
+          "params": { "direction": "DROP", "threshold": 10 },
+          "unit": "%",
+          "baselineField": "f102",
+          "message": "EF 比上次（或出院前）下降 ≥ 10 个百分点"
+        },
+        {
+          "ruleCode": "ef_low",
+          "categoryKey": "fu_echo",
+          "targetField": "f248",
+          "ruleType": "OUT_OF_RANGE",
+          "params": { "op": "LT", "value": 40 },
+          "unit": "%",
+          "message": "EF < 40%"
+        }
+      ],
+      "current": { "f248": 39 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f248": 56 } },
+      "ordinals": {},
+      "expectedHits": [
+        {
+          "ruleId": "ef_drop",
+          "key": "f248",
+          "categoryKey": "fu_echo",
+          "message": "EF 比上次（或出院前）下降 ≥ 10 个百分点",
+          "previousValue": 56,
+          "change": -17,
+          "changeText": "下降 17 个百分点"
+        },
+        {
+          "ruleId": "ef_low",
+          "key": "f248",
+          "categoryKey": "fu_echo",
+          "message": "EF < 40%",
+          "previousValue": null,
+          "change": null,
+          "changeText": null
+        }
+      ]
+    },
+    {
+      "name": "previous 为 null（无上一次且基线回落全空）：固定阈值规则仍求值（OUT_OF_RANGE 命中）",
+      "rules": [
+        {
+          "ruleCode": "ef_low",
+          "categoryKey": "fu_echo",
+          "targetField": "f248",
+          "ruleType": "OUT_OF_RANGE",
+          "params": { "op": "LT", "value": 40 },
+          "unit": "%",
+          "message": "EF < 40%"
+        }
+      ],
+      "current": { "f248": 38 },
+      "previous": null,
+      "ordinals": {},
+      "expectedHits": [
+        {
+          "ruleId": "ef_low",
+          "key": "f248",
+          "categoryKey": "fu_echo",
+          "message": "EF < 40%",
+          "previousValue": null,
+          "change": null,
+          "changeText": null
+        }
+      ]
+    },
+    {
+      "name": "OUT_OF_RANGE 边界：EF = 40 不命中（LT 严格小于）",
+      "rules": [
+        {
+          "ruleCode": "ef_low",
+          "categoryKey": "fu_echo",
+          "targetField": "f248",
+          "ruleType": "OUT_OF_RANGE",
+          "params": { "op": "LT", "value": 40 },
+          "unit": "%",
+          "message": "EF < 40%"
+        }
+      ],
+      "current": { "f248": 40 },
+      "previous": null,
+      "ordinals": {},
+      "expectedHits": []
+    },
+    {
+      "name": "CHANGE_PCT ANY：阻抗 500 → 800（+60% > 50%）标红，方向按实际升降",
+      "rules": [
+        {
+          "ruleCode": "impedance_any",
+          "categoryKey": "fu_battery",
+          "targetField": "f401",
+          "ruleType": "CHANGE_PCT",
+          "params": { "direction": "ANY", "percent": 50 },
+          "unit": "Ω",
+          "message": "阻抗较上次升高或降低 > 50%"
+        }
+      ],
+      "current": { "f401": 800 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f401": 500 } },
+      "ordinals": {},
+      "expectedHits": [
+        {
+          "ruleId": "impedance_any",
+          "key": "f401",
+          "categoryKey": "fu_battery",
+          "message": "阻抗较上次升高或降低 > 50%",
+          "previousValue": 500,
+          "change": 60,
+          "changeText": "升高 60%"
+        }
+      ]
+    },
+    {
+      "name": "CHANGE_PCT DROP：感知 8 → 3.6（−55% > 50%）标红下降",
+      "rules": [
+        {
+          "ruleCode": "sensing_drop",
+          "categoryKey": "fu_sensing",
+          "targetField": "f402",
+          "ruleType": "CHANGE_PCT",
+          "params": { "direction": "DROP", "percent": 50 },
+          "unit": "mV",
+          "message": "感知较上次下降 > 50%"
+        }
+      ],
+      "current": { "f402": 3.6 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f402": 8 } },
+      "ordinals": {},
+      "expectedHits": [
+        {
+          "ruleId": "sensing_drop",
+          "key": "f402",
+          "categoryKey": "fu_sensing",
+          "message": "感知较上次下降 > 50%",
+          "previousValue": 8,
+          "change": -55,
+          "changeText": "下降 55%"
+        }
+      ]
+    },
+    {
+      "name": "CHANGE_PCT 恰好等于阈值不命中（> 严格大于）：8 → 4（−50%）",
+      "rules": [
+        {
+          "ruleCode": "sensing_drop",
+          "categoryKey": "fu_sensing",
+          "targetField": "f402",
+          "ruleType": "CHANGE_PCT",
+          "params": { "direction": "DROP", "percent": 50 },
+          "unit": "mV",
+          "message": "感知较上次下降 > 50%"
+        }
+      ],
+      "current": { "f402": 4 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f402": 8 } },
+      "ordinals": {},
+      "expectedHits": []
+    },
+    {
+      "name": "CHANGE_PCT 上次为 0：变化率无效，跳过",
+      "rules": [
+        {
+          "ruleCode": "impedance_any",
+          "categoryKey": "fu_battery",
+          "targetField": "f401",
+          "ruleType": "CHANGE_PCT",
+          "params": { "direction": "ANY", "percent": 50 },
+          "unit": "Ω",
+          "message": "阻抗较上次升高或降低 > 50%"
+        }
+      ],
+      "current": { "f401": 300 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f401": 0 } },
+      "ordinals": {},
+      "expectedHits": []
+    },
+    {
+      "name": "ORDINAL_RISE：无(0) → 少量(2) 升高 2 级 ≥ 2 标红",
+      "rules": [
+        {
+          "ruleCode": "mr_rise",
+          "categoryKey": "fu_echo",
+          "targetField": "f239",
+          "ruleType": "ORDINAL_RISE",
+          "params": { "grades": 2, "reachCodes": ["3", "4"] },
+          "message": "二尖瓣返流较上次加重 ≥ 2 级，或达到中量 / 大量"
+        }
+      ],
+      "current": { "f239": 2 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f239": 0 } },
+      "ordinals": { "f239": { "0": 0, "1": 1, "2": 2, "3": 3, "4": 4 } },
+      "expectedHits": [
+        {
+          "ruleId": "mr_rise",
+          "key": "f239",
+          "categoryKey": "fu_echo",
+          "message": "二尖瓣返流较上次加重 ≥ 2 级，或达到中量 / 大量",
+          "previousValue": 0,
+          "change": 2,
+          "changeText": "升高 2 级"
+        }
+      ]
+    },
+    {
+      "name": "ORDINAL_RISE reachCodes：微量(1) → 中量(3) 升高 2 级也命中；少量(2) → 中量(3) 升高 1 级但达到中量仍标红",
+      "rules": [
+        {
+          "ruleCode": "mr_rise",
+          "categoryKey": "fu_echo",
+          "targetField": "f239",
+          "ruleType": "ORDINAL_RISE",
+          "params": { "grades": 2, "reachCodes": ["3", "4"] },
+          "message": "二尖瓣返流较上次加重 ≥ 2 级，或达到中量 / 大量"
+        }
+      ],
+      "current": { "f239": 3 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f239": 2 } },
+      "ordinals": { "f239": { "0": 0, "1": 1, "2": 2, "3": 3, "4": 4 } },
+      "expectedHits": [
+        {
+          "ruleId": "mr_rise",
+          "key": "f239",
+          "categoryKey": "fu_echo",
+          "message": "二尖瓣返流较上次加重 ≥ 2 级，或达到中量 / 大量",
+          "previousValue": 2,
+          "change": 1,
+          "changeText": "达到预设档位"
+        }
+      ]
+    },
+    {
+      "name": "ORDINAL_RISE 上次值缺序数（停用选项 / 无序数字典）：跳过",
+      "rules": [
+        {
+          "ruleCode": "mr_rise",
+          "categoryKey": "fu_echo",
+          "targetField": "f239",
+          "ruleType": "ORDINAL_RISE",
+          "params": { "grades": 2 },
+          "message": "二尖瓣返流较上次加重 ≥ 2 级"
+        }
+      ],
+      "current": { "f239": 4 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f239": 9 } },
+      "ordinals": { "f239": { "0": 0, "1": 1, "2": 2, "3": 3, "4": 4 } },
+      "expectedHits": []
+    },
+    {
+      "name": "NEW_EVENT：本次填写再住院类型且日期晚于上一次随访（上一次未填该事件）→ 新发",
+      "rules": [
+        {
+          "ruleCode": "rehospital",
+          "categoryKey": "fu_event",
+          "targetField": "f223",
+          "ruleType": "NEW_EVENT",
+          "params": { "dateField": "f224" },
+          "message": "新发再住院（本次填写且日期晚于上一次随访）"
+        }
+      ],
+      "current": { "f223": 2, "f224": "2026-05-01" },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f224": null } },
+      "ordinals": {},
+      "expectedHits": [
+        {
+          "ruleId": "rehospital",
+          "key": "f223",
+          "categoryKey": "fu_event",
+          "message": "新发再住院（本次填写且日期晚于上一次随访）",
+          "previousValue": null,
+          "change": null,
+          "changeText": "新发"
+        }
+      ]
+    },
+    {
+      "name": "NEW_EVENT：日期不晚于上一次随访（上一次已有同事件）→ 不是新发",
+      "rules": [
+        {
+          "ruleCode": "rehospital",
+          "categoryKey": "fu_event",
+          "targetField": "f223",
+          "ruleType": "NEW_EVENT",
+          "params": { "dateField": "f224" },
+          "message": "新发再住院（本次填写且日期晚于上一次随访）"
+        }
+      ],
+      "current": { "f223": 2, "f224": "2025-08-01" },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f223": 1, "f224": "2025-05-01" } },
+      "ordinals": {},
+      "expectedHits": []
+    },
+    {
+      "name": "NEW_EVENT：上一次为「无」（编码 0）→ 本次命中即新发（Q41「或上一次为无」）",
+      "rules": [
+        {
+          "ruleCode": "revasc",
+          "categoryKey": "fu_event",
+          "targetField": "f225",
+          "ruleType": "NEW_EVENT",
+          "params": { "dateField": "f226" },
+          "message": "新发再血运重建（再次血运重建 ≠ 无且日期晚于上一次随访）"
+        }
+      ],
+      "current": { "f225": 1, "f226": "2025-01-10" },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f225": 0 } },
+      "ordinals": {},
+      "expectedHits": [
+        {
+          "ruleId": "revasc",
+          "key": "f225",
+          "categoryKey": "fu_event",
+          "message": "新发再血运重建（再次血运重建 ≠ 无且日期晚于上一次随访）",
+          "previousValue": 0,
+          "change": null,
+          "changeText": "新发"
+        }
+      ]
+    },
+    {
+      "name": "NEW_EVENT triggerCodes：本次取值不在命中编码内 → 不标红",
+      "rules": [
+        {
+          "ruleCode": "rehospital",
+          "categoryKey": "fu_event",
+          "targetField": "f223",
+          "ruleType": "NEW_EVENT",
+          "params": { "dateField": "f224", "triggerCodes": ["1", "2"] },
+          "message": "新发再住院（心衰 / 冠脉疾病）"
+        }
+      ],
+      "current": { "f223": 5, "f224": "2026-05-01" },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": {} },
+      "ordinals": {},
+      "expectedHits": []
+    },
+    {
+      "name": "NEW_EVENT 本次为「无 / 未填」（编码 0 或空）→ 不标红",
+      "rules": [
+        {
+          "ruleCode": "revasc",
+          "categoryKey": "fu_event",
+          "targetField": "f225",
+          "ruleType": "NEW_EVENT",
+          "params": { "dateField": "f226" },
+          "message": "新发再血运重建（再次血运重建 ≠ 无且日期晚于上一次随访）"
+        }
+      ],
+      "current": { "f225": 0 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": {} },
+      "ordinals": {},
+      "expectedHits": []
+    },
+    {
+      "name": "FLIP_TO_YES：上一次否(0) → 本次是(1) → 新发心室血栓（基线回落 f113）",
+      "rules": [
+        {
+          "ruleCode": "thrombus",
+          "categoryKey": "fu_echo",
+          "targetField": "f258",
+          "ruleType": "FLIP_TO_YES",
+          "params": {},
+          "baselineField": "f113",
+          "message": "新发心室血栓（由否变是）"
+        }
+      ],
+      "current": { "f258": 1 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f258": 0 } },
+      "ordinals": {},
+      "expectedHits": [
+        {
+          "ruleId": "thrombus",
+          "key": "f258",
+          "categoryKey": "fu_echo",
+          "message": "新发心室血栓（由否变是）",
+          "previousValue": 0,
+          "change": null,
+          "changeText": "由否变是"
+        }
+      ]
+    },
+    {
+      "name": "FLIP_TO_YES：上一次已是(1) → 本次仍是 → 不标红（不算新发）",
+      "rules": [
+        {
+          "ruleCode": "thrombus",
+          "categoryKey": "fu_echo",
+          "targetField": "f258",
+          "ruleType": "FLIP_TO_YES",
+          "params": {},
+          "baselineField": "f113",
+          "message": "新发心室血栓（由否变是）"
+        }
+      ],
+      "current": { "f258": 1 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f258": 1 } },
+      "ordinals": {},
+      "expectedHits": []
+    },
+    {
+      "name": "FLIP_TO_YES 新发死亡：无对比对象（无基线回落列），本次 = 是即标红（第 1 年 BASELINE 也生效）",
+      "rules": [
+        {
+          "ruleCode": "death_yes",
+          "categoryKey": "fu_contact",
+          "targetField": "f215",
+          "ruleType": "FLIP_TO_YES",
+          "params": {},
+          "message": "本次随访记录死亡（是否死亡 = 是）"
+        }
+      ],
+      "current": { "f215": 1 },
+      "previous": { "kind": "BASELINE", "values": { "f102": 55 } },
+      "ordinals": {},
+      "expectedHits": [
+        {
+          "ruleId": "death_yes",
+          "key": "f215",
+          "categoryKey": "fu_contact",
+          "message": "本次随访记录死亡（是否死亡 = 是）",
+          "previousValue": null,
+          "change": null,
+          "changeText": "由否变是"
+        }
+      ]
+    },
+    {
+      "name": "FLIP_TO_YES 有基线回落列但基线值缺失：上一次为空跳过（不臆断新发）",
+      "rules": [
+        {
+          "ruleCode": "thrombus",
+          "categoryKey": "fu_echo",
+          "targetField": "f258",
+          "ruleType": "FLIP_TO_YES",
+          "params": {},
+          "baselineField": "f113",
+          "message": "新发心室血栓（由否变是）"
+        }
+      ],
+      "current": { "f258": 1 },
+      "previous": { "kind": "BASELINE", "values": {} },
+      "ordinals": {},
+      "expectedHits": []
+    },
+    {
+      "name": "VALUE_HIT codes：ERI 状态非正常（命中预设编码）",
+      "rules": [
+        {
+          "ruleCode": "eri_abnormal",
+          "categoryKey": "fu_battery",
+          "targetField": "f403",
+          "ruleType": "VALUE_HIT",
+          "params": { "codes": ["2", "3"] },
+          "message": "ERI 状态非正常"
+        }
+      ],
+      "current": { "f403": 2 },
+      "previous": null,
+      "ordinals": {},
+      "expectedHits": [
+        {
+          "ruleId": "eri_abnormal",
+          "key": "f403",
+          "categoryKey": "fu_battery",
+          "message": "ERI 状态非正常",
+          "previousValue": null,
+          "change": null,
+          "changeText": null
+        }
+      ]
+    },
+    {
+      "name": "VALUE_HIT op：预计电池寿命 ≤ 1 年命中；空值不命中",
+      "rules": [
+        {
+          "ruleCode": "battery_low",
+          "categoryKey": "fu_battery",
+          "targetField": "f404",
+          "ruleType": "VALUE_HIT",
+          "params": { "op": "LTE", "value": 1 },
+          "unit": "年",
+          "message": "预计电池寿命 ≤ 1 年"
+        }
+      ],
+      "current": { "f404": 0.8 },
+      "previous": null,
+      "ordinals": {},
+      "expectedHits": [
+        {
+          "ruleId": "battery_low",
+          "key": "f404",
+          "categoryKey": "fu_battery",
+          "message": "预计电池寿命 ≤ 1 年",
+          "previousValue": null,
+          "change": null,
+          "changeText": null
+        }
+      ]
+    },
+    {
+      "name": "OUT_OF_RANGE GTE：LA > 45 命中（GT 严格大于用 GTE 语义由 op 决定）",
+      "rules": [
+        {
+          "ruleCode": "la_high",
+          "categoryKey": "fu_echo",
+          "targetField": "f250",
+          "ruleType": "OUT_OF_RANGE",
+          "params": { "op": "GT", "value": 45 },
+          "unit": "mm",
+          "message": "LA > 45 mm"
+        }
+      ],
+      "current": { "f250": 47 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f250": 44 } },
+      "ordinals": {},
+      "expectedHits": [
+        {
+          "ruleId": "la_high",
+          "key": "f250",
+          "categoryKey": "fu_echo",
+          "message": "LA > 45 mm",
+          "previousValue": null,
+          "change": null,
+          "changeText": null
+        }
+      ]
+    }
+  ]
+}

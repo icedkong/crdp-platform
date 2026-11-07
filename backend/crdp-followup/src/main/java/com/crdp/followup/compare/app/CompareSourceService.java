@@ -36,7 +36,8 @@ import org.springframework.stereotype.Service;
  *   <li>功能开关 compare_highlight 关闭或该表单无启用规则 → previous 为 null（记录页本身正常返回， AGENTS §5.7）。
  * </ul>
  *
- * <p>规则定义与求值（前后端共用用例）、结果持久化与补录后重算随 E17-T03 / E17-T04；C 的「同一器械 / 电极」取法随 E21。
+ * <p>求值已随 E17-T03 落地（{@link com.crdp.followup.compare.domain.CompareEvaluator} 与前端 packages/rules
+ * 共享用例锁定一致）；结果持久化与补录后重算随 E17-T04；C 的「同一器械 / 电极」取法随 E21。
  */
 @Service
 public class CompareSourceService {

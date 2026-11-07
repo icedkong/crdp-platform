@@ -20,6 +20,11 @@
  *   A-PAT-019）：按分类实时上抛 `progress` 事件（给 CategoryBar / E13-T11）；条件不显示
  *   的字段不计入、派生与加密列不计入（与后端 FormProgressEngine 同口径，共享用例锁定）；
  *   `anchors()` 输出每个分类的稳定锚点键与模板版本（报告单位置 E16-T13 用）。
+ * - 对比标红（E17-T03 / A-FU-027，design-system §14）：`highlightEnabled` 且模板带
+ *   `compareRules` 时按 @crdp/rules 的 evaluateCompareRules（与后端 CompareEvaluator
+ *   共享用例锁定一致）实时求值：命中字段红底（globalCss .crdp-field-flag）+ ▲ + 变化量
+ *   与对比值，悬停显示规则说明（tooltip）；分组标题显示 ▲n，`highlight` 事件上抛命中
+ *   列表（页面并入 CategoryBar 标红数）；不弹窗、不发通知、不拦提交。
  * - Enter 不提交（本组件只阻止默认行为；Ctrl/⌘+S、Ctrl/⌘+Enter 由页面监听）。
  * - 响应式（E24-T02 / NFR-RESP-001、002，pages.md §5.2、design-system §12）：
  *   断点统一走 @crdp/responsive 的 useBreakpoint（全站唯一断点来源）——
@@ -27,10 +32,17 @@
  *   右对齐 120）；手机标签在上、输入框占满宽（高 36 / 字号 16 由根节点
  *   crdp-form 命中 globalCss 手机媒体查询提供）、数值弹数字键盘
  *   （inputmode="decimal"）。
- * 不在本组件（后续任务）：对比标红（E17）、附件条（E16）。
+ * 不在本组件（后续任务）：附件条（E16）、标红结果持久化展示（E17-T04）。
  */
 import type { FormSchema } from '@crdp/api';
-import type { CategoryProgress, DerivedOutcome, FieldIssue } from '@crdp/rules';
+import type {
+  CategoryProgress,
+  CompareHit,
+  CompareRuleInput,
+  DerivedOutcome,
+  FieldIssue,
+  OrdinalMap,
+} from '@crdp/rules';
 
 import type { PreviousRecord } from './carry-over';
 import type {
@@ -49,11 +61,13 @@ import {
   computeCategoryProgress,
   computeDerivedValues,
   derivedManualKind,
+  evaluateCompareRules,
   isDerivedManualEditable,
   isEmptyFormValue,
   isFieldVisible,
   isRequiredField,
   stripHiddenFieldValues,
+  toCompareRuleInput,
   validateFormData,
 } from '@crdp/rules';
 import { colors, sizes } from '@crdp/tokens';
@@ -66,6 +80,7 @@ import {
   RadioGroup,
   Select,
   Textarea,
+  Tooltip,
 } from 'ant-design-vue';
 
 import {
@@ -74,7 +89,11 @@ import {
   carryOverButtonText,
   carryOverPlan,
 } from './carry-over';
-import { previousValueText, readonlyFieldValue } from './format-value';
+import {
+  formatFieldValue,
+  previousValueText,
+  readonlyFieldValue,
+} from './format-value';
 import {
   anchorId,
   categoryAnchors,
@@ -95,6 +114,11 @@ const props = withDefaults(
   defineProps<{
     /** 条件上下文（如医院 C 的 device.*，E21-T03）。 */
     context?: null | Record<string, unknown>;
+    /**
+     * 对比标红开关（E17-T03 / A-FU-027，design-system §14）：功能开关 compare_highlight
+     * （后端按 previous / compareRules 是否下发收敛，记录页传 detail 两字段非空）。
+     */
+    highlightEnabled?: boolean;
     /** 布局：auto 桌面 140 / 平板 120 / 手机标签在上；horizontal 固定横向；vertical 标签在上。 */
     layout?: 'auto' | 'horizontal' | 'vertical';
     /** 字段附加信息（data_meta）：manual / note（「其他」说明）/ fromReport（报告单带入）。 */
@@ -103,15 +127,16 @@ const props = withDefaults(
     mode?: 'edit' | 'readonly';
     /** 表单数据（键 = 稳定键；v-model）。 */
     modelValue: Record<string, unknown>;
-    /** 上一次记录（带入上次值 / 「上次 xx」提示；规则参数决定取法，后端给）。 */
+    /** 上一次记录（带入上次值 / 对比标红；规则参数决定取法，后端给）。 */
     previous?: null | PreviousRecord;
-    /** 表单模板（FormSchema，字段 / 分组 / 选项 / 条件 / 校验全部来自它）。 */
+    /** 表单模板（FormSchema，字段 / 分组 / 选项 / 条件 / 校验 / 对比规则全部来自它）。 */
     schema: FormSchema;
     /** 提交校验后为 true：显示必填 / 硬错误标红。 */
     showErrors?: boolean;
   }>(),
   {
     context: undefined,
+    highlightEnabled: false,
     layout: 'auto',
     meta: undefined,
     mode: 'edit',
@@ -123,6 +148,8 @@ const emit = defineEmits<{
   carryOver: [keys: string[]];
   clearedHidden: [keys: string[]];
   fieldBlur: [key: string];
+  /** 对比标红命中（E17-T03）：页面据此给 CategoryBar 并入标红数；命中字段内渲染见模板。 */
+  highlight: [hits: CompareHit[]];
   progress: [items: CategoryProgress[]];
   'update:meta': [meta: Record<string, FieldMetaValue | undefined>];
   'update:modelValue': [data: Record<string, unknown>];
@@ -556,6 +583,116 @@ watch(
   { immediate: true },
 );
 
+// ---------------------------------------------------------------- 对比标红（E17-T03 / A-FU-027、C-FU-011）
+
+/** 序数表（ORDINAL_RISE 用）：模板 optionSet.ordinal；无序数字段不进表。 */
+const compareOrdinals = computed<OrdinalMap>(() => {
+  const map: OrdinalMap = {};
+  for (const field of allFields.value) {
+    for (const option of field.optionSet ?? []) {
+      if (option.ordinal !== null && option.ordinal !== undefined) {
+        (map[field.key] ??= {})[String(option.code)] = option.ordinal;
+      }
+    }
+  }
+  return map;
+});
+
+/** 实时求值（与后端 CompareEvaluator 共享用例锁定一致）；只读视图不标红（持久化展示随 E17-T04）。 */
+const compareHits = computed<CompareHit[]>(() => {
+  if (!props.highlightEnabled || isReadonly.value) return [];
+  const rules: CompareRuleInput[] = [];
+  for (const rule of props.schema.compareRules ?? []) {
+    if (!rule.enabled) continue;
+    const input = toCompareRuleInput(rule);
+    if (input) rules.push(input);
+  }
+  if (rules.length === 0) return [];
+  return evaluateCompareRules(
+    rules,
+    props.modelValue,
+    props.previous
+      ? {
+          date: props.previous.date,
+          kind: props.previous.kind,
+          values: props.previous.values,
+        }
+      : null,
+    compareOrdinals.value,
+  );
+});
+
+const hitsByKey = computed(() => {
+  const group = new Map<string, CompareHit[]>();
+  for (const hit of compareHits.value) {
+    const list = group.get(hit.key) ?? [];
+    list.push(hit);
+    group.set(hit.key, list);
+  }
+  return group;
+});
+
+/** 分组标红数（分组标题 ▲n；锚点 / CategoryBar 由页面上抛 highlight 后并入）。 */
+const hitCountByCategory = computed(() => {
+  const count = new Map<string, number>();
+  for (const hit of compareHits.value) {
+    count.set(hit.categoryKey, (count.get(hit.categoryKey) ?? 0) + 1);
+  }
+  return count;
+});
+
+function hitsOf(field: RendererField): CompareHit[] {
+  return hitsByKey.value.get(field.key) ?? [];
+}
+
+function hitCountOf(categoryKey: string): number {
+  return hitCountByCategory.value.get(categoryKey) ?? 0;
+}
+
+/** 对比值引用名：上一次随访 → 上次；第 1 年基线回落 → 出院前（Q41 出院前超声）。 */
+const previousRefLabel = computed(() =>
+  props.previous?.kind === 'BASELINE' ? '出院前' : '上次',
+);
+
+/**
+ * 标红字段旁的可见文本（验收「标红字段旁显示对比值与变化量」）：
+ * 变化量文案 + （对比值）；固定阈值规则无变化量，只留 ▲ 与 tooltip 规则说明。
+ */
+function highlightTextOf(field: RendererField): string {
+  return hitsOf(field)
+    .map((hit) => {
+      const parts: string[] = [];
+      if (hit.changeText) parts.push(hit.changeText);
+      const previousText = formatFieldValue(field, hit.previousValue);
+      if (previousText)
+        parts.push(`（${previousRefLabel.value} ${previousText}）`);
+      return parts.join('');
+    })
+    .filter((part) => part !== '')
+    .join('；');
+}
+
+/** 规则说明（tooltip）：命中的规则文案逐条拼接（悬停显示规则与阈值来源，design-system §14）。 */
+function highlightTooltipOf(field: RendererField): string {
+  return hitsOf(field)
+    .map((hit) => hit.message)
+    .join('；');
+}
+
+/** 上抛 highlight（页面给 CategoryBar 并入标红数）；命中未变化不重复上抛；开关关闭不上抛。 */
+let lastHighlightJson = '';
+watch(
+  compareHits,
+  (hits) => {
+    if (!props.highlightEnabled) return;
+    const next = JSON.stringify(hits);
+    if (next === lastHighlightJson) return;
+    lastHighlightJson = next;
+    emit('highlight', hits);
+  },
+  { immediate: true },
+);
+
 // ---------------------------------------------------------------- 暴露
 
 /** 每个分类 / 分节的稳定锚点键与模板版本（components.md §10.3 锚点；报告单位置 E16-T13 用）。 */
@@ -609,13 +746,24 @@ defineExpose({ anchors, focusFirstError, scrollTo, validate });
       class="form-category"
       data-testid="form-category"
     >
-      <h4 class="category-title">{{ category.label }}</h4>
+      <h4 class="category-title">
+        {{ category.label }}
+        <!-- 对比标红数（E17-T03 / A-FU-027）：分组标题 ▲n，红色（design-system §14） -->
+        <span
+          v-if="hitCountOf(category.key) > 0"
+          :data-testid="`category-highlight-${category.key}`"
+          class="category-highlight"
+        >
+          ▲{{ hitCountOf(category.key) }}
+        </span>
+      </h4>
       <div class="category-fields" :class="{ 'single-column': singleColumn }">
         <div
           v-for="field in visibleFieldsOf(category)"
           :key="field.key"
           class="form-field"
           :class="{
+            'crdp-field-flag': hitsOf(field).length > 0,
             'field-carried': carriedOf(field),
             'field-from-report': fromReportOf(field),
             'field-full-row': isFullRow(field),
@@ -838,6 +986,22 @@ defineExpose({ anchors, focusFirstError, scrollTo, validate });
               {{ previousTextOf(field) }}
             </div>
 
+            <!-- 对比标红（E17-T03 / A-FU-027）：▲ + 变化量 + 对比值；悬停显示规则说明 -->
+            <Tooltip
+              v-if="hitsOf(field).length > 0"
+              :title="highlightTooltipOf(field)"
+            >
+              <div
+                :data-testid="`field-highlight-${field.key}`"
+                class="field-highlight"
+              >
+                <span class="highlight-flag">▲</span>
+                <span v-if="highlightTextOf(field)" class="highlight-text">
+                  {{ highlightTextOf(field) }}
+                </span>
+              </div>
+            </Tooltip>
+
             <!-- 派生留空原因（缺少身高 / 出院日期早于手术日期……，与后端逐字一致） -->
             <div
               v-if="kindOf(field) === 'derived' && derivedHintOf(field)"
@@ -1011,6 +1175,28 @@ defineExpose({ anchors, focusFirstError, scrollTo, validate });
   flex-basis: 100%;
   font-size: 12px;
   color: var(--form-text-secondary);
+}
+
+/* 分组标题标红数（E17-T03）：红色 ▲n（design-system §14） */
+.category-highlight {
+  margin-left: 4px;
+  font-size: 12px;
+  color: var(--form-error);
+}
+
+/* 对比标红字段旁提示（E17-T03 / A-FU-027）：▲ + 变化量 + 对比值；红底由
+   globalCss .crdp-field-flag 提供输入框背景，这里只管文案行 */
+.field-highlight {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--form-error);
+  cursor: help;
+}
+
+.field-highlight .highlight-flag {
+  font-weight: 600;
 }
 
 .field-warning {

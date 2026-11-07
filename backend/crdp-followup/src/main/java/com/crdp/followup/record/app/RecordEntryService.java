@@ -1,5 +1,6 @@
 package com.crdp.followup.record.app;
 
+import com.crdp.followup.compare.app.CompareRuleService;
 import com.crdp.followup.compare.app.CompareSourceService;
 import com.crdp.followup.plan.app.FollowupTerminationService;
 import com.crdp.followup.task.app.FollowupTaskStatusService;
@@ -39,7 +40,8 @@ import org.springframework.transaction.annotation.Transactional;
  *       FollowupTerminationService#terminateOnDeath} 终止患者全部未开始任务（幂等；「失访」只是失访候选，判定随
  *       E15-T05，本流程不置失访）；
  *   <li>修改已提交（edit-session / PUT）、删除、报告单带入随 E16 / E21；{@code previous}（上一次记录解析，A-FU-027）已随 E17-T02
- *       接入（{@link CompareSourceService#resolve}）；标红求值与持久化随 E17-T03 / E17-T04。
+ *       接入（{@link CompareSourceService#resolve}）；{@code compareRules}（启用规则下发，前端实时标红与后端保存复算共用，
+ *       tech-plan §11）随 E17-T03；标红结果持久化随 E17-T04。
  * </ul>
  */
 @Service
@@ -57,6 +59,7 @@ public class RecordEntryService {
     private final FollowupTerminationService terminationService;
     private final FollowupTaskQueryMapper taskQueryMapper;
     private final CompareSourceService compareSource;
+    private final CompareRuleService compareRules;
     private final CryptoService crypto;
     private final AuditLogger audit;
 
@@ -68,6 +71,7 @@ public class RecordEntryService {
             FollowupTerminationService terminationService,
             FollowupTaskQueryMapper taskQueryMapper,
             CompareSourceService compareSource,
+            CompareRuleService compareRules,
             CryptoService crypto,
             AuditLogger audit) {
         this.recordService = recordService;
@@ -77,6 +81,7 @@ public class RecordEntryService {
         this.terminationService = terminationService;
         this.taskQueryMapper = taskQueryMapper;
         this.compareSource = compareSource;
+        this.compareRules = compareRules;
         this.crypto = crypto;
         this.audit = audit;
     }
@@ -106,7 +111,8 @@ public class RecordEntryService {
     /**
      * 记录详情（followup.md §3；E15-T07 起附 source（TASK / BACKFILL）与 visitDate（补录的实际随访日期，A-FU-014）。
      * taskless 记录（补录）context 为 null、附 patient 摘要（表单页头幅：脱敏姓名 / 病案号 / 病区）。 E17-T02 起附
-     * previous（A-FU-027 上一次记录解析：上一次已提交随访，无则基线回落；功能关闭或无启用规则为 null）。
+     * previous（A-FU-027 上一次记录解析：上一次已提交随访，无则基线回落；功能关闭或无启用规则为 null）； E17-T03 起附
+     * compareRules（该表单启用规则，前端实时标红与后端保存复算共用同一组规则，tech-plan §11）。
      */
     public record RecordDetailView(
             String id,
@@ -120,7 +126,8 @@ public class RecordEntryService {
             Map<String, Object> data,
             Map<String, Object> dataMeta,
             TaskContextView context,
-            CompareSourceService.PreviousView previous) {}
+            CompareSourceService.PreviousView previous,
+            List<CompareRuleService.RuleView> compareRules) {}
 
     /** 患者摘要（补录记录的表单页头幅；姓名 / 病案号只输出脱敏值）。 */
     public record PatientBriefView(
@@ -140,10 +147,15 @@ public class RecordEntryService {
 
     // ---------------------------------------------------------------- 详情（表单页装配）
 
-    /** 记录详情（40400：记录不存在；context 为 null = 记录未关联任务或越范围不可见，此时附 patient 摘要）。 */
+    /**
+     * 记录详情（40400：记录不存在；context 为 null = 记录未关联任务或越范围不可见，此时附 patient 摘要）。 E17-T03：previous +
+     * compareRules 成对下发（功能开关关闭或无启用规则均为 null，记录页正常返回）。
+     */
     public RecordDetailView detail(long recordId) {
         FollowupRecordService.RecordView record = recordService.record(recordId);
         TaskContextView context = contextOf(recordId);
+        List<CompareRuleService.RuleView> enabledRules =
+                compareRules.evaluationRules(record.formCode());
         return new RecordDetailView(
                 String.valueOf(record.id()),
                 record.formCode(),
@@ -157,7 +169,8 @@ public class RecordEntryService {
                 record.dataMeta(),
                 context,
                 compareSource.resolve(
-                        record.id(), record.patientId(), record.formCode(), record.visitDate()));
+                        record.id(), record.patientId(), record.formCode(), record.visitDate()),
+                enabledRules.isEmpty() ? null : enabledRules);
     }
 
     // ---------------------------------------------------------------- 提交（A-FU-005「提交后任务完成」）

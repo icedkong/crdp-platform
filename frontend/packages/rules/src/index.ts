@@ -15,6 +15,17 @@ export function permissionCode(
 }
 
 export {
+  type CompareHit,
+  type ComparePrevious,
+  type CompareRuleInput,
+  type CompareRuleKind,
+  type CompareRuleThresholds,
+  evaluateCompareRules,
+  formatCompareNumber,
+  type OrdinalMap,
+  toCompareRuleInput,
+} from './form-compare';
+export {
   type Condition,
   type ConditionalField,
   type ConditionOp,

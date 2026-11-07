@@ -12,10 +12,15 @@ import type { RendererField } from './layout';
 
 import { isEmptyFormValue, isFieldVisible } from '@crdp/rules';
 
-/** 上一次记录（FormRenderer previous prop；规则参数决定取法，后端给）。 */
+/**
+ * 上一次记录（FormRenderer previous prop；规则参数决定取法，后端给）。E17-T03 起可带 kind：
+ * BASELINE（第 1 年 / 此前无随访的基线回落，无日期、不作带入上次值对象——A-FU-015 带入的是
+ * 上一次随访的值）与 FOLLOWUP（上一次已提交随访，date = 对比时点）。
+ */
 export interface PreviousRecord {
-  date: string;
-  recordId: string;
+  date?: null | string;
+  kind?: 'BASELINE' | 'FOLLOWUP';
+  recordId?: null | string;
   values: Record<string, unknown>;
 }
 
@@ -33,6 +38,7 @@ function isCarryOverEligible(
   previous: null | PreviousRecord,
 ): boolean {
   if (!previous) return false;
+  if (previous.kind === 'BASELINE') return false; // 基线回落只作对比标红，不带入（带入 = 上一次随访值）
   if (field.carryOver !== true) return false; // 模板未标记：测量值等不带入
   if (field.storage !== 'json') return false; // 实体 / 加密列的值不经表单 JSON
   if (field.type === 'derived') return false; // 派生字段只读、由系统计算
@@ -83,9 +89,9 @@ export function applyCarryOver(
   return next;
 }
 
-/** 按钮文案（带上次随访日期，便于确认带入的是哪一次）。 */
+/** 按钮文案（带上次随访日期，便于确认带入的是哪一次；无日期只显示基础文案）。 */
 export function carryOverButtonText(previous: PreviousRecord): string {
-  return `带入上次值（${previous.date}）`;
+  return previous.date ? `带入上次值（${previous.date}）` : '带入上次值';
 }
 
 /** 数组 / 普通对象深拷贝一份（带入值与上次记录不共享引用）。 */
