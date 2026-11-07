@@ -525,6 +525,89 @@ public interface ReportMapper {
             """)
     int clearReportLocationAdjusted(@Param("id") long id);
 
+    // ---------------------------------------------------------------- 历史报告单位置迁移（E18-T08 /
+    // A-ATT-002）
+
+    /** 待迁移报告单行（旧关联落库形态 V75）：一条 legacy_link_type 非空且未迁移的 NORMAL 报告单。 */
+    record LegacyScanRow(
+            long reportId,
+            long patientId,
+            String typeName,
+            String nameSnapshot,
+            String legacyLinkType,
+            Integer legacyLinkYear) {}
+
+    /**
+     * 待迁移清单（只扫 NORMAL 报告单与未删患者）。迁移是租户级收尾批处理（旧系统数据装载后执行）， 与退回作业同口径走
+     * {@code @IgnoreScope}；只读关联形态与年度，不吐患者数据。
+     */
+    @IgnoreScope(reason = "历史报告单位置迁移巡检（E18-T08）：租户级收尾批处理，按 legacy 列定位待迁移行，" + "只读关联形态与年度，不吐患者数据")
+    @Select(
+            """
+            SELECT r.id AS reportId, r.patient_id AS patientId, r.type_name AS typeName,
+                   r.name_snapshot AS nameSnapshot, r.legacy_link_type AS legacyLinkType,
+                   r.legacy_link_year AS legacyLinkYear
+            FROM rpt_report r
+            JOIN pt_patient pt ON pt.id = r.patient_id AND pt.deleted = 0
+            WHERE r.status = 'NORMAL'
+              AND r.legacy_link_type IS NOT NULL AND r.legacy_migrated_at IS NULL
+            ORDER BY r.id
+            """)
+    List<LegacyScanRow> scanPendingLegacyReports();
+
+    /** 已迁移的历史报告单数（迁移报告「列出数量」用；全租户计数，不吐患者数据）。 */
+    @IgnoreScope(reason = "历史报告单位置迁移计数（E18-T08）：全租户口径，只回计数不吐患者数据")
+    @Select(
+            """
+            SELECT COUNT(*) FROM rpt_report
+            WHERE legacy_link_type IS NOT NULL AND legacy_migrated_at IS NOT NULL
+            """)
+    long countMigratedLegacyReports();
+
+    /** 该年随访记录行（E18-T05 历史导入年度记录：anchor 整条的模板版本取记录固化版本）。 */
+    record YearRecordRow(long id, int templateVersion) {}
+
+    /** 患者某年度的随访记录（E18-T08「按年关联 → 该年随访记录」；年度锚点列 V73，一年度一条，取 id 最小）。 */
+    @IgnoreScope(reason = "历史报告单位置迁移定位该年随访记录（E18-T08）：按巡检行的患者 + 年度定位，" + "只读记录标识与固化版本，不吐患者数据")
+    @Select(
+            """
+            SELECT id, template_version AS templateVersion
+            FROM fu_record
+            WHERE patient_id = #{patientId} AND followup_year = #{year}
+            ORDER BY id LIMIT 1
+            """)
+    YearRecordRow findYearRecord(@Param("patientId") long patientId, @Param("year") int year);
+
+    /**
+     * 某报告单的位置行（迁移去重与日志 before / after 用）。与 {@link #linksOfReport} 同形但不走数据范围 ——
+     * 迁移按巡检清单定位报告单，批处理无逐患者会话。
+     */
+    @IgnoreScope(reason = "历史报告单位置迁移读在册位置（E18-T08）：按巡检清单定位报告单做去重与日志快照，" + "不吐患者数据")
+    @Select(
+            """
+            SELECT l.id, l.report_id AS reportId, l.link_type AS linkType,
+                   l.link_record_id AS linkRecordId, l.anchor_type AS anchorType,
+                   l.anchor_key AS anchorKey, l.template_version AS templateVersion,
+                   l.adjusted
+            FROM rpt_report_link l
+            WHERE l.report_id = #{reportId}
+            ORDER BY l.id ASC
+            """)
+    List<LinkRow> linksOfReportForMigration(@Param("reportId") long reportId);
+
+    /**
+     * 标记历史报告单迁移完成（V75 重入判据 legacy_migrated_at）。带 legacy_migrated_at IS NULL 条件 —— 并发或重复执行时 已迁移行 0
+     * 行更新，幂等。
+     */
+    @IgnoreScope(reason = "历史报告单位置迁移标记（E18-T08）：按巡检清单定位报告单，不吐患者数据")
+    @Update(
+            """
+            UPDATE rpt_report
+            SET legacy_migrated_at = CURRENT_TIMESTAMP(3)
+            WHERE id = #{id} AND status = 'NORMAL' AND legacy_migrated_at IS NULL
+            """)
+    int markLegacyMigrated(@Param("id") long id);
+
     // ---------------------------------------------------------------- 配置删除守卫（OQ-95②）
 
     /** 类型被报告单引用数（全租户，含已删报告单——守卫不因软删除失效）。 */

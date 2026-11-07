@@ -1,5 +1,6 @@
 package com.crdp.followup.report.api;
 
+import com.crdp.followup.report.app.ReportLegacyLocationMigrationService;
 import com.crdp.followup.report.app.ReportMappingService;
 import com.crdp.followup.report.app.ReportService;
 import com.crdp.framework.security.RequireModule;
@@ -33,9 +34,15 @@ public class ReportController {
 
     private final ReportMappingService mappingService;
 
-    public ReportController(ReportService service, ReportMappingService mappingService) {
+    private final ReportLegacyLocationMigrationService legacyLocationMigration;
+
+    public ReportController(
+            ReportService service,
+            ReportMappingService mappingService,
+            ReportLegacyLocationMigrationService legacyLocationMigration) {
         this.service = service;
         this.mappingService = mappingService;
+        this.legacyLocationMigration = legacyLocationMigration;
     }
 
     @Operation(
@@ -166,6 +173,24 @@ public class ReportController {
 
     /** 修改位置请求体（report.md §2）：add / remove 至少一项非空；remove 按四元组匹配（模板版本不参与）。 */
     record LocationsChangeBody(List<LocationBody> add, List<LocationBody> remove) {}
+
+    // ---------------------------------------------------------------- 历史报告单位置迁移（E18-T08 /
+    // A-ATT-002）
+
+    @Operation(
+            summary =
+                    "历史报告单位置迁移（E18-T08 / A-ATT-002 位置必填变更）：旧系统「可选单一关联」"
+                            + "装载的报告单（legacy_link_type / legacy_link_year，followup V75）迁移为新位置模型——"
+                            + "按年关联 → 该年随访记录整条（E18-T05 年度记录），原关联基线 → 未指定位置"
+                            + "（A-ATT-020 不集中补指定）；可重入（已迁移行零写入），返回迁移报告（数量）；"
+                            + "权限 followup:patient:import（与导入向导同一操作人画像）")
+    @PostMapping("/reports/legacy-location-migration")
+    @RequireModule("followup")
+    @RequiresPermission("followup:patient:import")
+    public ApiResponse<ReportLegacyLocationMigrationService.MigrationReport>
+            migrateLegacyLocations() {
+        return ApiResponse.ok(legacyLocationMigration.migrateCurrentTenant());
+    }
 
     // ---------------------------------------------------------------- 映射写入（E16-T07 /
     // A-ATT-013、C-SCAN-005）
