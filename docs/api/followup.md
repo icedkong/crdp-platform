@@ -88,14 +88,16 @@ E14-T06 已实现（A-PAT-011、A-FU-007、A-FU-008、C-FU-021；OQ-79 暂行口
 - 连续补录（C-FU-015）：提交接口返回 `{ nextBackfill: { patientId, implantId } }`，前端清空测量值继续。
 - 报告单带入：`report.md` §5。
 
-## 4. 对比标红 / 异常阈值规则（A-FU-027、C-FU-011；开关 `compare_highlight`）
+## 4. 对比标红 / 异常阈值规则（A-FU-027、C-FU-011；开关 `compare_highlight`）· 已实现（E17-T01）
+
+表：租户库 followup V67 `fu_compare_rule`（规则是租户配置：每条可开关〔status〕、调阈值〔params 阈值键〕；规则条目由预置迁移落库——A 的 Q41 全量随 E17-T05、C 默认随 E21-T20——不提供增删与结构改动）。`rule_type` 七类（tech-plan §11）：`DIFF`（差值下降 / 上升，params `{direction, threshold}`）、`CHANGE_PCT`（变化率 `{direction, percent}`，direction 额外允许 `ANY`=升高或降低）、`ORDINAL_RISE`（序数升级 `{grades, reachCodes?}`）、`NEW_EVENT`（新发事件 `{dateField?, triggerCodes?}`）、`FLIP_TO_YES`（由否变是，无阈值键）、`OUT_OF_RANGE`（超出提示范围 `{op, value}`）、`VALUE_HIT`（取值命中，`{codes}` 或 `{op, value}` 二选一）；对比字段恒为 `targetField`，无上一次随访时的回落基线字段为 `baselineFormCode`/`baselineField` 独立列。params 按类型键集校验（未知键 / 缺必填键 / 越界 40001；阈值 >0 且 ≤9999 两位小数、grades 1–5 整数、value ±10000 内）。权限码 `followup:abnormal:config`（C 规格原有；A 按 OQ-16 暂行做法同授 TENANT_ADMIN，菜单 plt_menu 40 / 平台库 V57，租户授予 followup V67 + 种子 V127）；功能开关 `compare_highlight` 关闭 → 40301（无行视为默认开，生产库无种子行）。
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| GET | `/api/hospital/followup/compare-rules?formCode=` | `followup:abnormal:config`（C）；A 无对应码（见 OQ-16） | 规则列表：字段、比较对象（上一次 / 基线 / 固定阈值）、条件、阈值、开关 |
-| PUT | `/api/hospital/followup/compare-rules/{id}` | 同上 | 开关、调阈值；写变更记录 |
+| GET | `/api/hospital/followup/compare-rules?formCode=` | `followup:abnormal:config`（A / C 同码，OQ-16） | **E17-T01 已实现**：规则清单（formCode 为空返回全部表单），行 `{id, formCode, formName, ruleCode, name, categoryKey, targetField, fieldLabel, fieldUnit, ruleType, ruleTypeLabel, params, baselineFormCode, baselineField, baselineFieldLabel, message, enabled, updatedAt}`——字段 / 表单显示名由后端关联 fe_form / fe_field 带出 |
+| PUT | `/api/hospital/followup/compare-rules/{id}` | 同上 | **E17-T01 已实现**：`{enabled, params}` 全量覆盖开关与阈值参数（键集按类型校验）；不存在 40400；写 `COMPARE_RULE_UPDATE` 审计（ objectType `FU_COMPARE_RULE`、objectId `ruleCode`、前后值只含 enabled + params） |
 
-规则只在录入表单内标红提示（A 规格：不属于预警）。C 的异常标红记录进入首页 / 统计（C-DASH-006）。
+规则只在录入表单内标红提示（A 规格：不属于预警）。「上一次」解析与前后端求值随 E17-T02 / E17-T03，结果持久化（fu_record.highlight）与规则变更重算随 E17-T04；C 的异常标红记录进入首页 / 统计（C-DASH-006）。配置表已登记配置模板复制清单（A-FLD-014「录入时对比提示规则」；(form_code, rule_code) 自然键合并）。
 
 ## 5. 预警（A-ALR-001..007）
 

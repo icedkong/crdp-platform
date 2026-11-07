@@ -314,6 +314,18 @@ class MenuSyncServiceTest {
                         "followup:scan:config",
                         55,
                         "ENABLED"),
+                // E17-T01 对比规则（平台库 V57 同构）：followup 菜单挂在 base 的系统设置目录（30）下
+                manifestRow(
+                        40L,
+                        30L,
+                        "MENU",
+                        "对比规则",
+                        "FollowupAbnormalRule",
+                        "/system/abnormal-rule",
+                        "followup/rule/index",
+                        "followup:abnormal:config",
+                        56,
+                        "ENABLED"),
                 // E10-T01 上传按钮（followup:scan:upload，OQ-12）：报告单菜单下的非敏感 followup 项
                 manifestRow(
                         231L,

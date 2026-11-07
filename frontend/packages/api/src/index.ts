@@ -177,6 +177,27 @@ export type {
   TenantBrandView,
   ThemeColorOption,
 } from './brand';
+
+// E17-T01 对比标红规则配置（A-FU-027 / C-FU-011，docs/api/followup.md §4）
+export {
+  COMPARE_DIRECTION_LABELS,
+  COMPARE_OP_LABELS,
+  COMPARE_RULE_TYPE_LABELS,
+  compareTargetText,
+  conditionText,
+  supportsThreshold,
+  thresholdBounds,
+  thresholdKeyOf,
+  toCompareRuleFormModel,
+  toCompareRuleUpdate,
+  validateCompareRuleModel,
+} from './compare-rule';
+export type {
+  CompareRule,
+  CompareRuleParams,
+  CompareRuleType,
+  CompareRuleUpdate,
+} from './compare-rule';
 export {
   DICT_LOG_ACTION_TEXT,
   DICT_SOURCE_TEXT,

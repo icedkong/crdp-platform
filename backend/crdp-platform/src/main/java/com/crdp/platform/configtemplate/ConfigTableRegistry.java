@@ -83,6 +83,13 @@ public final class ConfigTableRegistry {
                             "followup",
                             "报告单设置",
                             "字段映射项目（项目代码 → 目标字段键，itemCode 可为固定 REPORT_DATE）"),
+                    // ---- followup：对比标红规则（E17-T01 / A-FU-027、C-FU-011 随 E21）----
+                    entry(
+                            "fu_compare_rule",
+                            "followup",
+                            "对比标红规则",
+                            "录入时对比提示规则（每条可开关、调阈值；form_code / rule_code 自然键合并，"
+                                    + "引用的 fe_field 字段随字段字典整包同序导入后自然一致）"),
                     // ---- followup：只复制结构（A-FLD-014「术者、病区 / 中心」）----
                     structure(
                             "ward",
