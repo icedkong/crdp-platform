@@ -1,5 +1,6 @@
 package com.crdp.followup.record.app;
 
+import com.crdp.followup.compare.app.CompareSourceService;
 import com.crdp.followup.plan.app.FollowupTerminationService;
 import com.crdp.followup.task.app.FollowupTaskStatusService;
 import com.crdp.followup.task.infra.mapper.FollowupTaskQueryMapper;
@@ -37,7 +38,8 @@ import org.springframework.transaction.annotation.Transactional;
  *   <li>死亡联动（OQ-79②）：模板字段编码 {@code death}（是否死亡）= 1 时经 {@link
  *       FollowupTerminationService#terminateOnDeath} 终止患者全部未开始任务（幂等；「失访」只是失访候选，判定随
  *       E15-T05，本流程不置失访）；
- *   <li>修改已提交（edit-session / PUT）、删除、报告单带入、previous / history 随 E15-T07 / E16 / E17。
+ *   <li>修改已提交（edit-session / PUT）、删除、报告单带入随 E16 / E21；{@code previous}（上一次记录解析，A-FU-027）已随 E17-T02
+ *       接入（{@link CompareSourceService#resolve}）；标红求值与持久化随 E17-T03 / E17-T04。
  * </ul>
  */
 @Service
@@ -54,6 +56,7 @@ public class RecordEntryService {
     private final FollowupTaskStatusService statusService;
     private final FollowupTerminationService terminationService;
     private final FollowupTaskQueryMapper taskQueryMapper;
+    private final CompareSourceService compareSource;
     private final CryptoService crypto;
     private final AuditLogger audit;
 
@@ -64,6 +67,7 @@ public class RecordEntryService {
             FollowupTaskStatusService statusService,
             FollowupTerminationService terminationService,
             FollowupTaskQueryMapper taskQueryMapper,
+            CompareSourceService compareSource,
             CryptoService crypto,
             AuditLogger audit) {
         this.recordService = recordService;
@@ -72,6 +76,7 @@ public class RecordEntryService {
         this.statusService = statusService;
         this.terminationService = terminationService;
         this.taskQueryMapper = taskQueryMapper;
+        this.compareSource = compareSource;
         this.crypto = crypto;
         this.audit = audit;
     }
@@ -100,7 +105,8 @@ public class RecordEntryService {
 
     /**
      * 记录详情（followup.md §3；E15-T07 起附 source（TASK / BACKFILL）与 visitDate（补录的实际随访日期，A-FU-014）。
-     * taskless 记录（补录）context 为 null、附 patient 摘要（表单页头幅：脱敏姓名 / 病案号 / 病区）。
+     * taskless 记录（补录）context 为 null、附 patient 摘要（表单页头幅：脱敏姓名 / 病案号 / 病区）。 E17-T02 起附
+     * previous（A-FU-027 上一次记录解析：上一次已提交随访，无则基线回落；功能关闭或无启用规则为 null）。
      */
     public record RecordDetailView(
             String id,
@@ -113,7 +119,8 @@ public class RecordEntryService {
             PatientBriefView patient,
             Map<String, Object> data,
             Map<String, Object> dataMeta,
-            TaskContextView context) {}
+            TaskContextView context,
+            CompareSourceService.PreviousView previous) {}
 
     /** 患者摘要（补录记录的表单页头幅；姓名 / 病案号只输出脱敏值）。 */
     public record PatientBriefView(
@@ -148,7 +155,9 @@ public class RecordEntryService {
                 context == null ? patientBriefOf(record.patientId()) : null,
                 record.data(),
                 record.dataMeta(),
-                context);
+                context,
+                compareSource.resolve(
+                        record.id(), record.patientId(), record.formCode(), record.visitDate()));
     }
 
     // ---------------------------------------------------------------- 提交（A-FU-005「提交后任务完成」）

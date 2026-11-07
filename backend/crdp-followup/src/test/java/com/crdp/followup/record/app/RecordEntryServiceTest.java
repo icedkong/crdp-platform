@@ -12,6 +12,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.crdp.followup.compare.app.CompareSourceService;
 import com.crdp.followup.plan.app.FollowupTerminationService;
 import com.crdp.followup.task.app.FollowupTaskStatusService;
 import com.crdp.followup.task.infra.mapper.FollowupTaskQueryMapper;
@@ -44,6 +45,7 @@ class RecordEntryServiceTest {
     private final FollowupTerminationService terminationService =
             mock(FollowupTerminationService.class);
     private final FollowupTaskQueryMapper taskQueryMapper = mock(FollowupTaskQueryMapper.class);
+    private final CompareSourceService compareSource = mock(CompareSourceService.class);
     private final CryptoService crypto = mock(CryptoService.class);
     private final AuditLogger audit = mock(AuditLogger.class);
 
@@ -55,6 +57,7 @@ class RecordEntryServiceTest {
                     statusService,
                     terminationService,
                     taskQueryMapper,
+                    compareSource,
                     crypto,
                     audit);
 
@@ -159,6 +162,18 @@ class RecordEntryServiceTest {
         assertEquals(LocalDate.of(2025, 6, 1), view.visitDate(), "补录带实际随访日期");
         assertEquals("301", view.patient().patientId());
         assertTrue(view.patient().patientName().contains("*"), "摘要姓名脱敏");
+    }
+
+    /** E17-T02：详情装配 previous（A-FU-027 上一次记录解析，求值随 E17-T03）。 */
+    @Test
+    void detailCarriesComparePrevious() {
+        when(recordService.record(701L)).thenReturn(record("DRAFT", Map.of()));
+        when(taskQueryMapper.taskContextByRecordId(701L)).thenReturn(taskRow("IN_PROGRESS"));
+        CompareSourceService.PreviousView baseline =
+                CompareSourceService.PreviousView.baseline(Map.of("f102", 55));
+        when(compareSource.resolve(701L, 301L, "A_ANNUAL_FU", null)).thenReturn(baseline);
+
+        assertEquals(baseline, service.detail(701L).previous(), "第 1 年回落基线出院前超声");
     }
 
     @Test

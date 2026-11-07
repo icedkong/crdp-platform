@@ -70,7 +70,7 @@ E14-T06 已实现（A-PAT-011、A-FU-007、A-FU-008、C-FU-021；OQ-79 暂行口
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| GET | `/api/hospital/followup/records/{id}` | `followup:task:view` | **E15-T02 已实现；E15-T07 起载体 fu_record 并附 `source`（TASK / BACKFILL）与 `visitDate`（补录的实际随访日期，A-FU-014）**：`{ id, formCode, formVersion, status: DRAFT\|SUBMITTED, version, source?, visitDate?, patient?, data, dataMeta, context }`；context = 任务上下文（患者脱敏姓名 / 病案号、病区、节点、计划日期、窗口、任务状态 + 完成方式 + 创建方式、下次计划日期；未关联任务或越范围为 null）；taskless 记录（补录）context 为 null、附 `patient` 摘要（脱敏姓名 / 病案号 / 病区，表单页头幅）；`previous / history / sequenceNo(C)` 随 E17 / E21 |
+| GET | `/api/hospital/followup/records/{id}` | `followup:task:view` | **E15-T02 已实现；E15-T07 起载体 fu_record 并附 `source`（TASK / BACKFILL）与 `visitDate`（补录的实际随访日期，A-FU-014）**：`{ id, formCode, formVersion, status: DRAFT\|SUBMITTED, version, source?, visitDate?, patient?, data, dataMeta, context, previous? }`；context = 任务上下文（患者脱敏姓名 / 病案号、病区、节点、计划日期、窗口、任务状态 + 完成方式 + 创建方式、下次计划日期；未关联任务或越范围为 null）；taskless 记录（补录）context 为 null、附 `patient` 摘要（脱敏姓名 / 病案号 / 病区，表单页头幅）；**`previous` E17-T02 已实现**（A-FU-027 上一次记录解析，见下方口径；`sequenceNo(C)` 随 E21） |
 | PUT | `/api/hospital/followup/records/{id}/draft` | `followup:record:edit` | **E25-T01 已实现**（按钮 plt_menu 222，平台库 V43）。`{ baseVersion, changes: { [fieldKey]: value }, overwrite? }` → `{ version, savedAt }`；changes 只带变更字段（null 值 = 清空该键），只过写入闸门（键 / 类型 / 派生重算 / 硬范围），不做必填 / 跨字段 / 软范围校验、不写字段历史、不逐次写审计、不更新 data_meta（OQ-77）；冲突 409（40900，同 `patient.md` §4.1：currentVersion / updatedBy 显示名 / updatedAt / diffFields 只列 changes 两边不同的键）；「保留我的并覆盖」= currentVersion 作 baseVersion 重发并带 `overwrite: true`，后端写 RECORD_DRAFT_OVERWRITE 审计（只记字段键）；已提交 40901；**载体 fu_record（E15-T07 已迁移，followup V58；HTTP 契约不变，OQ-77① / OQ-83①）**；**「任务变进行中」E15-T02 已接入**：保存成功后关联任务（fu_task.record_id）仍在待随访时置进行中（OQ-77②，幂等） |
 | POST | `/api/hospital/followup/records/{id}/submit` | `followup:record:edit` | **E15-T02 已实现**：`{ baseVersion, data, dataMeta? }`（data 全量，baseVersion 乐观锁）；完整校验（42200，必填 / 条件必填 / 跨字段 / 派生 / 硬范围）→ 隐藏字段值清空 → SUBMITTED → DRAFT→SUBMITTED 字段历史（E11-T06）→ 任务完成（FollowupTaskStatusService.complete：完成方式按窗口派生、completed_at / completed_by 写入、已过直接录入期 40901 只能历史补录 E15-T07）；「是否死亡 = 是」（模板字段编码 death）同一事务终止该患者未开始任务（OQ-79②，A-FU-007）；写 RECORD_SUBMIT 审计；响应 `{ recordId, taskId, taskStatus, completeKind, fieldChanges, warnings[] }`；C 的“下次随访时间”与 ERI 标记随 E21 |
 | POST | `/api/hospital/followup/records/{id}/edit-session` | A `record:edit`；C `record:edit-submitted` | 开始修改已提交记录（返回当前 version；随 E21-T11 / C-FU-026——tasks.csv 归属医院 C 扩展，E15-T07 不实现） |
@@ -82,7 +82,7 @@ E14-T06 已实现（A-PAT-011、A-FU-007、A-FU-008、C-FU-021；OQ-79 暂行口
 | GET | `/api/hospital/followup/records/{id}/history?fieldKey=` | `followup:task:view` | 字段级历史 |
 
 - **载体（E15-T07 / OQ-83① 迁移点）**：随访记录业务表 `fu_record`（followup V58：patient_id / task_id（唯一）/ source / visit_date / form_code / template_version / status / version / data·data_meta JSON），患者与任务关联 + `@DataScope`，写入闸门与版本口径复用 FormService 引擎口（`writeGateData` / `validateForSubmit` / `stripHiddenFields`），不与 fe_record 双写（OQ-63①）；V58 同时把既有任务关联记录（fe_record）整体搬入并把 fu_task.record_id 改指 fu_record；fe_record 回归 REPORT 字段集 / 引擎参考实现载体；随访记录的字段历史 record_type = `FU_RECORD`（旧 FE_RECORD 行保留作历史溯源）。
-- `previous`：A 与上一次已提交的年度记录对比（第 1 年与基线出院前超声对比，A-FU-027）；C 与同一器械 / 电极的上一次对比（C-FU-010）。由后端按规则参数选取，前端不自己找。
+- `previous`（**E17-T02 已实现**，A-FU-027；由后端按规则参数选取，前端不自己找）：`{ kind: FOLLOWUP\|BASELINE, recordId?, visitDate?, source?, values }`。FOLLOWUP = 该患者「已提交」的同表单随访记录（含逾期完成、补录、历史导入；计划外随访与草稿不作对比对象）中，对比时点（`visitDate ?? 关联任务计划日期`——TASK 记录不落 visit_date，年度时点即计划日期）早于本次、最近的一条，同对比时点按 id 小者；`values` 只带启用规则引用的键（`targetField` ∪ 新发事件的 `params.dateField`），缺失键由求值侧按「上一次该字段为空跳过该条规则」处理。此前无已提交随访（第 1 年或此前无随访）→ `kind = BASELINE`，`values` 按启用规则的 `baselineFormCode`/`baselineField` 从基线分节（`pt_baseline_section`）当前值取（出院前超声，Q41；基线无提交语义）。功能开关 `compare_highlight` 关闭、该表单无启用规则、或回落字段全空 → `previous` 为 null（记录详情本身正常返回）。C 的「同一器械 / 电极」取法随 E21（C-FU-010）。
 - 带入上次值（A-FU-015、C-FU-016）：`GET /records/{id}?withCarry=true` 返回 `carry` 建议值，用户确认后才写入 `data`。
 - C 随访序号按随访日期自动重排，内部记录号不变（C-FU-018）。
 - 连续补录（C-FU-015）：提交接口返回 `{ nextBackfill: { patientId, implantId } }`，前端清空测量值继续。
@@ -97,7 +97,7 @@ E14-T06 已实现（A-PAT-011、A-FU-007、A-FU-008、C-FU-021；OQ-79 暂行口
 | GET | `/api/hospital/followup/compare-rules?formCode=` | `followup:abnormal:config`（A / C 同码，OQ-16） | **E17-T01 已实现**：规则清单（formCode 为空返回全部表单），行 `{id, formCode, formName, ruleCode, name, categoryKey, targetField, fieldLabel, fieldUnit, ruleType, ruleTypeLabel, params, baselineFormCode, baselineField, baselineFieldLabel, message, enabled, updatedAt}`——字段 / 表单显示名由后端关联 fe_form / fe_field 带出 |
 | PUT | `/api/hospital/followup/compare-rules/{id}` | 同上 | **E17-T01 已实现**：`{enabled, params}` 全量覆盖开关与阈值参数（键集按类型校验）；不存在 40400；写 `COMPARE_RULE_UPDATE` 审计（ objectType `FU_COMPARE_RULE`、objectId `ruleCode`、前后值只含 enabled + params） |
 
-规则只在录入表单内标红提示（A 规格：不属于预警）。「上一次」解析与前后端求值随 E17-T02 / E17-T03，结果持久化（fu_record.highlight）与规则变更重算随 E17-T04；C 的异常标红记录进入首页 / 统计（C-DASH-006）。配置表已登记配置模板复制清单（A-FLD-014「录入时对比提示规则」；(form_code, rule_code) 自然键合并）。
+规则只在录入表单内标红提示（A 规格：不属于预警）。「上一次」解析已随 E17-T02 落地（`GET /records/{id}` 的 `previous`，§3）；前后端求值随 E17-T03，结果持久化（fu_record.highlight）与规则变更重算随 E17-T04；C 的异常标红记录进入首页 / 统计（C-DASH-006）。配置表已登记配置模板复制清单（A-FLD-014「录入时对比提示规则」；(form_code, rule_code) 自然键合并）。
 
 ## 5. 预警（A-ALR-001..007）
 
