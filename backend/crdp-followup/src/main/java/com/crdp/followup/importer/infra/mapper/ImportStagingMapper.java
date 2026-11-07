@@ -11,9 +11,9 @@ import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
 /**
- * imp_job / imp_row 读写（E18-T02 / tech-plan §12③）。预检阶段（E18-T03 起）从本表取数： 暂存行按 job_id 顺序读、 payload
- * 由应用层经 CryptoService 解密——mapper 只做持久化。导入作业非受控表（ControlledTables）： 病区范围在导入确认时校验 （E18-T04 /
- * T06），状态查询按作业归属人。
+ * imp_job / imp_row / imp_issue 读写（E18-T02 暂存、E18-T03 校验 / tech-plan §12③④⑤）。 校验阶段从本 mapper
+ * 取暂存行（payload 由应用层经 CryptoService 解密——mapper 只做持久化）并写回校验问题。 导入作业非受控表（ControlledTables）：
+ * 病区范围在导入确认时校验 （E18-T04 / T06），状态查询按作业归属人。
  */
 @Mapper
 public interface ImportStagingMapper {
@@ -175,4 +175,87 @@ public interface ImportStagingMapper {
     /** 清掉该作业已暂存的行（预检失败不留半成品；重跑预检前也先清）。 */
     @Delete("DELETE FROM imp_row WHERE job_id = #{jobId}")
     int deleteRows(@Param("jobId") long jobId);
+
+    // ---------------------------------------------------------------- 校验问题（E18-T03，imp_issue）
+
+    /** 暂存行读取行（校验阶段按 id 游标分批读，payload 为密文由应用层解密）。 */
+    record StagedRow(
+            long id,
+            String sheetName,
+            int rowNo,
+            String rowType,
+            String mrnBlind,
+            String payloadCipher) {}
+
+    /** 校验问题插入行（colNo / colLetters / header 可空：无法定位列的问题）。 */
+    record IssueInsert(
+            long jobId,
+            String sheetName,
+            int rowNo,
+            Integer colNo,
+            String colLetters,
+            String header,
+            String level,
+            String code,
+            String message) {
+
+        public static IssueInsert of(
+                long jobId, com.crdp.followup.importer.domain.ImportIssue issue) {
+            return new IssueInsert(
+                    jobId,
+                    issue.sheetName(),
+                    issue.rowNo(),
+                    issue.colNo(),
+                    issue.columnLetters(),
+                    issue.header(),
+                    issue.level().name(),
+                    issue.code(),
+                    issue.message());
+        }
+    }
+
+    /**
+     * 按 id 游标分批读暂存行（keyset 分页：内存只有一批，E18-T03 校验与大文件口径一致）。
+     *
+     * <p>IgnoreScope 理由：预检校验在作业维度读<strong>本作业自己暂存</strong>的行（job_id 限定）， 病案号查重走全院盲索引存在性（同 {@code
+     * PatientMapper.findLiveMrnBlinds} 口径）； 病区数据范围在导入确认时校验（E18-T04 / T06，与 imp_row 登记进
+     * ControlledTables 的口径一致——暂存行含患者数据，后续行级确认读数必须带范围或作业归属校验）。
+     */
+    @com.crdp.framework.datascope.IgnoreScope(
+            reason =
+                    "导入预检校验读本作业暂存行（job_id 限定，E18-T03）：暂存行尚无病区归属，"
+                            + "病区数据范围在导入确认时校验（E18-T04 / T06）；查重只做全院盲索引存在性，不输出患者数据")
+    @Select(
+            """
+            SELECT id, sheet_name AS sheetName, row_no AS rowNo, row_type AS rowType,
+                   mrn_blind AS mrnBlind, payload_cipher AS payloadCipher
+            FROM imp_row WHERE job_id = #{jobId} AND id > #{afterId}
+            ORDER BY id LIMIT #{limit}
+            """)
+    List<StagedRow> findRows(
+            @Param("jobId") long jobId, @Param("afterId") long afterId, @Param("limit") int limit);
+
+    /** 批量写校验问题（校验按批 flush）。 */
+    @Insert(
+            """
+            <script>
+            INSERT INTO imp_issue (job_id, sheet_name, row_no, col_no, col_letters, header, level, code, message)
+            VALUES
+            <foreach collection="rows" item="row" separator=",">
+              (#{row.jobId}, #{row.sheetName}, #{row.rowNo}, #{row.colNo}, #{row.colLetters},
+               #{row.header}, #{row.level}, #{row.code}, #{row.message})
+            </foreach>
+            </script>
+            """)
+    int insertIssues(@Param("rows") List<IssueInsert> rows);
+
+    /** 清掉该作业的校验问题（重新校验前先清，幂等）。 */
+    @Delete("DELETE FROM imp_issue WHERE job_id = #{jobId}")
+    int deleteIssues(@Param("jobId") long jobId);
+
+    /** 按级别数问题（null = 全部；确认门控「有 ERROR 时 40001」用，E18-T05）。 */
+    @Select(
+            "<script>SELECT COUNT(*) FROM imp_issue WHERE job_id = #{jobId}"
+                    + " <if test='level != null'>AND level = #{level}</if></script>")
+    long countIssues(@Param("jobId") long jobId, @Param("level") String level);
 }

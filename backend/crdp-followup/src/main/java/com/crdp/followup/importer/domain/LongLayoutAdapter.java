@@ -127,7 +127,15 @@ public final class LongLayoutAdapter implements ImportLayoutAdapter {
                             legacyCol < 0
                                     ? null
                                     : new ImportCell(cell(cells, legacyCol), rowNo, legacyCol);
-                    ImportCell mrnCell = baseline.get(catalog.mrnFieldKey().orElse(null));
+                    // 病案号空单元格也带坐标（E18-T03「病案号为空」要钉回原单元格批注）
+                    String mrnKey = catalog.mrnFieldKey().orElse(null);
+                    ImportCell mrnCell =
+                            mrnKey == null
+                                    ? null
+                                    : new ImportCell(
+                                            cell(cells, baselineHeader.column(mrnKey)),
+                                            rowNo,
+                                            baselineHeader.column(mrnKey));
                     sink.accept(
                             new ImportPatientRecord(
                                     mrnCell, legacyNoCell, Map.of(), baseline, List.of(), rowNo));
