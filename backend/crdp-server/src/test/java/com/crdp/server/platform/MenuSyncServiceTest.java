@@ -160,6 +160,18 @@ class MenuSyncServiceTest {
                         "followup:patient:create",
                         30,
                         "ENABLED"),
+                // E18-T06 导入向导隐藏路由（平台库 V58 同构）：患者档案菜单下的 followup 菜单项
+                manifestRow(
+                        353L,
+                        21L,
+                        "MENU",
+                        "导入向导",
+                        "FollowupPatientImport",
+                        "/followup/patient/import",
+                        "followup/patient/import",
+                        "followup:patient:import",
+                        35,
+                        "ENABLED"),
                 // E13-T03 编辑患者资料按钮（平台库 V38 同构）：患者档案菜单下的 followup 按钮
                 manifestRow(
                         214L,

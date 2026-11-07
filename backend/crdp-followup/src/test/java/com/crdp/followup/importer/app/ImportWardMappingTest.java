@@ -16,6 +16,7 @@ import com.crdp.followup.importer.domain.ImportWardDirectory;
 import com.crdp.followup.importer.domain.ImportWardDirectory.WardEntry;
 import com.crdp.followup.importer.infra.mapper.ImportStagingMapper;
 import com.crdp.followup.importer.infra.mapper.ImportStagingMapper.IssueInsert;
+import com.crdp.followup.importer.infra.mapper.ImportStagingMapper.IssueRow;
 import com.crdp.followup.importer.infra.mapper.ImportStagingMapper.JobInsert;
 import com.crdp.followup.importer.infra.mapper.ImportStagingMapper.JobRow;
 import com.crdp.followup.importer.infra.mapper.ImportStagingMapper.RowInsert;
@@ -401,6 +402,17 @@ class ImportWardMappingTest {
         public int deleteIssues(long jobId) {
             issues.clear();
             return 1;
+        }
+
+        /** E18-T06 问题分页与存储键回填（向导页）：假实现只服务既有用例，不命中断言。 */
+        @Override
+        public List<IssueRow> findIssues(long jobId, String level, long offset, int limit) {
+            return List.of();
+        }
+
+        @Override
+        public int updateStorageKey(long id, String storageKey) {
+            return 0;
         }
 
         @Override

@@ -30,6 +30,7 @@ import com.crdp.followup.importer.infra.mapper.ImportCommitMapper.BatchInsert;
 import com.crdp.followup.importer.infra.mapper.ImportCommitMapper.ImportedRecordInsert;
 import com.crdp.followup.importer.infra.mapper.ImportCommitMapper.WriteInsert;
 import com.crdp.followup.importer.infra.mapper.ImportStagingMapper;
+import com.crdp.followup.importer.infra.mapper.ImportStagingMapper.IssueRow;
 import com.crdp.followup.importer.infra.mapper.ImportStagingMapper.JobInsert;
 import com.crdp.followup.importer.infra.mapper.ImportStagingMapper.JobRow;
 import com.crdp.followup.importer.infra.mapper.ImportStagingMapper.RowInsert;
@@ -1020,6 +1021,17 @@ class ImportCommitServiceTest {
         @Override
         public int deleteIssues(long jobId) {
             return 1;
+        }
+
+        /** E18-T06 问题分页与存储键回填（向导页）：假实现只服务既有用例，不命中断言。 */
+        @Override
+        public List<IssueRow> findIssues(long jobId, String level, long offset, int limit) {
+            return List.of();
+        }
+
+        @Override
+        public int updateStorageKey(long id, String storageKey) {
+            return 0;
         }
 
         @Override
