@@ -1112,6 +1112,339 @@ class ReportServiceTest {
         verify(files, never()).markDeleted(anyLong());
     }
 
+    // ---------------------------------------------------------------- 修改位置（E16-T13 /
+    // A-ATT-020、C-SCAN-020：至少保留一个、增删写操作日志）
+
+    /** 报告单在册 + 两条位置（基线 case 分类、随访记录 88 整条）。 */
+    private void readyReportWithTwoLocations() {
+        when(mapper.findReport(900L))
+                .thenReturn(
+                        new ReportMapper.ReportHeadRow(
+                                900L,
+                                PATIENT,
+                                "ECHO",
+                                "心脏超声",
+                                "经胸超声心动图（示例）",
+                                LocalDate.of(2026, 10, 28)));
+        RecordContext rec = record(88L, "第2年随访", "TASK", LocalDate.of(2026, 6, 10), 2);
+        lenient().when(mapper.recordsOfPatient(PATIENT)).thenReturn(rec.rows());
+        when(mapper.linksOfReport(900L))
+                .thenReturn(
+                        List.of(
+                                new ReportMapper.LinkRow(
+                                        1L, 900L, "baseline", null, "category", "case", 3, 0),
+                                new ReportMapper.LinkRow(
+                                        2L, 900L, "followup_record", 88L, null, null, 2, 0)));
+    }
+
+    /** 增删同场：add 按当前模板版本校验落行、remove 四元组定位删除、版本 +1、写 RPT_LOCATION_CHANGE 审计。 */
+    @Test
+    void changeLocationsAddsRemovesBumpsVersionAndAudits() {
+        readyReportWithTwoLocations();
+        // 第一次调用 = 在册 2 行（基线 case + 记录整条，readyReportWithTwoLocations 同款）；
+        // 第二次（执行后回读）= 剩整条记录 + 新增的 echo 分组
+        when(mapper.linksOfReport(900L))
+                .thenReturn(
+                        List.of(
+                                new ReportMapper.LinkRow(
+                                        1L, 900L, "baseline", null, "category", "case", 3, 0),
+                                new ReportMapper.LinkRow(
+                                        2L, 900L, "followup_record", 88L, null, null, 2, 0)))
+                .thenReturn(
+                        List.of(
+                                new ReportMapper.LinkRow(
+                                        2L, 900L, "followup_record", 88L, null, null, 2, 0),
+                                new ReportMapper.LinkRow(
+                                        4L,
+                                        900L,
+                                        "followup_record",
+                                        88L,
+                                        "section",
+                                        "echo",
+                                        2,
+                                        0)));
+
+        ReportService.LocationsChangedView view =
+                service.changeLocations(
+                        900L,
+                        new ReportService.LocationChangeRequest(
+                                List.of(
+                                        new ReportService.LocationInput(
+                                                "followup_record", 88L, "section", "echo", 2)),
+                                List.of(
+                                        new ReportService.LocationInput(
+                                                "baseline", null, "category", "case", 3))));
+
+        assertEquals("900", view.id());
+        assertEquals(2, view.locationCount(), "原 2 个 - 移除 1 个 + 新增 1 个");
+        assertEquals("超声复查", view.locations().get(1).anchorLabel(), "回读位置标签");
+
+        ArgumentCaptor<ReportMapper.LinkInsert> linkCaptor =
+                ArgumentCaptor.forClass(ReportMapper.LinkInsert.class);
+        verify(mapper).insertLink(linkCaptor.capture());
+        assertEquals("echo", linkCaptor.getValue().anchorKey());
+        assertEquals(PATIENT, linkCaptor.getValue().patientId(), "子表冗余 patient_id 与报告单一致");
+        assertEquals(2, linkCaptor.getValue().templateVersion(), "分组锚点版本 = 记录固化版本");
+        verify(mapper).deleteLink(900L, "baseline", null, "category", "case");
+        verify(mapper).bumpVersion(900L, OPERATOR);
+
+        ArgumentCaptor<AuditEntry> captor = ArgumentCaptor.forClass(AuditEntry.class);
+        verify(audit).append(captor.capture());
+        AuditEntry entry = captor.getValue();
+        assertEquals("RPT_LOCATION_CHANGE", entry.action());
+        assertEquals("REPORT", entry.objectType());
+        assertEquals("900", entry.objectId());
+        assertTrue(entry.description().contains("增加 1 个"), entry.description());
+        assertTrue(entry.description().contains("移除 1 个"), entry.description());
+        assertTrue(
+                entry.description().contains("第2年随访 2026-06-10 · 超声复查"),
+                "描述列出增加的位置：" + entry.description());
+        assertTrue(entry.description().contains("基线 · 病例基本信息"), "描述列出移除的位置");
+        assertTrue(entry.beforeJson().contains("case"), entry.beforeJson());
+        assertTrue(entry.afterJson().contains("echo"), entry.afterJson());
+    }
+
+    /** 无位置报告单（历史迁移 / 模板调整后失去位置）经 add 补指定第一个位置（A-ATT-020「指定位置」）。 */
+    @Test
+    void changeLocationsAssignsFirstLocationToUnassignedReport() {
+        when(mapper.findReport(900L))
+                .thenReturn(
+                        new ReportMapper.ReportHeadRow(
+                                900L, PATIENT, "ECHO", "心脏超声", null, LocalDate.of(2026, 10, 28)));
+        when(mapper.linksOfReport(900L))
+                .thenReturn(List.of())
+                .thenReturn(
+                        List.of(
+                                new ReportMapper.LinkRow(
+                                        1L, 900L, "baseline", null, "category", "basic", 3, 0)));
+
+        ReportService.LocationsChangedView view =
+                service.changeLocations(
+                        900L,
+                        new ReportService.LocationChangeRequest(
+                                List.of(
+                                        new ReportService.LocationInput(
+                                                "baseline", null, "category", "basic", 3)),
+                                List.of()));
+
+        assertEquals(1, view.locationCount());
+        verify(mapper, never()).deleteLink(anyLong(), anyString(), any(), anyString(), anyString());
+        verify(mapper).bumpVersion(900L, OPERATOR);
+        verify(audit)
+                .append(
+                        argThat(
+                                entry ->
+                                        entry != null
+                                                && "RPT_LOCATION_CHANGE".equals(entry.action())));
+    }
+
+    /** 验收：移除全部位置 40001「请至少保留 1 个位置」，不落任何删除。 */
+    @Test
+    void changeLocationsRejectsRemovingEveryPosition() {
+        readyReportWithTwoLocations();
+
+        ApiException error =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.changeLocations(
+                                        900L,
+                                        new ReportService.LocationChangeRequest(
+                                                List.of(),
+                                                List.of(
+                                                        new ReportService.LocationInput(
+                                                                "baseline",
+                                                                null,
+                                                                "category",
+                                                                "case",
+                                                                3),
+                                                        new ReportService.LocationInput(
+                                                                "followup_record",
+                                                                88L,
+                                                                null,
+                                                                null,
+                                                                2)))));
+
+        assertEquals(40001, error.code());
+        assertTrue(error.getMessage().contains("请至少保留 1 个位置"), error.getMessage());
+        verify(mapper, never()).deleteLink(anyLong(), anyString(), any(), anyString(), anyString());
+        verify(mapper, never()).insertLink(any());
+        verify(mapper, never()).bumpVersion(anyLong(), anyLong());
+        verify(audit, never()).append(any(AuditEntry.class));
+    }
+
+    /** add / remove 清单都为空 40001；同一位置同时出现在两侧由「add 只收不在册位置」先行拦截（同码 40001）。 */
+    @Test
+    void changeLocationsRejectsEmptyAndOverlappingLists() {
+        readyReportWithTwoLocations();
+
+        ApiException empty =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.changeLocations(
+                                        900L,
+                                        new ReportService.LocationChangeRequest(
+                                                List.of(), List.of())));
+        assertEquals(40001, empty.code());
+        assertTrue(empty.getMessage().contains("请增加或移除至少 1 个位置"), empty.getMessage());
+
+        ApiException overlap =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.changeLocations(
+                                        900L,
+                                        new ReportService.LocationChangeRequest(
+                                                List.of(
+                                                        new ReportService.LocationInput(
+                                                                "followup_record",
+                                                                88L,
+                                                                null,
+                                                                null,
+                                                                2)),
+                                                List.of(
+                                                        new ReportService.LocationInput(
+                                                                "followup_record",
+                                                                88L,
+                                                                null,
+                                                                null,
+                                                                2)))));
+        assertEquals(40001, overlap.code(), "add 与 remove 含同一在册位置：add 侧 40001 先拦截");
+        assertTrue(overlap.getMessage().contains("已在报告单上"), overlap.getMessage());
+    }
+
+    /** 增加的位置须在当前模板版本锚点内（验收：锚点不在当前模板版本时拒绝）。 */
+    @Test
+    void changeLocationsRejectsAnchorOutsideCurrentTemplateVersion() {
+        readyReportWithTwoLocations();
+
+        ApiException unknownCategory =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.changeLocations(
+                                        900L,
+                                        new ReportService.LocationChangeRequest(
+                                                List.of(
+                                                        new ReportService.LocationInput(
+                                                                "baseline",
+                                                                null,
+                                                                "category",
+                                                                "nope",
+                                                                3)),
+                                                List.of())));
+        assertEquals(40001, unknownCategory.code());
+        assertTrue(unknownCategory.getMessage().contains("基线分类不存在"), unknownCategory.getMessage());
+
+        ApiException unknownSection =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.changeLocations(
+                                        900L,
+                                        new ReportService.LocationChangeRequest(
+                                                List.of(
+                                                        new ReportService.LocationInput(
+                                                                "followup_record",
+                                                                88L,
+                                                                "section",
+                                                                "ghost",
+                                                                2)),
+                                                List.of())));
+        assertEquals(40001, unknownSection.code());
+        assertTrue(unknownSection.getMessage().contains("随访分组不存在"), unknownSection.getMessage());
+
+        ApiException foreignRecord =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.changeLocations(
+                                        900L,
+                                        new ReportService.LocationChangeRequest(
+                                                List.of(
+                                                        new ReportService.LocationInput(
+                                                                "followup_record",
+                                                                999L,
+                                                                null,
+                                                                null,
+                                                                2)),
+                                                List.of())));
+        assertEquals(40400, foreignRecord.code(), "越患者记录不区分不存在 / 他人 / 越范围");
+    }
+
+    /** 验收：同一报告单同一位置唯一——重复添加 40001；移除不在册位置 40001。 */
+    @Test
+    void changeLocationsRejectsDuplicateAddAndUnknownRemove() {
+        readyReportWithTwoLocations();
+
+        ApiException duplicate =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.changeLocations(
+                                        900L,
+                                        new ReportService.LocationChangeRequest(
+                                                List.of(
+                                                        new ReportService.LocationInput(
+                                                                "baseline",
+                                                                null,
+                                                                "category",
+                                                                "case",
+                                                                3)),
+                                                List.of())));
+        assertEquals(40001, duplicate.code());
+        assertTrue(duplicate.getMessage().contains("已在报告单上"), duplicate.getMessage());
+
+        ApiException unknownRemove =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.changeLocations(
+                                        900L,
+                                        new ReportService.LocationChangeRequest(
+                                                List.of(),
+                                                List.of(
+                                                        new ReportService.LocationInput(
+                                                                "baseline",
+                                                                null,
+                                                                "category",
+                                                                "basic",
+                                                                3)))));
+        assertEquals(40001, unknownRemove.code());
+        assertTrue(unknownRemove.getMessage().contains("不在报告单上"), unknownRemove.getMessage());
+
+        verify(mapper, never()).insertLink(any());
+        verify(mapper, never()).deleteLink(anyLong(), anyString(), any(), anyString(), anyString());
+    }
+
+    /** 越范围 / 不存在的报告单：40400 不暴露存在，写 DENIED 审计（与删除同口径）。 */
+    @Test
+    void changeLocationsOutOfScopeWritesDeniedAuditAnd40400() {
+        when(mapper.findReport(900L)).thenReturn(null);
+
+        ApiException error =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.changeLocations(
+                                        900L,
+                                        new ReportService.LocationChangeRequest(
+                                                List.of(
+                                                        new ReportService.LocationInput(
+                                                                "baseline",
+                                                                null,
+                                                                "category",
+                                                                "basic",
+                                                                3)),
+                                                List.of())));
+        assertEquals(40400, error.code());
+        ArgumentCaptor<AuditEntry> captor = ArgumentCaptor.forClass(AuditEntry.class);
+        verify(audit).append(captor.capture());
+        assertEquals("RPT_LOCATION_CHANGE", captor.getValue().action());
+        assertEquals("DENIED", captor.getValue().result().name());
+    }
+
     /** 已追加的审计动作清单（含每份 RPT_CREATE 与批量的 RPT_BATCH_CREATE）。 */
     private List<String> auditActions() {
         ArgumentCaptor<AuditEntry> captor = ArgumentCaptor.forClass(AuditEntry.class);

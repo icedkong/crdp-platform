@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -41,8 +42,8 @@ import org.springframework.transaction.annotation.Transactional;
  *   <li>位置必填、可多选：粒度三种——基线某分类（baseline + category）、某条随访记录整条 （followup_record + anchor
  *       NULL）、某条随访记录中的某分组（followup_record + section）， 不细到字段；位置为空 40001（「请至少选择 1 个位置」）；C
  *       的植入记录锚点（implant_record）随 E21-T32 开放，此前 40001 拒绝。
- *   <li>锚点校验（E16-T02 口径）：基线分类对当前发布版模板、随访分组对该记录固化版本的模板分类清单； 锚点按模板版本校验、修改位置与「未指定位置」随 E16-T13，模板改版退回随
- *       E16-T15。
+ *   <li>锚点校验（E16-T02 口径）：基线分类对当前发布版模板、随访分组对该记录固化版本的模板分类清单； 修改位置（增删、至少保留一个、写 RPT_LOCATION_CHANGE
+ *       操作日志）随 E16-T13 落地， 无位置报告单可查询为「未指定位置」并经 add 补指定（A-ATT-020）；模板改版退回随 E16-T15。
  *   <li>附件走 E10 上传接口拿 fileId 后挂台账（≤ file.upload.max.files.per.report，超限 40001）； 批量上传（E16-T03 /
  *       A-ATT-014、C-SCAN-007）见 {@link #batchCreate}：每个文件一份或合并为一份，一次 ≤ 50 个文件。
  *   <li>指标结果逐行存显示快照（模板修改不联动已存报告单，E16-T01 口径）；↑ / ↓ 由服务端按参考范围 与数值结果计算，解析不出范围不标。
@@ -224,6 +225,13 @@ public class ReportService {
 
     /** 患者内清单响应。 */
     public record ReportsView(String patientId, String scope, List<ReportItemView> items) {}
+
+    /** 修改位置请求（E16-T13 / A-ATT-020、C-SCAN-020）：add / remove 至少一项非空。 */
+    public record LocationChangeRequest(List<LocationInput> add, List<LocationInput> remove) {}
+
+    /** 修改位置结果（回读位置标签，与患者内清单同形；前端随后刷新）。 */
+    public record LocationsChangedView(
+            String id, int locationCount, List<LocationTagView> locations) {}
 
     // ---------------------------------------------------------------- 创建（A-ATT-001 /
     // A-ATT-002、C-SCAN-010）
@@ -434,7 +442,7 @@ public class ReportService {
 
     /**
      * 删除入口的患者数据范围校验（@DataScope 出行的 findReport）：越范围 / 不存在 / 已删一律 40400， 并按删除患者同口径写 DENIED 审计（action
-     * 传入 RPT_DELETE / RPT_FILE_DELETE）。
+     * 传入 RPT_DELETE / RPT_FILE_DELETE / RPT_LOCATION_CHANGE）。
      */
     private ReportMapper.ReportHeadRow requireReportInScope(long reportId, String deniedAction) {
         ReportMapper.ReportHeadRow report = mapper.findReport(reportId);
@@ -443,7 +451,7 @@ public class ReportService {
                     AuditEntry.operation("followup", deniedAction)
                             .objectType("REPORT")
                             .objectId(String.valueOf(reportId))
-                            .description("删除报告单被拒绝：报告单不在操作者数据范围内或已删除")
+                            .description("报告单操作被拒绝：报告单不在操作者数据范围内或已删除")
                             .result(AuditResult.DENIED)
                             .errorCode(40400)
                             .reason("OUT_OF_SCOPE")
@@ -451,6 +459,282 @@ public class ReportService {
             throw new ApiException(404, 40400, "报告单不存在或不在您的数据范围内");
         }
         return report;
+    }
+
+    // ---------------------------------------------------------------- 修改位置（E16-T13 /
+    // A-ATT-020、C-SCAN-020）
+
+    /**
+     * 修改位置（A-ATT-020、C-SCAN-020「增加或移除位置，至少保留一个；每次增删写入操作日志」）：
+     *
+     * <ul>
+     *   <li>add 按创建同口径校验：锚点须在当前模板版本内（基线 = 当前发布版分类、随访分组 = 该记录固化版本）， 越患者记录 40400； 与在册位置四元组重复 40001。
+     *   <li>remove 只做结构解析后按四元组匹配在册行（模板版本不参与——锚点可能来自旧版本或已退回，E16-T15）， 不在册 40001。
+     *   <li>结果至少保留 1 个位置（40001）：全部移除不被允许；无位置报告单（历史迁移 / 模板调整后失去位置）只进 add（「指定位置」补上，A-ATT-020）。
+     *   <li>增删同场一次事务：插入新增行、删除移除行、version + 1（V63 列注释「修改位置随 E16-T13」）， 写 RPT_LOCATION_CHANGE
+     *       操作日志（谁、何时、增加 / 移除了哪些位置——beforeJson / afterJson 带位置清单）。
+     * </ul>
+     *
+     * <p>越范围 / 不存在 / 已删报告单 40400（写 DENIED 审计）；越患者数据范围查询「未指定位置」不受影响 （E16-T05
+     * locationScope=UNASSIGNED 已有）。
+     */
+    @Transactional
+    public LocationsChangedView changeLocations(long reportId, LocationChangeRequest request) {
+        if (request == null) {
+            throw bad("请求体不能为空");
+        }
+        ReportMapper.ReportHeadRow report = requireReportInScope(reportId, "RPT_LOCATION_CHANGE");
+        long patientId = report.patientId();
+        List<ReportMapper.LinkRow> current = mapper.linksOfReport(reportId);
+        List<NormalizedLocation> adds = normalizeAddedLocations(patientId, current, request.add());
+        List<NormalizedLocation> removes = normalizeRemovedLocations(current, request.remove());
+        if (adds.isEmpty() && removes.isEmpty()) {
+            throw bad("请增加或移除至少 1 个位置");
+        }
+        // 同一位置同时出现在 add / remove 时：在册行由 add 的「已在报告单上」40001 先行拦截（add 只收不在册位置、
+        // remove 只收在册位置，交叠必然落在其一），无需单独的交叠校验分支。
+        if (current.size() - removes.size() + adds.size() < 1) {
+            // A-ATT-020「至少保留一个」；无位置报告单由历史迁移 / 模板调整产生（E18-T08 / E16-T15），不经本口移除到 0
+            throw bad("请至少保留 1 个位置（无位置的报告单由历史迁移或模板调整产生，不在此移除到 0 个）");
+        }
+
+        long operator = CurrentSession.requireHospital().userId();
+        List<ReportMapper.LinkRow> removedRows =
+                current.stream()
+                        .filter(
+                                link ->
+                                        removes.stream()
+                                                .anyMatch(
+                                                        remove ->
+                                                                linkDedupeKey(link)
+                                                                        .equals(
+                                                                                remove
+                                                                                        .dedupeKey())))
+                        .toList();
+        for (NormalizedLocation add : adds) {
+            mapper.insertLink(
+                    new ReportMapper.LinkInsert(
+                            reportId,
+                            patientId,
+                            add.linkType(),
+                            add.linkRecordId(),
+                            add.anchorType(),
+                            add.anchorKey(),
+                            add.templateVersion()));
+        }
+        for (NormalizedLocation remove : removes) {
+            mapper.deleteLink(
+                    reportId,
+                    remove.linkType(),
+                    remove.linkRecordId(),
+                    remove.anchorType(),
+                    remove.anchorKey());
+        }
+        mapper.bumpVersion(reportId, operator);
+
+        List<ReportMapper.LinkRow> after = mapper.linksOfReport(reportId);
+        List<LocationTagView> afterTags = buildTags(patientId, after);
+        audit.append(
+                AuditEntry.operation("followup", "RPT_LOCATION_CHANGE")
+                        .objectType("REPORT")
+                        .objectId(String.valueOf(reportId))
+                        .description(
+                                "修改报告单位置："
+                                        + changeSummary(patientId, adds, removedRows)
+                                        + "；报告单："
+                                        + report.typeName()
+                                        + (report.nameSnapshot() == null
+                                                ? ""
+                                                : " · " + report.nameSnapshot()))
+                        .beforeJson(writeJson(locationRefs(current)))
+                        .afterJson(writeJson(locationRefs(after)))
+                        .result(AuditResult.SUCCESS)
+                        .build());
+        log.info(
+                "报告单位置变更（E16-T13）：reportId={} patientId={} 增加={} 移除={} operator={}",
+                reportId,
+                patientId,
+                adds.size(),
+                removes.size(),
+                operator);
+        return new LocationsChangedView(
+                String.valueOf(reportId), afterTags.size(), List.copyOf(afterTags));
+    }
+
+    /** 增加清单：创建同口径锚点校验（当前模板版本）+ 请求内去重 + 不与在册位置重复（同一报告单同一位置唯一）。 */
+    private List<NormalizedLocation> normalizeAddedLocations(
+            long patientId, List<ReportMapper.LinkRow> current, List<LocationInput> add) {
+        if (add == null || add.isEmpty()) {
+            return List.of();
+        }
+        Map<String, String> baselineCategories = baselineCategoryMap();
+        Map<Long, RecordRow> records = recordMap(patientId);
+        Map<String, NormalizedLocation> distinct = new LinkedHashMap<>();
+        for (LocationInput input : add) {
+            if (input == null) {
+                continue;
+            }
+            NormalizedLocation normalized = normalizeOne(input, baselineCategories, records);
+            distinct.putIfAbsent(normalized.dedupeKey(), normalized);
+        }
+        for (NormalizedLocation normalized : distinct.values()) {
+            for (ReportMapper.LinkRow link : current) {
+                if (linkDedupeKey(link).equals(normalized.dedupeKey())) {
+                    throw bad("该位置已在报告单上，无需重复添加：" + locationRef(normalized));
+                }
+            }
+        }
+        return List.copyOf(distinct.values());
+    }
+
+    /** 移除清单：只做结构解析（不校验当前模板——锚点可能来自旧版本或已退回，E16-T15），按四元组匹配在册行； 不在册 40001（不区分「从未有 / 已被他人移除」）。 */
+    private List<NormalizedLocation> normalizeRemovedLocations(
+            List<ReportMapper.LinkRow> current, List<LocationInput> remove) {
+        if (remove == null || remove.isEmpty()) {
+            return List.of();
+        }
+        Map<String, NormalizedLocation> matched = new LinkedHashMap<>();
+        for (LocationInput input : remove) {
+            if (input == null) {
+                continue;
+            }
+            NormalizedLocation parsed = parseRemoveRef(input);
+            boolean found = false;
+            for (ReportMapper.LinkRow link : current) {
+                if (linkDedupeKey(link).equals(parsed.dedupeKey())) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                throw bad("该位置不在报告单上，无法移除：" + locationRef(parsed));
+            }
+            matched.putIfAbsent(parsed.dedupeKey(), parsed);
+        }
+        return List.copyOf(matched.values());
+    }
+
+    /** 移除位置的结构解析：粒度合法性（基线 = 分类、随访 = 整条或分组）与 add 同口径，模板版本不参与。 */
+    private NormalizedLocation parseRemoveRef(LocationInput input) {
+        String linkType = input.linkType() == null ? "" : input.linkType().trim();
+        String anchorType =
+                input.anchorType() == null || input.anchorType().isBlank()
+                        ? null
+                        : input.anchorType().trim();
+        String anchorKey = trimToNull(input.anchorKey());
+        if ("implant_record".equals(linkType)) {
+            throw bad("植入记录位置随医院 C 扩展开放（E21-T32），当前不可选");
+        }
+        if (LINK_BASELINE.equals(linkType)) {
+            if (!ANCHOR_CATEGORY.equals(anchorType) || anchorKey == null) {
+                throw bad("基线位置必须是某个分类（不能是分组或整条记录）");
+            }
+            return new NormalizedLocation(LINK_BASELINE, null, ANCHOR_CATEGORY, anchorKey, 0);
+        }
+        if (LINK_FOLLOWUP_RECORD.equals(linkType)) {
+            if (input.linkRecordId() == null) {
+                throw bad("随访记录位置缺少记录标识");
+            }
+            if (anchorType != null && !ANCHOR_SECTION.equals(anchorType)) {
+                throw bad("随访记录位置只能是整条记录或其中某个分组");
+            }
+            if (ANCHOR_SECTION.equals(anchorType) && anchorKey == null) {
+                throw bad("分组位置缺少分组锚点");
+            }
+            return new NormalizedLocation(
+                    LINK_FOLLOWUP_RECORD, input.linkRecordId(), anchorType, anchorKey, 0);
+        }
+        throw bad("位置类型不合法：" + linkType);
+    }
+
+    /** 在册位置行的四元组（与 {@link NormalizedLocation#dedupeKey()} 同构）。 */
+    private static String linkDedupeKey(ReportMapper.LinkRow link) {
+        return link.linkType()
+                + '|'
+                + (link.linkRecordId() == null ? "" : link.linkRecordId())
+                + '|'
+                + (link.anchorType() == null ? "" : link.anchorType())
+                + '|'
+                + (link.anchorKey() == null ? "" : link.anchorKey());
+    }
+
+    /** 位置的技术标识（错误文案用，不暴露患者数据）：基线分类 key / 记录 id + 分组 key。 */
+    private static String locationRef(NormalizedLocation location) {
+        if (LINK_BASELINE.equals(location.linkType())) {
+            return "基线分类 " + location.anchorKey();
+        }
+        String ref = "随访记录 " + location.linkRecordId();
+        return location.anchorKey() == null ? ref : ref + " 分组 " + location.anchorKey();
+    }
+
+    /** 操作日志摘要：增加 N 个（标签清单）、移除 M 个（标签清单）——A-ATT-020「增加或移除了哪个位置」。 */
+    private String changeSummary(
+            long patientId, List<NormalizedLocation> adds, List<ReportMapper.LinkRow> removedRows) {
+        StringBuilder summary = new StringBuilder();
+        if (!adds.isEmpty()) {
+            List<ReportMapper.LinkRow> addRows =
+                    adds.stream().map(ReportService::toLinkRow).toList();
+            String labels =
+                    buildTags(patientId, addRows).stream()
+                            .map(ReportService::tagText)
+                            .collect(Collectors.joining("、"));
+            summary.append("增加 ").append(adds.size()).append(" 个（").append(labels).append("）");
+        }
+        if (!removedRows.isEmpty()) {
+            if (!summary.isEmpty()) {
+                summary.append("、");
+            }
+            String labels =
+                    buildTags(patientId, removedRows).stream()
+                            .map(ReportService::tagText)
+                            .collect(Collectors.joining("、"));
+            summary.append("移除 ")
+                    .append(removedRows.size())
+                    .append(" 个（")
+                    .append(labels)
+                    .append("）");
+        }
+        return summary.toString();
+    }
+
+    /** 归一化位置 → 位置行（标签构建复用；id / adjusted 不参与显示）。 */
+    private static ReportMapper.LinkRow toLinkRow(NormalizedLocation location) {
+        return new ReportMapper.LinkRow(
+                null,
+                null,
+                location.linkType(),
+                location.linkRecordId(),
+                location.anchorType(),
+                location.anchorKey(),
+                location.templateVersion(),
+                0);
+    }
+
+    /**
+     * 操作日志 before / after 的位置清单：四元组 + 模板版本的紧凑形态（不含显示标签与日期——静态 ObjectMapper 不带 jsr310 模块序列化不了
+     * LocalDate，且留痕以锚点标识为准）。
+     */
+    private static List<Map<String, Object>> locationRefs(List<ReportMapper.LinkRow> rows) {
+        List<Map<String, Object>> refs = new ArrayList<>();
+        for (ReportMapper.LinkRow link : rows) {
+            Map<String, Object> ref = new LinkedHashMap<>();
+            ref.put("linkType", link.linkType());
+            ref.put("linkRecordId", link.linkRecordId());
+            ref.put("anchorType", link.anchorType());
+            ref.put("anchorKey", link.anchorKey());
+            ref.put("templateVersion", link.templateVersion());
+            refs.add(ref);
+        }
+        return refs;
+    }
+
+    /** 位置标签文案（与前端 reportLocationText 同口径）：「基线 · 病例基本信息」「第2年随访 2026-06-10 · 超声复查」。 */
+    private static String tagText(LocationTagView tag) {
+        String scope =
+                LINK_BASELINE.equals(tag.linkType())
+                        ? "基线"
+                        : (tag.recordLabel() != null ? tag.recordLabel() : "随访记录");
+        return tag.anchorLabel() == null ? scope : scope + " · " + tag.anchorLabel();
     }
 
     // ---------------------------------------------------------------- 批量上传（E16-T03 /
@@ -1054,50 +1338,65 @@ public class ReportService {
 
     /** 位置标签（列表 / 左栏显示用）：recordLabel / anchorLabel 按当前模板解析（模板改版退回随 E16-T15）。 */
     private Map<Long, List<LocationTagView>> locationTags(long patientId) {
+        Map<Long, List<LocationTagView>> tags = new LinkedHashMap<>();
+        for (LinkRow link : mapper.linksOfPatient(patientId)) {
+            tags.computeIfAbsent(link.reportId(), id -> new ArrayList<>())
+                    .add(
+                            tagOf(
+                                    link,
+                                    baselineCategoryMap(),
+                                    recordMap(patientId),
+                                    new LinkedHashMap<>()));
+        }
+        return tags;
+    }
+
+    /** 位置行 → 标签（修改位置的变更前后 / 操作日志摘要共用一份标签拼装）。 */
+    private List<LocationTagView> buildTags(long patientId, List<ReportMapper.LinkRow> rows) {
         Map<String, String> baselineCategories = baselineCategoryMap();
         Map<Long, RecordRow> records = recordMap(patientId);
         Map<Long, Map<String, String>> sectionCache = new LinkedHashMap<>();
-        Map<Long, List<LocationTagView>> tags = new LinkedHashMap<>();
-        for (LinkRow link : mapper.linksOfPatient(patientId)) {
-            String recordLabel = null;
-            LocalDate recordDate = null;
-            String anchorLabel = null;
-            if (LINK_BASELINE.equals(link.linkType())) {
-                anchorLabel = baselineCategories.get(link.anchorKey());
-            } else if (LINK_FOLLOWUP_RECORD.equals(link.linkType())
-                    && link.linkRecordId() != null) {
-                RecordRow record = records.get(link.linkRecordId());
-                if (record != null) {
-                    recordLabel = recordTitle(record);
-                    recordDate = record.planDate() != null ? record.planDate() : record.visitDate();
-                    if (ANCHOR_SECTION.equals(link.anchorType())) {
-                        Map<String, String> sections =
-                                sectionCache.computeIfAbsent(
-                                        record.id(),
-                                        id ->
-                                                categoryMap(
-                                                        record.formCode(),
-                                                        record.templateVersion()));
-                        anchorLabel = sections.get(link.anchorKey());
-                    }
-                }
-            }
-            tags.computeIfAbsent(link.reportId(), id -> new ArrayList<>())
-                    .add(
-                            new LocationTagView(
-                                    link.linkType(),
-                                    link.linkRecordId() == null
-                                            ? null
-                                            : String.valueOf(link.linkRecordId()),
-                                    recordLabel,
-                                    recordDate,
-                                    link.anchorType(),
-                                    link.anchorKey(),
-                                    anchorLabel,
-                                    link.templateVersion() == null ? 0 : link.templateVersion(),
-                                    link.adjusted() != null && link.adjusted() > 0));
+        List<LocationTagView> tags = new ArrayList<>();
+        for (ReportMapper.LinkRow link : rows) {
+            tags.add(tagOf(link, baselineCategories, records, sectionCache));
         }
         return tags;
+    }
+
+    private LocationTagView tagOf(
+            LinkRow link,
+            Map<String, String> baselineCategories,
+            Map<Long, RecordRow> records,
+            Map<Long, Map<String, String>> sectionCache) {
+        String recordLabel = null;
+        LocalDate recordDate = null;
+        String anchorLabel = null;
+        if (LINK_BASELINE.equals(link.linkType())) {
+            anchorLabel = baselineCategories.get(link.anchorKey());
+        } else if (LINK_FOLLOWUP_RECORD.equals(link.linkType()) && link.linkRecordId() != null) {
+            RecordRow record = records.get(link.linkRecordId());
+            if (record != null) {
+                recordLabel = recordTitle(record);
+                recordDate = record.planDate() != null ? record.planDate() : record.visitDate();
+                if (ANCHOR_SECTION.equals(link.anchorType())) {
+                    Map<String, String> sections =
+                            sectionCache.computeIfAbsent(
+                                    record.id(),
+                                    id -> categoryMap(record.formCode(), record.templateVersion()));
+                    anchorLabel = sections.get(link.anchorKey());
+                }
+            }
+        }
+        return new LocationTagView(
+                link.linkType(),
+                link.linkRecordId() == null ? null : String.valueOf(link.linkRecordId()),
+                recordLabel,
+                recordDate,
+                link.anchorType(),
+                link.anchorKey(),
+                anchorLabel,
+                link.templateVersion() == null ? 0 : link.templateVersion(),
+                link.adjusted() != null && link.adjusted() > 0);
     }
 
     // ---------------------------------------------------------------- 通用

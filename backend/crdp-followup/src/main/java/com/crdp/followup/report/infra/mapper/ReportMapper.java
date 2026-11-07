@@ -4,6 +4,7 @@ import com.crdp.framework.datascope.DataScope;
 import com.crdp.framework.datascope.IgnoreScope;
 import java.time.LocalDate;
 import java.util.List;
+import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Options;
@@ -316,6 +317,47 @@ public interface ReportMapper {
             """)
     int softDeleteReport(
             @Param("id") long id, @Param("reason") String reason, @Param("operator") long operator);
+
+    // ---------------------------------------------------------------- 修改位置（E16-T13 /
+    // A-ATT-020、C-SCAN-020）
+
+    /**
+     * 移除一条位置行（修改位置 remove，E16-T13）：按四元组（link_type / link_record_id / anchor_type /
+     * anchor_key）定位，模板版本不参与（锚点可能来自旧版本或已退回，E16-T15）。 位置行的留痕在操作日志（RPT_LOCATION_CHANGE 的
+     * beforeJson），表本身无软删列——历史行物理删除。 调用方已经 findReport（@DataScope）确认报告单可见。
+     */
+    @IgnoreScope(
+            reason =
+                    "报告单位置移除（E16-T13 修改位置）：调用方已经 findReport（@DataScope）确认报告单可见"
+                            + "（越范围 40400），且 remove 清单已逐条与在册位置行匹配")
+    @Delete(
+            """
+            DELETE FROM rpt_report_link
+            WHERE report_id = #{reportId} AND link_type = #{linkType}
+              AND ((#{linkRecordId} IS NULL AND link_record_id IS NULL)
+                   OR link_record_id = #{linkRecordId})
+              AND ((#{anchorType} IS NULL AND anchor_type IS NULL) OR anchor_type = #{anchorType})
+              AND ((#{anchorKey} IS NULL AND anchor_key IS NULL) OR anchor_key = #{anchorKey})
+            """)
+    int deleteLink(
+            @Param("reportId") long reportId,
+            @Param("linkType") String linkType,
+            @Param("linkRecordId") Long linkRecordId,
+            @Param("anchorType") String anchorType,
+            @Param("anchorKey") String anchorKey);
+
+    /**
+     * 位置变更推进乐观锁版本（V63 version 列注释「编辑 / 修改位置随 E16-T13」），供详情 / 后续编辑的 409 判定。调用方已经
+     * findReport（@DataScope）确认报告单可见。
+     */
+    @IgnoreScope(reason = "报告单位置变更推进版本（E16-T13）：调用方已经 findReport（@DataScope）确认报告单可见（越范围 40400）")
+    @Update(
+            """
+            UPDATE rpt_report
+            SET version = version + 1, updated_by = #{operator}
+            WHERE id = #{id} AND status = 'NORMAL'
+            """)
+    int bumpVersion(@Param("id") long id, @Param("operator") long operator);
 
     /**
      * 文件挂的报告单上下文（E16-T09 下载 / 预览权限收紧，OQ-62① 的报告单部分）：归属是事实查询
