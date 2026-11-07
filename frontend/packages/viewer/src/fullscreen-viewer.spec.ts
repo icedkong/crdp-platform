@@ -128,6 +128,35 @@ describe('e16-t06 FullscreenViewer（全屏查看器）', () => {
     }
   });
 
+  // E16-T12 补：A-ATT-005「XLSX 需下载查看」在全屏外壳的形态（格式矩阵的只下载一端）
+  it('xLSX：只下载提示与原因文案，变换按钮禁用；有下载权限时可从内容面下载', async () => {
+    const xlsx = {
+      fileId: 13,
+      format: 'xlsx',
+      mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      name: '检验汇总（示例）.xlsx',
+    };
+    mountViewer({ file: xlsx });
+    expect(document.body.textContent).toContain(
+      'Excel 工作簿暂不支持在线预览，请下载查看',
+    );
+    expect(document.body.textContent).toContain('无下载权限时无法获取该文件');
+    for (const label of ['旋转', '翻转', '缩小', '放大']) {
+      expect(toolbarButton(label)?.hasAttribute('disabled')).toBe(true);
+    }
+    expect(toolbarButton('下载')).toBeFalsy();
+    for (const wrapper of mounted.splice(0)) wrapper.unmount();
+
+    const allowed = mountViewer({ file: xlsx, canDownload: true });
+    expect(allowed.emitted('download')).toBeUndefined();
+    const contentDownload = [...document.body.querySelectorAll('button')].find(
+      (item) => (item.textContent ?? '').replaceAll(' ', '').includes('下载'),
+    );
+    contentDownload?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await Promise.resolve();
+    expect(allowed.emitted('download')?.[0]?.[0]).toMatchObject({ fileId: 13 });
+  });
+
   it('翻页：上一份 / 下一份与指示文案，边界禁用；单份不显示翻页', async () => {
     const wrapper = mountViewer({ fileCount: 3, index: 0 });
     expect(document.body.textContent).toContain('第 1 / 3 份');
