@@ -255,7 +255,8 @@ class TenantOnboardingServiceMySqlIT {
                 // （rpt_report.location_adjusted 退回标记）、E17-T01 增加 V67
                 // （对比标红规则 fu_compare_rule 与对比规则菜单授予）、E18-T02 增加 V68
                 // （导入作业与暂存行 imp_job / imp_row）、E17-T04 增加 V69
-                // （fu_record.highlight 对比标红命中列）。
+                // （fu_record.highlight 对比标红命中列）、E17-T05 增加 V70（医院 A Q41
+                // 默认对比规则预置 fu_compare_rule 15 条）。
                 // 此处随迁移清单维护
                 List.of(
                         "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14",
@@ -263,7 +264,7 @@ class TenantOnboardingServiceMySqlIT {
                         "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38",
                         "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50",
                         "51", "52", "53", "54", "55", "56", "57", "58", "59", "60", "61", "62",
-                        "63", "64", "65", "66", "67", "68", "69"),
+                        "63", "64", "65", "66", "67", "68", "69", "70"),
                 root.queryForList(
                         "SELECT version FROM "
                                 + DB

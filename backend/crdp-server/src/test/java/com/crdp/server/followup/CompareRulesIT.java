@@ -94,7 +94,7 @@ class CompareRulesIT {
         Map<?, ?> list = get("/api/hospital/followup/compare-rules", adminToken).getBody();
         assertEquals(0, code(list));
         List<?> items = (List<?>) list.get("data");
-        assertEquals(2, items.size(), "迁移 V67 种子的两条 Q41 默认规则");
+        assertEquals(17, items.size(), "Q41 默认规则全量（V67 两条 + V70 预置十五条）");
         Map<?, ?> ef =
                 items.stream()
                         .map(item -> (Map<?, ?>) item)
@@ -155,12 +155,49 @@ class CompareRulesIT {
                 get("/api/hospital/followup/compare-rules?formCode=A_ANNUAL_FU", adminToken)
                         .getBody();
         assertEquals(0, code(list));
-        assertEquals(2, ((List<?>) list.get("data")).size());
+        assertEquals(17, ((List<?>) list.get("data")).size());
         Map<?, ?> other =
                 get("/api/hospital/followup/compare-rules?formCode=NOT_EXIST", adminToken)
                         .getBody();
         assertEquals(0, code(other));
         assertEquals(0, ((List<?>) other.get("data")).size());
+    }
+
+    /**
+     * E17-T05 验收位（tasks.csv：Q41 规则全部可开关）：Q41 全量 17 条（V67 两条 + V70 十五条）逐条 PUT 关 / 开 都返回 0 且 enabled
+     * 落库翻转（params 原样回传，各类型键集校验通过），最后全部恢复启用。
+     */
+    @Test
+    void allQ41PresetRulesToggleable() {
+        String adminToken = login(TENANT_A, ADMIN);
+        Map<?, ?> list = get("/api/hospital/followup/compare-rules", adminToken).getBody();
+        List<?> items = (List<?>) list.get("data");
+        assertEquals(17, items.size(), "Q41 全量预置");
+        for (Object item : items) {
+            Map<?, ?> rule = (Map<?, ?>) item;
+            long id = ((Number) rule.get("id")).longValue();
+            String body = "{\"enabled\":false,\"params\":" + paramsJson(rule) + "}";
+            Map<?, ?> off =
+                    put("/api/hospital/followup/compare-rules/" + id, adminToken, body).getBody();
+            assertEquals(0, code(off), "关：" + rule.get("ruleCode"));
+            assertEquals(Boolean.FALSE, data(off).get("enabled"), "关：" + rule.get("ruleCode"));
+            Map<?, ?> on =
+                    put(
+                                    "/api/hospital/followup/compare-rules/" + id,
+                                    adminToken,
+                                    "{\"enabled\":true,\"params\":" + paramsJson(rule) + "}")
+                            .getBody();
+            assertEquals(0, code(on), "开：" + rule.get("ruleCode"));
+            assertEquals(Boolean.TRUE, data(on).get("enabled"), "开：" + rule.get("ruleCode"));
+        }
+        runInTenantA(
+                () ->
+                        assertEquals(
+                                17L,
+                                jdbc.queryForObject(
+                                        "SELECT COUNT(*) FROM fu_compare_rule WHERE status = 'ENABLED'",
+                                        Long.class),
+                                "全部恢复启用"));
     }
 
     /** 权限与登录口径：FOLLOWUP_DOCTOR 无配置码 40300；未登录 40100。 */
@@ -285,6 +322,16 @@ class CompareRulesIT {
 
     private static Map<?, ?> paramsOf(Map<?, ?> view) {
         return (Map<?, ?>) view.get("params");
+    }
+
+    /** 规则视图的 params 原样序列化回 JSON（PUT 回传保持各类型键集不变，只翻开关）。 */
+    private static String paramsJson(Map<?, ?> rule) {
+        try {
+            return new com.fasterxml.jackson.databind.ObjectMapper()
+                    .writeValueAsString(paramsOf(rule));
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException("params 序列化失败", e);
+        }
     }
 
     private String login(String tenant, String username) {
