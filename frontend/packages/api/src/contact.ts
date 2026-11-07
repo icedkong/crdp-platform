@@ -149,8 +149,13 @@ export interface ContactLogUpdateRequest {
   result: ContactResult;
 }
 
-/** 创建结果（terminatedTasks = 结果「告知已故」时本次终止的未完成任务数，其余 null）。 */
+/**
+ * 创建结果（terminatedTasks = 结果「告知已故」时本次终止的未完成任务数，其余 null；
+ * callReportId = 带录音时同事务自动生成的「通话记录」报告单 id，A-ATT-017 / E16-T08）。
+ */
 export interface ContactLogCreateResult {
+  callReportId?: null | string;
+  followupTaskId?: null | string;
   log: ContactLogRow;
   terminatedTasks?: null | number;
 }

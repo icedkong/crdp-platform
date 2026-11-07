@@ -236,7 +236,8 @@ public class ReportController {
                 body.conclusion(),
                 locations,
                 body.fileIds(),
-                body.note());
+                body.note(),
+                body.contactLogId());
     }
 
     private static ReportService.BatchCreateRequest toBatchRequest(BatchCreateBody body) {
@@ -301,7 +302,8 @@ public class ReportController {
             String conclusion,
             List<LocationBody> locations,
             List<String> fileIds,
-            String note) {}
+            String note,
+            String contactLogId) {}
 
     /** 批量上传请求体（report.md §2 POST /reports/batch-create）。 */
     record BatchCreateBody(

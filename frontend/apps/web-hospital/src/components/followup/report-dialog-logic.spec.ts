@@ -1,4 +1,8 @@
-import type { ReportCatalogField, ReportLocationInput } from '@crdp/api';
+import type {
+  ContactLogRow,
+  ReportCatalogField,
+  ReportLocationInput,
+} from '@crdp/api';
 
 // E16-T02 / A-ATT-001、A-ATT-002；C-SCAN-010：添加报告单对话框纯逻辑
 // （公共槽位标签推导、指标行构建与 ↑/↓、校验、载荷、位置相等与预选初始化）
@@ -6,10 +10,13 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildIndicatorRows,
+  CALL_TYPE_CODE,
+  callContactOptions,
   hasReportFormError,
   indicatorPayload,
   initialLocations,
   locationDiff,
+  locationRequired,
   reportConclusionLabel,
   reportDateLabel,
   reportFindingsLabel,
@@ -275,5 +282,84 @@ describe('e16-t02 添加报告单 · 校验与位置（A-ATT-002 / C-SCAN-010）
       '预选是副本，避免误改调用方',
     );
     expect(initialLocations(undefined)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------- E16-T08 / A-ATT-017 通话记录关联
+
+function contactLog(overrides: Partial<ContactLogRow> = {}): ContactLogRow {
+  return {
+    audios: [
+      {
+        fileId: '6001',
+        format: 'mp3',
+        inlinePlayable: true,
+        mimeType: 'audio/mpeg',
+        originalName: '通话录音（示例）.mp3',
+        sizeBytes: 2048,
+      },
+    ],
+    contactTime: '2026-11-05T09:00:00',
+    createdAt: '2026-11-05T09:00:00',
+    creatorName: '王医生（示例）',
+    id: '5001',
+    method: 'PHONE',
+    note: null,
+    patientId: '301',
+    result: 'REACHED',
+    version: 0,
+    ...overrides,
+  };
+}
+
+describe('callContactOptions（关联沟通记录下拉，A-ATT-017）', () => {
+  it('只列带录音的沟通记录，标签含时间 / 方式 / 录音数', () => {
+    const options = callContactOptions([
+      contactLog(),
+      contactLog({ id: '5002', audios: [] }),
+      contactLog({
+        audios: [
+          {
+            fileId: '6002',
+            format: 'mp3',
+            inlinePlayable: true,
+            originalName: 'a.mp3（示例）',
+            sizeBytes: 1,
+          },
+          {
+            fileId: '6003',
+            format: 'wav',
+            inlinePlayable: true,
+            originalName: 'b.wav（示例）',
+            sizeBytes: 1,
+          },
+        ],
+        contactTime: '2026-11-06T16:30:00',
+        id: '5003',
+        method: 'WECHAT',
+      }),
+    ]);
+
+    expect(options).toHaveLength(2);
+    expect(options[0]).toEqual({
+      audioCount: 1,
+      label: '2026-11-05 09:00 · 电话（录音 1 个）',
+      value: '5001',
+    });
+    expect(options[1]?.value).toBe('5003');
+    expect(options[1]?.label).toContain('微信');
+    expect(options[1]?.label).toContain('录音 2 个');
+  });
+});
+
+describe('locationRequired（通话记录关联时位置可空，A-ATT-017）', () => {
+  it('普通类型与未关联的通话记录仍必填（A-ATT-002）', () => {
+    expect(locationRequired('ECHO', null)).toBe(true);
+    expect(locationRequired(CALL_TYPE_CODE, null)).toBe(true);
+    expect(locationRequired(null, '5001')).toBe(true);
+  });
+
+  it('关联沟通记录的通话记录可空（后端按任务对应随访记录推导 / 未指定位置）', () => {
+    expect(locationRequired(CALL_TYPE_CODE, '5001')).toBe(false);
   });
 });

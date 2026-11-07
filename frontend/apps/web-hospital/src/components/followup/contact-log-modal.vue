@@ -143,6 +143,10 @@ async function handleSubmit() {
           ? '已记录；患者标记为死亡，未完成任务已终止'
           : '已记录沟通',
       );
+      // E16-T08 / A-ATT-017：带录音时后端同事务生成「通话记录」报告单，提示两处同一数据
+      if (created.callReportId) {
+        message.info('录音已同步为一份「通话记录」报告单（见报告单页签）');
+      }
       emit('success', created.log);
     }
     open.value = false;
@@ -212,6 +216,9 @@ async function handleSubmit() {
         <span v-for="item in audios" :key="item.fileId" class="audio-name">
           {{ item.name }}
         </span>
+        <p class="audio-hint">
+          保存后录音同时显示为一份「通话记录」报告单（A-ATT-017，见报告单页签），两处是同一文件。
+        </p>
       </FormItem>
       <FormItem
         v-else-if="row && row.audios.length > 0"
@@ -233,6 +240,12 @@ async function handleSubmit() {
 .audio-name {
   display: block;
   margin-top: 4px;
+  font-size: 12px;
+  color: #8c8c8c;
+}
+
+.audio-hint {
+  margin: 4px 0 0;
   font-size: 12px;
   color: #8c8c8c;
 }

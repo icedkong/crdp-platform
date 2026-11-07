@@ -8,7 +8,7 @@ import type {
 } from '@crdp/api';
 import type { Dayjs } from 'dayjs';
 
-import type { IndicatorRow } from './report-dialog-logic';
+import type { CallContactOption, IndicatorRow } from './report-dialog-logic';
 
 import { computed, reactive, ref, watch } from 'vue';
 
@@ -27,6 +27,7 @@ import {
 } from 'ant-design-vue';
 import dayjs from 'dayjs';
 
+import { fetchPatientContacts } from '#/api/core/contact';
 import { fetchUploadPolicy, uploadFile } from '#/api/core/file';
 import {
   createReport,
@@ -43,9 +44,12 @@ import {
   attachmentCountText,
   attachmentOverLimit,
   buildIndicatorRows,
+  CALL_TYPE_CODE,
+  callContactOptions,
   hasReportFormError,
   indicatorPayload,
   initialLocations,
+  locationRequired,
   moveItem,
   reportConclusionLabel,
   reportDateLabel,
@@ -91,6 +95,10 @@ const treeLoading = ref(false);
 const submitting = ref(false);
 
 const typeCode = ref<null | string>(null);
+// E16-T08 / A-ATT-017：仅「通话记录」显示「关联沟通记录」（录音即附件，两处同一数据）
+const contactOptions = ref<CallContactOption[]>([]);
+const contactLogId = ref<null | string>(null);
+const contactsLoading = ref(false);
 const nameId = ref<null | string>(null);
 const reportDate = ref<Dayjs | null>(null);
 const findings = ref('');
@@ -155,7 +163,10 @@ const errors = computed(() =>
   }),
 );
 const locationInvalid = computed(
-  () => showErrors.value && locations.value.length === 0,
+  () =>
+    showErrors.value &&
+    locations.value.length === 0 &&
+    locationRequired(typeCode.value, contactLogId.value),
 );
 
 const indicatorColumns = [
@@ -190,6 +201,7 @@ async function loadPolicy() {
 
 function resetForm() {
   typeCode.value = null;
+  contactLogId.value = null;
   nameId.value = null;
   reportDate.value = dayjs();
   findings.value = '';
@@ -244,6 +256,7 @@ function normalizeLocationsWithTree() {
 
 async function onTypeChange(code: string) {
   typeCode.value = code;
+  contactLogId.value = null;
   nameId.value = null;
   replaceRows(buildIndicatorRows(null, props.patientGender));
   namesLoading.value = true;
@@ -253,6 +266,21 @@ async function onTypeChange(code: string) {
     names.value = [];
   } finally {
     namesLoading.value = false;
+  }
+  if (code === CALL_TYPE_CODE && contactOptions.value.length === 0) {
+    // 只在首次选「通话记录」时拉取（最近 100 条沟通记录足够覆盖关联候选）
+    contactsLoading.value = true;
+    try {
+      const page = await fetchPatientContacts(props.patientId, {
+        pageNo: 1,
+        pageSize: 100,
+      });
+      contactOptions.value = callContactOptions(page.items);
+    } catch {
+      contactOptions.value = [];
+    } finally {
+      contactsLoading.value = false;
+    }
   }
 }
 
@@ -329,11 +357,19 @@ function beforeUpload() {
 
 async function handleSubmit() {
   showErrors.value = true;
-  if (hasReportFormError(errors.value) || locations.value.length === 0) return;
+  if (
+    hasReportFormError(errors.value) ||
+    (locations.value.length === 0 &&
+      locationRequired(typeCode.value, contactLogId.value))
+  ) {
+    return;
+  }
   submitting.value = true;
   try {
     const created = await createReport({
       conclusion: conclusion.value.trim() || null,
+      contactLogId:
+        typeCode.value === CALL_TYPE_CODE ? contactLogId.value : null,
       fields: {},
       fileIds: files.value.map((item) => item.fileId),
       findings: findings.value.trim() || null,
@@ -364,6 +400,8 @@ function handleCancel() {
 // 测试驱动口（对话框内容经 Modal teleport，事件从 DOM 直取不便）
 defineExpose({
   indicatorRows,
+  contactLogId,
+  contactOptions,
   customRequest,
   files,
   moveFile,
@@ -415,6 +453,26 @@ defineExpose({
         />
         <p v-if="showErrors && errors.nameId" class="error">
           {{ errors.nameId }}
+        </p>
+      </FormItem>
+
+      <!-- E16-T08 / A-ATT-017：通话记录可选关联某条沟通记录，录音即附件（同一批文件，两处同一数据） -->
+      <FormItem
+        v-if="typeCode === 'CALL'"
+        label="关联沟通记录"
+        data-testid="call-contact-link"
+      >
+        <Select
+          :loading="contactsLoading"
+          :options="contactOptions"
+          allow-clear
+          data-testid="call-contact-select"
+          placeholder="选择带录音的沟通记录（可选）"
+          :value="contactLogId"
+          @update:value="contactLogId = $event"
+        />
+        <p class="hint">
+          关联后该沟通的录音即本报告单附件（同一文件、不重复存储）；位置留空时自动取该沟通关联任务的随访记录（无则进入「未指定位置」）；删除任一处两处同时删除（A-ATT-017）。
         </p>
       </FormItem>
 
@@ -478,7 +536,10 @@ defineExpose({
         />
       </FormItem>
 
-      <FormItem label="位置" required>
+      <FormItem
+        label="位置"
+        :required="locationRequired(typeCode, contactLogId)"
+      >
         <LocationPicker
           :options="treeOptions"
           :patient-id="patientId"

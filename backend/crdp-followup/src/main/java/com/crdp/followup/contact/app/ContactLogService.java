@@ -10,6 +10,7 @@ import com.crdp.followup.file.infra.mapper.SysFileMapper;
 import com.crdp.followup.file.infra.mapper.SysFileRow;
 import com.crdp.followup.patient.app.PatientContactGateway;
 import com.crdp.followup.plan.app.FollowupTerminationService;
+import com.crdp.followup.report.app.CallReportService;
 import com.crdp.followup.task.app.FollowupTaskStatusService;
 import com.crdp.followup.task.app.UnreachedFollowupService;
 import com.crdp.followup.task.infra.mapper.FollowupTaskMapper;
@@ -76,6 +77,7 @@ public class ContactLogService {
     private final UnreachedFollowupService unreachedFollowups;
     private final FollowupTerminationService termination;
     private final FilePolicyService filePolicy;
+    private final CallReportService callReports;
     private final AuditLogger audit;
 
     public ContactLogService(
@@ -87,6 +89,7 @@ public class ContactLogService {
             UnreachedFollowupService unreachedFollowups,
             FollowupTerminationService termination,
             FilePolicyService filePolicy,
+            CallReportService callReports,
             AuditLogger audit) {
         this.mapper = mapper;
         this.files = files;
@@ -96,6 +99,7 @@ public class ContactLogService {
         this.unreachedFollowups = unreachedFollowups;
         this.termination = termination;
         this.filePolicy = filePolicy;
+        this.callReports = callReports;
         this.audit = audit;
     }
 
@@ -129,9 +133,11 @@ public class ContactLogService {
 
     /**
      * 创建结果（terminatedTasks = 结果「告知已故」时本次终止的未完成任务数；followupTaskId = 未接通时自动生成的跟进任务 id，无则
-     * null，E15-T05）。
+     * null，E15-T05；callReportId = 带录音时同事务自动生成的「通话记录」报告单 id，无录音或 CALL 类型不可用为 null，E16-T08 /
+     * A-ATT-017）。
      */
-    public record CreateResult(ContactLogView log, Integer terminatedTasks, Long followupTaskId) {}
+    public record CreateResult(
+            ContactLogView log, Integer terminatedTasks, Long followupTaskId, Long callReportId) {}
 
     /** 分页结果（统一分页口径）。 */
     public record ContactLogPage(
@@ -254,6 +260,19 @@ public class ContactLogService {
                             .terminateOnDeath(patientId, "沟通记录「告知已故」", row.getCreatedBy())
                             .terminatedTasks();
         }
+        // 录音 → 同一份「通话记录」报告单（A-ATT-017，E16-T08）：无录音不触发联动；CALL 类型不可用时联动侧返回 null（不阻断沟通记录）
+        Long callReportId = null;
+        if (!audioFileIds.isEmpty()) {
+            callReportId =
+                    callReports.createForContact(
+                            patientId,
+                            row.getId(),
+                            taskId,
+                            contactTime,
+                            note,
+                            audioFileIds,
+                            row.getCreatedBy());
+        }
         audit.append(
                 AuditEntry.operation("followup", "CONTACT_CREATE")
                         .objectType("CONTACT_LOG")
@@ -284,15 +303,19 @@ public class ContactLogService {
                         .result(AuditResult.SUCCESS)
                         .build());
         log.info(
-                "沟通记录已创建 id={} patient={} result={} audio={} followup={} deathTerminated={}",
+                "沟通记录已创建 id={} patient={} result={} audio={} followup={} deathTerminated={} callReport={}",
                 row.getId(),
                 patientId,
                 result.code(),
                 audioFileIds.size(),
                 followupTaskId,
-                terminatedTasks);
+                terminatedTasks,
+                callReportId);
         return new CreateResult(
-                viewsOf(List.of(requireRow(row.getId()))).get(0), terminatedTasks, followupTaskId);
+                viewsOf(List.of(requireRow(row.getId()))).get(0),
+                terminatedTasks,
+                followupTaskId,
+                callReportId);
     }
 
     /** 修改（乐观锁 baseVersion，冲突 409；结果改为「告知已故」同样触发死亡终止，幂等）。 */
@@ -356,7 +379,7 @@ public class ContactLogService {
         return viewsOf(List.of(requireRow(contactId))).get(0);
     }
 
-    /** 删除（连带软删录音，A-ATT-017「任一处删除即两处同时删除」；任务与失访计数不回滚）。 */
+    /** 删除（连带软删录音与其「通话记录」报告单，A-ATT-017「任一处删除即两处同时删除」；任务与失访计数不回滚）。 */
     @Transactional
     public void delete(long contactId) {
         ContactLogMapper.ContactLogRow existing = requireContactInScope(contactId);
@@ -366,6 +389,8 @@ public class ContactLogService {
         for (ContactLogMapper.AudioRow audio : audios) {
             files.markDeleted(audio.fileId());
         }
+        // CALL 报告单连带软删（A-ATT-017，E16-T08）：报告单页签同时消失；录音台账上面已软删
+        callReports.softDeleteForContact(contactId, CurrentSession.requireHospital().userId());
         audit.append(
                 AuditEntry.operation("followup", "CONTACT_DELETE")
                         .objectType("CONTACT_LOG")
@@ -387,6 +412,29 @@ public class ContactLogService {
                         .result(AuditResult.SUCCESS)
                         .build());
         log.info("沟通记录已删除 id={} audio={}", contactId, audios.size());
+    }
+
+    // ---------------------------------------------------------------- 通话记录联动（E16-T08 / A-ATT-017）
+
+    /**
+     * 可关联的沟通记录（报告单页签手动添加「通话记录」时选某条沟通，A-ATT-017「在报告单页签添加通话记录时可选关联某条沟通记录」）。 越范围 / 不存在 / 不属于该患者一律
+     * 40400（不暴露存在）。
+     */
+    public record LinkableContact(
+            long id, Long taskId, LocalDateTime contactTime, List<Long> audioFileIds) {}
+
+    /** 取单条沟通记录及其在册录音 fileId（录音即报告单附件，同一批 sys_file、不重复存储）。 */
+    public LinkableContact linkableContact(long patientId, long contactLogId) {
+        requirePatientInScope(patientId);
+        ContactLogMapper.ContactLogRow row = requireContactInScope(contactLogId);
+        if (row.patientId() != patientId) {
+            throw new ApiException(404, 40400, "沟通记录不存在");
+        }
+        List<Long> audioFileIds = new ArrayList<>();
+        for (ContactLogMapper.AudioRow audio : mapper.audiosOf(List.of(contactLogId))) {
+            audioFileIds.add(audio.fileId());
+        }
+        return new LinkableContact(contactLogId, row.taskId(), row.contactTime(), audioFileIds);
     }
 
     // ---------------------------------------------------------------- 内部

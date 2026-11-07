@@ -57,7 +57,8 @@ public class ContactLogController {
                             + " nextContactTime?, note?, audioFileIds[] }——录音须先经 POST /api/hospital/files"
                             + " 上传（真实类型与 50 MB 上限在文件服务校验），这里只收 AUDIO 类别且未挂他处的"
                             + " fileId；第一次联系任务进入进行中；result = DECEASED 同事务触发死亡终止"
-                            + "（A-FU-007，返回 terminatedTasks）；批量写 CONTACT_CREATE 审计")
+                            + "（A-FU-007，返回 terminatedTasks）；带录音时同事务自动生成「通话记录」报告单"
+                            + "（A-ATT-017 / E16-T08，返回 callReportId，规则见 report.md §2）；写 CONTACT_CREATE 审计")
     @PostMapping("/patients/{id}/contacts")
     @RequireModule("followup")
     @RequiresPermission("followup:record:edit")

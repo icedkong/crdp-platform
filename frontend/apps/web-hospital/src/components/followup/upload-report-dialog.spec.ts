@@ -19,6 +19,7 @@ const createReport = vi.fn();
 const uploadFile = vi.fn();
 const fetchUploadPolicy = vi.fn();
 const getFilePreviewUrl = vi.fn();
+const fetchPatientContacts = vi.fn();
 
 vi.mock('#/api/core/report', () => ({
   createReport: (...args: unknown[]) => createReport(...args),
@@ -27,6 +28,9 @@ vi.mock('#/api/core/report', () => ({
   fetchCatalogReportTypes: (...args: unknown[]) =>
     fetchCatalogReportTypes(...args),
   fetchReportLocations: (...args: unknown[]) => fetchReportLocations(...args),
+}));
+vi.mock('#/api/core/contact', () => ({
+  fetchPatientContacts: (...args: unknown[]) => fetchPatientContacts(...args),
 }));
 vi.mock('#/api/core/file', () => ({
   fetchUploadPolicy: (...args: unknown[]) => fetchUploadPolicy(...args),
@@ -50,6 +54,23 @@ const TYPES = [
       },
     ],
     name: '检验',
+    nameRequired: true,
+  },
+  {
+    code: 'CALL',
+    defaultDigitizeStatus: null,
+    fields: [
+      {
+        code: 'call_time',
+        key: 'f001',
+        label: '通话时间',
+        required: true,
+        sortNo: 10,
+        type: 'datetime',
+        unit: null,
+      },
+    ],
+    name: '通话记录',
     nameRequired: true,
   },
   {
@@ -157,6 +178,33 @@ async function mountDialog(props: Record<string, unknown> = {}) {
   fetchCatalogReportTypes.mockResolvedValue(TYPES);
   fetchReportLocations.mockResolvedValue(TREE);
   fetchCatalogReportNames.mockResolvedValue(NAMES_LAB);
+  fetchPatientContacts.mockResolvedValue({
+    items: [
+      {
+        audios: [
+          {
+            fileId: '6001',
+            format: 'mp3',
+            inlinePlayable: true,
+            originalName: '通话录音（示例）.mp3',
+            sizeBytes: 2048,
+          },
+        ],
+        contactTime: '2026-11-05T09:00:00',
+        createdAt: '2026-11-05T09:00:00',
+        creatorName: '王医生（示例）',
+        id: '5001',
+        method: 'PHONE',
+        note: null,
+        patientId: '301',
+        result: 'REACHED',
+        version: 0,
+      },
+    ],
+    pageNo: 1,
+    pageSize: 100,
+    total: 1,
+  });
   fetchUploadPolicy.mockResolvedValue({
     formats: [],
     maxAudioMb: 50,
@@ -441,5 +489,52 @@ describe('e16-t02 UploadReportDialog（添加报告单）', () => {
     expect(fullscreen?.querySelector('[data-watermark]')).toBeTruthy();
     // 两份附件 → 翻页控件可见
     expect(fullscreen?.textContent).toContain('第 1 / 2 份');
+  });
+});
+
+// ---------------------------------------------------------------- E16-T08 / A-ATT-017 通话记录关联
+
+describe('e16-t08 UploadReportDialog（通话记录关联沟通记录）', () => {
+  it('选「通话记录」显示关联沟通记录下拉（只列带录音的记录）；关联后位置可空提交', async () => {
+    const wrapper = await mountDialog();
+    await pickTypeAndName(wrapper, 'CALL', '41');
+
+    expect(fetchPatientContacts).toHaveBeenCalledWith('301', {
+      pageNo: 1,
+      pageSize: 100,
+    });
+    expect(bodyText()).toContain('关联沟通记录');
+
+    // 选定关联沟通记录（Select 经 teleport，经组件状态驱动）
+    const vm = wrapper.vm as unknown as { contactLogId: null | string };
+    vm.contactLogId = '5001';
+    await flush(1);
+
+    // 位置留空提交：不再拦截（后端按该沟通关联任务的随访记录推导 / 未指定位置）
+    await clickSubmit(wrapper);
+
+    expect(createReport).toHaveBeenCalledTimes(1);
+    const payload = createReport.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(payload.contactLogId).toBe('5001');
+    expect(payload.typeCode).toBe('CALL');
+    expect(payload.locations).toEqual([]);
+  });
+
+  it('「通话记录」未关联沟通记录时位置仍必填', async () => {
+    const wrapper = await mountDialog();
+    await pickTypeAndName(wrapper, 'CALL', '41');
+
+    await clickSubmit(wrapper);
+
+    expect(bodyText()).toContain('请至少选择 1 个位置');
+    expect(createReport).not.toHaveBeenCalled();
+  });
+
+  it('其他类型不显示关联沟通记录', async () => {
+    const wrapper = await mountDialog();
+    await pickTypeAndName(wrapper, 'LAB', '12');
+
+    expect(bodyText()).not.toContain('关联沟通记录');
+    expect(fetchPatientContacts).not.toHaveBeenCalled();
   });
 });

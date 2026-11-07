@@ -47,3 +47,25 @@ describe('reportDeleteNote（E16-T09 后果告知）', () => {
     expect(reportDeleteNote(row({ fileCount: 0 }))).toContain('（无附件）');
   });
 });
+
+// ---------------------------------------------------------------- E16-T08 / A-ATT-017 通话记录
+
+describe('reportDeleteNote（关联沟通记录的通话记录，A-ATT-017）', () => {
+  it('带 contactLogId 的行追加「两处同时消失」提示（pages.md §4.8 确认弹窗要写明）', () => {
+    const note = reportDeleteNote(
+      row({
+        contactLogId: '5001',
+        fileCount: 1,
+        name: '随访电话录音（示例）',
+        typeCode: 'CALL',
+        typeName: '通话记录',
+      }),
+    );
+    expect(note).toContain('两处同时消失');
+    expect(note).toContain('附件 1 个一并移除');
+  });
+
+  it('普通报告单文案不变（不提通话记录联动）', () => {
+    expect(reportDeleteNote(row())).not.toContain('两处同时消失');
+  });
+});

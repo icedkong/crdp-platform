@@ -792,6 +792,8 @@ function openEditContact(row: ContactLogRow) {
 
 function handleContactSaved() {
   void loadContactLogs(contactLogsPage.value);
+  // E16-T08 / A-ATT-017：录音同时生成「通话记录」报告单，两处看到同一份数据——保存后同步刷新报告单清单
+  void loadReports();
 }
 
 /** 删除确认要写明两处同时删除（pages.md §4.8 / A-ATT-017）。 */
@@ -805,8 +807,10 @@ function handleDeleteContact(row: ContactLogRow) {
     onOk: async () => {
       try {
         await deleteContactLog(row.id);
-        message.success('沟通记录已删除');
+        message.success('沟通记录已删除（通话记录报告单同时删除）');
         void loadContactLogs(contactLogsPage.value);
+        // E16-T08 / A-ATT-017：连带软删「通话记录」报告单，两处同时消失
+        void loadReports();
       } catch {
         // 提示由统一拦截器弹出
       }
@@ -1264,6 +1268,13 @@ const timelineLegendNote =
             <template #bodyCell="{ column, record }">
               <template v-if="column.dataIndex === 'name'">
                 {{ record.name ?? '—' }}
+                <!-- E16-T08 / A-ATT-017：关联沟通记录的通话记录（录音与沟通记录页签同一文件） -->
+                <Tooltip
+                  v-if="record.contactLogId"
+                  title="与沟通记录页签的录音为同一文件（A-ATT-017），删除任一处两处同时删除"
+                >
+                  <Tag data-testid="report-call-link-tag">关联沟通记录</Tag>
+                </Tooltip>
               </template>
               <template v-else-if="column.dataIndex === 'locations'">
                 <template v-if="record.locations.length === 0">
@@ -1374,7 +1385,7 @@ const timelineLegendNote =
         <template #emptyText> 暂无沟通记录 </template>
       </Table>
       <p class="hint">
-        录音与「通话记录」报告单是同一文件（A-ATT-017，报告单页签随 E16）；
+        录音同时显示为一份「通话记录」报告单（A-ATT-017，见报告单页签），两处是同一文件；
         删除任一处两处同时删除。
       </p>
     </div>

@@ -54,15 +54,22 @@ export interface ReportIndicatorInput {
   result: string;
 }
 
-/** 创建请求（POST /followup/reports；locations ≥ 1）。 */
+/**
+ * 创建请求（POST /followup/reports；locations ≥ 1）。通话记录（typeCode=CALL）可带
+ * contactLogId 关联某条沟通记录（A-ATT-017，E16-T08）：关联后该沟通的录音即本报告单附件
+ * （同一批文件、不重复上传），locations 允许为空——后端自动取该沟通关联任务的随访记录
+ * （整条），无对应记录进入「未指定位置」。
+ */
 export interface ReportCreateRequest {
   conclusion?: null | string;
+  /** 关联沟通记录 id（仅 CALL 通话记录可选，A-ATT-017；其他类型 40001） */
+  contactLogId?: null | string;
   /** 类型专属字段值（键 = 该类型 REPORT 表单稳定键） */
   fields?: Record<string, unknown>;
   fileIds?: string[];
   findings?: null | string;
   indicators?: ReportIndicatorInput[];
-  /** 位置必填、可多选（A-ATT-002 / C-SCAN-010） */
+  /** 位置必填、可多选（A-ATT-002 / C-SCAN-010；关联沟通记录时可空，由后端按任务推导） */
   locations: ReportLocationInput[];
   nameId?: null | string;
   note?: null | string;
@@ -128,6 +135,8 @@ export interface ReportFirstFile {
 /** 患者内报告单行（报告单页签列表；左栏附件导航消费，E16-T14）。 */
 export interface ReportRow {
   conclusion: null | string;
+  /** 关联沟通记录 id（仅 CALL 通话记录，A-ATT-017：与沟通记录页签的录音为同一批文件；其余 null） */
+  contactLogId?: null | string;
   createdAt: string;
   creatorName: null | string;
   digitizeStatus: null | string;

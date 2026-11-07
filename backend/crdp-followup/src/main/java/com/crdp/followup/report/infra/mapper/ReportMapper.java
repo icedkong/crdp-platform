@@ -23,7 +23,7 @@ import org.apache.ibatis.annotations.Update;
 @Mapper
 public interface ReportMapper {
 
-    /** 报告单行（患者内清单，报告时间倒序）。 */
+    /** 报告单行（患者内清单，报告时间倒序；contactLogId = 关联沟通记录，仅 CALL 通话记录，E16-T08）。 */
     record ReportRow(
             Long id,
             Long patientId,
@@ -31,6 +31,7 @@ public interface ReportMapper {
             String typeName,
             Long nameId,
             String nameSnapshot,
+            Long contactLogId,
             LocalDate reportDate,
             String findings,
             String conclusion,
@@ -103,15 +104,15 @@ public interface ReportMapper {
             Integer templateVersion,
             String status) {}
 
-    /** 新建报告单（生成 id 回填到 {@link ReportInsert#setId}）。 */
+    /** 新建报告单（生成 id 回填到 {@link ReportInsert#setId}；contactLogId 仅 CALL 通话记录，E16-T08）。 */
     @Insert(
             """
             INSERT INTO rpt_report (patient_id, type_code, type_name, name_id, name_snapshot,
-                                    report_date, findings, conclusion, note, field_values,
-                                    digitize_status, status, version, created_by)
+                                    contact_log_id, report_date, findings, conclusion, note,
+                                    field_values, digitize_status, status, version, created_by)
             VALUES (#{patientId}, #{typeCode}, #{typeName}, #{nameId}, #{nameSnapshot},
-                    #{reportDate}, #{findings}, #{conclusion}, #{note}, #{fieldValues},
-                    #{digitizeStatus}, 'NORMAL', 0, #{createdBy})
+                    #{contactLogId}, #{reportDate}, #{findings}, #{conclusion}, #{note},
+                    #{fieldValues}, #{digitizeStatus}, 'NORMAL', 0, #{createdBy})
             """)
     @Options(useGeneratedKeys = true, keyProperty = "id", keyColumn = "id")
     int insertReport(ReportInsert row);
@@ -173,7 +174,8 @@ public interface ReportMapper {
     @Select(
             """
             SELECT r.id, r.patient_id AS patientId, r.type_code AS typeCode, r.type_name AS typeName,
-                   r.name_id AS nameId, r.name_snapshot AS nameSnapshot, r.report_date AS reportDate,
+                   r.name_id AS nameId, r.name_snapshot AS nameSnapshot,
+                   r.contact_log_id AS contactLogId, r.report_date AS reportDate,
                    r.findings, r.conclusion, r.note, r.digitize_status AS digitizeStatus,
                    r.location_adjusted AS locationAdjusted, r.version,
                    r.created_by AS createdBy, u.display_name AS creatorName,
@@ -354,6 +356,24 @@ public interface ReportMapper {
             """)
     int softDeleteReport(
             @Param("id") long id, @Param("reason") String reason, @Param("operator") long operator);
+
+    /**
+     * 关联某条沟通记录的在册报告单头（E16-T08 / A-ATT-017，删沟通记录连带软删用）。 只取 NORMAL 行；类型 / 名称快照供审计描述。调用方
+     * （ContactLogService.delete）已做患者数据范围校验（越范围 40400）。
+     */
+    @IgnoreScope(
+            reason =
+                    "通话记录连带删除（E16-T08）：调用方已经 PatientContactGateway 做患者数据范围校验（40400），"
+                            + "归属查询本身不能按范围过滤")
+    @Select(
+            """
+            SELECT r.id, r.patient_id AS patientId, r.type_code AS typeCode,
+                   r.type_name AS typeName, r.name_snapshot AS nameSnapshot,
+                   r.report_date AS reportDate
+            FROM rpt_report r
+            WHERE r.contact_log_id = #{contactLogId} AND r.status = 'NORMAL'
+            """)
+    List<ReportHeadRow> callReportsOfContact(@Param("contactLogId") long contactLogId);
 
     // ---------------------------------------------------------------- 修改位置（E16-T13 /
     // A-ATT-020、C-SCAN-020）

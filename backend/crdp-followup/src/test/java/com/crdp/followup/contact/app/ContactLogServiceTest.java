@@ -1,6 +1,7 @@
 package com.crdp.followup.contact.app;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -58,6 +59,8 @@ class ContactLogServiceTest {
             mock(UnreachedFollowupService.class);
     private final FollowupTerminationService termination = mock(FollowupTerminationService.class);
     private final FilePolicyService filePolicy = mock(FilePolicyService.class);
+    private final com.crdp.followup.report.app.CallReportService callReports =
+            mock(com.crdp.followup.report.app.CallReportService.class);
     private final AuditLogger audit = mock(AuditLogger.class);
 
     private final ContactLogService service =
@@ -70,6 +73,7 @@ class ContactLogServiceTest {
                     unreachedFollowups,
                     termination,
                     filePolicy,
+                    callReports,
                     audit);
 
     @BeforeEach
@@ -106,6 +110,11 @@ class ContactLogServiceTest {
         when(files.find(6001L)).thenReturn(mp3);
         when(files.markAttached(6001L)).thenReturn(1);
         stubRowView(5001L);
+        lenient()
+                .when(
+                        callReports.createForContact(
+                                anyLong(), anyLong(), any(), any(), any(), any(), anyLong()))
+                .thenReturn(null);
 
         ContactLogService.CreateResult result =
                 service.create(
@@ -125,6 +134,7 @@ class ContactLogServiceTest {
         assertEquals("5001", result.log().id());
         assertEquals("REACHED", result.log().result());
         assertEquals(null, result.terminatedTasks(), "非「告知已故」不触发死亡终止");
+        assertEquals(null, result.callReportId(), "联动生成返回 null 时响应同 null（CALL 类型不可用等，OQ-103①）");
         verify(files).markAttached(6001L);
         verify(mapper).insertAudio(5001L, 6001L, 0);
         verify(taskStatus).markInProgress(TASK, OPERATOR, "记录沟通");
@@ -525,6 +535,7 @@ class ContactLogServiceTest {
 
         verify(mapper).deleteAudiosOf(5001L);
         verify(files).markDeleted(6001L);
+        verify(callReports).softDeleteForContact(5001L, OPERATOR);
         verify(audit).append(any());
     }
 
@@ -551,6 +562,142 @@ class ContactLogServiceTest {
                 service.latestResultByPatients(List.of(PATIENT, 302L)),
                 "任务列表「最近联系」取每患者最新一条");
         assertEquals(java.util.Map.of(), service.latestResultByPatients(List.of()));
+    }
+
+    // ---------------------------------------------------------------- 通话记录联动（E16-T08 / A-ATT-017）
+
+    @Test
+    void createWithAudioGeneratesCallReportInSameTransaction() {
+        inScope();
+        taskOfPatient();
+        when(mapper.insert(any(ContactLogMapper.ContactLogInsert.class)))
+                .thenAnswer(
+                        invocation -> {
+                            invocation
+                                    .getArgument(0, ContactLogMapper.ContactLogInsert.class)
+                                    .setId(5001L);
+                            return 1;
+                        });
+        SysFileRow mp3 = fileRow(6001L, "mp3", "PENDING");
+        when(files.find(6001L)).thenReturn(mp3);
+        when(files.markAttached(6001L)).thenReturn(1);
+        stubRowView(5001L);
+        when(callReports.createForContact(
+                        eq(PATIENT),
+                        eq(5001L),
+                        eq(TASK),
+                        eq(LocalDateTime.of(2026, 11, 5, 9, 0)),
+                        any(),
+                        eq(List.of(6001L)),
+                        eq(OPERATOR)))
+                .thenReturn(700L);
+
+        ContactLogService.CreateResult result =
+                service.create(
+                        PATIENT,
+                        new ContactLogService.SaveBody(
+                                TASK,
+                                "PHONE",
+                                "REACHED",
+                                LocalDateTime.of(2026, 11, 5, 9, 0),
+                                null,
+                                null,
+                                "患者诉近期胸闷（示例）",
+                                List.of(6001L)));
+
+        assertEquals(Long.valueOf(700L), result.callReportId(), "自动生成的「通话记录」报告单 id 随响应返回");
+        verify(callReports)
+                .createForContact(
+                        eq(PATIENT),
+                        eq(5001L),
+                        eq(TASK),
+                        eq(LocalDateTime.of(2026, 11, 5, 9, 0)),
+                        eq("患者诉近期胸闷（示例）"),
+                        eq(List.of(6001L)),
+                        eq(OPERATOR));
+    }
+
+    @Test
+    void createWithoutAudioDoesNotCallCallReportGeneration() {
+        inScope();
+        when(mapper.insert(any(ContactLogMapper.ContactLogInsert.class)))
+                .thenAnswer(
+                        invocation -> {
+                            invocation
+                                    .getArgument(0, ContactLogMapper.ContactLogInsert.class)
+                                    .setId(5003L);
+                            return 1;
+                        });
+        stubRowView(5003L);
+
+        service.create(
+                PATIENT,
+                new ContactLogService.SaveBody(
+                        null, "PHONE", "REACHED", null, null, null, null, null));
+
+        verify(callReports, never())
+                .createForContact(anyLong(), anyLong(), any(), any(), any(), any(), anyLong());
+    }
+
+    @Test
+    void linkableContactReturnsContactWithAudioFileIds() {
+        inScope();
+        when(mapper.find(5001L)).thenReturn(row(5001L, "REACHED"));
+        when(mapper.audiosOf(List.of(5001L)))
+                .thenReturn(
+                        List.of(
+                                new ContactLogMapper.AudioRow(
+                                        5001L,
+                                        6001L,
+                                        "mp3",
+                                        "通话录音（示例）.mp3",
+                                        "audio/mpeg",
+                                        2048L,
+                                        0)));
+
+        ContactLogService.LinkableContact contact = service.linkableContact(PATIENT, 5001L);
+
+        assertEquals(5001L, contact.id());
+        assertNull(contact.taskId());
+        assertEquals(List.of(6001L), contact.audioFileIds(), "录音 fileId 即报告单附件（同一批 sys_file）");
+    }
+
+    @Test
+    void linkableContactHidesOthersPatientContact() {
+        inScope();
+        // 沟通记录属于其他患者：不暴露存在（40400）
+        when(mapper.find(5002L))
+                .thenReturn(
+                        new ContactLogMapper.ContactLogRow(
+                                5002L,
+                                302L,
+                                null,
+                                "PHONE",
+                                "REACHED",
+                                LocalDateTime.of(2026, 11, 5, 9, 0),
+                                null,
+                                null,
+                                null,
+                                0,
+                                OPERATOR,
+                                "王医生（示例）",
+                                null,
+                                null));
+
+        assertEquals(
+                40400,
+                assertThrows(ApiException.class, () -> service.linkableContact(PATIENT, 5002L))
+                        .code());
+    }
+
+    @Test
+    void linkableContactHidesExistenceForOutOfScopePatient() {
+        when(patientScope.patientIdInScope(PATIENT)).thenReturn(null);
+
+        assertEquals(
+                40400,
+                assertThrows(ApiException.class, () -> service.linkableContact(PATIENT, 5001L))
+                        .code());
     }
 
     // ---------------------------------------------------------------- 造数
