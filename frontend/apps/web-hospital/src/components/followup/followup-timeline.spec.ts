@@ -4,7 +4,9 @@ import type {
   PatientTimelineEntry,
 } from '@crdp/api';
 
-import { mount } from '@vue/test-utils';
+import type { AttachmentNavItem } from '#/reference/types';
+
+import { flushPromises, mount } from '@vue/test-utils';
 import { nextTick, ref } from 'vue';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -423,5 +425,164 @@ describe('e13-t11 随访记录展开分组条（components.md §9「展开」+ �
         .find('[data-testid="category-bar"]')
         .exists(),
     ).toBe(true);
+  });
+});
+
+/* ----------------------------------------------------------------------
+ * E16-T14 / A-PAT-020、C-PAT-017：随访页签左栏定位与分组末尾附件条——
+ * 展开记录的每个分组末尾（FormRenderer category-end 插槽）与整条记录末尾显示
+ * 所在位置附件缩略图（同一报告单在每个所在位置各出现一次）；locateInRecord 由
+ * 患者详情页在点左栏位置标签后调用：切时间轴视图、展开该记录、滚到分组锚点
+ * （或记录顶部）并高亮 2 秒。
+ */
+function navItem(patch: Partial<AttachmentNavItem> = {}): AttachmentNavItem {
+  return {
+    fileCount: 1,
+    home: 'followup',
+    locations: [],
+    name: '经胸超声心动图（示例）',
+    reportDate: '2026-10-28',
+    reportId: '900',
+    typeCode: 'ECHO',
+    typeName: '心脏超声',
+    ...patch,
+  };
+}
+
+describe('e16-t14 分组末尾附件条与记录内定位（A-PAT-020）', () => {
+  const attachments: AttachmentNavItem[] = [
+    navItem({
+      locations: [
+        {
+          anchorKey: 'echo',
+          anchorLabel: '超声复查',
+          anchorType: 'section',
+          linkRecordId: '701',
+          linkType: 'followup_record',
+        },
+      ],
+      thumbnailUrl: '/thumbnails/900.png',
+    }),
+    navItem({
+      locations: [{ linkRecordId: '701', linkType: 'followup_record' }],
+      name: '外院资料（示例）',
+      reportId: '901',
+      typeCode: 'OTHER',
+      typeName: '其他',
+    }),
+    navItem({
+      locations: [{ linkRecordId: '702', linkType: 'followup_record' }],
+      name: '其他记录附件（示例）',
+      reportId: '902',
+      typeCode: 'OTHER',
+      typeName: '其他',
+    }),
+  ];
+
+  async function expand(
+    wrapper: ReturnType<typeof mountTimeline>,
+    recordId = '701',
+  ) {
+    await wrapper
+      .find(`[data-testid="record-expand-toggle-${recordId}"]`)
+      .trigger('click');
+    await wrapper.setProps({ expandedRecordId: recordId });
+    await flushPromises();
+  }
+
+  it('分组末尾与整条记录末尾显示所在位置附件；点缩略图 open-attachment', async () => {
+    mockRecordLoading();
+    const wrapper = mount(FollowupTimeline, {
+      attachTo: document.body,
+      props: { attachments, entries: [followupNode()], patientId: '301' },
+    });
+    mounted.push(wrapper);
+    await expand(wrapper);
+
+    const panel = wrapper.find('[data-testid="record-expand-701"]');
+    // 超声复查分组末尾：只有挂在 echo 分组的 900
+    const echoStrip = panel.find('#crdp-anchor-echo .strip');
+    expect(echoStrip.exists()).toBe(true);
+    expect(echoStrip.find('img').attributes('src')).toBe('/thumbnails/900.png');
+    await echoStrip.find('.thumb').trigger('click');
+    expect(wrapper.emitted('openAttachment')?.[0]).toEqual(['900']);
+
+    // 整条记录末尾：只有整条挂靠的 901（分组附件不重复出现在整条末尾）
+    const strips = panel.findAll('.strip');
+    expect(strips).toHaveLength(2);
+    const whole = strips.at(1);
+    expect(whole?.find('.thumb').attributes('title')).toContain(
+      '外院资料（示例）',
+    );
+    await whole?.find('.thumb').trigger('click');
+    expect(wrapper.emitted('openAttachment')?.[1]).toEqual(['901']);
+  });
+
+  it('条内「上传附件」预选该位置（分组锚点 / 整条记录）', async () => {
+    mockRecordLoading();
+    const wrapper = mount(FollowupTimeline, {
+      attachTo: document.body,
+      props: {
+        attachments,
+        canUpload: true,
+        entries: [followupNode()],
+        patientId: '301',
+      },
+    });
+    mounted.push(wrapper);
+    await expand(wrapper);
+
+    const panel = wrapper.find('[data-testid="record-expand-701"]');
+    await panel.find('#crdp-anchor-echo .strip .add').trigger('click');
+    expect(wrapper.emitted('uploadAt')?.[0]).toEqual([
+      [
+        {
+          anchorKey: 'echo',
+          anchorTemplateVersion: 0,
+          anchorType: 'section',
+          linkRecordId: '701',
+          linkType: 'followup_record',
+        },
+      ],
+    ]);
+
+    // canUpload 时空分组（overview）也渲染上传条：末条 = 整条记录
+    const strips = panel.findAll('.strip');
+    await strips.at(-1)?.find('.add').trigger('click');
+    expect(wrapper.emitted('uploadAt')?.[1]).toEqual([
+      [
+        {
+          anchorTemplateVersion: 0,
+          anchorType: null,
+          linkRecordId: '701',
+          linkType: 'followup_record',
+        },
+      ],
+    ]);
+  });
+
+  it('locateInRecord：未展开先展开，滚到分组锚点并高亮；整条记录滚到记录顶部', async () => {
+    mockRecordLoading();
+    const scrollIntoView = vi
+      .spyOn(Element.prototype, 'scrollIntoView')
+      .mockImplementation(() => {});
+    const wrapper = mount(FollowupTimeline, {
+      attachTo: document.body,
+      props: { entries: [followupNode()], patientId: '301' },
+    });
+    mounted.push(wrapper);
+
+    const vm = wrapper.vm as unknown as {
+      locateInRecord: (recordId: string, anchorKey?: string) => void;
+    };
+    vm.locateInRecord('701', 'echo');
+    expect(wrapper.emitted('update:expandedRecordId')?.at(-1)?.[0]).toBe('701');
+    await wrapper.setProps({ expandedRecordId: '701' });
+    await flushPromises();
+
+    const anchor = document.querySelector('#crdp-anchor-echo');
+    expect(anchor?.className).toContain('crdp-anchor-flash');
+    expect(scrollIntoView).toHaveBeenCalled();
+    scrollIntoView.mockRestore();
   });
 });

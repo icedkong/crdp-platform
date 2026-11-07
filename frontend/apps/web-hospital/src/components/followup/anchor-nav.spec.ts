@@ -15,7 +15,9 @@ import {
   flashAnchor,
   jumpToAnchor,
   parseCategoryHash,
+  parseRecordHash,
   pickActiveKey,
+  recordHash,
   useAnchorSpy,
 } from './anchor-nav';
 
@@ -44,6 +46,33 @@ describe('anchorDomId / categoryHash（components.md §6：#crdp-anchor-<key>、
 
   it('parseCategoryHash：URL 编码的键可解码（锚点键理论上为 ASCII，防御即可）', () => {
     expect(parseCategoryHash(`#cat=${encodeURIComponent('a b')}`)).toBe('a b');
+  });
+
+  it('recordHash / parseRecordHash（E16-T14 随访位置：#rec=<id>&cat=<key>，可分享 / 后退）', () => {
+    expect(recordHash('701', 'echo')).toBe('#rec=701&cat=echo');
+    expect(recordHash('701')).toBe('#rec=701');
+    expect(parseRecordHash('#rec=701&cat=echo')).toEqual({
+      anchorKey: 'echo',
+      recordId: '701',
+    });
+    expect(parseRecordHash('#rec=701')).toEqual({
+      anchorKey: null,
+      recordId: '701',
+    });
+    // 无 rec / 空 rec / 纯基线 hash 返回 null recordId（基线定位不走这里）
+    expect(parseRecordHash('#cat=basic_info')).toEqual({
+      anchorKey: 'basic_info',
+      recordId: null,
+    });
+    expect(parseRecordHash('')).toEqual({ anchorKey: null, recordId: null });
+    expect(parseRecordHash('#rec=&cat=echo')).toEqual({
+      anchorKey: 'echo',
+      recordId: null,
+    });
+    expect(parseRecordHash(recordHash('701', 'a b'))).toEqual({
+      anchorKey: 'a b',
+      recordId: '701',
+    });
   });
 });
 

@@ -37,6 +37,28 @@ export function parseCategoryHash(hash: string): null | string {
 }
 
 /**
+ * 页面地址 hash（E16-T14 随访位置）：`#rec=<recordId>&cat=<key>`（分组）或
+ * `#rec=<recordId>`（整条记录）；与基线 `#cat=<key>` 同为「可分享、可后退」口径。
+ */
+export function recordHash(recordId: string, anchorKey?: string): string {
+  const rec = `rec=${encodeURIComponent(recordId)}`;
+  return anchorKey ? `#${rec}&cat=${encodeURIComponent(anchorKey)}` : `#${rec}`;
+}
+
+/** 从 hash 中解析 `rec` 与 `cat`（E16-T14 随访位置回放）；缺项为 null。 */
+export function parseRecordHash(hash: string): {
+  anchorKey: null | string;
+  recordId: null | string;
+} {
+  const rec = /(?:^#|&)rec=([^&]*)/.exec(hash);
+  const recordId = rec?.[1] ? decodeURIComponent(rec[1]) : null;
+  return {
+    anchorKey: parseCategoryHash(hash),
+    recordId: recordId && recordId.length > 0 ? recordId : null,
+  };
+}
+
+/**
  * 给锚点元素加 2 秒高亮（`.crdp-anchor-flash`，timings.anchorHighlightMs）；
  * 返回清理函数（提前卸载时移除类并撤销定时器）。元素为空时是 no-op。
  */

@@ -14,6 +14,8 @@ import type {
   ReportCreateRequest,
   ReportDeletedView,
   ReportLocationNode,
+  ReportLocationsChangedView,
+  ReportLocationsChangeRequest,
   ReportSearchPage,
   ReportSearchRequest,
 } from '@crdp/api';
@@ -111,5 +113,20 @@ export function deleteReportFile(
   return requestClient.delete<ReportDeletedView>(
     apiPath(`/followup/reports/${reportId}/files/${fileId}`),
     { data: { reason } },
+  );
+}
+
+/**
+ * E16-T13 / E16-T14 / A-ATT-020、C-SCAN-020：修改位置（PUT，followup:scan:upload）。
+ * { add[], remove[] } 至少一项非空；结果至少保留 1 个位置（40001）；add 锚点按当前
+ * 模板版本校验。无位置报告单（「未指定位置」组）经 add 补指定。
+ */
+export function updateReportLocations(
+  reportId: number | string,
+  payload: ReportLocationsChangeRequest,
+) {
+  return requestClient.put<ReportLocationsChangedView>(
+    apiPath(`/followup/reports/${reportId}/locations`),
+    payload,
   );
 }

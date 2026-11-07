@@ -771,11 +771,20 @@ class ReportServiceTest {
                                         3L, 901L, "followup_record", 88L, null, null, 2, 0)));
         when(mapper.fileCountsOfPatient(PATIENT))
                 .thenReturn(List.of(new ReportMapper.FileCountRow(900L, 2L)));
+        when(mapper.firstFilesOfPatient(PATIENT))
+                .thenReturn(
+                        List.of(
+                                // sort_no 更小的图片行在前：首附件取 sort_no 最小的一条
+                                new ReportMapper.FirstFileRow(900L, 77L, "png"),
+                                new ReportMapper.FirstFileRow(900L, 78L, "pdf")));
 
         ReportService.ReportsView all = service.reportsOf(PATIENT, null);
         assertEquals(2, all.items().size());
         ReportService.ReportItemView echo = all.items().get(0);
         assertEquals(2, echo.fileCount());
+        assertEquals("77", echo.firstFile().fileId(), "首附件（左栏 / 内联缩略图数据源，E16-T14）");
+        assertEquals("png", echo.firstFile().format());
+        assertNull(all.items().get(1).firstFile(), "无附件的报告单 firstFile 为 null");
         assertEquals(2, echo.locations().size());
         assertEquals("病例基本信息", echo.locations().get(0).anchorLabel());
         assertEquals("第2年随访 2026-06-10", echo.locations().get(1).recordLabel());

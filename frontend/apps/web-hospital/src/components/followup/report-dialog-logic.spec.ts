@@ -9,6 +9,7 @@ import {
   hasReportFormError,
   indicatorPayload,
   initialLocations,
+  locationDiff,
   reportConclusionLabel,
   reportDateLabel,
   reportFindingsLabel,
@@ -194,6 +195,48 @@ describe('e16-t02 添加报告单 · 校验与位置（A-ATT-002 / C-SCAN-010）
         typeCode: 'OTHER',
       }).nameId,
     ).toBeNull();
+  });
+
+  it('e16-T14 locationDiff：新增进 add、消失进 remove（四元组匹配，版本不参与）；无变化两空', () => {
+    const baseline: ReportLocationInput = {
+      anchorKey: 'case',
+      anchorTemplateVersion: 3,
+      anchorType: 'category',
+      linkType: 'baseline',
+    };
+    const staleVersion: ReportLocationInput = {
+      anchorKey: 'case',
+      anchorTemplateVersion: 9,
+      anchorType: 'category',
+      linkType: 'baseline',
+    };
+    const whole: ReportLocationInput = {
+      anchorTemplateVersion: 2,
+      anchorType: null,
+      linkRecordId: '88',
+      linkType: 'followup_record',
+    };
+    // 基线保留（版本变化不算差异）+ 加整条记录 → 只有 add
+    expect(locationDiff([baseline], [staleVersion, whole])).toEqual({
+      add: [whole],
+      remove: [],
+    });
+    // 移除基线、保留整条 → 只有 remove
+    expect(locationDiff([baseline, whole], [whole])).toEqual({
+      add: [],
+      remove: [baseline],
+    });
+    // 同时增删 / 无变化
+    expect(locationDiff([baseline], [whole])).toEqual({
+      add: [whole],
+      remove: [baseline],
+    });
+    expect(locationDiff([baseline], [{ ...baseline }])).toEqual({
+      add: [],
+      remove: [],
+    });
+    // 指定位置（无初始位置）：全部进 add
+    expect(locationDiff([], [whole])).toEqual({ add: [whole], remove: [] });
   });
 
   it('位置四元组相等（整条 vs 分组是不同位置）', () => {

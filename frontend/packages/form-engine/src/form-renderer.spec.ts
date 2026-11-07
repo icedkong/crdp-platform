@@ -713,3 +713,37 @@ describe('e11-t11 FormRenderer：锚点（稳定键 + 模板版本）与已填 /
     ]);
   });
 });
+
+/* ----------------------------------------------------------------------
+ * E16-T14 / A-PAT-020：分类末尾作用域插槽——随访展开记录的分组末尾注入附件
+ * 缩略图条（InlineAttachmentStrip）用；不传插槽时渲染不受影响。
+ */
+describe('e16-t14 FormRenderer：category-end 分类末尾作用域插槽', () => {
+  it('每个分类末尾各渲染一次，作用域带 category.key / label；顺序在字段之后', () => {
+    const wrapper = mount(FormRenderer, {
+      props: { schema, modelValue: {} },
+      slots: {
+        'category-end':
+          '<div class="strip" :data-category="category.key">{{ category.label }} 末尾</div>',
+      },
+    });
+    const strips = wrapper.findAll('.strip');
+    expect(strips.map((node) => node.attributes('data-category'))).toEqual([
+      'overview',
+      'outcome',
+      'echo',
+      'medication',
+    ]);
+    expect(strips[0]?.text()).toBe('随访概况 末尾');
+    // 插槽渲染在该分类 section 内（末尾 = 字段区之后）
+    const section = wrapper.find('#crdp-anchor-overview');
+    expect(section.find('.strip').exists()).toBe(true);
+    expect(section.find('[data-field-key]').exists()).toBe(true);
+  });
+
+  it('不传插槽时分类正常渲染（既有调用方不受影响）', () => {
+    const wrapper = mountRenderer({ mode: 'readonly' });
+    expect(wrapper.findAll('.form-category').length).toBeGreaterThan(0);
+    expect(wrapper.find('.strip').exists()).toBe(false);
+  });
+});
