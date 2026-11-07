@@ -10,6 +10,8 @@
  * 改派后新负责人收 TASK_REASSIGNED 站内信）；最近联系随 E15-T04（fu_contact_log）；
  * C 的器械类型 / 随访时间点 / 上次标红项数随 E21 / E17。
  */
+import type { CompareRule } from './compare-rule';
+
 import { BATCH_SKIP_REASON_TEXT } from './batch-operation';
 
 /** fu_task.status（E15-T01 状态机 + E15-T05 失访候选，components.md §2 task 域的展示派生见 {@link taskDisplayStatus}）。 */
@@ -149,8 +151,26 @@ export interface RecordPatientBrief {
   wardName?: null | string;
 }
 
-/** 记录详情（followup.md §3；E15-T07 起附 source 与 visitDate，taskless 记录附 patient 摘要）。 */
+/**
+ * 上一次记录（E17-T02 / A-FU-027；由后端按规则参数选取，前端不自己找）：FOLLOWUP = 上一次
+ * 已提交的同表单随访记录；BASELINE = 第 1 年（或此前无随访）的基线回落（出院前超声，Q41）。
+ * `values` 只带启用规则引用的键（targetField ∪ 新发事件的 params.dateField），缺失键由求值侧
+ * 按「上一次该字段为空跳过该条规则」处理（docs/api/followup.md §3）。
+ */
+export interface RecordPreviousView {
+  /** FOLLOWUP 带对比时点；BASELINE 无日期。 */
+  date?: null | string;
+  kind: 'BASELINE' | 'FOLLOWUP';
+  recordId?: null | string;
+  /** 提交来源（TASK / BACKFILL / IMPORT），BASELINE 无。 */
+  source?: null | string;
+  values: Record<string, unknown>;
+}
+
+/** 记录详情（followup.md §3；E15-T07 起附 source 与 visitDate，taskless 记录附 patient 摘要；E17-T02 起附 previous、E17-T03 起附 compareRules）。 */
 export interface RecordDetailView {
+  /** 该表单启用对比规则（E17-T03）：前端实时标红与后端保存复算共用；功能关闭 / 无启用规则为 null。 */
+  compareRules?: CompareRule[] | null;
   context?: null | RecordTaskContext;
   data: Record<string, unknown>;
   dataMeta: Record<string, unknown>;
@@ -158,6 +178,8 @@ export interface RecordDetailView {
   formVersion: number;
   id: string;
   patient?: null | RecordPatientBrief;
+  /** 上一次记录解析（E17-T02 / A-FU-027）：功能关闭、无启用规则或回落字段全空为 null。 */
+  previous?: null | RecordPreviousView;
   source?: null | string;
   status: 'DRAFT' | 'SUBMITTED';
   version: number;

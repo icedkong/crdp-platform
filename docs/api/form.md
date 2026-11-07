@@ -21,7 +21,7 @@
 - 模板版本快照存租户库 `fe_form_version` / `fe_form_version_field`（followup V29）：publish 把当时的分类与**启用字段**固化成快照并前移 `fe_form.current_version`；快照不可变，旧版本永久可读。
 - 停用字段不进新版本；旧版本快照里仍在——旧记录（`data` JSON 键 = 稳定键）按其保存时版本渲染与校验，模板改版不影响。
 - 选项（`fe_option`）不进快照：选项编码创建后不可改、停用不删除（V28），显示名与停用标记读取时现取；停用选项在 `optionSet[]` 带 `disabled: true`（不可新选，历史值仍可显示）。
-- `rules` 为 `fe_rule` 跨字段校验（E11-T04 已落地）：实时读取启用规则、**不进版本快照**，形状见 §2.2；`compareRules` 随 E17。
+- `rules` 为 `fe_rule` 跨字段校验（E11-T04 已落地）：实时读取启用规则、**不进版本快照**，形状见 §2.2；`compareRules` 已随 E17-T03 落地——对比规则属随访域（`fu_compare_rule`，`/form/forms/{code}` 不下发），由记录详情 `GET /followup/records/{id}` 的 `compareRules` 带出、记录页并入 `schema.compareRules`（components.md §10.1 契约不变，求值见 docs/api/followup.md §4）。
 - 字段的 `visibleWhen` / `requiredWhen` 条件树随版本快照下发（`fe_form_version_field`，E11-T03）：旧版本按其快照口径求值；求值语义见 §2.4。
 - `carryOver`（带入上次值适用字段，A-FU-015 / C-FU-016）随 E11-T07 定为 FormSchemaField 可选列：模板标记的设置项（A 用药、C 程控起搏模式 / 上下限频率 / AV 间期）可带入、测量值不标记即不带入；`fe_field` 加列 + 快照下发未落地（前端契约先行，渲染器按缺省 false 处理，见 OQ-67 ①）。
 - 记录侧绑定见 §1.1：记录存 `templateVersion`，读取时前端用 `GET /forms/{code}?version={templateVersion}` 取渲染口径。
@@ -145,7 +145,7 @@ E11-T02 落地（A-NFR-002 / C-NFR-002「JSON 文档存储」）。数据记录�
 
 `backend/crdp-form/src/test/resources/shared-cases/form-validation-cases.json`：后端 `FormRuleEngineTest` 与前端 `packages/rules/src/form-validation.test.ts` 各执行一遍，errors / warnings 逐条（`key`、`categoryKey`、`rule`、`message`）完全一致（E11-T03 起用例可带条件字段与 `context`）。条件求值专用 `shared-cases/form-condition-cases.json`：后端 `FormConditionEngineTest` 与前端 `packages/rules/src/form-condition.test.ts` 各执行一遍，visible / missingRequired 逐条一致。派生专用 `shared-cases/form-derived-cases.json`（E11-T05 已落地）：后端 `FormDerivedEngineTest` 与前端 `packages/rules/src/form-derived.test.ts` 各执行一遍，每个派生字段的 value / status / message 逐条一致（见 §2.6）。
 
-**综合标准用例** `shared-cases/form-standard-cases.json`（E11-T10 已落地，A-FLD-004 + A-FLD-005）：后端 `FormStandardCaseTest` 与前端 `packages/rules/src/form-standard.test.ts` 各执行一遍，把三个引擎按提交流程组成**标准管线**，五个结果块（visible / clearedHidden / derived / errors / warnings）逐条一致：① 条件求值（`visibleWhen`）→ visible；② 隐藏字段残留值清空（§2.4 `stripHiddenFields` / `stripHiddenFieldValues` 同语义）→ clearedHidden；③ 派生在**清空后**的数据上按拓扑重算（渲染器清空后实时重算同口径，§2.6）→ derived；④ 校验在「清空 + ok 计算值回写」的数据上执行（范围 → 条件必填 → 跨字段 → 派生手工闸门 `rule=derived` 追加在最后，与渲染器 hardErrors 组装、写入闸门同口径）→ errors / warnings。组合顺序本身是被测语义：**清空先于派生**（隐藏来源按缺失计、止日缺省回落按今天）、**派生先于校验**（计算值参与跨字段比较）、**掩蔽先于跨字段**（残留值不比较）。对比规则（E17）沿用同一目录。
+**综合标准用例** `shared-cases/form-standard-cases.json`（E11-T10 已落地，A-FLD-004 + A-FLD-005）：后端 `FormStandardCaseTest` 与前端 `packages/rules/src/form-standard.test.ts` 各执行一遍，把三个引擎按提交流程组成**标准管线**，五个结果块（visible / clearedHidden / derived / errors / warnings）逐条一致：① 条件求值（`visibleWhen`）→ visible；② 隐藏字段残留值清空（§2.4 `stripHiddenFields` / `stripHiddenFieldValues` 同语义）→ clearedHidden；③ 派生在**清空后**的数据上按拓扑重算（渲染器清空后实时重算同口径，§2.6）→ derived；④ 校验在「清空 + ok 计算值回写」的数据上执行（范围 → 条件必填 → 跨字段 → 派生手工闸门 `rule=derived` 追加在最后，与渲染器 hardErrors 组装、写入闸门同口径）→ errors / warnings。组合顺序本身是被测语义：**清空先于派生**（隐藏来源按缺失计、止日缺省回落按今天）、**派生先于校验**（计算值参与跨字段比较）、**掩蔽先于跨字段**（残留值不比较）。对比规则已随 E17-T03 落地（`backend/crdp-followup/src/test/resources/shared-cases/compare-cases.json`，规则属随访域与计划用例同目录；两端口径见 docs/api/followup.md §4）。
 
 ### 2.6 派生函数库（fe_field.derived_def，E11-T05 已实现；A-FLD-005、C-FLD-006）
 

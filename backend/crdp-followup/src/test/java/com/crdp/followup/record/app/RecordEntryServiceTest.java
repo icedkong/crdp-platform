@@ -7,11 +7,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.crdp.followup.compare.app.CompareRuleService;
 import com.crdp.followup.compare.app.CompareSourceService;
 import com.crdp.followup.plan.app.FollowupTerminationService;
 import com.crdp.followup.task.app.FollowupTaskStatusService;
@@ -24,6 +26,7 @@ import com.crdp.framework.web.ApiException;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -46,6 +49,7 @@ class RecordEntryServiceTest {
             mock(FollowupTerminationService.class);
     private final FollowupTaskQueryMapper taskQueryMapper = mock(FollowupTaskQueryMapper.class);
     private final CompareSourceService compareSource = mock(CompareSourceService.class);
+    private final CompareRuleService compareRules = mock(CompareRuleService.class);
     private final CryptoService crypto = mock(CryptoService.class);
     private final AuditLogger audit = mock(AuditLogger.class);
 
@@ -58,6 +62,7 @@ class RecordEntryServiceTest {
                     terminationService,
                     taskQueryMapper,
                     compareSource,
+                    compareRules,
                     crypto,
                     audit);
 
@@ -164,6 +169,13 @@ class RecordEntryServiceTest {
         assertTrue(view.patient().patientName().contains("*"), "摘要姓名脱敏");
     }
 
+    /** 详情默认无启用规则（各 detail 用例按需覆盖；E17-T03 compareRules 缺省 null）。 */
+    @BeforeEach
+    void noCompareRulesByDefault() {
+        lenient().when(compareRules.evaluationRules(any())).thenReturn(List.of());
+        lenient().when(compareSource.resolve(anyLong(), anyLong(), any(), any())).thenReturn(null);
+    }
+
     /** E17-T02：详情装配 previous（A-FU-027 上一次记录解析，求值随 E17-T03）。 */
     @Test
     void detailCarriesComparePrevious() {
@@ -174,6 +186,48 @@ class RecordEntryServiceTest {
         when(compareSource.resolve(701L, 301L, "A_ANNUAL_FU", null)).thenReturn(baseline);
 
         assertEquals(baseline, service.detail(701L).previous(), "第 1 年回落基线出院前超声");
+    }
+
+    /** E17-T03：详情附 compareRules（启用规则下发，前端实时标红与后端复算共用，tech-plan §11）。 */
+    @Test
+    void detailCarriesEnabledCompareRules() {
+        when(recordService.record(701L)).thenReturn(record("DRAFT", Map.of()));
+        when(taskQueryMapper.taskContextByRecordId(701L)).thenReturn(taskRow("IN_PROGRESS"));
+        CompareRuleService.RuleView efDrop =
+                new CompareRuleService.RuleView(
+                        11L,
+                        "A_ANNUAL_FU",
+                        "年度随访记录",
+                        "ef_drop",
+                        "射血分数下降",
+                        "fu_echo",
+                        "f248",
+                        "EF 射血分数",
+                        "%",
+                        "DIFF",
+                        "差值下降 / 上升",
+                        Map.of("direction", "DROP", "threshold", 10),
+                        "A_BASELINE",
+                        "f102",
+                        "出院前最后一次EF",
+                        "EF 比上次（或出院前）下降 ≥ 10 个百分点",
+                        true,
+                        "2027-05-17T10:00");
+        when(compareRules.evaluationRules("A_ANNUAL_FU")).thenReturn(List.of(efDrop));
+
+        RecordEntryService.RecordDetailView view = service.detail(701L);
+
+        assertEquals(List.of(efDrop), view.compareRules(), "启用规则随记录详情下发（只含启用行）");
+        assertNull(view.previous(), "无上一次且基线回落为空 → previous 为 null（规则仍可固定阈值求值）");
+    }
+
+    /** E17-T03：功能开关关闭 / 无启用规则 → compareRules 为 null（记录页正常返回、前端不标红）。 */
+    @Test
+    void detailWithoutEnabledRulesOmitsCompareRules() {
+        when(recordService.record(701L)).thenReturn(record("DRAFT", Map.of()));
+        when(taskQueryMapper.taskContextByRecordId(701L)).thenReturn(taskRow("IN_PROGRESS"));
+
+        assertNull(service.detail(701L).compareRules(), "无启用规则不下发");
     }
 
     @Test

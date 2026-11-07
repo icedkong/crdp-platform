@@ -4,8 +4,8 @@ import type {
   RecordPatientBrief,
   RecordTaskContext,
 } from '@crdp/api';
-import type { AutoSaveTrigger } from '@crdp/form-engine';
-import type { CategoryProgress } from '@crdp/rules';
+import type { AutoSaveTrigger, PreviousRecord } from '@crdp/form-engine';
+import type { CategoryProgress, CompareHit } from '@crdp/rules';
 
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -137,6 +137,26 @@ const patient = ref<null | RecordPatientBrief>(null);
 const source = ref<null | string>(null);
 const recordVisitDate = ref<null | string>(null);
 const progressItems = ref<CategoryProgress[]>([]);
+/** 上一次记录（E17-T02 previous → E17-T03 渲染器对比标红与带入上次值）。 */
+const previousRecord = ref<null | PreviousRecord>(null);
+/** 分组标红数（E17-T03 highlight 事件 → CategoryBar ▲n）。 */
+const highlightCountByKey = ref<Record<string, number>>({});
+/** CategoryBar 条目：已填 / 应填 + 该组标红数（components.md §6 highlightCount）。 */
+const categoryItems = computed<
+  Array<CategoryProgress & { highlightCount?: number }>
+>(() =>
+  progressItems.value.map((item) => ({
+    ...item,
+    highlightCount: highlightCountByKey.value[item.key] ?? 0,
+  })),
+);
+/**
+ * 对比标红开关（E17-T03 / A-FU-027）：后端不下发规则（功能开关 compare_highlight 关闭或
+ * 该表单无启用规则）即整体不标红（AGENTS.md 规则 7：开关关闭前端隐藏）。
+ */
+const highlightEnabled = computed(
+  () => (schema.value?.compareRules?.length ?? 0) > 0,
+);
 const activeKey = ref('');
 const showErrors = ref(false);
 const submitting = ref(false);
@@ -279,7 +299,19 @@ async function load() {
   loading.value = true;
   try {
     const detail = await fetchRecordDetail(recordId.value);
-    schema.value = await fetchFormSchema(detail.formCode, detail.formVersion);
+    // E17-T03：对比规则由记录详情下发（followup 域 fu_compare_rule），并入渲染器模板契约
+    // 的 schema.compareRules（components.md §10.1）；previous 同源（E17-T02）。
+    const fetched = await fetchFormSchema(detail.formCode, detail.formVersion);
+    schema.value = { ...fetched, compareRules: detail.compareRules ?? null };
+    previousRecord.value = detail.previous
+      ? {
+          date: detail.previous.date ?? null,
+          kind: detail.previous.kind,
+          recordId: detail.previous.recordId ?? null,
+          values: detail.previous.values,
+        }
+      : null;
+    highlightCountByKey.value = {};
     data.value = { ...detail.data };
     savedData.value = { ...detail.data };
     meta.value = { ...detail.dataMeta };
@@ -306,6 +338,15 @@ async function load() {
   } finally {
     loading.value = false;
   }
+}
+
+/** 对比标红命中（E17-T03 / A-FU-027）：按分组计数并入 CategoryBar（▲n，design-system §14）。 */
+function onHighlight(hits: CompareHit[]): void {
+  const count: Record<string, number> = {};
+  for (const hit of hits) {
+    count[hit.categoryKey] = (count[hit.categoryKey] ?? 0) + 1;
+  }
+  highlightCountByKey.value = count;
 }
 
 /** 打开时如有本地草稿（上次断网 / 未同步），提示「发现未提交的草稿，是否恢复」。 */
@@ -575,7 +616,7 @@ function handleJump(key: string) {
           <div v-if="isDesktop" class="anchors">
             <CategoryBar
               :active-key="activeKey"
-              :items="progressItems"
+              :items="categoryItems"
               mode="bar"
               show-highlight-count
               @jump="handleJump"
@@ -585,7 +626,7 @@ function handleJump(key: string) {
             <CategoryBar
               v-if="!isDesktop"
               :active-key="activeKey"
-              :items="progressItems"
+              :items="categoryItems"
               :mode="isMobile ? 'select' : 'bar'"
               show-highlight-count
               @jump="handleJump"
@@ -593,11 +634,14 @@ function handleJump(key: string) {
             <FormRenderer
               ref="renderer"
               v-model="data"
+              :highlight-enabled="highlightEnabled"
               :meta="meta"
               :mode="readonly ? 'readonly' : 'edit'"
+              :previous="previousRecord"
               :schema="schema"
               :show-errors="showErrors"
               @field-blur="autosave.noteBlur()"
+              @highlight="onHighlight"
               @progress="progressItems = $event"
             />
             <div v-if="nextVisitText(context)" class="next-visit">

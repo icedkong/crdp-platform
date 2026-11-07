@@ -25,7 +25,9 @@ import org.springframework.transaction.annotation.Transactional;
  * 规则条目（字段、类型、结构）由预置迁移落库，不提供增删改结构。每次 PUT 写 COMPARE_RULE_UPDATE 配置审计（PLT-AUD-001
  * 口径：配置变更必审计，含前后值）。功能开关 compare_highlight 关闭 → 40301、 前端隐藏入口（AGENTS.md 规则 7）；无行视为默认开。
  *
- * <p>求值（上一次记录解析、前后端同一组规则实时求值）随 E17-T02 / E17-T03 接入本表；结果持久化与规则 变更重算随 E17-T04。
+ * <p>求值接入：上一次记录解析随 E17-T02（{@link CompareSourceService}）、规则下发与前后端实时求值随 E17-T03（{@link
+ * #evaluationRules} + {@link com.crdp.followup.compare.domain.CompareEvaluator}）； 结果持久化与规则变更重算随
+ * E17-T04。
  */
 @Service
 public class CompareRuleService {
@@ -76,6 +78,23 @@ public class CompareRuleService {
         List<RuleView> items = new ArrayList<>();
         for (CompareRuleRow row : rules.findAll(blankToNull(formCode))) {
             items.add(toView(row));
+        }
+        return items;
+    }
+
+    /**
+     * 求值规则（E17-T03）：该表单的启用规则（前端实时标红 + 后端保存时复算共用；tech-plan §11 「规则定义以 JSON 下发到前端实时求值」）。与 {@link
+     * #list} 不同：不检查配置权限（记录页 全员可用，只有启用行）、功能开关关闭返回空表（记录详情本身正常返回，AGENTS.md 规则 7）。
+     */
+    public List<RuleView> evaluationRules(String formCode) {
+        if (Boolean.FALSE.equals(features.findEnabled(FEATURE_CODE))) {
+            return List.of();
+        }
+        List<RuleView> items = new ArrayList<>();
+        for (CompareRuleRow row : rules.findAll(blankToNull(formCode))) {
+            if ("ENABLED".equals(row.status())) {
+                items.add(toView(row));
+            }
         }
         return items;
     }

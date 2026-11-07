@@ -1039,6 +1039,8 @@ export type {
   BackfillCreateRequest,
   BackfillCreateView,
   RecordDetailView,
+  RecordPatientBrief,
+  RecordPreviousView,
   RecordSubmitResult,
   RecordTaskContext,
   TaskAcknowledgeView,
