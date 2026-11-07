@@ -5,16 +5,24 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.crdp.followup.importer.XlsxTestFiles;
+import com.crdp.followup.importer.app.ImportFieldRuleLoader.ImportFieldRules;
 import com.crdp.followup.importer.domain.ImportFieldCatalog;
+import com.crdp.followup.importer.domain.ImportFieldRule;
 import com.crdp.followup.importer.infra.mapper.ImportStagingMapper;
+import com.crdp.followup.importer.infra.mapper.ImportStagingMapper.IssueInsert;
 import com.crdp.followup.importer.infra.mapper.ImportStagingMapper.JobInsert;
 import com.crdp.followup.importer.infra.mapper.ImportStagingMapper.JobRow;
 import com.crdp.followup.importer.infra.mapper.ImportStagingMapper.RowInsert;
+import com.crdp.followup.importer.infra.mapper.ImportStagingMapper.StagedRow;
+import com.crdp.followup.patient.app.PatientBlindIndexService;
+import com.crdp.form.field.domain.FieldType;
+import com.crdp.form.rule.app.FormDerivedEngine;
 import com.crdp.framework.crypto.CryptoService;
 import com.crdp.framework.excel.StreamingXlsxGateway;
 import com.crdp.framework.web.ApiException;
@@ -40,6 +48,8 @@ class ImportStagingServiceTest {
     private final FakeStagingMapper staging = new FakeStagingMapper();
     private final CryptoService crypto = mock(CryptoService.class);
     private final ImportFieldCatalogLoader catalogLoader = mock(ImportFieldCatalogLoader.class);
+    private final ImportFieldRuleLoader ruleLoader = mock(ImportFieldRuleLoader.class);
+    private final PatientBlindIndexService patientBlindIndex = mock(PatientBlindIndexService.class);
     private final ObjectMapper json = new ObjectMapper();
 
     private ImportStagingService service;
@@ -48,12 +58,27 @@ class ImportStagingServiceTest {
     void setUp() {
         when(crypto.encrypt(anyString(), anyString()))
                 .thenAnswer(inv -> CIPHER_PREFIX + inv.getArgument(1));
+        when(crypto.decrypt(anyString()))
+                .thenAnswer(inv -> inv.getArgument(0).toString().substring(CIPHER_PREFIX.length()));
         when(crypto.blindIndex(anyString(), anyString()))
                 .thenAnswer(inv -> "blind(" + inv.getArgument(1) + ")");
         when(catalogLoader.load()).thenReturn(catalog());
+        when(ruleLoader.load()).thenReturn(rules());
+        when(patientBlindIndex.existingBlinds(any())).thenReturn(java.util.Set.of());
         service =
                 new ImportStagingService(
-                        staging, catalogLoader, crypto, new StreamingXlsxGateway(), json);
+                        staging,
+                        catalogLoader,
+                        crypto,
+                        new StreamingXlsxGateway(),
+                        json,
+                        new ImportValidationService(
+                                staging,
+                                ruleLoader,
+                                crypto,
+                                patientBlindIndex,
+                                new FormDerivedEngine(),
+                                json));
     }
 
     // ---------------------------------------------------------------- 建作业
@@ -153,8 +178,7 @@ class ImportStagingServiceTest {
 
         assertEquals("PRECHECKED", staging.findJob(jobId).status());
         assertEquals(1, staging.rows.size());
-        RowInsert row = staging.rows.get(0);
-        assertEquals(jobId, row.jobId());
+        StagedRow row = staging.rows.get(0);
         assertEquals("患者数据", row.sheetName());
         assertEquals(2, row.rowNo());
         assertEquals("PATIENT", row.rowType());
@@ -164,13 +188,23 @@ class ImportStagingServiceTest {
         JsonNode payload = json.readTree(row.payloadCipher().substring(CIPHER_PREFIX.length()));
         assertEquals("MRN001（示例）", payload.get("mrn").asText());
         assertEquals("P001（示例）", payload.get("legacyNo").asText());
+        assertEquals("MRN001（示例）", payload.get("mrnCell").get("v").asText());
+        assertEquals(2, payload.get("mrnCell").get("r").asInt());
+        assertEquals(10, payload.get("mrnCell").get("c").asInt(), "基线病案号列 = 前置 9 + 1");
         assertEquals("2020-01-10", payload.get("baseline").get("f001").get("v").asText());
         assertEquals(9, payload.get("baseline").get("f001").get("c").asInt());
         assertEquals(1, payload.get("followups").size());
         assertEquals(1, payload.get("followups").get(0).get("group").asInt());
         assertEquals(
                 "55", payload.get("followups").get(0).get("values").get("f257").get("v").asText());
-        assertNull(row.problems());
+        assertNull(staging.inserts.get(0).problems());
+
+        // 暂存完成随即校验（E18-T03）：是否死亡「0」按 Q36 警告、EF 55 在范围内、无错误
+        assertEquals(0, outcome.errorCount());
+        assertEquals(1, outcome.warnCount());
+        assertEquals(1, staging.issues.size());
+        assertEquals("BOOLEAN_01", staging.issues.get(0).code());
+        assertEquals(15, staging.issues.get(0).colNo(), "f215 = 前置 9 + 锚点基线 5 + 1（0 起）");
     }
 
     // ---------------------------------------------------------------- 长表暂存
@@ -235,14 +269,27 @@ class ImportStagingServiceTest {
                 json.readTree(
                         staging.rows.get(1).payloadCipher().substring(CIPHER_PREFIX.length()));
         assertEquals(1, followup.get("year").asInt());
-        assertNull(staging.rows.get(1).problems());
+        assertNull(staging.inserts.get(1).problems());
 
         // 病案号为空：mrn_blind 为 NULL、问题列出「病案号为空」；年度解析不了也进问题列表
         assertNull(staging.rows.get(2).mrnBlind());
-        JsonNode problems = json.readTree(staging.rows.get(2).problems());
+        JsonNode problems = json.readTree(staging.inserts.get(2).problems());
         assertEquals(2, problems.size());
         assertTrue(problems.get(0).asText().contains("病案号为空"));
         assertTrue(problems.get(1).asText().contains("随访年度"));
+
+        // 校验（E18-T03）：空病案号与坏年度报错、必填「是否死亡」为空与 Q36「0/1」警告
+        assertEquals(2, outcome.errorCount());
+        assertEquals(2, outcome.warnCount());
+        assertTrue(
+                staging.issues.stream().anyMatch(issue -> "MRN_BLANK".equals(issue.code())),
+                "病案号为空报错");
+        assertTrue(
+                staging.issues.stream().anyMatch(issue -> "YEAR_INVALID".equals(issue.code())),
+                "随访年度解析不了报错");
+        assertTrue(
+                staging.issues.stream().anyMatch(issue -> "REQUIRED_EMPTY".equals(issue.code())),
+                "必填为空只警告");
     }
 
     // ---------------------------------------------------------------- 预检失败
@@ -346,6 +393,36 @@ class ImportStagingServiceTest {
     private static final List<String> LONG_FOLLOWUP_HEADERS =
             List.of("病案号", "随访年度", "随访日期", "是否死亡", "EF");
 
+    /** 与 catalog() 同一套字段的校验规则（E18-T03 校验注入；值全部虚构）。 */
+    private static ImportFieldRules rules() {
+        return new ImportFieldRules(
+                List.of(
+                        rule("f001", "手术日期", FieldType.DATE, false, false, null),
+                        rule("f002", "病案号", FieldType.TEXT, true, true, null),
+                        rule("f003", "姓名", FieldType.TEXT, false, true, null),
+                        rule("f004", "性别", FieldType.SELECT, false, false, Map.of(1, "男", 2, "女")),
+                        rule("f005", "手术年龄", FieldType.NUMBER, false, false, null),
+                        rule("f267", "出生日期", FieldType.DATE, false, false, null)),
+                List.of(
+                        rule("f214", "随访日期", FieldType.DATE, false, false, null),
+                        rule("f215", "是否死亡", FieldType.RADIO, true, false, Map.of(0, "否", 1, "是")),
+                        rule("f217", "死亡随访时间", FieldType.DATE, false, false, null),
+                        rule("f257", "EF", FieldType.NUMBER, false, false, null)),
+                "f002");
+    }
+
+    private static ImportFieldRule rule(
+            String fieldKey,
+            String label,
+            FieldType type,
+            boolean required,
+            boolean sensitive,
+            Map<Integer, String> options) {
+        return new ImportFieldRule(
+                fieldKey, label, label, true, type, null, null, 0.0, 75.0, 20.0, 70.0, required,
+                sensitive, options, null);
+    }
+
     private static ImportFieldCatalog catalog() {
         return new com.crdp.followup.importer.domain.StaticImportFieldCatalog(
                 List.of(
@@ -403,7 +480,9 @@ class ImportStagingServiceTest {
         }
 
         private final Map<Long, MutableJob> jobs = new LinkedHashMap<>();
-        private final List<RowInsert> rows = new ArrayList<>();
+        private final List<RowInsert> inserts = new ArrayList<>();
+        private final List<StagedRow> rows = new ArrayList<>();
+        private final List<IssueInsert> issues = new ArrayList<>();
         private final List<Integer> insertBatches = new ArrayList<>();
         private final List<Long> progressDeltas = new ArrayList<>();
         private long sequence;
@@ -490,15 +569,54 @@ class ImportStagingServiceTest {
 
         @Override
         public int insertRows(List<RowInsert> batch) {
-            rows.addAll(batch);
+            inserts.addAll(batch);
+            for (RowInsert row : batch) {
+                rows.add(
+                        new StagedRow(
+                                ++sequence,
+                                row.sheetName(),
+                                row.rowNo(),
+                                row.rowType(),
+                                row.mrnBlind(),
+                                row.payloadCipher()));
+            }
             insertBatches.add(batch.size());
             return batch.size();
         }
 
         @Override
         public int deleteRows(long jobId) {
-            rows.removeIf(row -> row.jobId() == jobId);
+            rows.clear(); // 单作业用例（fake 不跨作业混行）
+            inserts.clear();
             return 1;
+        }
+
+        @Override
+        public List<StagedRow> findRows(long jobId, long afterId, int limit) {
+            return rows.stream()
+                    .filter(row -> row.id() > afterId)
+                    .sorted(java.util.Comparator.comparingLong(StagedRow::id))
+                    .limit(limit)
+                    .toList();
+        }
+
+        @Override
+        public int insertIssues(List<IssueInsert> batch) {
+            issues.addAll(batch);
+            return batch.size();
+        }
+
+        @Override
+        public int deleteIssues(long jobId) {
+            issues.clear();
+            return 1;
+        }
+
+        @Override
+        public long countIssues(long jobId, String level) {
+            return issues.stream()
+                    .filter(issue -> level == null || issue.level().equals(level))
+                    .count();
         }
     }
 }

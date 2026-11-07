@@ -1,5 +1,6 @@
 package com.crdp.followup.importer.app;
 
+import com.crdp.followup.importer.app.ImportRowPayloads.CellValue;
 import com.crdp.followup.importer.domain.ImportCell;
 import com.crdp.followup.importer.domain.ImportFieldCatalog;
 import com.crdp.followup.importer.domain.ImportFollowup;
@@ -35,10 +36,11 @@ import org.springframework.stereotype.Service;
  * OQ-100④）， 每批 {@value #INSERT_BATCH} 行落库并累加进度，任何时刻内存只有一批； 版面 / 表头整体错误（{@link
  * ImportLayoutException}）标 PRECHECK_FAILED、差异清单落 layout_problems，不写任何行。
  *
- * <p>暂存形态（宽表一行 = 一位患者 PATIENT；长表基线行 BASELINE 与随访行 FOLLOWUP 分存）：行内含姓名 / 病案号等敏感明文， 整行 JSON 经 {@link
- * CryptoService} 加密落 payload_cipher（purpose={@link ImporterEncryptedColumns#PURPOSE_ROW_PAYLOAD}）；
- * 病案号另落盲索引 mrn_blind——与 {@code pt_patient.mrn_blind} 同 purpose，E18-T03 按它查重与关联基线行（tech-plan
- * §12④「按盲索引查病案号重复」）。 解析阶段已知问题 （随访年度解析不了、病案号为空）落行级 problems；类型 / 范围 / 选项校验属 E18-T03。
+ * <p>暂存形态（宽表一行 = 一位患者 PATIENT；长表基线行 BASELINE 与随访行 FOLLOWUP 分存）：行内含姓名 / 病案号等敏感明文， 整行 JSON（形态 {@link
+ * ImportRowPayloads}）经 {@link CryptoService} 加密落 payload_cipher（purpose={@link
+ * ImporterEncryptedColumns#PURPOSE_ROW_PAYLOAD}）； 病案号另落盲索引 mrn_blind——与 {@code
+ * pt_patient.mrn_blind} 同 purpose，校验（E18-T03 {@link ImportValidationService}）按它查重与关联基线行（tech-plan
+ * §12④「按盲索引查病案号重复」）。 解析阶段已知问题 （随访年度解析不了、病案号为空）落行级 problems；暂存完成后随即跑校验并把问题落 imp_issue（E18-T03）。
  *
  * <p>调用需租户上下文（imp_job / imp_row 在租户库）。上传端点（multipart → 对象存储 → 建作业 → 异步派发预检）与审计随 E18-T06 接入； 本服务的
  * runPrecheck 设计为可在异步线程直接调用（租户上下文经 TenantContextTaskDecorator 复制）。
@@ -62,18 +64,21 @@ public class ImportStagingService {
     private final CryptoService crypto;
     private final ExcelGateway excel;
     private final ObjectMapper json;
+    private final ImportValidationService validation;
 
     public ImportStagingService(
             ImportStagingMapper staging,
             ImportFieldCatalogLoader catalogLoader,
             CryptoService crypto,
             ExcelGateway excel,
-            ObjectMapper json) {
+            ObjectMapper json,
+            ImportValidationService validation) {
         this.staging = staging;
         this.catalogLoader = catalogLoader;
         this.crypto = crypto;
         this.excel = excel;
         this.json = json;
+        this.validation = validation;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -81,13 +86,18 @@ public class ImportStagingService {
     /** 上传文件元数据（文件内容由对象存储承载，storage_key 由上传端点随 E18-T06 回填）。 */
     public record NewImportFile(String fileName, long fileSize, String sha256) {}
 
-    /** 预检结果（状态与行数供向导页展示进度；layoutProblems 为版面 / 表头整体错误清单）。 */
+    /**
+     * 预检结果（状态与行数供向导页展示进度；layoutProblems 为版面 / 表头整体错误清单； errorCount / warnCount 为 E18-T03 校验问题计数——有
+     * ERROR 时确认提交被拦（E18-T05 / import-export.md §1）。
+     */
     public record PrecheckOutcome(
             long jobId,
             String status,
             String layout,
             long stagedRows,
-            List<String> layoutProblems) {}
+            List<String> layoutProblems,
+            long errorCount,
+            long warnCount) {}
 
     // ---------------------------------------------------------------- 建作业
 
@@ -143,7 +153,11 @@ public class ImportStagingService {
                     adapter.streamFollowups(workbook, catalog, stager::followup);
                 }
             }
-            return stager.finish();
+            stager.flush();
+            // tech-plan §12 状态机「预检完成 = 生成校验报告」：校验（E18-T03）在状态仍为 PRECHECKING 内完成，
+            // 任何异常（含校验基础设施故障）统一落 PRECHECK_FAILED，不留「已预检完成但没报告」的中间态。
+            ImportValidationService.ValidationSummary summary = validation.validate(jobId);
+            return stager.finish(summary);
         } catch (ImportLayoutException failure) {
             return fail(
                     jobId,
@@ -177,12 +191,19 @@ public class ImportStagingService {
     }
 
     private PrecheckOutcome fail(long jobId, String layout, List<String> problems, String reason) {
-        // 预检失败不留半成品行；状态终态 PRECHECK_FAILED（重新上传开新作业）
+        // 预检失败不留半成品行与问题；状态终态 PRECHECK_FAILED（重新上传开新作业）
         staging.deleteRows(jobId);
+        staging.deleteIssues(jobId);
         String problemsJson = writeJson(problems);
         staging.failPrecheck(jobId, layout, problemsJson, truncate(reason));
         return new PrecheckOutcome(
-                jobId, STATUS_PRECHECK_FAILED, layout, 0, problems == null ? List.of() : problems);
+                jobId,
+                STATUS_PRECHECK_FAILED,
+                layout,
+                0,
+                problems == null ? List.of() : problems,
+                0,
+                0);
     }
 
     // ---------------------------------------------------------------- 暂存器
@@ -210,8 +231,9 @@ public class ImportStagingService {
                     "PATIENT",
                     record.mrn(),
                     writeJson(
-                            new WideRowPayload(
+                            new ImportRowPayloads.WideRow(
                                     record.mrn(),
+                                    CellValue.of(record.mrnCell()),
                                     record.legacyNo(),
                                     cells(record.frontColumns()),
                                     cells(record.baseline()),
@@ -227,8 +249,11 @@ public class ImportStagingService {
                     "BASELINE",
                     record.mrn(),
                     writeJson(
-                            new BaselineRowPayload(
-                                    record.mrn(), record.legacyNo(), cells(record.baseline()))),
+                            new ImportRowPayloads.BaselineRow(
+                                    record.mrn(),
+                                    CellValue.of(record.mrnCell()),
+                                    record.legacyNo(),
+                                    cells(record.baseline()))),
                     problems);
         }
 
@@ -246,20 +271,38 @@ public class ImportStagingService {
                     "FOLLOWUP",
                     followup.mrnCell() == null ? null : followup.mrnCell().normalized(),
                     writeJson(
-                            new FollowupRowPayload(
+                            new ImportRowPayloads.FollowupRow(
                                     followup.mrnCell() == null
                                             ? null
                                             : followup.mrnCell().normalized(),
+                                    CellValue.of(followup.mrnCell()),
                                     followup.year(),
                                     followup.yearCell() == null ? null : followup.yearCell().raw(),
+                                    CellValue.of(followup.yearCell()),
                                     cells(followup.values()))),
                     problems);
         }
 
-        PrecheckOutcome finish() {
-            flush();
+        /** 落库当前批（校验前先全部落库——跨行校验要读全量暂存行）。 */
+        void flush() {
+            if (batch.isEmpty()) {
+                return;
+            }
+            staging.insertRows(List.copyOf(batch));
+            staging.addStagedRows(jobId, batch.size());
+            batch.clear();
+        }
+
+        PrecheckOutcome finish(ImportValidationService.ValidationSummary summary) {
             staging.finishPrecheck(jobId, layout.name(), staged);
-            return new PrecheckOutcome(jobId, STATUS_PRECHECKED, layout.name(), staged, List.of());
+            return new PrecheckOutcome(
+                    jobId,
+                    STATUS_PRECHECKED,
+                    layout.name(),
+                    staged,
+                    List.of(),
+                    summary.errorCount(),
+                    summary.warnCount());
         }
 
         private void add(
@@ -287,58 +330,23 @@ public class ImportStagingService {
                 flush();
             }
         }
-
-        private void flush() {
-            if (batch.isEmpty()) {
-                return;
-            }
-            staging.insertRows(List.copyOf(batch));
-            staging.addStagedRows(jobId, batch.size());
-            batch.clear();
-        }
     }
 
-    // ---------------------------------------------------------------- 载荷 JSON
+    // ---------------------------------------------------------------- 载荷 JSON（形态见
+    // ImportRowPayloads）
 
-    /** 单元格载荷：原文 + 行列坐标（E18-T03 批注版报告定位用）。 */
-    record CellPayload(String v, int r, int c) {
-
-        static CellPayload of(ImportCell cell) {
-            return cell == null ? null : new CellPayload(cell.raw(), cell.rowNo(), cell.colNo());
-        }
-    }
-
-    /** 宽表行载荷（一行 = 一位患者：前置列 + 基线 + 各年度随访组）。 */
-    record WideRowPayload(
-            String mrn,
-            String legacyNo,
-            Map<String, CellPayload> front,
-            Map<String, CellPayload> baseline,
-            List<FollowupPayload> followups) {}
-
-    /** 随访载荷（宽表组：group = 第几组即第几年；长表行：yearRaw 保留原文）。 */
-    record FollowupPayload(
-            Integer group, Integer year, String yearRaw, Map<String, CellPayload> values) {}
-
-    /** 长表「基线」行载荷。 */
-    record BaselineRowPayload(String mrn, String legacyNo, Map<String, CellPayload> baseline) {}
-
-    /** 长表「随访记录」行载荷。 */
-    record FollowupRowPayload(
-            String mrn, Integer year, String yearRaw, Map<String, CellPayload> values) {}
-
-    private static Map<String, CellPayload> cells(Map<String, ImportCell> values) {
-        Map<String, CellPayload> payload = new LinkedHashMap<>();
-        values.forEach((key, cell) -> payload.put(key, CellPayload.of(cell)));
+    private static Map<String, CellValue> cells(Map<String, ImportCell> values) {
+        Map<String, CellValue> payload = new LinkedHashMap<>();
+        values.forEach((key, cell) -> payload.put(key, CellValue.of(cell)));
         return payload;
     }
 
-    private static List<FollowupPayload> followups(List<ImportFollowup> followups) {
-        List<FollowupPayload> payload = new ArrayList<>(followups.size());
+    private static List<ImportRowPayloads.FollowupGroup> followups(List<ImportFollowup> followups) {
+        List<ImportRowPayloads.FollowupGroup> payload = new ArrayList<>(followups.size());
         for (int i = 0; i < followups.size(); i++) {
             ImportFollowup followup = followups.get(i);
             payload.add(
-                    new FollowupPayload(
+                    new ImportRowPayloads.FollowupGroup(
                             i + 1,
                             followup.year(),
                             followup.yearCell() == null ? null : followup.yearCell().raw(),

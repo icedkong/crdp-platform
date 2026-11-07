@@ -39,6 +39,24 @@ public interface PatientMapper {
             """)
     Long findLiveIdByMrnBlind(@Param("mrnBlind") String mrnBlind);
 
+    /**
+     * 批量全院存在性（E18-T03 导入预检查重）：给定盲索引中在册（未软删）的子集—— 只返回盲索引本身，不输出任何患者数据； 病区数据范围在导入确认时校验（E18-T04 /
+     * T06），预检重复提示按全院口径（范围外同号患者同样构成「重复」）。
+     */
+    @IgnoreScope(
+            reason =
+                    "导入预检按病案号全院查重（A-PAT-018 / tech-plan §12④「按盲索引查病案号重复」）："
+                            + "只取盲索引存在性，不输出患者数据；病区范围在导入确认时校验（E18-T04 / T06）")
+    @Select(
+            """
+            <script>
+            SELECT DISTINCT mrn_blind FROM pt_patient
+            WHERE deleted = 0 AND mrn_blind IN
+              (<foreach collection='blinds' item='blind' separator=','>#{blind}</foreach>)
+            </script>
+            """)
+    java.util.Set<String> findLiveMrnBlinds(@Param("blinds") java.util.Collection<String> blinds);
+
     /** 查重摘要（当前用户数据范围内；越范围返回 null，不暴露存在）。 */
     @DataScope(resource = "patient")
     @Select(
