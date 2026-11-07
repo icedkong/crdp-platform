@@ -1,0 +1,924 @@
+{
+  "formCode": "A_ANNUAL_FU",
+  "source": "db/tenant/followup/V67__fu_compare_rule.sql（2 条）+ V70__hospital_a_compare_rule_preset.sql（15 条），hospital-a-spec 第 5 章「录入时对比提示规则（医院已确认 Q41）」默认值；由 ACompareRulePresetSqlTest.q41SharedCaseFileMatchesPresetRows 锁定与本文件一致",
+  "rules": [
+    {
+      "ruleCode": "ef_drop",
+      "categoryKey": "fu_echo",
+      "targetField": "f248",
+      "ruleType": "DIFF",
+      "params": { "direction": "DROP", "threshold": 10 },
+      "baselineField": "f102",
+      "unit": "%",
+      "message": "EF 比上次（或出院前）下降 ≥ 10 个百分点"
+    },
+    {
+      "ruleCode": "new_death",
+      "categoryKey": "fu_contact",
+      "targetField": "f215",
+      "ruleType": "FLIP_TO_YES",
+      "params": {},
+      "baselineField": null,
+      "unit": null,
+      "message": "本次「是否死亡」= 是"
+    },
+    {
+      "ruleCode": "lvdd_rise",
+      "categoryKey": "fu_echo",
+      "targetField": "f249",
+      "ruleType": "DIFF",
+      "params": { "direction": "RISE", "threshold": 5 },
+      "baselineField": "f103",
+      "unit": "mm",
+      "message": "LVDd 比上次（或出院前）增加 ≥ 5 mm"
+    },
+    {
+      "ruleCode": "new_readmission",
+      "categoryKey": "fu_event",
+      "targetField": "f223",
+      "ruleType": "NEW_EVENT",
+      "params": { "dateField": "f224" },
+      "baselineField": null,
+      "unit": null,
+      "message": "新发再住院：本次填写了再住院类型，且日期晚于上一次随访（或上一次未填）"
+    },
+    {
+      "ruleCode": "new_revascularization",
+      "categoryKey": "fu_event",
+      "targetField": "f225",
+      "ruleType": "NEW_EVENT",
+      "params": { "dateField": "f226" },
+      "baselineField": null,
+      "unit": null,
+      "message": "新发再血运重建：本次再次血运重建 ≠ 无，且日期晚于上一次随访（或上一次为无）"
+    },
+    {
+      "ruleCode": "new_postop_mi",
+      "categoryKey": "fu_event",
+      "targetField": "f219",
+      "ruleType": "NEW_EVENT",
+      "params": { "dateField": "f220" },
+      "baselineField": null,
+      "unit": null,
+      "message": "新发术后心肌梗死：本次为是，且日期晚于上一次随访（或上一次为否）"
+    },
+    {
+      "ruleCode": "new_postop_cvd",
+      "categoryKey": "fu_event",
+      "targetField": "f221",
+      "ruleType": "NEW_EVENT",
+      "params": { "dateField": "f222" },
+      "baselineField": null,
+      "unit": null,
+      "message": "新发术后脑血管疾病：本次非无，且日期晚于上一次随访（或上一次为无）"
+    },
+    {
+      "ruleCode": "new_revalve",
+      "categoryKey": "fu_event",
+      "targetField": "f227",
+      "ruleType": "NEW_EVENT",
+      "params": { "dateField": "f229" },
+      "baselineField": null,
+      "unit": null,
+      "message": "新发再次瓣膜手术：本次非无，且日期晚于上一次随访（或上一次为无）"
+    },
+    {
+      "ruleCode": "new_arr_reop",
+      "categoryKey": "fu_event",
+      "targetField": "f230",
+      "ruleType": "NEW_EVENT",
+      "params": { "dateField": "f231" },
+      "baselineField": null,
+      "unit": null,
+      "message": "新发因心律失常再次手术：本次为是，且日期晚于上一次随访（或上一次为否）"
+    },
+    {
+      "ruleCode": "new_postop_bleed",
+      "categoryKey": "fu_event",
+      "targetField": "f233",
+      "ruleType": "NEW_EVENT",
+      "params": { "dateField": "f234" },
+      "baselineField": null,
+      "unit": null,
+      "message": "新发术后出血：本次非无，且日期晚于上一次随访（或上一次为无）"
+    },
+    {
+      "ruleCode": "mr_reflux_worsen",
+      "categoryKey": "fu_echo",
+      "targetField": "f239",
+      "ruleType": "ORDINAL_RISE",
+      "params": { "grades": 2, "reachCodes": ["3", "4"] },
+      "baselineField": null,
+      "unit": null,
+      "message": "返流程度比上次升高 ≥ 2 级，或达到中量 / 大量"
+    },
+    {
+      "ruleCode": "ar_reflux_worsen",
+      "categoryKey": "fu_echo",
+      "targetField": "f241",
+      "ruleType": "ORDINAL_RISE",
+      "params": { "grades": 2, "reachCodes": ["3", "4"] },
+      "baselineField": null,
+      "unit": null,
+      "message": "返流程度比上次升高 ≥ 2 级，或达到中量 / 大量"
+    },
+    {
+      "ruleCode": "tr_reflux_worsen",
+      "categoryKey": "fu_echo",
+      "targetField": "f243",
+      "ruleType": "ORDINAL_RISE",
+      "params": { "grades": 2, "reachCodes": ["3", "4"] },
+      "baselineField": null,
+      "unit": null,
+      "message": "返流程度比上次升高 ≥ 2 级，或达到中量 / 大量"
+    },
+    {
+      "ruleCode": "new_thrombus",
+      "categoryKey": "fu_echo",
+      "targetField": "f258",
+      "ruleType": "FLIP_TO_YES",
+      "params": {},
+      "baselineField": "f113",
+      "unit": null,
+      "message": "心室血栓由否变为是（对比上一次随访或出院前）"
+    },
+    {
+      "ruleCode": "ef_below_40",
+      "categoryKey": "fu_echo",
+      "targetField": "f248",
+      "ruleType": "OUT_OF_RANGE",
+      "params": { "op": "LT", "value": 40 },
+      "baselineField": null,
+      "unit": "%",
+      "message": "EF ＜ 40%（超出提示范围）"
+    },
+    {
+      "ruleCode": "lvdd_above_60",
+      "categoryKey": "fu_echo",
+      "targetField": "f249",
+      "ruleType": "OUT_OF_RANGE",
+      "params": { "op": "GT", "value": 60 },
+      "baselineField": null,
+      "unit": "mm",
+      "message": "LVDd ＞ 60 mm（超出提示范围）"
+    },
+    {
+      "ruleCode": "la_above_45",
+      "categoryKey": "fu_echo",
+      "targetField": "f245",
+      "ruleType": "OUT_OF_RANGE",
+      "params": { "op": "GT", "value": 45 },
+      "baselineField": null,
+      "unit": "mm",
+      "message": "LA ＞ 45 mm（超出提示范围）"
+    }
+  ],
+  "ordinals": {
+    "f239": { "0": 0, "1": 1, "2": 2, "3": 3, "4": 4 },
+    "f241": { "0": 0, "1": 1, "2": 2, "3": 3, "4": 4 },
+    "f243": { "0": 0, "1": 1, "2": 2, "3": 3, "4": 4 }
+  },
+  "cases": [
+    {
+      "name": "ef_drop 正：EF 56 → 45 下降 11 ≥ 10 个百分点（Q41 示例）",
+      "ruleCodes": ["ef_drop"],
+      "current": { "f248": 45 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f248": 56 } },
+      "expectedHits": [
+        {
+          "ruleId": "ef_drop",
+          "key": "f248",
+          "categoryKey": "fu_echo",
+          "message": "EF 比上次（或出院前）下降 ≥ 10 个百分点",
+          "previousValue": 56,
+          "change": -11,
+          "changeText": "下降 11 个百分点"
+        }
+      ]
+    },
+    {
+      "name": "ef_drop 正（边界含等号）：EF 55 → 45 恰好下降 10 也标红",
+      "ruleCodes": ["ef_drop"],
+      "current": { "f248": 45 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f248": 55 } },
+      "expectedHits": [
+        {
+          "ruleId": "ef_drop",
+          "key": "f248",
+          "categoryKey": "fu_echo",
+          "message": "EF 比上次（或出院前）下降 ≥ 10 个百分点",
+          "previousValue": 55,
+          "change": -10,
+          "changeText": "下降 10 个百分点"
+        }
+      ]
+    },
+    {
+      "name": "ef_drop 正（第 1 年回落基线）：出院前 EF 55 → 本次 44，previousValue 取 f102",
+      "ruleCodes": ["ef_drop"],
+      "current": { "f248": 44 },
+      "previous": { "kind": "BASELINE", "values": { "f102": 55, "f103": 52, "f113": 0 } },
+      "expectedHits": [
+        {
+          "ruleId": "ef_drop",
+          "key": "f248",
+          "categoryKey": "fu_echo",
+          "message": "EF 比上次（或出院前）下降 ≥ 10 个百分点",
+          "previousValue": 55,
+          "change": -11,
+          "changeText": "下降 11 个百分点"
+        }
+      ]
+    },
+    {
+      "name": "ef_drop 反：EF 55 → 46 下降 9 < 10 不标红",
+      "ruleCodes": ["ef_drop"],
+      "current": { "f248": 46 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f248": 55 } },
+      "expectedHits": []
+    },
+    {
+      "name": "ef_drop 反：上一次 EF 为空跳过该条规则（Q41「上一次该字段为空时跳过」）",
+      "ruleCodes": ["ef_drop"],
+      "current": { "f248": 30 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f249": 52 } },
+      "expectedHits": []
+    },
+    {
+      "name": "new_death 正：本次「是否死亡」= 是（上一年为否）",
+      "ruleCodes": ["new_death"],
+      "current": { "f215": 1 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f215": 0 } },
+      "expectedHits": [
+        {
+          "ruleId": "new_death",
+          "key": "f215",
+          "categoryKey": "fu_contact",
+          "message": "本次「是否死亡」= 是",
+          "previousValue": 0,
+          "change": null,
+          "changeText": "由否变是"
+        }
+      ]
+    },
+    {
+      "name": "new_death 正（第 1 年 BASELINE 也生效）：无对比对象，本次 = 是即标红",
+      "ruleCodes": ["new_death"],
+      "current": { "f215": 1 },
+      "previous": { "kind": "BASELINE", "values": { "f102": 55 } },
+      "expectedHits": [
+        {
+          "ruleId": "new_death",
+          "key": "f215",
+          "categoryKey": "fu_contact",
+          "message": "本次「是否死亡」= 是",
+          "previousValue": null,
+          "change": null,
+          "changeText": "由否变是"
+        }
+      ]
+    },
+    {
+      "name": "new_death 反：本次「是否死亡」= 否不标红",
+      "ruleCodes": ["new_death"],
+      "current": { "f215": 0 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f215": 0 } },
+      "expectedHits": []
+    },
+    {
+      "name": "lvdd_rise 正：LVDd 52 → 58 增加 6 ≥ 5 mm",
+      "ruleCodes": ["lvdd_rise"],
+      "current": { "f249": 58 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f249": 52 } },
+      "expectedHits": [
+        {
+          "ruleId": "lvdd_rise",
+          "key": "f249",
+          "categoryKey": "fu_echo",
+          "message": "LVDd 比上次（或出院前）增加 ≥ 5 mm",
+          "previousValue": 52,
+          "change": 6,
+          "changeText": "增加 6 mm"
+        }
+      ]
+    },
+    {
+      "name": "lvdd_rise 正（边界含等号）：LVDd 52 → 57 恰好增加 5 也标红",
+      "ruleCodes": ["lvdd_rise"],
+      "current": { "f249": 57 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f249": 52 } },
+      "expectedHits": [
+        {
+          "ruleId": "lvdd_rise",
+          "key": "f249",
+          "categoryKey": "fu_echo",
+          "message": "LVDd 比上次（或出院前）增加 ≥ 5 mm",
+          "previousValue": 52,
+          "change": 5,
+          "changeText": "增加 5 mm"
+        }
+      ]
+    },
+    {
+      "name": "lvdd_rise 正（第 1 年回落基线）：出院前 LVDd 50 → 本次 58",
+      "ruleCodes": ["lvdd_rise"],
+      "current": { "f249": 58 },
+      "previous": { "kind": "BASELINE", "values": { "f102": 55, "f103": 50, "f113": 0 } },
+      "expectedHits": [
+        {
+          "ruleId": "lvdd_rise",
+          "key": "f249",
+          "categoryKey": "fu_echo",
+          "message": "LVDd 比上次（或出院前）增加 ≥ 5 mm",
+          "previousValue": 50,
+          "change": 8,
+          "changeText": "增加 8 mm"
+        }
+      ]
+    },
+    {
+      "name": "lvdd_rise 反：LVDd 52 → 56 增加 4 < 5 不标红",
+      "ruleCodes": ["lvdd_rise"],
+      "current": { "f249": 56 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f249": 52 } },
+      "expectedHits": []
+    },
+    {
+      "name": "lvdd_rise 反：第 1 年基线出院前 LVDd 未填（回落列空跳过）",
+      "ruleCodes": ["lvdd_rise"],
+      "current": { "f249": 62 },
+      "previous": { "kind": "BASELINE", "values": { "f102": 55 } },
+      "expectedHits": []
+    },
+    {
+      "name": "new_readmission 正：本次填再住院类型且上一次未填（a_readmit_type 无「无」编码，空 = 未再住院）",
+      "ruleCodes": ["new_readmission"],
+      "current": { "f223": 2, "f224": "2026-05-01" },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f224": null } },
+      "expectedHits": [
+        {
+          "ruleId": "new_readmission",
+          "key": "f223",
+          "categoryKey": "fu_event",
+          "message": "新发再住院：本次填写了再住院类型，且日期晚于上一次随访（或上一次未填）",
+          "previousValue": null,
+          "change": null,
+          "changeText": "新发"
+        }
+      ]
+    },
+    {
+      "name": "new_readmission 正：上一次也有再住院，本次再住院日期晚于上一次随访日期",
+      "ruleCodes": ["new_readmission"],
+      "current": { "f223": 2, "f224": "2025-12-20" },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-11-05",
+        "values": { "f223": 1, "f224": "2025-05-01" }
+      },
+      "expectedHits": [
+        {
+          "ruleId": "new_readmission",
+          "key": "f223",
+          "categoryKey": "fu_event",
+          "message": "新发再住院：本次填写了再住院类型，且日期晚于上一次随访（或上一次未填）",
+          "previousValue": 1,
+          "change": null,
+          "changeText": "新发"
+        }
+      ]
+    },
+    {
+      "name": "new_readmission 反：本次未填再住院类型（空 = 未再住院）",
+      "ruleCodes": ["new_readmission"],
+      "current": { "f224": null },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": {} },
+      "expectedHits": []
+    },
+    {
+      "name": "new_readmission 反：上一次已有再住院且本次日期不晚于上一次随访（旧事重填不算新发）",
+      "ruleCodes": ["new_readmission"],
+      "current": { "f223": 2, "f224": "2025-08-01" },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-11-05",
+        "values": { "f223": 1, "f224": "2025-05-01" }
+      },
+      "expectedHits": []
+    },
+    {
+      "name": "new_revascularization 正：上一次为无（0），本次再次血运重建 = 内科支架（Q41「或上一次为无」）",
+      "ruleCodes": ["new_revascularization"],
+      "current": { "f225": 1, "f226": "2025-01-10" },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f225": 0 } },
+      "expectedHits": [
+        {
+          "ruleId": "new_revascularization",
+          "key": "f225",
+          "categoryKey": "fu_event",
+          "message": "新发再血运重建：本次再次血运重建 ≠ 无，且日期晚于上一次随访（或上一次为无）",
+          "previousValue": 0,
+          "change": null,
+          "changeText": "新发"
+        }
+      ]
+    },
+    {
+      "name": "new_revascularization 反：本次再次血运重建 = 无（0）",
+      "ruleCodes": ["new_revascularization"],
+      "current": { "f225": 0 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": {} },
+      "expectedHits": []
+    },
+    {
+      "name": "new_revascularization 反：上一次已有血运重建且本次日期不晚于上一次随访",
+      "ruleCodes": ["new_revascularization"],
+      "current": { "f225": 2, "f226": "2025-06-01" },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-11-05",
+        "values": { "f225": 1, "f226": "2025-03-01" }
+      },
+      "expectedHits": []
+    },
+    {
+      "name": "new_postop_mi 正：上一次为否，本次术后心肌梗死 = 是",
+      "ruleCodes": ["new_postop_mi"],
+      "current": { "f219": 1, "f220": "2026-02-01" },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f219": 0 } },
+      "expectedHits": [
+        {
+          "ruleId": "new_postop_mi",
+          "key": "f219",
+          "categoryKey": "fu_event",
+          "message": "新发术后心肌梗死：本次为是，且日期晚于上一次随访（或上一次为否）",
+          "previousValue": 0,
+          "change": null,
+          "changeText": "新发"
+        }
+      ]
+    },
+    {
+      "name": "new_postop_mi 反：本次术后心肌梗死 = 否",
+      "ruleCodes": ["new_postop_mi"],
+      "current": { "f219": 0 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f219": 0 } },
+      "expectedHits": []
+    },
+    {
+      "name": "new_postop_cvd 正：上一次为无，本次术后脑血管疾病 = 脑梗死",
+      "ruleCodes": ["new_postop_cvd"],
+      "current": { "f221": 2, "f222": "2026-03-10" },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f221": 0 } },
+      "expectedHits": [
+        {
+          "ruleId": "new_postop_cvd",
+          "key": "f221",
+          "categoryKey": "fu_event",
+          "message": "新发术后脑血管疾病：本次非无，且日期晚于上一次随访（或上一次为无）",
+          "previousValue": 0,
+          "change": null,
+          "changeText": "新发"
+        }
+      ]
+    },
+    {
+      "name": "new_postop_cvd 反：本次术后脑血管疾病 = 无（0）",
+      "ruleCodes": ["new_postop_cvd"],
+      "current": { "f221": 0 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f221": 0 } },
+      "expectedHits": []
+    },
+    {
+      "name": "new_revalve 正：上一次为无，本次再次瓣膜手术 = 瓣膜介入治疗",
+      "ruleCodes": ["new_revalve"],
+      "current": { "f227": 1, "f229": "2026-01-20" },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f227": 0 } },
+      "expectedHits": [
+        {
+          "ruleId": "new_revalve",
+          "key": "f227",
+          "categoryKey": "fu_event",
+          "message": "新发再次瓣膜手术：本次非无，且日期晚于上一次随访（或上一次为无）",
+          "previousValue": 0,
+          "change": null,
+          "changeText": "新发"
+        }
+      ]
+    },
+    {
+      "name": "new_revalve 反：本次再次瓣膜手术 = 无（0）",
+      "ruleCodes": ["new_revalve"],
+      "current": { "f227": 0 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f227": 0 } },
+      "expectedHits": []
+    },
+    {
+      "name": "new_arr_reop 正：上一次为否，本次因心律失常再次手术 = 是",
+      "ruleCodes": ["new_arr_reop"],
+      "current": { "f230": 1, "f231": "2026-04-02" },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f230": 0 } },
+      "expectedHits": [
+        {
+          "ruleId": "new_arr_reop",
+          "key": "f230",
+          "categoryKey": "fu_event",
+          "message": "新发因心律失常再次手术：本次为是，且日期晚于上一次随访（或上一次为否）",
+          "previousValue": 0,
+          "change": null,
+          "changeText": "新发"
+        }
+      ]
+    },
+    {
+      "name": "new_arr_reop 反：本次因心律失常再次手术 = 否",
+      "ruleCodes": ["new_arr_reop"],
+      "current": { "f230": 0 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f230": 0 } },
+      "expectedHits": []
+    },
+    {
+      "name": "new_postop_bleed 正：上一次为无，本次术后出血 = 消化道出血",
+      "ruleCodes": ["new_postop_bleed"],
+      "current": { "f233": 1, "f234": "2026-02-15" },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f233": 0 } },
+      "expectedHits": [
+        {
+          "ruleId": "new_postop_bleed",
+          "key": "f233",
+          "categoryKey": "fu_event",
+          "message": "新发术后出血：本次非无，且日期晚于上一次随访（或上一次为无）",
+          "previousValue": 0,
+          "change": null,
+          "changeText": "新发"
+        }
+      ]
+    },
+    {
+      "name": "new_postop_bleed 反：本次术后出血 = 无（0）",
+      "ruleCodes": ["new_postop_bleed"],
+      "current": { "f233": 0 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f233": 0 } },
+      "expectedHits": []
+    },
+    {
+      "name": "mr_reflux_worsen 正：二尖瓣返流无(0) → 少量(2) 升高 2 级",
+      "ruleCodes": ["mr_reflux_worsen"],
+      "current": { "f239": 2 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f239": 0 } },
+      "expectedHits": [
+        {
+          "ruleId": "mr_reflux_worsen",
+          "key": "f239",
+          "categoryKey": "fu_echo",
+          "message": "返流程度比上次升高 ≥ 2 级，或达到中量 / 大量",
+          "previousValue": 0,
+          "change": 2,
+          "changeText": "升高 2 级"
+        }
+      ]
+    },
+    {
+      "name": "mr_reflux_worsen 正（达到即标红）：少量(2) → 中量(3) 只升高 1 级但达到中量",
+      "ruleCodes": ["mr_reflux_worsen"],
+      "current": { "f239": 3 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f239": 2 } },
+      "expectedHits": [
+        {
+          "ruleId": "mr_reflux_worsen",
+          "key": "f239",
+          "categoryKey": "fu_echo",
+          "message": "返流程度比上次升高 ≥ 2 级，或达到中量 / 大量",
+          "previousValue": 2,
+          "change": 1,
+          "changeText": "达到预设档位"
+        }
+      ]
+    },
+    {
+      "name": "mr_reflux_worsen 反：无(0) → 微量(1) 只升高 1 级且未达中量",
+      "ruleCodes": ["mr_reflux_worsen"],
+      "current": { "f239": 1 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f239": 0 } },
+      "expectedHits": []
+    },
+    {
+      "name": "mr_reflux_worsen 反：中量(3) → 微量(1) 返流减轻",
+      "ruleCodes": ["mr_reflux_worsen"],
+      "current": { "f239": 1 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f239": 3 } },
+      "expectedHits": []
+    },
+    {
+      "name": "ar_reflux_worsen 正：主动脉瓣返流微量(1) → 中量(3) 升高 2 级",
+      "ruleCodes": ["ar_reflux_worsen"],
+      "current": { "f241": 3 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f241": 1 } },
+      "expectedHits": [
+        {
+          "ruleId": "ar_reflux_worsen",
+          "key": "f241",
+          "categoryKey": "fu_echo",
+          "message": "返流程度比上次升高 ≥ 2 级，或达到中量 / 大量",
+          "previousValue": 1,
+          "change": 2,
+          "changeText": "升高 2 级"
+        }
+      ]
+    },
+    {
+      "name": "ar_reflux_worsen 反：无(0) → 微量(1) 只升高 1 级且未达中量",
+      "ruleCodes": ["ar_reflux_worsen"],
+      "current": { "f241": 1 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f241": 0 } },
+      "expectedHits": []
+    },
+    {
+      "name": "tr_reflux_worsen 正：三尖瓣返流少量(2) → 大量(4) 升高 2 级",
+      "ruleCodes": ["tr_reflux_worsen"],
+      "current": { "f243": 4 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f243": 2 } },
+      "expectedHits": [
+        {
+          "ruleId": "tr_reflux_worsen",
+          "key": "f243",
+          "categoryKey": "fu_echo",
+          "message": "返流程度比上次升高 ≥ 2 级，或达到中量 / 大量",
+          "previousValue": 2,
+          "change": 2,
+          "changeText": "升高 2 级"
+        }
+      ]
+    },
+    {
+      "name": "tr_reflux_worsen 反：大量(4) → 少量(2) 减轻（本次未达中量）",
+      "ruleCodes": ["tr_reflux_worsen"],
+      "current": { "f243": 2 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f243": 4 } },
+      "expectedHits": []
+    },
+    {
+      "name": "new_thrombus 正：上一次随访心室血栓 = 否，本次 = 是",
+      "ruleCodes": ["new_thrombus"],
+      "current": { "f258": 1 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f258": 0 } },
+      "expectedHits": [
+        {
+          "ruleId": "new_thrombus",
+          "key": "f258",
+          "categoryKey": "fu_echo",
+          "message": "心室血栓由否变为是（对比上一次随访或出院前）",
+          "previousValue": 0,
+          "change": null,
+          "changeText": "由否变是"
+        }
+      ]
+    },
+    {
+      "name": "new_thrombus 正（第 1 年回落基线）：出院前无心室血栓（f113 = 0），本次 = 是",
+      "ruleCodes": ["new_thrombus"],
+      "current": { "f258": 1 },
+      "previous": { "kind": "BASELINE", "values": { "f113": 0 } },
+      "expectedHits": [
+        {
+          "ruleId": "new_thrombus",
+          "key": "f258",
+          "categoryKey": "fu_echo",
+          "message": "心室血栓由否变为是（对比上一次随访或出院前）",
+          "previousValue": 0,
+          "change": null,
+          "changeText": "由否变是"
+        }
+      ]
+    },
+    {
+      "name": "new_thrombus 反：本次 = 否",
+      "ruleCodes": ["new_thrombus"],
+      "current": { "f258": 0 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f258": 0 } },
+      "expectedHits": []
+    },
+    {
+      "name": "new_thrombus 反：上一次已 = 是，本次仍 = 是（不算新发）",
+      "ruleCodes": ["new_thrombus"],
+      "current": { "f258": 1 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f258": 1 } },
+      "expectedHits": []
+    },
+    {
+      "name": "new_thrombus 反：第 1 年基线出院前有无血栓未填（回落列空不臆断新发）",
+      "ruleCodes": ["new_thrombus"],
+      "current": { "f258": 1 },
+      "previous": { "kind": "BASELINE", "values": { "f102": 55 } },
+      "expectedHits": []
+    },
+    {
+      "name": "ef_below_40 正：EF = 39 ＜ 40（超出提示范围）",
+      "ruleCodes": ["ef_below_40"],
+      "current": { "f248": 39 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f248": 52 } },
+      "expectedHits": [
+        {
+          "ruleId": "ef_below_40",
+          "key": "f248",
+          "categoryKey": "fu_echo",
+          "message": "EF ＜ 40%（超出提示范围）",
+          "previousValue": null,
+          "change": null,
+          "changeText": null
+        }
+      ]
+    },
+    {
+      "name": "ef_below_40 反：EF = 40 恰在边界（Q41「EF ＜ 40」严格小于）",
+      "ruleCodes": ["ef_below_40"],
+      "current": { "f248": 40 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f248": 52 } },
+      "expectedHits": []
+    },
+    {
+      "name": "ef_below_40 反：本次 EF 未填（空值不命中）",
+      "ruleCodes": ["ef_below_40"],
+      "current": {},
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f248": 52 } },
+      "expectedHits": []
+    },
+    {
+      "name": "lvdd_above_60 正：LVDd = 61 ＞ 60（超出提示范围）",
+      "ruleCodes": ["lvdd_above_60"],
+      "current": { "f249": 61 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f249": 55 } },
+      "expectedHits": [
+        {
+          "ruleId": "lvdd_above_60",
+          "key": "f249",
+          "categoryKey": "fu_echo",
+          "message": "LVDd ＞ 60 mm（超出提示范围）",
+          "previousValue": null,
+          "change": null,
+          "changeText": null
+        }
+      ]
+    },
+    {
+      "name": "lvdd_above_60 反：LVDd = 60 恰在边界（Q41「LVDd ＞ 60」严格大于）",
+      "ruleCodes": ["lvdd_above_60"],
+      "current": { "f249": 60 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f249": 55 } },
+      "expectedHits": []
+    },
+    {
+      "name": "la_above_45 正：LA = 46 ＞ 45（超出提示范围）",
+      "ruleCodes": ["la_above_45"],
+      "current": { "f245": 46 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f245": 42 } },
+      "expectedHits": [
+        {
+          "ruleId": "la_above_45",
+          "key": "f245",
+          "categoryKey": "fu_echo",
+          "message": "LA ＞ 45 mm（超出提示范围）",
+          "previousValue": null,
+          "change": null,
+          "changeText": null
+        }
+      ]
+    },
+    {
+      "name": "la_above_45 反：LA = 45 恰在边界（Q41「LA ＞ 45」严格大于）",
+      "ruleCodes": ["la_above_45"],
+      "current": { "f245": 45 },
+      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f245": 42 } },
+      "expectedHits": []
+    },
+    {
+      "name": "全表单正：17 条规则齐上，一次年度录入命中 6 条且按 sort_no 顺序输出",
+      "ruleCodes": [
+        "ef_drop",
+        "new_death",
+        "lvdd_rise",
+        "new_readmission",
+        "new_revascularization",
+        "new_postop_mi",
+        "new_postop_cvd",
+        "new_revalve",
+        "new_arr_reop",
+        "new_postop_bleed",
+        "mr_reflux_worsen",
+        "ar_reflux_worsen",
+        "tr_reflux_worsen",
+        "new_thrombus",
+        "ef_below_40",
+        "lvdd_above_60",
+        "la_above_45"
+      ],
+      "current": { "f215": 0, "f239": 2, "f245": 47, "f248": 38, "f249": 58, "f258": 1 },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-11-05",
+        "values": { "f215": 0, "f239": 0, "f245": 44, "f248": 56, "f249": 52, "f258": 0 }
+      },
+      "expectedHits": [
+        {
+          "ruleId": "ef_drop",
+          "key": "f248",
+          "categoryKey": "fu_echo",
+          "message": "EF 比上次（或出院前）下降 ≥ 10 个百分点",
+          "previousValue": 56,
+          "change": -18,
+          "changeText": "下降 18 个百分点"
+        },
+        {
+          "ruleId": "lvdd_rise",
+          "key": "f249",
+          "categoryKey": "fu_echo",
+          "message": "LVDd 比上次（或出院前）增加 ≥ 5 mm",
+          "previousValue": 52,
+          "change": 6,
+          "changeText": "增加 6 mm"
+        },
+        {
+          "ruleId": "mr_reflux_worsen",
+          "key": "f239",
+          "categoryKey": "fu_echo",
+          "message": "返流程度比上次升高 ≥ 2 级，或达到中量 / 大量",
+          "previousValue": 0,
+          "change": 2,
+          "changeText": "升高 2 级"
+        },
+        {
+          "ruleId": "new_thrombus",
+          "key": "f258",
+          "categoryKey": "fu_echo",
+          "message": "心室血栓由否变为是（对比上一次随访或出院前）",
+          "previousValue": 0,
+          "change": null,
+          "changeText": "由否变是"
+        },
+        {
+          "ruleId": "ef_below_40",
+          "key": "f248",
+          "categoryKey": "fu_echo",
+          "message": "EF ＜ 40%（超出提示范围）",
+          "previousValue": null,
+          "change": null,
+          "changeText": null
+        },
+        {
+          "ruleId": "la_above_45",
+          "key": "f245",
+          "categoryKey": "fu_echo",
+          "message": "LA ＞ 45 mm（超出提示范围）",
+          "previousValue": null,
+          "change": null,
+          "changeText": null
+        }
+      ]
+    },
+    {
+      "name": "全表单反：各字段与上一次相仿且无事件，17 条规则全部不命中（LVDd = 60 也不超出范围）",
+      "ruleCodes": [
+        "ef_drop",
+        "new_death",
+        "lvdd_rise",
+        "new_readmission",
+        "new_revascularization",
+        "new_postop_mi",
+        "new_postop_cvd",
+        "new_revalve",
+        "new_arr_reop",
+        "new_postop_bleed",
+        "mr_reflux_worsen",
+        "ar_reflux_worsen",
+        "tr_reflux_worsen",
+        "new_thrombus",
+        "ef_below_40",
+        "lvdd_above_60",
+        "la_above_45"
+      ],
+      "current": {
+        "f215": 0,
+        "f219": 0,
+        "f221": 0,
+        "f223": null,
+        "f225": 0,
+        "f227": 0,
+        "f230": 0,
+        "f233": 0,
+        "f239": 0,
+        "f241": 0,
+        "f243": 0,
+        "f245": 44,
+        "f248": 56,
+        "f249": 60,
+        "f258": 0
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-11-05",
+        "values": { "f215": 0, "f239": 0, "f241": 0, "f243": 0, "f245": 44, "f248": 56, "f249": 56, "f258": 0 }
+      },
+      "expectedHits": []
+    }
+  ]
+}

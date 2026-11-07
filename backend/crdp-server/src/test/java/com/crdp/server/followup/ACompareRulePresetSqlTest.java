@@ -5,9 +5,14 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.crdp.followup.compare.domain.CompareRuleType;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -374,6 +379,69 @@ class ACompareRulePresetSqlTest {
                     type.validateParams((Map<String, Object>) row.get("params"));
             assertEquals(row.get("params"), params, entry.getKey() + " 校验应原样通过（键集与阈值合法）");
         }
+    }
+
+    /**
+     * E17-T06（Q41 每条规则正反用例）的绑定核对：共享用例文件 {@code
+     * crdp-followup/src/test/resources/shared-cases/compare-cases-q41.json} 里的 17 条规则定义与 本测试解析的 V67
+     * + V70 预置行逐项一致（ruleCode / categoryKey / targetField / ruleType / params / baselineField /
+     * message）。 用例文件在 crdp-followup 测试资源（跨模块，走仓库文件定位，同 {@link AFieldDictAppendix#locateSpec()}
+     * 的向上找根）， 由后端 {@code Q41CompareRuleCasesTest} 与前端 {@code form-compare-q41.test.ts}
+     * 各执行一遍；本核对保证两端正反用例 跑的是真实预置规则——迁移调阈值不同步用例文件即失败。
+     */
+    @Test
+    void q41SharedCaseFileMatchesPresetRows() throws IOException {
+        JsonNode rules =
+                new ObjectMapper()
+                        .readTree(Files.newInputStream(locateQ41CaseFile()))
+                        .path("rules");
+        assertTrue(rules.isArray() && !rules.isEmpty(), "Q41 用例文件应带 rules 数组");
+        Map<String, JsonNode> caseRules = new LinkedHashMap<>();
+        for (JsonNode rule : rules) {
+            String code = rule.path("ruleCode").asText();
+            assertTrue(!caseRules.containsKey(code), "Q41 用例文件规则重复：" + code);
+            caseRules.put(code, rule);
+        }
+        assertEquals(
+                rulesByCode.keySet(),
+                caseRules.keySet(),
+                "Q41 用例文件的规则集应与 V67 + V70 预置完全一致（缺失即用例没跟上预置）");
+        for (Map.Entry<String, JsonNode> entry : caseRules.entrySet()) {
+            Map<String, Object> row = rulesByCode.get(entry.getKey());
+            JsonNode rule = entry.getValue();
+            String at = entry.getKey();
+            assertEquals(row.get("category_key"), rule.path("categoryKey").asText(), at + " 分类锚点");
+            assertEquals(row.get("target_field"), rule.path("targetField").asText(), at + " 对比字段");
+            assertEquals(row.get("rule_type"), rule.path("ruleType").asText(), at + " 规则类型");
+            assertEquals(
+                    row.get("params"),
+                    new ObjectMapper().convertValue(rule.path("params"), LinkedHashMap.class),
+                    at + " 阈值参数（调阈值须同步用例文件）");
+            assertEquals(
+                    row.get("baseline_field") == null ? null : row.get("baseline_field").toString(),
+                    rule.path("baselineField").isTextual()
+                            ? rule.path("baselineField").asText()
+                            : null,
+                    at + " 基线回落字段");
+            assertEquals(row.get("message"), rule.path("message").asText(), at + " 标红提示文案");
+        }
+    }
+
+    /** 从模块目录向上找到 Q41 共享用例文件（crdp-followup 测试资源，跨模块读仓库文件）。 */
+    private static Path locateQ41CaseFile() {
+        Path dir = Paths.get("").toAbsolutePath();
+        while (dir != null) {
+            Path candidate =
+                    dir.resolve(
+                            "backend/crdp-followup/src/test/resources/shared-cases/compare-cases-q41.json");
+            if (Files.exists(candidate)) {
+                return candidate;
+            }
+            dir = dir.getParent();
+        }
+        throw new IllegalStateException(
+                "未找到 backend/crdp-followup/src/test/resources/shared-cases/compare-cases-q41.json"
+                        + "（应在仓库内运行）");
     }
 
     // ---------------------------------------------------------------- 与 V38 字段字典交叉核对
