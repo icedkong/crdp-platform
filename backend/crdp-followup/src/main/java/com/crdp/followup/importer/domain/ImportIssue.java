@@ -92,6 +92,15 @@ public record ImportIssue(
     /** 随访行的病案号在「基线」表中不存在（报错）。 */
     public static final String CODE_NO_BASELINE = "NO_BASELINE";
 
+    /** 病区/中心取值映射不上病区字典（报错：未映射值导入前必须处理——修正原表或在病区管理维护别名，E18-T04 / A-WARD-006）。 */
+    public static final String CODE_WARD_UNMAPPED = "WARD_UNMAPPED";
+
+    /** 病区/中心取值对应的病区已停用（报错：停用病区不能进新患者，A-WARD-008）。 */
+    public static final String CODE_WARD_DISABLED = "WARD_DISABLED";
+
+    /** 病区/中心取值同时匹配多个病区（编码 / 名称 / 别名冲突，报错：无法确定唯一归属）。 */
+    public static final String CODE_WARD_AMBIGUOUS = "WARD_AMBIGUOUS";
+
     /** Excel 列字母（0 起下标 → A、Z、AA……，问题清单与批注同一坐标语言）。 */
     public String columnLetters() {
         return Optional.ofNullable(colNo).map(ImportCell::columnLetters).orElse(null);

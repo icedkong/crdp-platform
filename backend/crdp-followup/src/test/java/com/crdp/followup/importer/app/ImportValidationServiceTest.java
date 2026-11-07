@@ -16,6 +16,7 @@ import com.crdp.followup.importer.app.ImportRowPayloads.FollowupRow;
 import com.crdp.followup.importer.app.ImportRowPayloads.WideRow;
 import com.crdp.followup.importer.app.ImportValidationService.ValidationSummary;
 import com.crdp.followup.importer.domain.ImportFieldRule;
+import com.crdp.followup.importer.domain.ImportWardDirectory;
 import com.crdp.followup.importer.infra.mapper.ImportStagingMapper;
 import com.crdp.followup.importer.infra.mapper.ImportStagingMapper.IssueInsert;
 import com.crdp.followup.importer.infra.mapper.ImportStagingMapper.JobInsert;
@@ -53,6 +54,8 @@ class ImportValidationServiceTest {
     private final FakeStagingMapper staging = new FakeStagingMapper();
     private final CryptoService crypto = mock(CryptoService.class);
     private final ImportFieldRuleLoader ruleLoader = mock(ImportFieldRuleLoader.class);
+    private final ImportWardDirectoryLoader wardDirectoryLoader =
+            mock(ImportWardDirectoryLoader.class);
     private final PatientBlindIndexService patientBlindIndex = mock(PatientBlindIndexService.class);
     private final ObjectMapper json = new ObjectMapper();
 
@@ -67,6 +70,7 @@ class ImportValidationServiceTest {
         when(crypto.blindIndex(anyString(), anyString()))
                 .thenAnswer(inv -> "blind(" + inv.getArgument(1) + ")");
         when(ruleLoader.load()).thenReturn(rules());
+        when(wardDirectoryLoader.load()).thenReturn(new ImportWardDirectory(List.of()));
         when(patientBlindIndex.existingBlinds(any())).thenReturn(Set.of());
         service =
                 new ImportValidationService(
@@ -75,7 +79,8 @@ class ImportValidationServiceTest {
                         crypto,
                         patientBlindIndex,
                         new FormDerivedEngine(),
-                        json);
+                        json,
+                        wardDirectoryLoader);
     }
 
     // ---------------------------------------------------------------- 宽表：重复 / 已存在 / 前置列冲突
@@ -246,7 +251,8 @@ class ImportValidationServiceTest {
                                 Map.of(0, "否", 1, "是"),
                                 null),
                         rule("f257", "EF", FieldType.NUMBER, false, false, null, null)),
-                "f002");
+                "f002",
+                null);
     }
 
     private long wideJobWithTwoDuplicatePatients() {

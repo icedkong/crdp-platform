@@ -14,6 +14,7 @@ import com.crdp.followup.importer.XlsxTestFiles;
 import com.crdp.followup.importer.app.ImportFieldRuleLoader.ImportFieldRules;
 import com.crdp.followup.importer.domain.ImportFieldCatalog;
 import com.crdp.followup.importer.domain.ImportFieldRule;
+import com.crdp.followup.importer.domain.ImportWardDirectory;
 import com.crdp.followup.importer.infra.mapper.ImportStagingMapper;
 import com.crdp.followup.importer.infra.mapper.ImportStagingMapper.IssueInsert;
 import com.crdp.followup.importer.infra.mapper.ImportStagingMapper.JobInsert;
@@ -49,6 +50,8 @@ class ImportStagingServiceTest {
     private final CryptoService crypto = mock(CryptoService.class);
     private final ImportFieldCatalogLoader catalogLoader = mock(ImportFieldCatalogLoader.class);
     private final ImportFieldRuleLoader ruleLoader = mock(ImportFieldRuleLoader.class);
+    private final ImportWardDirectoryLoader wardDirectoryLoader =
+            mock(ImportWardDirectoryLoader.class);
     private final PatientBlindIndexService patientBlindIndex = mock(PatientBlindIndexService.class);
     private final ObjectMapper json = new ObjectMapper();
 
@@ -64,6 +67,7 @@ class ImportStagingServiceTest {
                 .thenAnswer(inv -> "blind(" + inv.getArgument(1) + ")");
         when(catalogLoader.load()).thenReturn(catalog());
         when(ruleLoader.load()).thenReturn(rules());
+        when(wardDirectoryLoader.load()).thenReturn(new ImportWardDirectory(List.of()));
         when(patientBlindIndex.existingBlinds(any())).thenReturn(java.util.Set.of());
         service =
                 new ImportStagingService(
@@ -78,7 +82,8 @@ class ImportStagingServiceTest {
                                 crypto,
                                 patientBlindIndex,
                                 new FormDerivedEngine(),
-                                json));
+                                json,
+                                wardDirectoryLoader));
     }
 
     // ---------------------------------------------------------------- 建作业
@@ -408,7 +413,8 @@ class ImportStagingServiceTest {
                         rule("f215", "是否死亡", FieldType.RADIO, true, false, Map.of(0, "否", 1, "是")),
                         rule("f217", "死亡随访时间", FieldType.DATE, false, false, null),
                         rule("f257", "EF", FieldType.NUMBER, false, false, null)),
-                "f002");
+                "f002",
+                null);
     }
 
     private static ImportFieldRule rule(
