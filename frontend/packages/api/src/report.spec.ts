@@ -124,6 +124,18 @@ describe('e16-t05 foldReportLocations（位置列超过 2 个折叠为 +N）', (
       visible: [],
     });
   });
+
+  // E16-T12 补：退回过的位置（adjusted，E16-T15 起由退回作业置位）折叠后悬停全文仍带「原位置已调整」
+  it('退回标记进入折叠文案：悬停全文带「（原位置已调整）」、折叠计数不变', () => {
+    const folded = foldReportLocations([
+      tag('a'),
+      tag('b'),
+      { ...tag('c'), adjusted: true },
+    ]);
+    expect(folded.extraCount).toBe(1);
+    expect(folded.all).toBe('基线 · a、基线 · b、基线 · c（原位置已调整）');
+    expect(folded.visible).toEqual(['基线 · a', '基线 · b']);
+  });
 });
 
 describe('e16-t05 reportRowDigitizeStatusText（行电子化状态，C-SCAN-011）', () => {
