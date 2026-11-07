@@ -17,10 +17,12 @@ import com.crdp.followup.importer.app.ImportStagingService;
 import com.crdp.followup.importer.app.ImportStagingService.NewImportFile;
 import com.crdp.followup.importer.app.ImportStagingService.PrecheckOutcome;
 import com.crdp.followup.importer.app.ImportValidationService;
+import com.crdp.followup.importer.app.ImportWardDirectoryLoader;
 import com.crdp.followup.importer.domain.ImportCell;
 import com.crdp.followup.importer.domain.ImportFieldCatalog;
 import com.crdp.followup.importer.domain.ImportFieldCatalog.CatalogField;
 import com.crdp.followup.importer.domain.ImportFieldRule;
+import com.crdp.followup.importer.domain.ImportWardDirectory;
 import com.crdp.followup.importer.domain.WideLayoutAdapter;
 import com.crdp.followup.importer.infra.mapper.ImportStagingMapper;
 import com.crdp.followup.importer.infra.mapper.ImportStagingMapper.IssueInsert;
@@ -65,6 +67,8 @@ class RealDictValidationReportTest {
     private final CryptoService crypto = mock(CryptoService.class);
     private final ImportFieldCatalogLoader catalogLoader = mock(ImportFieldCatalogLoader.class);
     private final ImportFieldRuleLoader ruleLoader = mock(ImportFieldRuleLoader.class);
+    private final ImportWardDirectoryLoader wardDirectoryLoader =
+            mock(ImportWardDirectoryLoader.class);
     private final PatientBlindIndexService patientBlindIndex = mock(PatientBlindIndexService.class);
     private final ObjectMapper json = new ObjectMapper();
 
@@ -85,6 +89,7 @@ class RealDictValidationReportTest {
                 .thenAnswer(inv -> "blind(" + inv.getArgument(1) + ")");
         when(catalogLoader.load()).thenReturn(CATALOG);
         when(ruleLoader.load()).thenReturn(realShapedRules());
+        when(wardDirectoryLoader.load()).thenReturn(new ImportWardDirectory(java.util.List.of()));
         when(patientBlindIndex.existingBlinds(any())).thenReturn(java.util.Set.of());
 
         when(staging.insertJob(any()))
@@ -204,7 +209,8 @@ class RealDictValidationReportTest {
                                 crypto,
                                 patientBlindIndex,
                                 new FormDerivedEngine(),
-                                json));
+                                json,
+                                wardDirectoryLoader));
 
         long jobId =
                 stagingService.createJob(
@@ -244,7 +250,8 @@ class RealDictValidationReportTest {
                         crypto,
                         patientBlindIndex,
                         new FormDerivedEngine(),
-                        json);
+                        json,
+                        wardDirectoryLoader);
         byte[] report = validation.annotatedReport(jobId);
         Map<String, String> parts = unzip(report);
         String sheet = parts.get("xl/worksheets/sheet2.xml");
@@ -352,7 +359,7 @@ class RealDictValidationReportTest {
                                                         FieldType.TEXT,
                                                         false,
                                                         false))));
-        return new ImportFieldRules(baseline, followup, "f002");
+        return new ImportFieldRules(baseline, followup, "f002", null);
     }
 
     private static ImportFieldRule rule(

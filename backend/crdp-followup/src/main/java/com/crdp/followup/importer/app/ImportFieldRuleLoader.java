@@ -16,7 +16,8 @@ import org.springframework.stereotype.Service;
  * §12④「按字段字典做类型、范围、选项、必填与跨字段校验」）。
  *
  * <p>口径与 {@link ImportFieldCatalogLoader}（E18-T01 表头目录）同源：BASELINE / FOLLOWUP 各取第一张表单、 字段按 sortNo
- * 排回字典顺序、「原表列名」锚点从帮助说明解析（OQ-72）。病案号字段按显示名「病案号」定位（身份列）。 调用需租户上下文（字段字典在租户库）。
+ * 排回字典顺序、「原表列名」锚点从帮助说明解析（OQ-72）。病案号字段按显示名「病案号」定位（身份列）； 「病区/中心」字段按显示名定位（E18-T04
+ * 病区值映射的接线点：该字段的取值来自病区字典而非固定选项集，A-WARD-006）。 调用需租户上下文（字段字典在租户库）。
  */
 @Service
 public class ImportFieldRuleLoader {
@@ -25,6 +26,9 @@ public class ImportFieldRuleLoader {
     private static final Pattern ORIGINAL_HEADER = Pattern.compile("原表列名「(.+?)」");
 
     private static final String MRN_LABEL = "病案号";
+
+    /** 「病区/中心」字段显示名（A-WARD-006 的字段名，V38 种子 f007；该字段的取值来自病区字典而非固定选项集）。 */
+    private static final String WARD_LABEL = "病区/中心";
 
     private final FieldDictionaryService dictionary;
 
@@ -35,11 +39,12 @@ public class ImportFieldRuleLoader {
         this.dictionary = dictionary;
     }
 
-    /** 一套校验规则：基线与随访两份 + 病案号字段键。 */
+    /** 一套校验规则：基线与随访两份 + 病案号、病区/中心字段键。 */
     public record ImportFieldRules(
             List<ImportFieldRule> baselineRules,
             List<ImportFieldRule> followupRules,
-            String mrnFieldKey) {
+            String mrnFieldKey,
+            String wardFieldKey) {
 
         public ImportFieldRules {
             baselineRules = List.copyOf(baselineRules);
@@ -69,7 +74,7 @@ public class ImportFieldRuleLoader {
         }
     }
 
-    /** 加载当前租户的校验规则。 */
+    /** 加载当前租户的校验规则（病区/中心字段按显示名定位，E18-T04 病区值映射的接线点）。 */
     public ImportFieldRules load() {
         String baselineForm = firstFormCode("BASELINE");
         String followupForm = firstFormCode("FOLLOWUP");
@@ -81,7 +86,13 @@ public class ImportFieldRuleLoader {
                         .findFirst()
                         .map(ImportFieldRule::fieldKey)
                         .orElse(null);
-        return new ImportFieldRules(baseline, followup, mrnKey);
+        String wardKey =
+                baseline.stream()
+                        .filter(rule -> WARD_LABEL.equals(rule.label()))
+                        .findFirst()
+                        .map(ImportFieldRule::fieldKey)
+                        .orElse(null);
+        return new ImportFieldRules(baseline, followup, mrnKey, wardKey);
     }
 
     private String firstFormCode(String usage) {

@@ -11,6 +11,8 @@ import com.crdp.followup.importer.domain.ImportCellValidator.Checked;
 import com.crdp.followup.importer.domain.ImportFieldRule;
 import com.crdp.followup.importer.domain.ImportIssue;
 import com.crdp.followup.importer.domain.ImportIssue.Level;
+import com.crdp.followup.importer.domain.ImportWardDirectory;
+import com.crdp.followup.importer.domain.ImportWardDirectory.Resolution;
 import com.crdp.followup.importer.domain.WideFrontColumns;
 import com.crdp.followup.importer.domain.WideLayoutAdapter;
 import com.crdp.followup.importer.infra.mapper.ImportStagingMapper;
@@ -39,8 +41,9 @@ import org.springframework.stereotype.Service;
  *
  * <p>校验（{@link #validate}，预检流程内调用或单独重跑，幂等——重跑先清旧问题）： 按字段字典做类型、范围、选项、必填与跨字段校验（{@link
  * ImportCellValidator}，Q36 / Q37 口径）， 宽表前置列与基线列比对（以基线列为准，不一致警告），派生字段与重算结果比对（{@link
- * FormDerivedEngine}，以重算结果为准，不一致警告，A 规格 §4「派生字段有原值」行）； 按盲索引做跨行检查——文件内病案号重复、病案号已存在于系统（重复，确认时选更新 /
- * 跳过，A-PAT-018）、 长表「同一病案号 + 随访年度出现两行」「随访行病案号不在基线表」（报错，A 规格 §4 验收原文）。 问题落 imp_issue（followup
+ * FormDerivedEngine}，以重算结果为准，不一致警告，A 规格 §4「派生字段有原值」行）； 「病区/中心」字段按病区字典与别名映射解析（E18-T04 /
+ * A-WARD-006：未映射、已停用、一值多区报错——未映射值导入前必须处理）； 按盲索引做跨行检查——文件内病案号重复、病案号已存在于系统（重复，确认时选更新 / 跳过，A-PAT-018）、
+ * 长表「同一病案号 + 随访年度出现两行」「随访行病案号不在基线表」（报错，A 规格 §4 验收原文）。 问题落 imp_issue（followup
  * V71），供导入向导（E18-T06）分页展示与确认门控（E18-T05：有 ERROR 时 confirm 40001）。
  *
  * <p>批注版报告（{@link #annotatedReport}）：从暂存行重建源工作表（表头 + 单元格原文与坐标都在 imp_row 密文里，E18-T02 的暂存形态），
@@ -64,6 +67,7 @@ public class ImportValidationService {
     private final PatientBlindIndexService patientBlindIndex;
     private final FormDerivedEngine derivedEngine;
     private final ObjectMapper json;
+    private final ImportWardDirectoryLoader wardDirectoryLoader;
 
     public ImportValidationService(
             ImportStagingMapper staging,
@@ -71,13 +75,15 @@ public class ImportValidationService {
             CryptoService crypto,
             PatientBlindIndexService patientBlindIndex,
             FormDerivedEngine derivedEngine,
-            ObjectMapper json) {
+            ObjectMapper json,
+            ImportWardDirectoryLoader wardDirectoryLoader) {
         this.staging = staging;
         this.ruleLoader = ruleLoader;
         this.crypto = crypto;
         this.patientBlindIndex = patientBlindIndex;
         this.derivedEngine = derivedEngine;
         this.json = json;
+        this.wardDirectoryLoader = wardDirectoryLoader;
     }
 
     /** 校验结果摘要（向导页统计「错误 / 警告」；患者行 = 宽表行 + 长表基线行）。 */
@@ -136,11 +142,13 @@ public class ImportValidationService {
 
     // ---------------------------------------------------------------- 校验主体
 
-    /** 全量校验（读暂存行 → 解密 → 逐行 / 跨行校验）。 */
+    /** 全量校验（读暂存行 → 解密 → 逐行 / 跨行校验；病区字典快照一次，E18-T04）。 */
     private ValidationResult validatePayloads(
             JobRow job, ImportFieldRules rules, List<StagedPayload> payloads) {
         List<ImportIssue> issues = new ArrayList<>();
-        Validator validator = new Validator(rules, issues, sheetColumnIndex(payloads));
+        Validator validator =
+                new Validator(
+                        rules, issues, sheetColumnIndex(payloads), wardDirectoryLoader.load());
         long patientRows = 0;
         long followupRows = 0;
         for (StagedPayload staged : payloads) {
@@ -261,20 +269,23 @@ public class ImportValidationService {
 
     // ---------------------------------------------------------------- 行级校验
 
-    /** 一次校验的可变上下文（问题累加 + 跨行索引）。 */
+    /** 一次校验的可变上下文（问题累加 + 跨行索引 + 病区字典快照）。 */
     private final class Validator {
 
         private final ImportFieldRules rules;
         private final List<ImportIssue> issues;
         private final Map<String, Map<String, Integer>> sheetColumns;
+        private final ImportWardDirectory wardDirectory;
 
         Validator(
                 ImportFieldRules rules,
                 List<ImportIssue> issues,
-                Map<String, Map<String, Integer>> sheetColumns) {
+                Map<String, Map<String, Integer>> sheetColumns,
+                ImportWardDirectory wardDirectory) {
             this.rules = rules;
             this.issues = issues;
             this.sheetColumns = sheetColumns;
+            this.wardDirectory = wardDirectory;
         }
 
         void wideRow(StagedRow staged, WideRow payload) {
@@ -365,7 +376,10 @@ public class ImportValidationService {
                                             finding.message()));
         }
 
-        /** 字段级校验（值 → 规则，坐标用行内单元格坐标），顺带累计类型化值（派生重算用）。 */
+        /**
+         * 字段级校验（值 → 规则，坐标用行内单元格坐标），顺带累计类型化值（派生重算用）。 「病区/中心」字段（wardFieldKey）不走固定选项集，改走病区字典值映射
+         * （E18-T04 / A-WARD-006）。
+         */
         private void checkValues(
                 String sheetName,
                 int rowNo,
@@ -377,6 +391,10 @@ public class ImportValidationService {
                         ImportFieldRule rule = ruleIndex.get(fieldKey);
                         if (rule == null) {
                             return; // 目录里已没有的字段（字典改版）：无法校验，按原样导入
+                        }
+                        if (fieldKey.equals(rules.wardFieldKey())) {
+                            checkWardValue(sheetName, rowNo, cell, rule, typedSink);
+                            return;
                         }
                         Checked checked = ImportCellValidator.check(rule, cell.toCell());
                         checked.findings()
@@ -531,6 +549,100 @@ public class ImportValidationService {
                                             + "）");
                         }
                     });
+        }
+
+        /**
+         * 病区/中心取值按病区字典解析（编码 / 名称 / 别名，E18-T04 / A-WARD-006）。 未映射、对应病区已停用、一值多区都报
+         * <strong>ERROR</strong>——未映射值导入前必须处理（tasks.csv 验收；有 ERROR 确认提交被拦， E18-T05）；
+         * 空值不在这里报（必填为空按历史导入口径仅警告，由通用路径产出 REQUIRED_EMPTY）； 匹配成功把病区 id 记为类型化值（E18-T05 提交写
+         * pt_patient.ward_id 用同一映射）。
+         */
+        private void checkWardValue(
+                String sheetName,
+                int rowNo,
+                CellValue cell,
+                ImportFieldRule rule,
+                Map<String, Object> typedSink) {
+            String raw = cell.toCell().normalized();
+            if (raw == null) {
+                ImportCellValidator.check(rule, cell.toCell())
+                        .findings()
+                        .forEach(
+                                finding ->
+                                        add(
+                                                sheetName,
+                                                rowNo,
+                                                cell,
+                                                rule.headerName(),
+                                                finding.code(),
+                                                finding.level(),
+                                                finding.message()));
+                return;
+            }
+            Resolution resolution = wardDirectory.resolve(raw);
+            switch (resolution.status()) {
+                case MATCHED -> {
+                    if (typedSink != null) {
+                        typedSink.put(rule.fieldKey(), resolution.ward().id());
+                    }
+                }
+                case UNMAPPED ->
+                        add(
+                                sheetName,
+                                rowNo,
+                                cell,
+                                rule.headerName(),
+                                ImportIssue.CODE_WARD_UNMAPPED,
+                                Level.ERROR,
+                                "取值「"
+                                        + raw
+                                        + "」不在病区/中心字典内（可为："
+                                        + wardSummary()
+                                        + "）；请修正原表，或在病区管理为对应病区维护该别名映射后再导入");
+                case DISABLED ->
+                        add(
+                                sheetName,
+                                rowNo,
+                                cell,
+                                rule.headerName(),
+                                ImportIssue.CODE_WARD_DISABLED,
+                                Level.ERROR,
+                                "取值「"
+                                        + raw
+                                        + "」对应的病区「"
+                                        + resolution.ward().name()
+                                        + "」已停用，不能导入；请先在病区管理恢复该病区，或修正原表");
+                case AMBIGUOUS -> {
+                    StringBuilder names = new StringBuilder();
+                    resolution
+                            .candidates()
+                            .forEach(
+                                    ward -> {
+                                        if (names.length() > 0) {
+                                            names.append("、");
+                                        }
+                                        names.append(ward.name());
+                                    });
+                    add(
+                            sheetName,
+                            rowNo,
+                            cell,
+                            rule.headerName(),
+                            ImportIssue.CODE_WARD_AMBIGUOUS,
+                            Level.ERROR,
+                            "取值「"
+                                    + raw
+                                    + "」同时匹配多个病区（"
+                                    + names
+                                    + "），无法确定唯一归属；请在病区管理修正编码 / 名称 / 别名后重新预检");
+                }
+            }
+        }
+
+        /** 未映射提示的候选病区清单（启用病区，截断与选项提示同口径）。 */
+        private String wardSummary() {
+            String summary = wardDirectory.enabledSummary(ImportWardDirectory.SUMMARY_LIMIT);
+            return summary.isEmpty() ? "（病区字典为空，请先在病区管理建病区）" : summary;
         }
 
         /** 病案号身份检查（空 = 错误，钉在病案号单元格上）。 */
