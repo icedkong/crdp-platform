@@ -144,6 +144,25 @@ export function initialLocations(
   return preset ? preset.map((item) => ({ ...item })) : [];
 }
 
+/**
+ * E16-T13 / E16-T14 修改位置差异（PUT { add, remove }）：next 相对 initial 新增的进
+ * add、消失的进 remove（按四元组匹配，模板版本不参与——remove 口径与后端一致）；
+ * 无变化时两者皆空（调用方不发起请求）。
+ */
+export function locationDiff(
+  initial: ReportLocationInput[],
+  next: ReportLocationInput[],
+): { add: ReportLocationInput[]; remove: ReportLocationInput[] } {
+  return {
+    add: next.filter(
+      (item) => !initial.some((old) => sameReportLocation(old, item)),
+    ),
+    remove: initial.filter(
+      (item) => !next.some((now) => sameReportLocation(item, now)),
+    ),
+  };
+}
+
 // ------------------------------------------- E16-T03 多附件（A-ATT-004、C-SCAN-006）
 
 /**

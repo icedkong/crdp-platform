@@ -859,6 +859,9 @@ defineExpose({ anchors, focusFirstError, scrollTo, validate });
           </div>
         </div>
       </div>
+      <!-- E16-T14 分类末尾作用域插槽（category { key, label }）：随访分组末尾的
+           附件缩略图条（InlineAttachmentStrip）等位置级内容由调用方注入 -->
+      <slot :category="category" name="category-end" />
     </section>
   </div>
 </template>

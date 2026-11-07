@@ -1,8 +1,14 @@
 <script lang="ts" setup>
-import type { FormSchema, PatientTimelineEntry } from '@crdp/api';
+import type {
+  FormSchema,
+  PatientTimelineEntry,
+  ReportLocationInput,
+} from '@crdp/api';
 import type { CategoryProgress } from '@crdp/rules';
 
-import { computed, onMounted, ref, watch } from 'vue';
+import type { AttachmentNavItem } from '#/reference/types';
+
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 
 import {
   PATIENT_STATUS_TEXT,
@@ -31,8 +37,10 @@ import { fetchFormSchema } from '#/api/core/form';
 import { fetchRecordDetail } from '#/api/core/task';
 import { useBreakpoint } from '#/reference/use-breakpoint';
 
-import { jumpToAnchor } from './anchor-nav';
+import { flashAnchor, jumpToAnchor } from './anchor-nav';
+import { itemsAtRecord } from './attachment-nav-logic';
 import CategoryBar from './category-bar.vue';
+import InlineAttachmentStrip from './inline-attachment-strip.vue';
 
 /**
  * E15-T07 / A-FU-023、C-FU-023（components.md §9）：患者详情「随访记录」页签右侧内容。
@@ -51,6 +59,9 @@ import CategoryBar from './category-bar.vue';
  * 下拉 + 底部抽屉（CategoryBar select 形态）。标红数随 E17（compareRules）接入。
  */
 const props = defineProps<{
+  /** E16-T14：所在位置附件（分组 / 整条记录末尾缩略图条；空数组不渲染）。 */
+  attachments?: AttachmentNavItem[];
+  canUpload?: boolean;
   entries: PatientTimelineEntry[];
   /** v-model：当前展开的记录（一次只展开一条；null = 全部收起）。 */
   expandedRecordId?: null | string;
@@ -59,7 +70,9 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (event: 'open', entry: PatientTimelineEntry): void;
+  (event: 'openAttachment', reportId: string): void;
   (event: 'update:expandedRecordId', id: null | string): void;
+  (event: 'uploadAt', preset: ReportLocationInput[]): void;
 }>();
 
 /** 颜色全部取自 tokens（不写魔法数）；stylelint 不认 v-bind()，走 CSS 变量注入。 */
@@ -224,6 +237,93 @@ function jumpRecordSection(key: string) {
   recordActiveKey.value = key;
   jumpToAnchor(key, document);
 }
+
+// ---------------------------------------------------------------- E16-T14 附件条与记录内定位
+
+/** 某分组末尾的附件（左栏同源条目，同一报告单在每个所在位置各出现一次）。 */
+function sectionItems(recordId: string, anchorKey: string) {
+  return itemsAtRecord(props.attachments ?? [], recordId, anchorKey);
+}
+
+/** 整条记录末尾的附件（只含整条挂靠位置；分组附件显示在各自分组末尾）。 */
+function wholeRecordItems(recordId: string) {
+  return itemsAtRecord(props.attachments ?? [], recordId);
+}
+
+/** 条内「上传附件」预选该位置（模板版本由上传对话框按位置树带出回填）。 */
+function stripPreset(
+  recordId: string,
+  anchorKey?: string,
+): ReportLocationInput[] {
+  return [
+    {
+      ...(anchorKey ? { anchorKey } : {}),
+      anchorTemplateVersion: 0,
+      anchorType: anchorKey ? 'section' : null,
+      linkRecordId: recordId,
+      linkType: 'followup_record',
+    },
+  ];
+}
+
+/** 展开记录容器 DOM id（locateInRecord 整条记录滚动目标）。 */
+function recordDomId(recordId: string) {
+  return `crdp-record-${recordId}`;
+}
+
+/** 待定位请求（记录异步加载完成后重放：滚到分组锚点或记录顶部并高亮）。 */
+const pendingLocate = ref<null | { anchorKey?: string; recordId: string }>(
+  null,
+);
+
+/**
+ * E16-T14 左栏位置标签跳转入口（患者详情页经模板 ref 调用）：确保时间轴视图、
+ * 展开该记录（v-model）、等记录渲染后滚到分组锚点（anchorKey 缺省滚到记录顶部）
+ * 并高亮 2 秒（A-PAT-020「点标签跳到该位置」）。
+ */
+function locateInRecord(recordId: string, anchorKey?: string) {
+  setView('timeline');
+  if (props.expandedRecordId !== recordId) {
+    emit('update:expandedRecordId', recordId);
+  }
+  pendingLocate.value = { anchorKey, recordId };
+  void resolvePendingLocate();
+}
+
+async function resolvePendingLocate() {
+  const pending = pendingLocate.value;
+  if (!pending) return;
+  if (props.expandedRecordId !== pending.recordId) return;
+  if (recordLoading.value || !recordSchema.value) {
+    await nextTick();
+    return; // 记录仍在加载：加载完成的 watch 会再次触发
+  }
+  await nextTick();
+  const container = document.querySelector(`#${recordDomId(pending.recordId)}`);
+  if (!container) {
+    pendingLocate.value = null;
+    return;
+  }
+  // 分组锚点不存在（模板改版 / 整条记录）时回落到记录顶部
+  const target = pending.anchorKey
+    ? (container.querySelector(`#crdp-anchor-${pending.anchorKey}`) ??
+      container)
+    : container;
+  target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  flashAnchor(target, document.defaultView);
+  if (pending.anchorKey) recordActiveKey.value = pending.anchorKey;
+  pendingLocate.value = null;
+}
+
+watch(
+  [() => props.expandedRecordId, recordSchema, recordLoading],
+  () => {
+    void resolvePendingLocate();
+  },
+  { flush: 'post' },
+);
+
+defineExpose({ locateInRecord });
 
 const jumpOptions = computed(() =>
   props.entries.map((entry, index) => ({
@@ -397,9 +497,11 @@ const tableRows = computed(() =>
             <p v-if="entry.note" class="note">{{ entry.note }}</p>
           </Card>
 
-          <!-- E13-T11 展开的随访记录：顶部吸顶分组条 + FormRenderer 只读内容 -->
+          <!-- E13-T11 展开的随访记录：顶部吸顶分组条 + FormRenderer 只读内容；
+               E16-T14 各分组末尾与整条记录末尾显示所在位置附件缩略图条 -->
           <div
             v-if="entry.recordId && entry.recordId === expandedRecordId"
+            :id="recordDomId(entry.recordId)"
             class="record-expand"
             :data-testid="`record-expand-${entry.recordId}`"
           >
@@ -438,6 +540,27 @@ const tableRows = computed(() =>
                 :schema="recordSchema"
                 mode="readonly"
                 @progress="recordProgress = $event"
+              >
+                <template #category-end="{ category }">
+                  <InlineAttachmentStrip
+                    :can-upload="canUpload"
+                    :items="sectionItems(entry.recordId ?? '', category.key)"
+                    @open="emit('openAttachment', $event)"
+                    @upload="
+                      emit(
+                        'uploadAt',
+                        stripPreset(entry.recordId ?? '', category.key),
+                      )
+                    "
+                  />
+                </template>
+              </FormRenderer>
+              <!-- 整条记录末尾（只含整条挂靠位置；分组附件在各自分组末尾） -->
+              <InlineAttachmentStrip
+                :can-upload="canUpload"
+                :items="wholeRecordItems(entry.recordId ?? '')"
+                @open="emit('openAttachment', $event)"
+                @upload="emit('uploadAt', stripPreset(entry.recordId ?? ''))"
               />
             </template>
           </div>

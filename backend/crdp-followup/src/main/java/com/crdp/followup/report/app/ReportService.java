@@ -193,7 +193,7 @@ public class ReportService {
             String anchorKey,
             int anchorTemplateVersion) {}
 
-    /** 患者内报告单行（含位置标签与附件数；AttachmentNav 完整形态随 E16-T14）。 */
+    /** 患者内报告单行（含位置标签、附件数与首附件；AttachmentNav 消费，E16-T14）。 */
     public record ReportItemView(
             String id,
             String patientId,
@@ -209,7 +209,14 @@ public class ReportService {
             String creatorName,
             String createdAt,
             long fileCount,
+            FirstFileView firstFile,
             List<LocationTagView> locations) {}
+
+    /**
+     * 首个附件（E16-T14 左栏附件导航 / 各位置内联缩略图数据源）：图片经预览短时链接出缩略图， 非图片出文件类型图标；无附件为 null。口径与全院检索行 firstFile
+     * 一致（sort_no 最小一条）。
+     */
+    public record FirstFileView(String fileId, String format) {}
 
     /** 位置标签（recordLabel / anchorLabel 供列表与左栏直接显示；ID 序列化为字符串）。 */
     public record LocationTagView(
@@ -1303,6 +1310,12 @@ public class ReportService {
         for (FileCountRow row : mapper.fileCountsOfPatient(patientId)) {
             fileCounts.put(row.reportId(), row.fileCount());
         }
+        Map<Long, FirstFileView> firstFiles = new LinkedHashMap<>();
+        for (ReportMapper.FirstFileRow row : mapper.firstFilesOfPatient(patientId)) {
+            firstFiles.putIfAbsent(
+                    row.reportId(),
+                    new FirstFileView(String.valueOf(row.fileId()), row.formatCode()));
+        }
         List<ReportItemView> items = new ArrayList<>();
         for (ReportRow row : mapper.reportsOfPatient(patientId)) {
             List<LocationTagView> locations = tags.getOrDefault(row.id(), List.of());
@@ -1331,6 +1344,7 @@ public class ReportService {
                             row.creatorName(),
                             row.createdAt(),
                             fileCounts.getOrDefault(row.id(), 0L),
+                            firstFiles.get(row.id()),
                             locations));
         }
         return new ReportsView(String.valueOf(patientId), normalized, items);

@@ -119,7 +119,13 @@ export interface ReportBatchCreatedView {
   reports: ReportCreatedView[];
 }
 
-/** 患者内报告单行（报告单页签列表；左栏附件导航完整形态随 E16-T14）。 */
+/** 首附件（患者内清单行，E16-T14：缩略图 / 文件图标数据源；口径同全院检索行）。 */
+export interface ReportFirstFile {
+  fileId: string;
+  format: string;
+}
+
+/** 患者内报告单行（报告单页签列表；左栏附件导航消费，E16-T14）。 */
 export interface ReportRow {
   conclusion: null | string;
   createdAt: string;
@@ -127,6 +133,7 @@ export interface ReportRow {
   digitizeStatus: null | string;
   fileCount: number;
   findings: null | string;
+  firstFile: null | ReportFirstFile;
   id: string;
   locations: ReportLocationTag[];
   name: null | string;

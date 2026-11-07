@@ -55,6 +55,9 @@ public interface ReportMapper {
     /** 附件计数行。 */
     record FileCountRow(Long reportId, Long fileCount) {}
 
+    /** 首个附件行（E16-T14 左栏 / 内联缩略图数据源；服务层按 report_id 取 sort_no 最小一条）。 */
+    record FirstFileRow(long reportId, long fileId, String formatCode) {}
+
     /** 报告单头行（E16-T07 映射写入：类型 / 名称快照 / 报告时间）。 */
     record ReportHeadRow(
             Long id,
@@ -194,6 +197,21 @@ public interface ReportMapper {
             GROUP BY f.report_id
             """)
     List<FileCountRow> fileCountsOfPatient(@Param("patientId") long patientId);
+
+    /**
+     * 某患者的首个附件行（@DataScope 出行，越范围空清单）。文件可见性以 sys_file.status 为准 （与附件计数同口径）；无附件的报告单不出行，服务层置 null。
+     */
+    @DataScope(resource = "patient")
+    @Select(
+            """
+            SELECT f.report_id AS reportId, f.file_id AS fileId, sf.format_code AS formatCode
+            FROM rpt_report_file f
+            JOIN pt_patient pt ON pt.id = f.patient_id AND pt.deleted = 0
+            JOIN sys_file sf ON sf.id = f.file_id AND sf.status <> 'DELETED'
+            WHERE f.patient_id = #{patientId}
+            ORDER BY f.report_id ASC, f.sort_no ASC, f.id ASC
+            """)
+    List<FirstFileRow> firstFilesOfPatient(@Param("patientId") long patientId);
 
     /** 患者的随访记录行（位置树用；含 DRAFT——整页表单录入中即可上传，pages.md §6.1 入口）。 */
     @DataScope(resource = "patient")

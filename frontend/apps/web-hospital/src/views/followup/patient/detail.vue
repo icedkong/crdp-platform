@@ -12,7 +12,9 @@ import type {
   ReportRow,
 } from '@crdp/api';
 
-import { computed, onMounted, ref, watch } from 'vue';
+import type { ReportLocation } from '#/reference/types';
+
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import {
@@ -59,6 +61,7 @@ import {
 
 import { fetchPatientBaseline, setBaselineLock } from '#/api/core/baseline';
 import { deleteContactLog, fetchPatientContacts } from '#/api/core/contact';
+import { getFilePreviewUrl } from '#/api/core/file';
 import { fetchFormSchema } from '#/api/core/form';
 import {
   fetchPatientContactInfo,
@@ -73,19 +76,30 @@ import {
   categoryHash,
   jumpToAnchor,
   parseCategoryHash,
+  parseRecordHash,
+  recordHash,
 } from '#/components/followup/anchor-nav';
+import {
+  itemsAtBaselineAnchor,
+  thumbnailFileOf,
+  toNavItems,
+} from '#/components/followup/attachment-nav-logic';
+import AttachmentNav from '#/components/followup/attachment-nav.vue';
 import AudioPlayer from '#/components/followup/audio-player.vue';
 import BackfillRecordModal from '#/components/followup/backfill-record-modal.vue';
 import BatchUploadDialog from '#/components/followup/batch-upload-dialog.vue';
 import CategoryBar from '#/components/followup/category-bar.vue';
 import ContactLogModal from '#/components/followup/contact-log-modal.vue';
+import { downloadFileById } from '#/components/followup/file-download';
 import FollowupTimeline from '#/components/followup/followup-timeline.vue';
+import InlineAttachmentStrip from '#/components/followup/inline-attachment-strip.vue';
 import PatientHeader from '#/components/followup/patient-header.vue';
 import ReasonModal from '#/components/followup/reason-modal.vue';
 import {
   reportDeleteLabel,
   reportDeleteNote,
 } from '#/components/followup/report-delete-logic';
+import ReportLocationModal from '#/components/followup/report-location-modal.vue';
 import {
   buildReportTree,
   findTreeNode,
@@ -97,7 +111,10 @@ import TempTaskModal from '#/components/followup/temp-task-modal.vue';
 import TransferWardModal from '#/components/followup/transfer-ward-modal.vue';
 import UnplannedRecordModal from '#/components/followup/unplanned-record-modal.vue';
 import UploadReportDialog from '#/components/followup/upload-report-dialog.vue';
+import WatermarkPreview from '#/components/followup/watermark-preview.vue';
+import { useBreakpoint } from '#/reference/use-breakpoint';
 import { usePermission } from '#/reference/use-permission';
+import { useWatermarkViewer } from '#/reference/use-watermark-viewer';
 
 defineOptions({ name: 'FollowupPatientDetail' });
 
@@ -117,6 +134,8 @@ defineOptions({ name: 'FollowupPatientDetail' });
 const route = useRoute();
 const router = useRouter();
 const { hasPermission } = usePermission();
+// E16-T14：左栏布局形态（桌面左栏 / 平板与手机收为「附件（n）」抽屉入口）
+const { isDesktop } = useBreakpoint();
 
 const loading = ref(true);
 const loadFailed = ref(false);
@@ -251,6 +270,8 @@ const baselineBarItems = computed(() =>
       (item) => item.key === section.code,
     );
     return {
+      // E16-T14：分类条 📎 计数 = 挂在该分类下的报告单数（A-PAT-020）
+      attachmentCount: baselineAnchorItems(section.code).length,
       filled: progress?.filled ?? 0,
       key: section.code,
       label: section.label,
@@ -279,6 +300,7 @@ function jumpToBaselineCategory(key: string) {
 watch(
   [baselineBarItems, () => route.hash],
   ([items, hash]) => {
+    if (parseRecordHash(String(hash ?? '')).recordId) return; // 随访位置 hash 走 #rec 重放
     const key = parseCategoryHash(String(hash ?? ''));
     if (!key) return;
     if (!items.some((item) => item.key === key)) return;
@@ -403,6 +425,7 @@ async function loadReports() {
   try {
     const page = await fetchPatientReports(patientId.value, 'all');
     reports.value = page.items;
+    void loadNavThumbnails(page.items);
   } catch {
     reports.value = [];
   } finally {
@@ -410,9 +433,16 @@ async function loadReports() {
   }
 }
 
-// 切到报告单页签时加载（患者档案的一部分，不随首屏拉取；上传成功后也走这里刷新）
+// 切到基线 / 随访 / 报告单页签时加载（左栏附件导航与内联缩略图共用一份 all 清单；
+// 不随首屏拉取，上传 / 修改位置成功后也走这里刷新）
 watch([tab, loading], ([current, isLoading]) => {
-  if (current === 'reports' && !isLoading && overview.value) {
+  if (
+    (current === 'baseline' ||
+      current === 'followup' ||
+      current === 'reports') &&
+    !isLoading &&
+    overview.value
+  ) {
     void loadReports();
   }
 });
@@ -456,6 +486,145 @@ const followupUploadPreset = computed<ReportLocationInput[] | undefined>(() =>
 
 function handleReportCreated() {
   void loadReports();
+}
+
+// ------------------------------ E16-T14 左栏附件导航与各位置内联缩略图（A-PAT-020 / C-PAT-017）
+
+/** 图片首附件 → 预览短时链接（≤ 5 分钟、写审计；懒加载、不跨会话缓存）。 */
+const thumbnailUrls = ref<Record<string, string>>({});
+
+async function loadNavThumbnails(rows: ReportRow[]) {
+  const targets = rows
+    .map((row) => ({ fileId: thumbnailFileOf(row)?.fileId, row }))
+    .filter(
+      (item): item is { fileId: string; row: ReportRow } =>
+        item.fileId !== undefined && !thumbnailUrls.value[item.fileId],
+    );
+  await Promise.all(
+    targets.map(async ({ fileId }) => {
+      try {
+        const grant = await getFilePreviewUrl(fileId);
+        thumbnailUrls.value = { ...thumbnailUrls.value, [fileId]: grant.url };
+      } catch {
+        // 换不到链接时降级为文件类型图标（不阻塞导航）
+      }
+    }),
+  );
+}
+
+/** 附件导航条目（缩略图 URL 就绪后回填；无位置条目进两侧「未指定位置」组）。 */
+const navItems = computed(() =>
+  toNavItems(reports.value).map((item) => {
+    const row = reports.value.find((report) => report.id === item.reportId);
+    const fileId = row ? thumbnailFileOf(row)?.fileId : undefined;
+    return fileId && thumbnailUrls.value[fileId]
+      ? { ...item, thumbnailUrl: thumbnailUrls.value[fileId] }
+      : item;
+  }),
+);
+
+/** 基线某分类末尾的附件（内联缩略图条 + 分类条 📎 计数同源）。 */
+function baselineAnchorItems(anchorKey: string) {
+  return itemsAtBaselineAnchor(navItems.value, anchorKey);
+}
+
+// 左栏位置标签跳转：基线滚到分类锚点（分类条同步高亮、写 #cat=<key>）；随访经
+// FollowupTimeline.locateInRecord 展开该记录并滚到分组锚点 / 记录顶部（写
+// #rec=<id>&cat=<key>；A-PAT-020「点标签跳到该位置」，抽屉模式组件内先关抽屉）。
+function handleNavLocate(location: ReportLocation) {
+  if (location.linkType === 'followup_record' && location.linkRecordId) {
+    void locateFollowup(location.linkRecordId, location.anchorKey);
+    return;
+  }
+  if (location.anchorKey) jumpToBaselineCategory(location.anchorKey);
+}
+
+/** 随访时间轴模板 ref（locateInRecord 展开记录并滚动定位）。 */
+const timelineRef = ref<null | {
+  locateInRecord: (id: string, key?: string) => void;
+}>(null);
+
+let lastFollowupHash = '';
+
+async function locateFollowup(recordId: string, anchorKey?: string) {
+  if (tab.value !== 'followup') tab.value = 'followup';
+  lastFollowupHash = recordHash(recordId, anchorKey);
+  if (route.hash !== lastFollowupHash) {
+    void router.push({ hash: lastFollowupHash });
+  }
+  await nextTick();
+  timelineRef.value?.locateInRecord(recordId, anchorKey);
+}
+
+// 分享 / 后退进来的 #rec=<id>&cat=<key> 重放（面板挂载后执行；只对有效记录生效）
+watch(
+  [() => route.hash, tab, timeline],
+  ([hash, current]) => {
+    const { anchorKey, recordId } = parseRecordHash(String(hash ?? ''));
+    if (!recordId) return;
+    if (current !== 'followup') return;
+    if (!timeline.value.some((entry) => entry.recordId === recordId)) return;
+    if (recordHash(recordId, anchorKey ?? undefined) === lastFollowupHash)
+      return;
+    void locateFollowup(recordId, anchorKey ?? undefined);
+  },
+  { immediate: true },
+);
+
+// ------------------------------ E16-T14 修改 / 指定位置（E16-T13 接口，A-ATT-020 / C-SCAN-020）
+
+/** 修改位置弹窗目标（「未指定位置」组「指定位置」与条目 ⋮ 菜单共用）。 */
+const locationEditOpen = ref(false);
+const locationEditTarget = ref<null | {
+  id: string;
+  label: string;
+  locations: ReportRow['locations'];
+}>(null);
+
+function openLocationEdit(reportId: string) {
+  const row = reports.value.find((report) => report.id === reportId);
+  if (!row) return;
+  locationEditTarget.value = {
+    id: row.id,
+    label: reportDeleteLabel(row),
+    locations: row.locations,
+  };
+  locationEditOpen.value = true;
+}
+
+function handleLocationsChanged() {
+  void loadReports(); // 位置标签 / 「未指定位置」组随清单刷新
+}
+
+// ------------------------------ E16-T14 附件预览（E16-T06 全屏查看器 + 水印）
+
+const watermarkViewer = useWatermarkViewer();
+const previewOpen = ref(false);
+const previewFiles = ref<
+  Array<{ fileId: string; format: string; name: string }>
+>([]);
+
+/** 左栏 / 内联缩略图 → 全屏查看器打开首附件（带水印；无附件给出提示）。 */
+function openAttachmentPreview(reportId: string) {
+  const row = reports.value.find((report) => report.id === reportId);
+  if (!row?.firstFile) {
+    message.info('该报告单暂无可预览的附件');
+    return;
+  }
+  previewFiles.value = [
+    {
+      fileId: row.firstFile.fileId,
+      format: row.firstFile.format,
+      name: row.name ?? row.typeName,
+    },
+  ];
+  previewOpen.value = true;
+}
+
+/** 查看器「下载」：换 5 分钟签名链接（后端写 DOWNLOAD 审计）交给浏览器。 */
+async function handlePreviewDownload(fileId: number | string) {
+  const ok = await downloadFileById(fileId);
+  if (!ok) message.error('下载失败，请稍后重试');
 }
 
 // ------------------------------ E16-T04 双树浏览（按类型 / 按时间，A-ATT-010 / C-SCAN-013）
@@ -763,245 +932,290 @@ const timelineLegendNote =
       <TabPane key="contacts" tab="沟通记录" />
     </Tabs>
 
-    <div v-if="tab === 'baseline'" class="main" data-testid="baseline-panel">
-      <!-- E13-T11 / A-PAT-021：右侧内容顶部吸顶分类条（已填 / 应填，未填完橙色；
+    <div
+      v-if="tab === 'baseline'"
+      class="tab-layout"
+      :class="[{ 'tab-layout-stacked': !isDesktop }]"
+      data-testid="baseline-panel"
+    >
+      <!-- E16-T14 / A-PAT-020：左栏只做报告单 / 附件导航（宽 240 可收起；平板「附件（n）」
+           左抽屉、手机底部抽屉由组件内处理）；点标签跳该位置、点本体跳第一个位置、
+           无位置报告单在「未指定位置」组补指定 -->
+      <AttachmentNav
+        :can-upload="canUploadReport"
+        :items="navItems"
+        :patient-id="patientId"
+        scope="baseline"
+        @edit-location="openLocationEdit"
+        @locate="handleNavLocate"
+        @open="openAttachmentPreview"
+        @upload="openReportUpload()"
+      />
+      <div class="main">
+        <!-- E13-T11 / A-PAT-021：右侧内容顶部吸顶分类条（已填 / 应填，未填完橙色；
            点击滚到该分类并高亮 2 秒，位置写入地址；平板横向滚动、手机下拉） -->
-      <CategoryBar
-        v-if="baselineBarItems.length > 0"
-        v-model:active-key="baselineActiveKey"
-        class="baseline-bar"
-        :items="baselineBarItems"
-        data-testid="baseline-category-bar"
-        spy
-        @jump="jumpToBaselineCategory"
-      />
-      <Alert
-        v-if="baselineLockBannerText"
-        class="notice"
-        data-testid="baseline-lock-banner"
-        :message="baselineLockBannerText"
-        type="warning"
-        show-icon
-      />
-      <div class="toolbar">
-        <Tooltip
-          v-if="canEditPatient && !editEnabled"
-          :title="BASELINE_LOCKED_TOOLTIP"
-        >
-          <Button data-testid="baseline-edit" disabled>编辑</Button>
-        </Tooltip>
-        <Button
-          v-else-if="canEditPatient"
-          data-testid="baseline-edit"
-          type="primary"
-          @click="openBaselineEdit"
-        >
-          编辑
-        </Button>
-        <Button
-          v-if="unlockVisible"
-          data-testid="baseline-unlock"
-          :loading="lockSubmitting"
-          @click="unlockOpen = true"
-        >
-          解锁
-        </Button>
-        <Button
-          v-else-if="lockVisible"
-          data-testid="baseline-lock"
-          :loading="lockSubmitting"
-          @click="confirmBaselineLock"
-        >
-          锁定
-        </Button>
-      </div>
-      <Descriptions
-        bordered
-        :column="{ xs: 1, sm: 1, md: 2, xl: 3 }"
-        size="middle"
-        title="基线信息（出院登记）"
-      >
-        <DescriptionsItem label="姓名（脱敏）">
-          {{ overview.name }}
-        </DescriptionsItem>
-        <DescriptionsItem label="编号（脱敏）">
-          {{ overview.patientNo }}
-        </DescriptionsItem>
-        <DescriptionsItem label="原系统编号">
-          {{ overview.legacyNo ?? '—' }}
-        </DescriptionsItem>
-        <DescriptionsItem label="随访编号">
-          {{ overview.visitNo ?? '—' }}
-        </DescriptionsItem>
-        <DescriptionsItem label="性别">
-          {{ genderText(overview.gender) }}
-        </DescriptionsItem>
-        <DescriptionsItem label="年龄（手术时）">
-          {{ overview.age ?? '—' }}
-        </DescriptionsItem>
-        <DescriptionsItem label="病区">
-          {{ overview.deptName ? `${overview.deptName} · ` : ''
-          }}{{ overview.wardName ?? '—' }}
-        </DescriptionsItem>
-        <DescriptionsItem label="负责医生">
-          {{ overview.responsibleName ?? '—' }}
-        </DescriptionsItem>
-        <DescriptionsItem label="患者类型">
-          {{ overview.patientType ?? '—' }}
-        </DescriptionsItem>
-        <DescriptionsItem label="手术日期">
-          {{ overview.surgeryDate ?? '—' }}
-        </DescriptionsItem>
-        <DescriptionsItem label="入院日期">
-          {{ overview.admissionDate ?? '—' }}
-        </DescriptionsItem>
-        <DescriptionsItem label="出院日期">
-          {{ overview.dischargeDate ?? '—' }}
-        </DescriptionsItem>
-        <DescriptionsItem label="出院状态">
-          {{ dischargeStatusLabel }}
-        </DescriptionsItem>
-        <DescriptionsItem label="基线资料完整度">
-          {{ completenessText(overview.baselineCompleteness) }}
-        </DescriptionsItem>
-        <DescriptionsItem label="随访资料完整度">
-          {{ completenessText(overview.followupCompleteness) }}
-        </DescriptionsItem>
-      </Descriptions>
-
-      <Descriptions
-        bordered
-        :column="{ xs: 1, sm: 1, md: 2, xl: 3 }"
-        size="middle"
-        title="计划与随访（随入组与随访记录写入更新）"
-      >
-        <DescriptionsItem label="下次随访">
-          {{ nextVisitText(overview) }}
-        </DescriptionsItem>
-        <DescriptionsItem label="最近随访">
-          {{ latestFollowupText(overview) }}
-        </DescriptionsItem>
-        <DescriptionsItem v-if="overview.latestFollowup" label="生存状态">
-          {{ survivalStatusText(overview.latestFollowup.survivalStatus) }}
-        </DescriptionsItem>
-      </Descriptions>
-
-      <section
-        v-for="section in baselineSectionViews"
-        :id="`crdp-anchor-${section.code}`"
-        :key="section.code"
-        class="baseline-section"
-        :data-testid="`baseline-section-${section.code}`"
-      >
-        <h3 class="section-title">
-          {{ section.label }}
-          <span class="section-meta">
-            {{ section.progressText }} · {{ section.statusText }}
-            <template v-if="section.hasDraft"> · 有未保存草稿</template>
-            <template v-if="section.updatedBy">
-              · {{ section.updatedBy }} 保存于
-              {{ section.updatedAt?.slice(0, 10) ?? '' }}
-            </template>
-          </span>
-          <!-- E16-T02 / A-ATT-001：分类内直接添加，预选该分类位置 -->
-          <Button
-            v-if="canUploadReport"
-            class="section-upload"
-            size="small"
-            type="link"
-            @click="openReportUpload(baselineUploadPreset(section.code))"
-          >
-            上传附件
-          </Button>
-        </h3>
-        <FormRenderer
-          :model-value="section.data"
-          :schema="section.schema"
-          mode="readonly"
+        <CategoryBar
+          v-if="baselineBarItems.length > 0"
+          v-model:active-key="baselineActiveKey"
+          class="baseline-bar"
+          :items="baselineBarItems"
+          data-testid="baseline-category-bar"
+          spy
+          @jump="jumpToBaselineCategory"
         />
-      </section>
-      <p v-if="baseline && baselineSectionViews.length === 0" class="hint">
-        基线分节尚未填写：点「编辑」按分类补录（A-PAT-003
-        可分次补录、先暂存后保存）。
-      </p>
-      <p class="hint">
-        分节字段值按模板只读展示；字段修改历史与锁定 /
-        解锁留痕可在操作日志查询（随报告单页签后的日志入口开放）。
-      </p>
+        <Alert
+          v-if="baselineLockBannerText"
+          class="notice"
+          data-testid="baseline-lock-banner"
+          :message="baselineLockBannerText"
+          type="warning"
+          show-icon
+        />
+        <div class="toolbar">
+          <Tooltip
+            v-if="canEditPatient && !editEnabled"
+            :title="BASELINE_LOCKED_TOOLTIP"
+          >
+            <Button data-testid="baseline-edit" disabled>编辑</Button>
+          </Tooltip>
+          <Button
+            v-else-if="canEditPatient"
+            data-testid="baseline-edit"
+            type="primary"
+            @click="openBaselineEdit"
+          >
+            编辑
+          </Button>
+          <Button
+            v-if="unlockVisible"
+            data-testid="baseline-unlock"
+            :loading="lockSubmitting"
+            @click="unlockOpen = true"
+          >
+            解锁
+          </Button>
+          <Button
+            v-else-if="lockVisible"
+            data-testid="baseline-lock"
+            :loading="lockSubmitting"
+            @click="confirmBaselineLock"
+          >
+            锁定
+          </Button>
+        </div>
+        <Descriptions
+          bordered
+          :column="{ xs: 1, sm: 1, md: 2, xl: 3 }"
+          size="middle"
+          title="基线信息（出院登记）"
+        >
+          <DescriptionsItem label="姓名（脱敏）">
+            {{ overview.name }}
+          </DescriptionsItem>
+          <DescriptionsItem label="编号（脱敏）">
+            {{ overview.patientNo }}
+          </DescriptionsItem>
+          <DescriptionsItem label="原系统编号">
+            {{ overview.legacyNo ?? '—' }}
+          </DescriptionsItem>
+          <DescriptionsItem label="随访编号">
+            {{ overview.visitNo ?? '—' }}
+          </DescriptionsItem>
+          <DescriptionsItem label="性别">
+            {{ genderText(overview.gender) }}
+          </DescriptionsItem>
+          <DescriptionsItem label="年龄（手术时）">
+            {{ overview.age ?? '—' }}
+          </DescriptionsItem>
+          <DescriptionsItem label="病区">
+            {{ overview.deptName ? `${overview.deptName} · ` : ''
+            }}{{ overview.wardName ?? '—' }}
+          </DescriptionsItem>
+          <DescriptionsItem label="负责医生">
+            {{ overview.responsibleName ?? '—' }}
+          </DescriptionsItem>
+          <DescriptionsItem label="患者类型">
+            {{ overview.patientType ?? '—' }}
+          </DescriptionsItem>
+          <DescriptionsItem label="手术日期">
+            {{ overview.surgeryDate ?? '—' }}
+          </DescriptionsItem>
+          <DescriptionsItem label="入院日期">
+            {{ overview.admissionDate ?? '—' }}
+          </DescriptionsItem>
+          <DescriptionsItem label="出院日期">
+            {{ overview.dischargeDate ?? '—' }}
+          </DescriptionsItem>
+          <DescriptionsItem label="出院状态">
+            {{ dischargeStatusLabel }}
+          </DescriptionsItem>
+          <DescriptionsItem label="基线资料完整度">
+            {{ completenessText(overview.baselineCompleteness) }}
+          </DescriptionsItem>
+          <DescriptionsItem label="随访资料完整度">
+            {{ completenessText(overview.followupCompleteness) }}
+          </DescriptionsItem>
+        </Descriptions>
+
+        <Descriptions
+          bordered
+          :column="{ xs: 1, sm: 1, md: 2, xl: 3 }"
+          size="middle"
+          title="计划与随访（随入组与随访记录写入更新）"
+        >
+          <DescriptionsItem label="下次随访">
+            {{ nextVisitText(overview) }}
+          </DescriptionsItem>
+          <DescriptionsItem label="最近随访">
+            {{ latestFollowupText(overview) }}
+          </DescriptionsItem>
+          <DescriptionsItem v-if="overview.latestFollowup" label="生存状态">
+            {{ survivalStatusText(overview.latestFollowup.survivalStatus) }}
+          </DescriptionsItem>
+        </Descriptions>
+
+        <section
+          v-for="section in baselineSectionViews"
+          :id="`crdp-anchor-${section.code}`"
+          :key="section.code"
+          class="baseline-section"
+          :data-testid="`baseline-section-${section.code}`"
+        >
+          <h3 class="section-title">
+            {{ section.label }}
+            <span class="section-meta">
+              {{ section.progressText }} · {{ section.statusText }}
+              <template v-if="section.hasDraft"> · 有未保存草稿</template>
+              <template v-if="section.updatedBy">
+                · {{ section.updatedBy }} 保存于
+                {{ section.updatedAt?.slice(0, 10) ?? '' }}
+              </template>
+            </span>
+            <!-- E16-T02 / A-ATT-001：分类内直接添加，预选该分类位置 -->
+            <Button
+              v-if="canUploadReport"
+              class="section-upload"
+              size="small"
+              type="link"
+              @click="openReportUpload(baselineUploadPreset(section.code))"
+            >
+              上传附件
+            </Button>
+          </h3>
+          <FormRenderer
+            :model-value="section.data"
+            :schema="section.schema"
+            mode="readonly"
+          />
+          <!-- E16-T14 / A-PAT-020：分类末尾显示位于此处的附件缩略图（点开带水印查看器） -->
+          <InlineAttachmentStrip
+            :items="baselineAnchorItems(section.code)"
+            @open="openAttachmentPreview"
+            @upload="openReportUpload(baselineUploadPreset(section.code))"
+          />
+        </section>
+        <p v-if="baseline && baselineSectionViews.length === 0" class="hint">
+          基线分节尚未填写：点「编辑」按分类补录（A-PAT-003
+          可分次补录、先暂存后保存）。
+        </p>
+        <p class="hint">
+          分节字段值按模板只读展示；字段修改历史与锁定 /
+          解锁留痕可在操作日志查询（随报告单页签后的日志入口开放）。
+        </p>
+      </div>
     </div>
 
     <div
       v-else-if="tab === 'followup'"
-      class="main"
+      class="tab-layout"
+      :class="[{ 'tab-layout-stacked': !isDesktop }]"
       data-testid="followup-panel"
     >
-      <Alert
-        class="notice"
-        :message="timelineLegendNote"
-        type="info"
-        show-icon
+      <!-- E16-T14 / C-PAT-017：随访记录页签左栏同一附件导航（按随访记录分组，新的在上） -->
+      <AttachmentNav
+        :can-upload="canUploadReport"
+        :items="navItems"
+        :patient-id="patientId"
+        scope="followup"
+        @edit-location="openLocationEdit"
+        @locate="handleNavLocate"
+        @open="openAttachmentPreview"
+        @upload="openReportUpload(followupUploadPreset)"
       />
-      <div class="toolbar">
-        <Tooltip v-if="followupTerminated" title="患者不在随访中">
-          <Button disabled>历史补录</Button>
-        </Tooltip>
-        <Button
-          v-else-if="canEditRecord"
-          data-testid="backfill-create"
-          @click="backfillOpen = true"
-        >
-          历史补录
-        </Button>
-        <!-- A-FU-023「中间该子计划的任务列表，可临时添加任务」：时间轴工具栏入口 -->
-        <Tooltip v-if="followupTerminated" title="患者不在随访中">
-          <Button disabled>添加任务</Button>
-        </Tooltip>
-        <Button
-          v-else-if="canEditRecord"
-          data-testid="temp-task-create"
-          @click="tempTaskOpen = true"
-        >
-          添加任务
-        </Button>
-        <!-- E16-T02 / A-ATT-001：随访记录内直接添加；展开记录时预选整条记录 -->
-        <Tooltip
-          :title="
-            expandedRecordId
-              ? undefined
-              : '先展开一条随访记录，可预选该记录为位置'
-          "
-        >
+      <div class="main">
+        <Alert
+          class="notice"
+          :message="timelineLegendNote"
+          type="info"
+          show-icon
+        />
+        <div class="toolbar">
+          <Tooltip v-if="followupTerminated" title="患者不在随访中">
+            <Button disabled>历史补录</Button>
+          </Tooltip>
           <Button
-            v-if="canUploadReport"
-            data-testid="followup-upload-report"
-            @click="openReportUpload(followupUploadPreset)"
+            v-else-if="canEditRecord"
+            data-testid="backfill-create"
+            @click="backfillOpen = true"
           >
-            上传附件
+            历史补录
           </Button>
-        </Tooltip>
+          <!-- A-FU-023「中间该子计划的任务列表，可临时添加任务」：时间轴工具栏入口 -->
+          <Tooltip v-if="followupTerminated" title="患者不在随访中">
+            <Button disabled>添加任务</Button>
+          </Tooltip>
+          <Button
+            v-else-if="canEditRecord"
+            data-testid="temp-task-create"
+            @click="tempTaskOpen = true"
+          >
+            添加任务
+          </Button>
+          <!-- E16-T02 / A-ATT-001：随访记录内直接添加；展开记录时预选整条记录 -->
+          <Tooltip
+            :title="
+              expandedRecordId
+                ? undefined
+                : '先展开一条随访记录，可预选该记录为位置'
+            "
+          >
+            <Button
+              v-if="canUploadReport"
+              data-testid="followup-upload-report"
+              @click="openReportUpload(followupUploadPreset)"
+            >
+              上传附件
+            </Button>
+          </Tooltip>
+        </div>
+        <FollowupTimeline
+          ref="timelineRef"
+          :attachments="navItems"
+          :can-upload="canUploadReport"
+          v-model:expanded-record-id="expandedRecordId"
+          :entries="timeline"
+          :patient-id="overview.id"
+          @open="openTimelineNode"
+          @open-attachment="openAttachmentPreview"
+          @upload-at="(preset) => openReportUpload(preset)"
+        />
+        <BackfillRecordModal
+          v-model:open="backfillOpen"
+          :patient-id="overview.id"
+          @created="onRecordCreated"
+        />
+        <TempTaskModal
+          v-model:open="tempTaskOpen"
+          :patient-id="overview.id"
+          :patient-label="overview.name"
+          @created="onTempTaskCreated"
+        />
+        <UnplannedRecordModal
+          v-model:open="unplannedOpen"
+          :patient-id="overview.id"
+          @created="onRecordCreated"
+        />
       </div>
-      <FollowupTimeline
-        v-model:expanded-record-id="expandedRecordId"
-        :entries="timeline"
-        :patient-id="overview.id"
-        @open="openTimelineNode"
-      />
-      <BackfillRecordModal
-        v-model:open="backfillOpen"
-        :patient-id="overview.id"
-        @created="onRecordCreated"
-      />
-      <TempTaskModal
-        v-model:open="tempTaskOpen"
-        :patient-id="overview.id"
-        :patient-label="overview.name"
-        @created="onTempTaskCreated"
-      />
-      <UnplannedRecordModal
-        v-model:open="unplannedOpen"
-        :patient-id="overview.id"
-        @created="onRecordCreated"
-      />
     </div>
 
     <div v-else-if="tab === 'reports'" class="main" data-testid="reports-panel">
@@ -1092,7 +1306,8 @@ const timelineLegendNote =
           </Table>
           <p class="hint">
             位置标签「基线 · 分类」「第N年随访 ·
-            分组」；行内预览与右侧详情需报告单文件清单接口（随后续任务）；行内「删除」为软删除、须填原因（E16-T09），删除单个附件的入口随附件导航（E16-T14）。
+            分组」；「未指定位置」的报告单在基线 /
+            随访页签左栏的「未指定位置」组补指定位置（E16-T14）；行内「删除」为软删除、须填原因（E16-T09），逐文件预览与删除需报告单文件清单接口（随后续任务）。
           </p>
         </div>
       </div>
@@ -1250,6 +1465,25 @@ const timelineLegendNote =
       placeholder="必填，如：上传错误，重复上传"
       @confirm="handleReportDelete"
     />
+
+    <!-- E16-T14 / A-ATT-020、C-SCAN-020：修改 / 指定位置（PUT locations，E16-T13 接口） -->
+    <ReportLocationModal
+      v-if="locationEditTarget"
+      v-model:open="locationEditOpen"
+      :patient-id="patientId"
+      :report="locationEditTarget"
+      @success="handleLocationsChanged"
+    />
+
+    <!-- E16-T14 附件预览（E16-T06 全屏查看器：缩放 / 旋转 / 翻转 / 水印，带水印口径） -->
+    <WatermarkPreview
+      :can-download="canDownload"
+      :files="previewFiles"
+      :open="previewOpen"
+      :viewer="watermarkViewer"
+      @download="handlePreviewDownload"
+      @update:open="previewOpen = $event"
+    />
   </div>
 </template>
 
@@ -1269,6 +1503,23 @@ const timelineLegendNote =
 
 .main {
   padding: 16px;
+}
+
+/* E16-T14 / A-PAT-020：基线 / 随访页签 = 左栏附件导航（240，组件自带收起）+ 右侧内容；
+   平板 / 手机收成「附件（n）」抽屉入口，纵向排在右侧内容顶部 */
+.tab-layout {
+  display: flex;
+  gap: 0;
+  align-items: stretch;
+}
+
+.tab-layout > .main {
+  flex: 1;
+  min-width: 0;
+}
+
+.tab-layout-stacked {
+  flex-direction: column;
 }
 
 /* E16-T02 基线分类标题旁「上传附件」 */

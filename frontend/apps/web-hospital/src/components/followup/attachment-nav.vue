@@ -11,6 +11,13 @@ import { useBreakpoint } from '#/reference/use-breakpoint';
 
 import AttachmentNavList from './attachment-nav-list.vue';
 
+/**
+ * E16-T14 / A-PAT-020、C-PAT-017（components.md §5 AttachmentNav）：基线 / 随访
+ * 页签左栏附件导航容器——桌面 240px 侧栏（v-model:collapsed 可收起成 24px 细条），
+ * 平板「附件（n）」左侧抽屉（320）、手机底部抽屉（70vh）；点位置标签 locate 跳到
+ * 该位置（抽屉模式先关抽屉再跳）、点报告单本体跳第一个位置、无位置走 open；
+ * 「未指定位置」警示组与分组结构由 #/reference/group 给出。
+ */
 const props = defineProps<{
   canUpload?: boolean;
   items: AttachmentNavItem[];
@@ -19,6 +26,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
+  editLocation: [reportId: string];
   locate: [location: ReportLocation];
   open: [reportId: string];
   upload: [];
@@ -26,7 +34,7 @@ const emit = defineEmits<{
 
 const { isDesktop, isMobile } = useBreakpoint();
 const drawerOpen = ref(false);
-const collapsed = ref(false);
+const collapsed = defineModel<boolean>('collapsed', { default: false });
 
 const scopedItems = computed(() => itemsForScope(props.items, props.scope));
 const groups = computed(() =>
@@ -63,6 +71,7 @@ function locate(location: ReportLocation) {
       :can-upload="canUpload"
       :empty-text="emptyText"
       :groups="groups"
+      @edit-location="emit('editLocation', $event)"
       @locate="locate"
       @open="emit('open', $event)"
       @upload="emit('upload')"
@@ -83,6 +92,7 @@ function locate(location: ReportLocation) {
         :can-upload="canUpload"
         :empty-text="emptyText"
         :groups="groups"
+        @edit-location="emit('editLocation', $event)"
         @locate="locate"
         @open="emit('open', $event)"
         @upload="emit('upload')"

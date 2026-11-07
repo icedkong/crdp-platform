@@ -7,8 +7,16 @@ import type {
 
 import { StatusTag } from '@crdp/status-tag';
 import { colors } from '@crdp/tokens';
-import { Button, Empty, Tag } from 'ant-design-vue';
+import { Button, Dropdown, Empty, Menu, MenuItem, Tag } from 'ant-design-vue';
 
+/**
+ * E16-T14 / A-PAT-020、C-PAT-017（components.md §5 AttachmentNavList）：左栏导航
+ * 列表体——类型分组带数量、每份报告单只出现一次且下方列出全部位置标签、缩略图与
+ * 电子化状态随行；「未指定位置」警示组每份带「指定位置」入口（有上传权限才显示，
+ * emit edit-location(reportId)，E16-T13 修改位置接口补指定）；条目 ⋮ 菜单：
+ * 预览（open）、修改位置（edit-location，followup:scan:upload——逐文件下载 /
+ * 删除需报告单文件清单接口，随后续任务开放）。
+ */
 defineProps<{
   canUpload?: boolean;
   emptyText: string;
@@ -16,6 +24,7 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
+  editLocation: [reportId: string];
   locate: [location: ReportLocation];
   open: [reportId: string];
   upload: [];
@@ -44,27 +53,43 @@ function chip(location: ReportLocation) {
       :style="{ color: group.warning ? colors.warning : undefined }"
     >
       <span>{{ group.title }}</span>
-      <Button
-        v-if="group.warning && canUpload"
-        size="small"
-        type="link"
-        @click="emit('upload')"
-      >
-        指定位置
-      </Button>
     </div>
     <template v-if="group.children?.length">
       <div v-for="child in group.children" :key="child.key" class="child">
         <div class="group-title">{{ child.title }}</div>
         <div v-for="item in child.items" :key="item.reportId" class="item">
-          <button class="name" type="button" @click="openItem(item)">
-            <img v-if="item.thumbnailUrl" alt="" :src="item.thumbnailUrl" />
-            <span>{{ item.name }}</span>
-            <StatusTag
-              v-if="item.digitizeStatus"
-              :status="item.digitizeStatus"
-            />
-          </button>
+          <div class="row">
+            <button class="name" type="button" @click="openItem(item)">
+              <img
+                v-if="item.thumbnailUrl"
+                alt=""
+                loading="lazy"
+                :src="item.thumbnailUrl"
+              />
+              <span>{{ item.name }}</span>
+              <StatusTag
+                v-if="item.digitizeStatus"
+                :status="item.digitizeStatus"
+              />
+            </button>
+            <Dropdown trigger="click">
+              <Button class="more" size="small" type="text">⋮</Button>
+              <template #overlay>
+                <Menu>
+                  <MenuItem key="preview" @click="emit('open', item.reportId)">
+                    预览
+                  </MenuItem>
+                  <MenuItem
+                    v-if="canUpload"
+                    key="edit-location"
+                    @click="emit('editLocation', item.reportId)"
+                  >
+                    修改位置
+                  </MenuItem>
+                </Menu>
+              </template>
+            </Dropdown>
+          </div>
           <div class="locs">
             <Tag
               v-for="(location, index) in item.locations"
@@ -79,11 +104,36 @@ function chip(location: ReportLocation) {
       </div>
     </template>
     <div v-for="item in group.items" :key="item.reportId" class="item">
-      <button class="name" type="button" @click="openItem(item)">
-        <img v-if="item.thumbnailUrl" alt="" :src="item.thumbnailUrl" />
-        <span>{{ item.name }}</span>
-        <StatusTag v-if="item.digitizeStatus" :status="item.digitizeStatus" />
-      </button>
+      <div class="row">
+        <button class="name" type="button" @click="openItem(item)">
+          <img
+            v-if="item.thumbnailUrl"
+            alt=""
+            loading="lazy"
+            :src="item.thumbnailUrl"
+          />
+          <span>{{ item.name }}</span>
+          <StatusTag v-if="item.digitizeStatus" :status="item.digitizeStatus" />
+        </button>
+        <!-- E16-T14 ⋮ 菜单：预览 / 修改位置（下载与逐文件删除需报告单文件清单接口） -->
+        <Dropdown trigger="click">
+          <Button class="more" size="small" type="text">⋮</Button>
+          <template #overlay>
+            <Menu>
+              <MenuItem key="preview" @click="emit('open', item.reportId)">
+                预览
+              </MenuItem>
+              <MenuItem
+                v-if="canUpload"
+                key="edit-location"
+                @click="emit('editLocation', item.reportId)"
+              >
+                修改位置
+              </MenuItem>
+            </Menu>
+          </template>
+        </Dropdown>
+      </div>
       <div class="locs">
         <Tag
           v-for="(location, index) in item.locations"
@@ -93,6 +143,16 @@ function chip(location: ReportLocation) {
         >
           {{ chip(location) }}
         </Tag>
+        <!-- E16-T14 未指定位置组：经 E16-T13 add 补指定（A-ATT-020 / C-SCAN-020） -->
+        <Button
+          v-if="group.warning && canUpload"
+          class="assign"
+          size="small"
+          type="link"
+          @click="emit('editLocation', item.reportId)"
+        >
+          指定位置
+        </Button>
       </div>
     </div>
   </div>
@@ -119,6 +179,17 @@ function chip(location: ReportLocation) {
   margin: 6px 0 6px 8px;
 }
 
+.row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.more {
+  flex: none;
+  color: #8c8c8c;
+}
+
 .name {
   display: flex;
   gap: 6px;
@@ -137,8 +208,15 @@ function chip(location: ReportLocation) {
   border-radius: 4px;
 }
 
-.loc {
+.locs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
   margin-top: 4px;
-  cursor: pointer;
+}
+
+.assign {
+  padding: 0;
 }
 </style>

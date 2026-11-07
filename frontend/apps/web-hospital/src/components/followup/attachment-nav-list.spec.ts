@@ -9,6 +9,7 @@ import type {
 } from '#/reference/types';
 
 import { mount } from '@vue/test-utils';
+import { nextTick } from 'vue';
 
 import { colors } from '@crdp/tokens';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -121,7 +122,7 @@ describe('e16-t12 AttachmentNavList（左栏导航列表）', () => {
     expect(wrapper.emitted('locate')?.[0]?.[0]).toEqual(wholeRecord);
   });
 
-  it('「未指定位置」警示组：组名橙色样式钩子，有上传权限时提供「指定位置」，无权限不显示', async () => {
+  it('「未指定位置」警示组：组名橙色样式钩子；「指定位置」逐份 emit edit-location（E16-T13 补指定），无权限不显示', async () => {
     const groups: AttachmentGroup[] = [
       {
         items: [
@@ -155,11 +156,49 @@ describe('e16-t12 AttachmentNavList（左栏导航列表）', () => {
       .filter((node) => node.text().replaceAll(' ', '').includes('指定位置'));
     expect(buttons).toHaveLength(1);
     await buttons.at(0)?.trigger('click');
-    expect(allowed.emitted('upload')).toHaveLength(1);
+    expect(allowed.emitted('editLocation')?.[0]).toEqual(['r2']);
+    expect(allowed.emitted('upload')).toBeUndefined();
     // 无位置的报告单点本体 → open（交给报告单详情 / 修改位置），不误抛 locate
     await allowed.find('.name').trigger('click');
     expect(allowed.emitted('open')?.[0]).toEqual(['r2']);
     expect(allowed.emitted('locate')).toBeUndefined();
+  });
+
+  it('e16-T14 ⋮ 菜单：预览 → open；「修改位置」有上传权限才出现 → edit-location', async () => {
+    const groups: AttachmentGroup[] = [
+      {
+        items: [item({ locations: [echoChip], reportId: 'r1' })],
+        key: '心脏超声',
+        title: '心脏超声（1）',
+      },
+    ];
+
+    async function openMenu(wrapper: ReturnType<typeof mountList>) {
+      await wrapper.find('.more').trigger('click');
+      await nextTick();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await nextTick();
+      return [...document.body.querySelectorAll('.ant-dropdown-menu-item')];
+    }
+
+    const denied = mountList(structuredClone(groups));
+    let items = await openMenu(denied);
+    expect(items.map((node) => node.textContent?.trim())).toEqual(['预览']);
+    (items[0] as HTMLElement).click();
+    await nextTick();
+    expect(denied.emitted('open')?.[0]).toEqual(['r1']);
+    expect(denied.emitted('editLocation')).toBeUndefined();
+
+    document.body.innerHTML = '';
+    const allowed = mountList(structuredClone(groups), { canUpload: true });
+    items = await openMenu(allowed);
+    expect(items.map((node) => node.textContent?.trim())).toEqual([
+      '预览',
+      '修改位置',
+    ]);
+    (items[1] as HTMLElement).click();
+    await nextTick();
+    expect(allowed.emitted('editLocation')?.[0]).toEqual(['r1']);
   });
 
   it('随访分组（children）：记录组下再按类型，跨记录报告单在每条记录下各出现一次', () => {
