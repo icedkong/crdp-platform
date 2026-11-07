@@ -1,6 +1,7 @@
 package com.crdp.followup.report.app;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -738,6 +739,7 @@ class ReportServiceTest {
                                         null,
                                         null,
                                         null,
+                                        1,
                                         0,
                                         OPERATOR,
                                         "管理员（示例）",
@@ -754,6 +756,7 @@ class ReportServiceTest {
                                         null,
                                         null,
                                         null,
+                                        0,
                                         0,
                                         OPERATOR,
                                         "管理员（示例）",
@@ -790,6 +793,8 @@ class ReportServiceTest {
         assertEquals("第2年随访 2026-06-10", echo.locations().get(1).recordLabel());
         assertEquals("超声复查", echo.locations().get(1).anchorLabel());
         assertTrue(echo.locations().get(1).adjusted(), "退回标记随 E16-T15 维护，读出口先带出");
+        assertTrue(echo.locationAdjusted(), "报告单级「原位置已调整」标记（V66，E16-T15）");
+        assertFalse(all.items().get(1).locationAdjusted(), "未退回的报告单不带标记");
 
         ReportService.ReportsView baselineOnly = service.reportsOf(PATIENT, "baseline");
         assertEquals(1, baselineOnly.items().size(), "只保留含基线位置的报告单");
@@ -1195,6 +1200,7 @@ class ReportServiceTest {
         assertEquals(PATIENT, linkCaptor.getValue().patientId(), "子表冗余 patient_id 与报告单一致");
         assertEquals(2, linkCaptor.getValue().templateVersion(), "分组锚点版本 = 记录固化版本");
         verify(mapper).deleteLink(900L, "baseline", null, "category", "case");
+        verify(mapper).clearReportLocationAdjusted(900L);
         verify(mapper).bumpVersion(900L, OPERATOR);
 
         ArgumentCaptor<AuditEntry> captor = ArgumentCaptor.forClass(AuditEntry.class);
@@ -1238,6 +1244,7 @@ class ReportServiceTest {
 
         assertEquals(1, view.locationCount());
         verify(mapper, never()).deleteLink(anyLong(), anyString(), any(), anyString(), anyString());
+        verify(mapper).clearReportLocationAdjusted(900L);
         verify(mapper).bumpVersion(900L, OPERATOR);
         verify(audit)
                 .append(

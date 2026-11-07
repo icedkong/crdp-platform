@@ -205,6 +205,7 @@ public class ReportService {
             String conclusion,
             String note,
             String digitizeStatus,
+            boolean locationAdjusted,
             int version,
             String creatorName,
             String createdAt,
@@ -536,6 +537,10 @@ public class ReportService {
                     remove.linkRecordId(),
                     remove.anchorType(),
                     remove.anchorKey());
+        }
+        if (!adds.isEmpty()) {
+            // E16-T15：用户 add 重新指定位置后清报告单级「原位置已调整」提示（纯移除不清——退回事实仍待处置）
+            mapper.clearReportLocationAdjusted(reportId);
         }
         mapper.bumpVersion(reportId, operator);
 
@@ -1285,7 +1290,8 @@ public class ReportService {
         return roots;
     }
 
-    private String recordTitle(RecordRow record) {
+    /** 记录标题（「第2年随访 2026-06-10」；退回作业 E16-T15 的日志描述共用，包内可见）。 */
+    static String recordTitle(RecordRow record) {
         String label =
                 record.nodeName() != null
                         ? record.nodeName()
@@ -1340,6 +1346,7 @@ public class ReportService {
                             row.conclusion(),
                             row.note(),
                             row.digitizeStatus(),
+                            row.locationAdjusted() != null && row.locationAdjusted() > 0,
                             row.version() == null ? 0 : row.version(),
                             row.creatorName(),
                             row.createdAt(),
