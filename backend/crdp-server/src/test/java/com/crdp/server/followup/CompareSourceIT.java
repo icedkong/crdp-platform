@@ -124,7 +124,8 @@ class CompareSourceIT {
 
     /**
      * 验收位（tasks.csv E17-T02「第 1 年与基线对比」）：第 1 年任务记录（此前无已提交随访）的 previous 回落 基线出院前超声（f102 EF 55、f103
-     * LVDd 52，分节当前值）；无基线分节的患者 previous 为空。
+     * LVDd 52，分节当前值）；无基线分节的患者 previous 为空。 E17-T05 起 Q41 全量预置（17 条）， 回落字段白名单多了 new_thrombus 的
+     * f113（f114 出院前二尖瓣反流量仍不在任何启用规则的回落列）。
      */
     @Test
     void firstYearComparesAgainstBaselineEcho() {
@@ -132,7 +133,7 @@ class CompareSourceIT {
         String doctor = hospitalToken("demoa", "doctor.demo", PASSWORD);
         long planId = publishedCyclePlan(hospitalToken("demoa", "nurse.demo", PASSWORD));
         long patientId = registerPatient("demoa", doctor, "P1", today.minusDays(20));
-        seedBaselineEcho(patientId, "{\"f102\":55,\"f103\":52,\"f113\":0}");
+        seedBaselineEcho(patientId, "{\"f102\":55,\"f103\":52,\"f113\":0,\"f114\":3}");
         long taskId = enrollCurrentTask("demoa", patientId, planId);
         String recordId = startTask(doctor, taskId);
 
@@ -141,7 +142,11 @@ class CompareSourceIT {
         assertNull(previous.get("recordId"), "基线回落不带记录定位");
         assertEquals(55, ((Number) valuesOf(previous).get("f102")).intValue(), "出院前 EF");
         assertEquals(52, ((Number) valuesOf(previous).get("f103")).intValue(), "出院前 LVDd");
-        assertNull(valuesOf(previous).get("f113"), "值只取启用规则的回落字段（V67 种子两条）");
+        assertEquals(
+                0,
+                ((Number) valuesOf(previous).get("f113")).intValue(),
+                "值只取启用规则的回落字段（Q41 全量含 new_thrombus 回落 f113）");
+        assertNull(valuesOf(previous).get("f114"), "不在任何启用规则回落列的字段仍不取（白名单口径）");
 
         // 无基线分节：previous 为空（规则求值侧逐条跳过）
         long noBaseline = registerPatient("demoa", doctor, "P1B", today.minusDays(20));
