@@ -10,6 +10,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.util.List;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -78,6 +79,46 @@ public class ReportController {
             @RequestParam(value = "scope", required = false) String scope) {
         return ApiResponse.ok(service.reportsOf(id, scope));
     }
+
+    // ---------------------------------------------------------------- 删除（E16-T09 /
+    // A-ATT-007、C-SCAN-016）
+
+    @Operation(
+            summary =
+                    "删除整份报告单（软删除，A-ATT-007 / C-SCAN-016）：{ reason } 必填（40001）；"
+                            + "status=DELETED + 原因 / 删除人 / 删除时间，附件台账一并软删（预览 / 下载 40400），"
+                            + "数据长期保留；越范围 / 不存在 40400（写 DENIED 审计）、重复删除 40901；写 RPT_DELETE 审计")
+    @DeleteMapping("/reports/{id}")
+    @RequireModule("followup")
+    @RequiresPermission("followup:scan:delete")
+    public ApiResponse<ReportService.DeletedView> delete(
+            @PathVariable("id") long id, @RequestBody(required = false) DeleteBody body) {
+        return ApiResponse.ok(
+                service.delete(
+                        id, new ReportService.DeleteRequest(body == null ? null : body.reason())));
+    }
+
+    @Operation(
+            summary =
+                    "删除报告单中的单个文件（软删除，A-ATT-007）：报告单保留、只软删该附件台账"
+                            + "（sys_file DELETED，预览 / 下载随即 40400）；{ reason } 必填（40001）；"
+                            + "文件不在该报告单 / 已删 40400；写 RPT_FILE_DELETE 审计")
+    @DeleteMapping("/reports/{id}/files/{fileId}")
+    @RequireModule("followup")
+    @RequiresPermission("followup:scan:delete")
+    public ApiResponse<ReportService.DeletedView> deleteFile(
+            @PathVariable("id") long id,
+            @PathVariable("fileId") long fileId,
+            @RequestBody(required = false) DeleteBody body) {
+        return ApiResponse.ok(
+                service.deleteFile(
+                        id,
+                        fileId,
+                        new ReportService.DeleteRequest(body == null ? null : body.reason())));
+    }
+
+    /** 删除请求体：原因必填、≤ 255 字（A-ATT-007「须填写原因」）。 */
+    record DeleteBody(String reason) {}
 
     @Operation(
             summary =

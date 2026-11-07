@@ -95,7 +95,8 @@ class FileDownloadServiceTest {
                         audit,
                         properties,
                         redis,
-                        (FilePreviewService.ContactAudioScopePort) fileId -> {});
+                        (FilePreviewService.ContactAudioScopePort) fileId -> {},
+                        (ReportFileScopePort) fileId -> null);
         lenient().when(redis.opsForValue()).thenReturn(valueOps);
     }
 
@@ -179,7 +180,8 @@ class FileDownloadServiceTest {
                         audit,
                         loose,
                         redis,
-                        (FilePreviewService.ContactAudioScopePort) fileId -> {});
+                        (FilePreviewService.ContactAudioScopePort) fileId -> {},
+                        (ReportFileScopePort) fileId -> null);
         stubRow(row("t/demoa/files/202611/x.pdf", "pdf", "application/pdf", "PENDING"));
 
         FileDownloadService.DownloadGrant grant = capped.downloadUrl(FILE_ID);
@@ -282,6 +284,67 @@ class FileDownloadServiceTest {
         ApiException error =
                 assertThrows(ApiException.class, () -> service.content(token, "10.0.0.8"));
         assertEquals(40400, error.code());
+    }
+
+    // ---------------------------------------------------------------- E16-T09 报告单附件范围与审计上下文
+
+    /** 挂在报告单上的文件：审计描述带「哪份报告单的哪个文件」（A-ATT-006：谁、何时、哪份报告单的哪个文件）。 */
+    @Test
+    void downloadAuditCarriesReportContext() {
+        stubRow(row("t/demoa/files/202611/x.pdf", "pdf", "application/pdf", "ATTACHED"));
+        FileDownloadProperties properties = new FileDownloadProperties();
+        properties.setTtlSeconds(300);
+        properties.setSigningKey(KEY);
+        FileDownloadService withReport =
+                new FileDownloadService(
+                        files,
+                        storage,
+                        signer,
+                        audit,
+                        properties,
+                        redis,
+                        (FilePreviewService.ContactAudioScopePort) fileId -> {},
+                        (ReportFileScopePort)
+                                fileId ->
+                                        new ReportFileScopePort.ReportFileView(
+                                                900L, "ECHO", "心脏超声", "经胸超声心动图（示例）"));
+
+        withReport.downloadUrl(FILE_ID);
+
+        ArgumentCaptor<AuditEntry> captured = ArgumentCaptor.forClass(AuditEntry.class);
+        verify(audit).append(captured.capture());
+        AuditEntry entry = captured.getValue();
+        assertEquals("DOWNLOAD", entry.action());
+        assertTrue(
+                entry.description().contains("报告单：心脏超声 · 经胸超声心动图（示例）（#900）"), entry.description());
+        assertTrue(entry.description().contains("复查报告.pdf"), entry.description());
+    }
+
+    /** 报告单患者越范围：范围守卫 40400 → 不签发、不写审计（不暴露存在，OQ-62① 报告单部分）。 */
+    @Test
+    void downloadOfReportFileOutOfScopeRejected() {
+        stubRow(row("t/demoa/files/202611/x.pdf", "pdf", "application/pdf", "ATTACHED"));
+        FileDownloadProperties properties = new FileDownloadProperties();
+        properties.setTtlSeconds(300);
+        properties.setSigningKey(KEY);
+        FileDownloadService withReport =
+                new FileDownloadService(
+                        files,
+                        storage,
+                        signer,
+                        audit,
+                        properties,
+                        redis,
+                        (FilePreviewService.ContactAudioScopePort) fileId -> {},
+                        (ReportFileScopePort)
+                                fileId -> {
+                                    throw new ApiException(404, 40400, "文件不存在或无权访问");
+                                });
+
+        ApiException error =
+                assertThrows(ApiException.class, () -> withReport.downloadUrl(FILE_ID));
+        assertEquals(40400, error.code());
+        verify(audit, never()).append(any(AuditEntry.class));
     }
 
     // ---------------------------------------------------------------- 工具

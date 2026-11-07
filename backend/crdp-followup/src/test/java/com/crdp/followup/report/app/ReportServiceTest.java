@@ -6,7 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
@@ -954,6 +956,160 @@ class ReportServiceTest {
 
         assertEquals(40001, error.code());
         verify(mapper, never()).insertReport(any());
+    }
+
+    // ---------------------------------------------------------------- 删除（E16-T09 /
+    // A-ATT-007、C-SCAN-016：
+    // 软删除、原因必填、全部记审计）
+
+    /** 原因必填：空 / 空白 40001「请填写删除原因」，不查报告单、不写审计。 */
+    @Test
+    void deleteRejectsBlankReason() {
+        ApiException error =
+                assertThrows(
+                        ApiException.class,
+                        () -> service.delete(900L, new ReportService.DeleteRequest(" ")));
+        assertEquals(40001, error.code());
+        assertTrue(error.getMessage().contains("请填写删除原因"), error.getMessage());
+        verify(mapper, never()).findReport(900L);
+        verify(audit, never()).append(any(AuditEntry.class));
+    }
+
+    /** 越范围 / 不存在的报告单：40400 不暴露存在，写 DENIED 审计（与删除患者同口径）。 */
+    @Test
+    void deleteOutOfScopeWritesDeniedAuditAnd40400() {
+        when(mapper.findReport(900L)).thenReturn(null);
+        ApiException error =
+                assertThrows(
+                        ApiException.class,
+                        () -> service.delete(900L, new ReportService.DeleteRequest("上传错误，删错患者")));
+        assertEquals(40400, error.code());
+        ArgumentCaptor<AuditEntry> captor = ArgumentCaptor.forClass(AuditEntry.class);
+        verify(audit).append(captor.capture());
+        assertEquals("RPT_DELETE", captor.getValue().action());
+        assertEquals("DENIED", captor.getValue().result().name());
+        verify(mapper, never()).softDeleteReport(anyLong(), anyString(), anyLong());
+    }
+
+    /** 删除整份报告单：status=DELETED + 原因 / 删除人落列，附件台账一并软删（sys_file DELETED），审计带原因。 */
+    @Test
+    void deleteSoftDeletesReportWithFilesAndAudits() {
+        when(mapper.findReport(900L))
+                .thenReturn(
+                        new ReportMapper.ReportHeadRow(
+                                900L,
+                                PATIENT,
+                                "ECHO",
+                                "心脏超声",
+                                "经胸超声心动图（示例）",
+                                LocalDate.of(2026, 10, 28)));
+        when(mapper.fileRowsOfReport(900L))
+                .thenReturn(
+                        List.of(
+                                new ReportMapper.ReportFileRow(501L, "echo-1.jpg（示例）"),
+                                new ReportMapper.ReportFileRow(502L, "echo-2.jpg（示例）")));
+        when(mapper.softDeleteReport(900L, "重复上传", OPERATOR)).thenReturn(1);
+
+        ReportService.DeletedView view =
+                service.delete(900L, new ReportService.DeleteRequest("重复上传"));
+
+        assertEquals("900", view.id());
+        assertEquals("DELETED", view.status());
+        verify(mapper).softDeleteReport(900L, "重复上传", OPERATOR);
+        verify(files).markDeleted(501L);
+        verify(files).markDeleted(502L);
+        ArgumentCaptor<AuditEntry> captor = ArgumentCaptor.forClass(AuditEntry.class);
+        verify(audit).append(captor.capture());
+        AuditEntry entry = captor.getValue();
+        assertEquals("RPT_DELETE", entry.action());
+        assertEquals("REPORT", entry.objectType());
+        assertEquals("900", entry.objectId());
+        assertTrue(entry.description().contains("心脏超声"), entry.description());
+        assertTrue(entry.description().contains("经胸超声心动图（示例）"), entry.description());
+        assertTrue(entry.description().contains("原因：重复上传"), entry.description());
+        assertTrue(entry.afterJson().contains("DELETED"), entry.afterJson());
+    }
+
+    /** 并发兜底：校验与更新之间被他人删除（0 行更新）→ 40901，不再软删文件。 */
+    @Test
+    void deleteAlreadyDeletedReportReturns40901() {
+        when(mapper.findReport(900L))
+                .thenReturn(
+                        new ReportMapper.ReportHeadRow(
+                                900L, PATIENT, "ECHO", "心脏超声", null, LocalDate.of(2026, 10, 28)));
+        when(mapper.softDeleteReport(900L, "重复上传", OPERATOR)).thenReturn(0);
+        ApiException error =
+                assertThrows(
+                        ApiException.class,
+                        () -> service.delete(900L, new ReportService.DeleteRequest("重复上传")));
+        assertEquals(40901, error.code());
+        verify(files, never()).markDeleted(anyLong());
+    }
+
+    /** 删除单个文件：sys_file 软删（预览 / 下载随即 40400）、报告单保留，审计带报告单与文件。 */
+    @Test
+    void deleteFileSoftDeletesLedgerAndAudits() {
+        when(mapper.findReport(900L))
+                .thenReturn(
+                        new ReportMapper.ReportHeadRow(
+                                900L,
+                                PATIENT,
+                                "ECHO",
+                                "心脏超声",
+                                "经胸超声心动图（示例）",
+                                LocalDate.of(2026, 10, 28)));
+        when(mapper.findFileOfReport(900L, 501L))
+                .thenReturn(new ReportMapper.ReportFileRow(501L, "echo-1.jpg（示例）"));
+
+        ReportService.DeletedView view =
+                service.deleteFile(900L, 501L, new ReportService.DeleteRequest("附件模糊不可辨识"));
+
+        assertEquals("900", view.id());
+        assertEquals("DELETED", view.status());
+        verify(files).markDeleted(501L);
+        verify(mapper, never()).softDeleteReport(anyLong(), anyString(), anyLong());
+        ArgumentCaptor<AuditEntry> captor = ArgumentCaptor.forClass(AuditEntry.class);
+        verify(audit).append(captor.capture());
+        AuditEntry entry = captor.getValue();
+        assertEquals("RPT_FILE_DELETE", entry.action());
+        assertEquals("REPORT", entry.objectType());
+        assertEquals("900", entry.objectId());
+        assertTrue(entry.description().contains("echo-1.jpg（示例）"), entry.description());
+        assertTrue(entry.description().contains("原因：附件模糊不可辨识"), entry.description());
+    }
+
+    /** 文件不在该报告单（或已删）：40400；报告单越范围同样 40400 + DENIED。 */
+    @Test
+    void deleteFileRejectsMissingFileAndOutOfScopeReport() {
+        when(mapper.findReport(900L)).thenReturn(null);
+        ApiException denied =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.deleteFile(
+                                        900L, 501L, new ReportService.DeleteRequest("误传")));
+        assertEquals(40400, denied.code());
+        verify(audit)
+                .append(
+                        argThat(
+                                entry ->
+                                        entry != null
+                                                && "RPT_FILE_DELETE".equals(entry.action())
+                                                && "DENIED".equals(entry.result().name())));
+
+        when(mapper.findReport(901L))
+                .thenReturn(
+                        new ReportMapper.ReportHeadRow(
+                                901L, PATIENT, "ECHO", "心脏超声", null, LocalDate.of(2026, 10, 28)));
+        when(mapper.findFileOfReport(901L, 501L)).thenReturn(null);
+        ApiException missing =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.deleteFile(
+                                        901L, 501L, new ReportService.DeleteRequest("误传")));
+        assertEquals(40400, missing.code());
+        verify(files, never()).markDeleted(anyLong());
     }
 
     /** 已追加的审计动作清单（含每份 RPT_CREATE 与批量的 RPT_BATCH_CREATE）。 */
