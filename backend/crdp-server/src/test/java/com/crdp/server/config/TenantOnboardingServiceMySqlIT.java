@@ -251,7 +251,8 @@ class TenantOnboardingServiceMySqlIT {
                 // rpt_indicator_item）、E16-T02 增加 V63（报告单运行时 rpt_report /
                 // rpt_report_link / rpt_report_file / rpt_indicator_value）、E23-T03 增加 V64
                 // （字段映射 rpt_mapping / rpt_mapping_item 与心脏超声预置）、E16-T09 增加 V65
-                // （rpt_report 软删除列 + 删除按钮授权）。
+                // （rpt_report 软删除列 + 删除按钮授权）、E16-T15 增加 V66
+                // （rpt_report.location_adjusted 退回标记）。
                 // 此处随迁移清单维护
                 List.of(
                         "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14",
@@ -259,7 +260,7 @@ class TenantOnboardingServiceMySqlIT {
                         "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38",
                         "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50",
                         "51", "52", "53", "54", "55", "56", "57", "58", "59", "60", "61", "62",
-                        "63", "64", "65"),
+                        "63", "64", "65", "66"),
                 root.queryForList(
                         "SELECT version FROM "
                                 + DB

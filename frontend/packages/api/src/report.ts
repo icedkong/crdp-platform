@@ -135,6 +135,8 @@ export interface ReportRow {
   findings: null | string;
   firstFile: null | ReportFirstFile;
   id: string;
+  /** 报告单级「原位置已调整」标记（E16-T15 起带出：退回作业置 1、修改位置 add 后清 0；位置级提示在 locations[].adjusted） */
+  locationAdjusted?: boolean;
   locations: ReportLocationTag[];
   name: null | string;
   note: null | string;

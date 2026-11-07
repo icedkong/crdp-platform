@@ -36,10 +36,28 @@ public interface ReportMapper {
             String conclusion,
             String note,
             String digitizeStatus,
+            Integer locationAdjusted,
             Integer version,
             Long createdBy,
             String creatorName,
             String createdAt) {}
+
+    /**
+     * 退回作业的巡检行（E16-T15）：一条在册位置 + 报告单上下文（日志描述用类型 / 名称快照）。 adjusted 为位置级退回标记（V63）；报告单级
+     * location_adjusted 在 rpt_report 上。
+     */
+    record ScanRow(
+            long linkId,
+            long reportId,
+            long patientId,
+            String typeName,
+            String nameSnapshot,
+            String linkType,
+            Long linkRecordId,
+            String anchorType,
+            String anchorKey,
+            Integer templateVersion,
+            Integer adjusted) {}
 
     /** 位置行（报告单联查，anchor 快照 + 展示标签由服务层拼）。 */
     record LinkRow(
@@ -157,7 +175,8 @@ public interface ReportMapper {
             SELECT r.id, r.patient_id AS patientId, r.type_code AS typeCode, r.type_name AS typeName,
                    r.name_id AS nameId, r.name_snapshot AS nameSnapshot, r.report_date AS reportDate,
                    r.findings, r.conclusion, r.note, r.digitize_status AS digitizeStatus,
-                   r.version, r.created_by AS createdBy, u.display_name AS creatorName,
+                   r.location_adjusted AS locationAdjusted, r.version,
+                   r.created_by AS createdBy, u.display_name AS creatorName,
                    r.created_at AS createdAt
             FROM rpt_report r
             JOIN pt_patient pt ON pt.id = r.patient_id AND pt.deleted = 0
@@ -399,6 +418,92 @@ public interface ReportMapper {
     /** 文件归属报告单的上下文行（下载审计「哪份报告单的哪个文件」，A-ATT-006）。 */
     record ReportFileContextRow(
             long reportId, long patientId, String typeCode, String typeName, String nameSnapshot) {}
+
+    // ---------------------------------------------------------------- 退回作业（E16-T15 /
+    // A-ATT-021、C-SCAN-021）
+
+    /**
+     * 全部在册位置行（只扫 NORMAL 报告单——已删报告单的位置无显示与跳转诉求）。作业在租户上下文内 整库巡检、无用户会话与数据范围，与 FollowupTaskMapper
+     * 的作业查询同口径走 {@code @IgnoreScope}；只读位置四元组与模板版本，不吐患者数据。
+     */
+    @IgnoreScope(
+            reason =
+                    "报告单位置退回巡检（E16-T15 作业）：租户上下文内的整库扫描，作业无用户会话；" + "只读位置锚点与模板版本，操作日志同样只记位置标识不吐患者数据")
+    @Select(
+            """
+            SELECT l.id AS linkId, l.report_id AS reportId, l.patient_id AS patientId,
+                   r.type_name AS typeName, r.name_snapshot AS nameSnapshot,
+                   l.link_type AS linkType, l.link_record_id AS linkRecordId,
+                   l.anchor_type AS anchorType, l.anchor_key AS anchorKey,
+                   l.template_version AS templateVersion, l.adjusted
+            FROM rpt_report_link l
+            JOIN rpt_report r ON r.id = l.report_id AND r.status = 'NORMAL'
+            ORDER BY l.report_id, l.id
+            """)
+    List<ScanRow> scanActiveLinks();
+
+    /**
+     * 随访记录行（退回作业校验锚点用：整条 / 分组都以记录存在且锚点在该记录固化版本分组清单内为前提）。 同 {@link #scanActiveLinks} 的
+     * {@code @IgnoreScope} 口径。
+     */
+    @IgnoreScope(reason = "报告单位置退回作业的随访记录定位（E16-T15）：作业无用户会话，只读记录表单与固化版本，" + "不吐患者数据")
+    @Select(
+            """
+            SELECT r.id, t.id AS taskId, n.name AS nodeName, r.source, r.visit_date AS visitDate,
+                   t.plan_date AS planDate, r.form_code AS formCode,
+                   r.template_version AS templateVersion, r.status
+            FROM fu_record r
+            LEFT JOIN fu_task t ON t.id = r.task_id
+            LEFT JOIN fu_plan_node n ON n.id = t.node_id
+            WHERE r.id = #{id}
+            """)
+    RecordRow findRecordById(@Param("id") long id);
+
+    /**
+     * 随访分组位置退回到整条记录（E16-T15）：锚点清空、adjusted 置 1（「原位置已调整」位置级标记）。 带 anchor_type = 'section'
+     * 条件——并发或重复执行时行已是整条（anchor 为 NULL）则 0 行更新，幂等。
+     */
+    @IgnoreScope(reason = "报告单位置退回（E16-T15 作业）：按巡检清单定位行，作业无用户会话")
+    @Update(
+            """
+            UPDATE rpt_report_link
+            SET anchor_type = NULL, anchor_key = NULL, adjusted = 1
+            WHERE id = #{id} AND anchor_type = 'section'
+            """)
+    int fallbackToWholeRecord(@Param("id") long id);
+
+    /** 位置级退回标记（E16-T15）：分组退回时整条位置已在册（同一报告单同一位置唯一），分组行移除、既有整条行置 adjusted = 1。 */
+    @IgnoreScope(reason = "报告单位置退回标记（E16-T15 作业）：按巡检清单定位行，作业无用户会话")
+    @Update("UPDATE rpt_report_link SET adjusted = 1 WHERE id = #{id} AND adjusted = 0")
+    int markLinkAdjusted(@Param("id") long id);
+
+    /**
+     * 移除一条位置行（E16-T15：基线分类已不在当前发布版 / 随访记录不存在时移除，A-ATT-021「分类也不存在时移除该位置」）。 留痕在 RPT_LOCATION_FALLBACK
+     * 操作日志的 beforeJson；与 E16-T13 remove 同口径物理删除。
+     */
+    @IgnoreScope(reason = "报告单位置移除（E16-T15 作业）：按巡检清单定位行，作业无用户会话")
+    @Delete("DELETE FROM rpt_report_link WHERE id = #{id}")
+    int deleteLinkById(@Param("id") long id);
+
+    /** 报告单级退回标记（E16-T15，V66 location_adjusted）：作业发生退回或移除即置 1，患者内清单行带出 「原位置已调整」提示。 */
+    @IgnoreScope(reason = "报告单退回标记（E16-T15 作业）：按巡检清单定位报告单，作业无用户会话")
+    @Update("UPDATE rpt_report SET location_adjusted = 1 WHERE id = #{id} AND status = 'NORMAL'")
+    int markReportLocationAdjusted(@Param("id") long id);
+
+    /** 退回作业推进乐观锁版本（与 E16-T13 修改位置同口径；作业无操作人，updated_by 不动）。只在有变更的报告单上调用—— 重复执行无变更则版本不动（幂等）。 */
+    @IgnoreScope(reason = "报告单版本推进（E16-T15 作业）：位置变更与 E16-T13 同口径，作业无用户会话")
+    @Update("UPDATE rpt_report SET version = version + 1 WHERE id = #{id} AND status = 'NORMAL'")
+    int bumpVersionByJob(@Param("id") long id);
+
+    /** 清报告单级退回标记（E16-T13 修改位置 add 重新指定后）：用户接管位置后「原位置已调整」提示不再 lingering。 */
+    @IgnoreScope(reason = "报告单退回标记清除（E16-T13 修改位置）：调用方已经 findReport（@DataScope）确认报告单可见")
+    @Update(
+            """
+            UPDATE rpt_report
+            SET location_adjusted = 0
+            WHERE id = #{id} AND status = 'NORMAL' AND location_adjusted = 1
+            """)
+    int clearReportLocationAdjusted(@Param("id") long id);
 
     // ---------------------------------------------------------------- 配置删除守卫（OQ-95②）
 
