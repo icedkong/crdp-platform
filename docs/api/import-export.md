@@ -17,6 +17,7 @@
 | GET | `/api/hospital/followup/imports/{jobId}/result` | 结果文件（签名链接，写审计） |
 
 - 宽表（A-PAT-018）：识别 9 个前置列 + 212 个基线列 + N 组 × 54 个随访列（组数不限）；列定义来自字段字典（`docs/requirements/hospital-a-spec.md` 第 4 章“导入格式说明”与附录 A），**不要在代码里硬编码列号以外的业务含义**。
+- **版面适配器已落地（E18-T01，无独立 HTTP 端点）**：`crdp-followup` importer domain 的 `ImportWorkbookParser` 按工作表结构识别版面（「基线」+「随访记录」两张 → 长表；单张 → 宽表），`WideLayoutAdapter` / `LongLayoutAdapter` 都解析到同一模型 `ImportParseResult`（患者记录：病案号、原系统编号、前置列（宽表专属）、基线字段值、按年度的随访值；单元格保留行 / 列坐标与原文，供 T03 批注版校验报告）。列 / 表头不匹配抛 `ImportLayoutException` 整体报错（差异清单带列字母，不做猜测）；数据级问题（重复、随访年度解析不了、随访行找不到患者）留在模型里由校验阶段报告。表头匹配口径见 OQ-100：宽表列 = 字段字典带「原表列名」锚点的字段（212 基线 / 54 随访，停用的 #217 也在内），长表列 = 启用字段的显示名（213 / 53）。E18-T02 的导入作业（imp_job / imp_row、流式读取）从 `ImportWorkbookParser` + `ImportFieldCatalogLoader`（importer app，从字段字典构造目录）接入。
 - 病区按导入文件中的病区列或向导中选择的病区（A-WARD-006）；导入人必须有该病区范围。
 - 导入写审计（作业级 + 行级摘要）；上传的原始文件按租户加密存储，保留期限见 OQ-28。
 - **测试用例只能用虚构数据**；仓库里不得出现医院提供的样例文件。
