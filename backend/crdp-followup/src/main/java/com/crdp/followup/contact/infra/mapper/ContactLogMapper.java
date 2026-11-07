@@ -257,7 +257,10 @@ public interface ContactLogMapper {
             @Param("fileId") long fileId,
             @Param("sortNo") int sortNo);
 
-    /** 某批沟通记录的录音（联查 sys_file 展示信息；按 sort_no、id 升序）。 */
+    /**
+     * 某批沟通记录的录音（联查 sys_file 展示信息；按 sort_no、id 升序）。 文件可见性以 sys_file.status 为准——CALL
+     * 报告单侧删除录音（整份或单个文件，E16-T09）软删台账后此处不再出行（A-ATT-017「任一处删除即两处同时删除」，E16-T08）。
+     */
     @Select(
             """
             <script>
@@ -265,7 +268,7 @@ public interface ContactLogMapper {
                    f.format_code AS format, f.original_name AS originalName,
                    f.mime_type AS mimeType, f.size_bytes AS sizeBytes, ca.sort_no AS sortNo
             FROM fu_contact_audio ca
-            JOIN sys_file f ON f.id = ca.file_id
+            JOIN sys_file f ON f.id = ca.file_id AND f.status != 'DELETED'
             WHERE ca.contact_log_id IN
             <foreach collection="contactLogIds" item="item" open="(" separator="," close=")">#{item}</foreach>
             ORDER BY ca.sort_no ASC, ca.id ASC

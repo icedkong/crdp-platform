@@ -13,10 +13,14 @@ export function reportDeleteLabel(row: ReportRow): string {
 
 /**
  * 删除弹窗说明（后果告知，A-ATT-007 软删除口径）：删除后患者端不再显示、附件一并
- * 移除（预览与下载随即不可用），数据保留并可审计。
+ * 移除（预览与下载随即不可用），数据保留并可审计。关联沟通记录的「通话记录」另加
+ * A-ATT-017 提示：录音与沟通记录页签是同一文件，删除后两处同时消失（pages.md §4.8）。
  */
 export function reportDeleteNote(row: ReportRow): string {
   const files =
     row.fileCount > 0 ? `、附件 ${row.fileCount} 个一并移除` : '（无附件）';
-  return `删除后「${reportDeleteLabel(row)}」不再显示${files}；数据保留可审计，须填写原因。`;
+  const callNote = row.contactLogId
+    ? '；录音与沟通记录页签为同一文件，删除后两处同时消失'
+    : '';
+  return `删除后「${reportDeleteLabel(row)}」不再显示${files}${callNote}；数据保留可审计，须填写原因。`;
 }

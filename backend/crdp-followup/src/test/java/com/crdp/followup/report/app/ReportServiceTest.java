@@ -59,10 +59,20 @@ class ReportServiceTest {
     private final FormService formService = mock(FormService.class);
     private final FilePolicyService filePolicy = mock(FilePolicyService.class);
     private final SysFileMapper files = mock(SysFileMapper.class);
+    private final com.crdp.followup.contact.app.ContactLogService contactLogs =
+            mock(com.crdp.followup.contact.app.ContactLogService.class);
     private final AuditLogger audit = mock(AuditLogger.class);
 
     private final ReportService service =
-            new ReportService(mapper, config, patientScope, formService, filePolicy, files, audit);
+            new ReportService(
+                    mapper,
+                    config,
+                    patientScope,
+                    formService,
+                    filePolicy,
+                    files,
+                    contactLogs,
+                    audit);
 
     @BeforeEach
     void login() {
@@ -162,7 +172,8 @@ class ReportServiceTest {
                                         new ReportService.LocationInput(
                                                 "followup_record", 88L, "section", "echo", 2)),
                                 List.of("501"),
-                                "门诊复查（示例）"));
+                                "门诊复查（示例）",
+                                null));
 
         assertEquals("900", view.id());
         assertEquals(3, view.locationCount(), "三种粒度位置各一行（基线分类 / 整条 / 分组）");
@@ -626,6 +637,7 @@ class ReportServiceTest {
                                                                 "basic",
                                                                 3)),
                                                 List.of(),
+                                                null,
                                                 null)));
 
         assertEquals(40001, error.code());
@@ -658,6 +670,7 @@ class ReportServiceTest {
                                                                 "basic",
                                                                 3)),
                                                 List.of(),
+                                                null,
                                                 null)));
         assertEquals(40001, noTpl.code());
     }
@@ -734,6 +747,7 @@ class ReportServiceTest {
                                         "心脏超声",
                                         12L,
                                         "经胸超声心动图（示例）",
+                                        null,
                                         LocalDate.of(2026, 10, 28),
                                         null,
                                         null,
@@ -749,6 +763,7 @@ class ReportServiceTest {
                                         PATIENT,
                                         "LAB",
                                         "检验",
+                                        null,
                                         null,
                                         null,
                                         LocalDate.of(2026, 9, 1),
@@ -1468,7 +1483,269 @@ class ReportServiceTest {
         return captor.getAllValues().stream().map(AuditEntry::action).toList();
     }
 
+    // ---------------------------------------------------------------- 通话记录关联（E16-T08 / A-ATT-017）
+
+    @Test
+    void createCallReportWithContactLinkAttachesAudiosAndDerivesLocationFromTaskRecord() {
+        readyCallTypeAndName("CALL");
+        // 关联的沟通记录：挂任务 9001，录音 6001 / 6002
+        when(contactLogs.linkableContact(PATIENT, 5001L))
+                .thenReturn(
+                        new com.crdp.followup.contact.app.ContactLogService.LinkableContact(
+                                5001L,
+                                9001L,
+                                java.time.LocalDateTime.of(2026, 11, 5, 9, 0),
+                                List.of(6001L, 6002L)));
+        RecordContext rec = record(88L, "第2年随访", "TASK", LocalDate.of(2026, 6, 10), 2);
+        // recordsOfPatient 的行带 taskId 9001（任务对应记录，A-ATT-017 位置预选）
+        com.crdp.followup.report.infra.mapper.ReportMapper.RecordRow taskRecord =
+                new com.crdp.followup.report.infra.mapper.ReportMapper.RecordRow(
+                        88L,
+                        9001L,
+                        "第2年随访",
+                        "TASK",
+                        null,
+                        LocalDate.of(2026, 6, 10),
+                        "A_FOLLOWUP",
+                        2,
+                        "SUBMITTED");
+        when(mapper.recordsOfPatient(PATIENT)).thenReturn(List.of(rec.row(), taskRecord));
+        when(mapper.insertReport(any()))
+                .thenAnswer(
+                        invocation -> {
+                            invocation.getArgument(0, ReportInsert.class).setId(910L);
+                            return 1;
+                        });
+
+        ReportService.CreatedView view =
+                service.create(
+                        PATIENT,
+                        new ReportService.CreateRequest(
+                                "CALL",
+                                "41",
+                                LocalDate.of(2026, 11, 5),
+                                Map.of(),
+                                List.of(),
+                                null,
+                                null,
+                                List.of(), // 位置缺省：自动取任务对应随访记录（整条）
+                                List.of(),
+                                null,
+                                "5001"));
+
+        assertEquals("910", view.id());
+        assertEquals(1, view.locationCount(), "位置 = 该沟通关联任务的随访记录（整条）");
+        assertEquals(2, view.fileCount(), "关联沟通记录的录音即附件（同一批 sys_file，不重复上传）");
+
+        ArgumentCaptor<ReportInsert> reportCaptor = ArgumentCaptor.forClass(ReportInsert.class);
+        verify(mapper).insertReport(reportCaptor.capture());
+        assertEquals(Long.valueOf(5001L), reportCaptor.getValue().contactLogId());
+
+        ArgumentCaptor<ReportMapper.LinkInsert> linkCaptor =
+                ArgumentCaptor.forClass(ReportMapper.LinkInsert.class);
+        verify(mapper).insertLink(linkCaptor.capture());
+        assertEquals("followup_record", linkCaptor.getValue().linkType());
+        assertEquals(Long.valueOf(88L), linkCaptor.getValue().linkRecordId());
+        assertNull(linkCaptor.getValue().anchorType());
+
+        // 录音已 ATTACHED（沟通侧挂载）：只挂关联行，不再改台账状态（A-ATT-017 不重复存储）
+        verify(files, never()).markAttached(anyLong());
+        verify(mapper, times(2)).insertFile(any());
+        verify(audit).append(any(AuditEntry.class));
+    }
+
+    @Test
+    void createCallReportWithLinkAllowsUnassignedLocationWhenNoTaskRecord() {
+        readyCallTypeAndName("CALL");
+        when(contactLogs.linkableContact(PATIENT, 5002L))
+                .thenReturn(
+                        new com.crdp.followup.contact.app.ContactLogService.LinkableContact(
+                                5002L,
+                                null,
+                                java.time.LocalDateTime.of(2026, 11, 5, 9, 0),
+                                List.of(6001L)));
+        when(mapper.recordsOfPatient(PATIENT)).thenReturn(List.of());
+        when(mapper.insertReport(any()))
+                .thenAnswer(
+                        invocation -> {
+                            invocation.getArgument(0, ReportInsert.class).setId(911L);
+                            return 1;
+                        });
+
+        ReportService.CreatedView view =
+                service.create(
+                        PATIENT,
+                        new ReportService.CreateRequest(
+                                "CALL",
+                                "41",
+                                LocalDate.of(2026, 11, 5),
+                                Map.of(),
+                                List.of(),
+                                null,
+                                null,
+                                List.of(),
+                                List.of(),
+                                null,
+                                "5002"));
+
+        assertEquals(0, view.locationCount(), "无对应记录 → 未指定位置（A-ATT-017 / A-ATT-020）");
+        verify(mapper, never()).insertLink(any());
+    }
+
+    @Test
+    void createRejectsContactLinkOnNonCallType() {
+        readyTypeAndName();
+
+        ApiException error =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.create(
+                                        PATIENT,
+                                        new ReportService.CreateRequest(
+                                                "LAB",
+                                                null,
+                                                LocalDate.of(2026, 10, 28),
+                                                Map.of(),
+                                                List.of(),
+                                                null,
+                                                null,
+                                                List.of(
+                                                        new ReportService.LocationInput(
+                                                                "baseline",
+                                                                null,
+                                                                "category",
+                                                                "basic",
+                                                                3)),
+                                                List.of(),
+                                                null,
+                                                "5001")));
+
+        assertEquals(40001, error.code());
+        assertTrue(error.getMessage().contains("通话记录"), error.getMessage());
+        verify(contactLogs, never()).linkableContact(anyLong(), anyLong());
+    }
+
+    @Test
+    void createWithLinkMergesExplicitUploadsAndAudiosWithinLimit() {
+        readyCallTypeAndName("CALL");
+        when(contactLogs.linkableContact(PATIENT, 5003L))
+                .thenReturn(
+                        new com.crdp.followup.contact.app.ContactLogService.LinkableContact(
+                                5003L,
+                                null,
+                                java.time.LocalDateTime.of(2026, 11, 5, 9, 0),
+                                List.of(6001L)));
+        when(mapper.recordsOfPatient(PATIENT)).thenReturn(List.of());
+        SysFileRow uploaded = file(501L, "补充材料（示例）.mp3");
+        when(files.find(501L)).thenReturn(uploaded);
+        when(files.markAttached(501L)).thenReturn(1);
+        when(mapper.insertReport(any()))
+                .thenAnswer(
+                        invocation -> {
+                            invocation.getArgument(0, ReportInsert.class).setId(912L);
+                            return 1;
+                        });
+
+        ReportService.CreatedView view =
+                service.create(
+                        PATIENT,
+                        new ReportService.CreateRequest(
+                                "CALL",
+                                "41",
+                                LocalDate.of(2026, 11, 5),
+                                Map.of(),
+                                List.of(),
+                                null,
+                                null,
+                                List.of(),
+                                List.of("501"),
+                                null,
+                                "5003"));
+
+        assertEquals(2, view.fileCount(), "新上传 + 关联录音合并（≤ 上限）");
+        verify(files).markAttached(501L);
+        verify(mapper, times(2)).insertFile(any());
+    }
+
+    @Test
+    void createWithLinkRejectsWhenAudiosPushOverFileLimit() {
+        readyCallTypeAndName("CALL");
+        when(contactLogs.linkableContact(PATIENT, 5004L))
+                .thenReturn(
+                        new com.crdp.followup.contact.app.ContactLogService.LinkableContact(
+                                5004L,
+                                null,
+                                java.time.LocalDateTime.of(2026, 11, 5, 9, 0),
+                                // 每份上限 10（桩 UploadPolicy）：新上传 9 个 + 录音 2 个 = 11 超限
+                                List.of(6001L, 6002L)));
+        when(mapper.recordsOfPatient(PATIENT)).thenReturn(List.of());
+        for (long id = 501L; id <= 509L; id++) {
+            when(files.find(id)).thenReturn(file(id, "通话片段（示例）.mp3"));
+            when(files.markAttached(id)).thenReturn(1);
+        }
+
+        ApiException error =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.create(
+                                        PATIENT,
+                                        new ReportService.CreateRequest(
+                                                "CALL",
+                                                "41",
+                                                LocalDate.of(2026, 11, 5),
+                                                Map.of(),
+                                                List.of(),
+                                                null,
+                                                null,
+                                                List.of(),
+                                                List.of(
+                                                        "501", "502", "503", "504", "505", "506",
+                                                        "507", "508", "509"),
+                                                null,
+                                                "5004")));
+
+        assertEquals(40001, error.code());
+        assertTrue(error.getMessage().contains("超过上限"), error.getMessage());
+        verify(mapper, never()).insertReport(any());
+    }
+
+    @Test
+    void createWithoutLinkStillRequiresAtLeastOneLocation() {
+        readyTypeAndName();
+
+        ApiException error =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.create(
+                                        PATIENT,
+                                        new ReportService.CreateRequest(
+                                                "LAB",
+                                                null,
+                                                LocalDate.of(2026, 10, 28),
+                                                Map.of(),
+                                                List.of(),
+                                                null,
+                                                null,
+                                                List.of(),
+                                                List.of(),
+                                                null,
+                                                null)));
+
+        assertEquals(40001, error.code());
+        assertTrue(error.getMessage().contains("请至少选择 1 个位置"), error.getMessage());
+    }
+
     // ---------------------------------------------------------------- 桩与工具
+
+    /** CALL 类型 + 名称 41 桩（通话记录关联用例共用）。 */
+    private void readyCallTypeAndName(String typeCode) {
+        when(config.findTypeIdByCode(typeCode)).thenReturn(9L);
+        when(config.findType(9L)).thenReturn(typeRow("CALL", "通话记录", true));
+        lenient().when(config.findName(41L)).thenReturn(nameRow(41L, "CALL", "随访电话录音", null, null));
+    }
 
     private static SessionPrincipal principal() {
         return new SessionPrincipal(
@@ -1597,6 +1874,7 @@ class ReportServiceTest {
                 null,
                 locations,
                 fileIds,
+                null,
                 null);
     }
 }

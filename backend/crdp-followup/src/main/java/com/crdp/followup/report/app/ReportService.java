@@ -1,5 +1,6 @@
 package com.crdp.followup.report.app;
 
+import com.crdp.followup.contact.app.ContactLogService;
 import com.crdp.followup.file.app.FilePolicyService;
 import com.crdp.followup.file.infra.mapper.SysFileMapper;
 import com.crdp.followup.file.infra.mapper.SysFileRow;
@@ -93,6 +94,7 @@ public class ReportService {
     private final FormService formService;
     private final FilePolicyService filePolicy;
     private final SysFileMapper files;
+    private final ContactLogService contactLogs;
     private final AuditLogger audit;
 
     public ReportService(
@@ -102,6 +104,7 @@ public class ReportService {
             FormService formService,
             FilePolicyService filePolicy,
             SysFileMapper files,
+            ContactLogService contactLogs,
             AuditLogger audit) {
         this.mapper = mapper;
         this.config = config;
@@ -109,6 +112,7 @@ public class ReportService {
         this.formService = formService;
         this.filePolicy = filePolicy;
         this.files = files;
+        this.contactLogs = contactLogs;
         this.audit = audit;
     }
 
@@ -125,7 +129,10 @@ public class ReportService {
     /** 指标结果输入（refRange 为前端按患者性别选定后的参考范围显示串）。 */
     public record IndicatorInput(String itemCode, String result, String refRange) {}
 
-    /** 创建请求（report.md §2 POST /reports）。 */
+    /**
+     * 创建请求（report.md §2 POST /reports）。{@code contactLogId} 仅「通话记录」类型（A-ATT-017，E16-T08）：
+     * 关联某条沟通记录后其录音即本报告单附件（同一批 sys_file、不重复存储），位置缺省时自动取该沟通关联任务的随访记录（整条）、无则「未指定位置」。
+     */
     public record CreateRequest(
             String typeCode,
             String nameId,
@@ -136,7 +143,8 @@ public class ReportService {
             String conclusion,
             List<LocationInput> locations,
             List<String> fileIds,
-            String note) {}
+            String note,
+            String contactLogId) {}
 
     /** 创建结果（前端随后刷新患者内清单）。 */
     public record CreatedView(
@@ -200,6 +208,7 @@ public class ReportService {
             String typeCode,
             String typeName,
             String name,
+            String contactLogId,
             LocalDate reportDate,
             String findings,
             String conclusion,
@@ -244,7 +253,10 @@ public class ReportService {
     // ---------------------------------------------------------------- 创建（A-ATT-001 /
     // A-ATT-002、C-SCAN-010）
 
-    /** 创建报告单：位置至少 1 个（40001）、附件上限与归属校验、指标项目归属校验；写 RPT_CREATE 审计。 */
+    /**
+     * 创建报告单：位置至少 1 个（40001；关联沟通记录的通话记录例外，见 {@link #linkedLocations}）、 附件上限与归属校验、指标项目归属校验；写
+     * RPT_CREATE 审计。
+     */
     @Transactional
     public CreatedView create(long patientId, CreateRequest request) {
         if (request == null) {
@@ -254,8 +266,13 @@ public class ReportService {
         TypeRow type = requireType(request.typeCode());
         NameRow name = requireName(type, request.nameId());
         LocalDate reportDate = requireReportDate(request.reportDate());
-        List<NormalizedLocation> locations = normalizeLocations(patientId, request.locations());
+        ContactLink link = contactLinkOf(patientId, type, request.contactLogId());
+        List<NormalizedLocation> locations =
+                link == null
+                        ? normalizeLocations(patientId, request.locations())
+                        : linkedLocations(patientId, link, request.locations());
         List<Long> fileIds = normalizeFileIds(request.fileIds());
+        List<Long> linkedAudioIds = linkedAudioIdsOf(link, fileIds);
         Map<String, Object> fields = request.fields() == null ? Map.of() : request.fields();
         String fieldValuesJson = writeFields(type, fields);
 
@@ -266,6 +283,7 @@ public class ReportService {
         row.setTypeName(type.name());
         row.setNameId(name == null ? null : name.id());
         row.setNameSnapshot(name == null ? null : name.name());
+        row.setContactLogId(link == null ? null : link.contactLogId());
         row.setReportDate(reportDate);
         row.setFindings(trimToNull(request.findings()));
         row.setConclusion(trimToNull(request.conclusion()));
@@ -291,6 +309,11 @@ public class ReportService {
             attachFile(reportId, fileId);
             mapper.insertFile(new ReportMapper.FileInsert(reportId, patientId, fileId, sortNo++));
         }
+        // 关联沟通记录的录音：同一批 sys_file（沟通侧已置 ATTACHED），只挂关联行不改台账状态（A-ATT-017 不重复存储）
+        for (Long audioId : linkedAudioIds) {
+            mapper.insertFile(new ReportMapper.FileInsert(reportId, patientId, audioId, sortNo++));
+        }
+        int fileCount = sortNo;
         int indicatorCount = insertIndicators(reportId, patientId, name, request.indicators());
 
         CreatedView view =
@@ -301,7 +324,7 @@ public class ReportService {
                         name == null ? null : name.name(),
                         reportDate,
                         locations.size(),
-                        fileIds.size());
+                        fileCount);
         audit.append(
                 AuditEntry.operation("followup", "RPT_CREATE")
                         .objectType("REPORT")
@@ -315,19 +338,25 @@ public class ReportService {
                                         + "，位置 "
                                         + locations.size()
                                         + " 个、附件 "
-                                        + fileIds.size()
+                                        + fileCount
                                         + " 个、指标 "
                                         + indicatorCount
-                                        + " 项")
+                                        + " 项"
+                                        + (link == null
+                                                ? ""
+                                                : "；关联沟通记录 "
+                                                        + link.contactLogId()
+                                                        + "（录音即附件，A-ATT-017）"))
                         .afterJson(writeJson(view))
                         .build());
         log.info(
-                "报告单创建（E16-T02）：reportId={} patientId={} type={} 位置数={} 附件数={}",
+                "报告单创建（E16-T02）：reportId={} patientId={} type={} 位置数={} 附件数={} 关联沟通记录={}",
                 reportId,
                 patientId,
                 type.code(),
                 locations.size(),
-                fileIds.size());
+                fileCount,
+                link == null ? null : link.contactLogId());
         return view;
     }
 
@@ -829,7 +858,7 @@ public class ReportService {
         return view;
     }
 
-    /** 批量创建的公共部分 → 单份创建请求（批量不收指标 / 所见 / 结论 / 备注，随批后逐份编辑）。 */
+    /** 批量创建的公共部分 → 单份创建请求（批量不收指标 / 所见 / 结论 / 备注 / 沟通关联，随批后逐份编辑）。 */
     private CreateRequest toCreateRequest(
             BatchCreateRequest batch,
             String nameId,
@@ -846,6 +875,7 @@ public class ReportService {
                 null,
                 locations,
                 fileIds.stream().map(String::valueOf).toList(),
+                null,
                 null);
     }
 
@@ -976,6 +1006,80 @@ public class ReportService {
             return name.digitizeStatusOverride();
         }
         return type.defaultDigitizeStatus();
+    }
+
+    // ---------------------------------------------------------------- 通话记录关联（E16-T08 / A-ATT-017）
+
+    /** 已解析的沟通记录关联（录音 fileId 即附件，不重复上传）。 */
+    private record ContactLink(long contactLogId, Long taskId, List<Long> audioFileIds) {}
+
+    /**
+     * 解析可选的 {@code contactLogId}：仅「通话记录」类型（40001）；归属校验（不属于该患者 / 越范围 40400）与录音清单 由 {@link
+     * ContactLogService#linkableContact}（沟通子域 app 口）承担。
+     */
+    private ContactLink contactLinkOf(long patientId, TypeRow type, String rawContactLogId) {
+        if (rawContactLogId == null || rawContactLogId.isBlank()) {
+            return null;
+        }
+        if (!CallReportService.CALL_TYPE_CODE.equals(type.code())) {
+            throw bad("关联沟通记录仅适用于「通话记录」类型报告单");
+        }
+        long contactLogId;
+        try {
+            contactLogId = Long.parseLong(rawContactLogId.trim());
+        } catch (NumberFormatException e) {
+            throw new ApiException(404, 40400, "沟通记录不存在");
+        }
+        ContactLogService.LinkableContact contact =
+                contactLogs.linkableContact(patientId, contactLogId);
+        return new ContactLink(contact.id(), contact.taskId(), contact.audioFileIds());
+    }
+
+    /**
+     * 关联通话记录的位置（A-ATT-017「录音生成的通话记录位置预选为该任务对应的随访记录（整条），没有对应记录时进入未指定位置」）：
+     * 显式给了照常校验（必填口径不变）；缺省取该沟通关联任务的随访记录（整条，模板版本取记录固化版本），无对应记录时不落位置行（「未指定位置」组，A-ATT-020）。
+     */
+    private List<NormalizedLocation> linkedLocations(
+            long patientId, ContactLink link, List<LocationInput> locations) {
+        if (locations != null && !locations.isEmpty()) {
+            return normalizeLocations(patientId, locations);
+        }
+        RecordRow record = null;
+        if (link.taskId() != null) {
+            for (RecordRow row : mapper.recordsOfPatient(patientId)) {
+                if (link.taskId().equals(row.taskId())) {
+                    record = row;
+                    break;
+                }
+            }
+        }
+        if (record == null) {
+            return List.of(); // 未指定位置：无位置报告单由本联动产生（A-ATT-017），E16-T05 UNASSIGNED / E16-T14 既有口径承接
+        }
+        return List.of(
+                new NormalizedLocation(
+                        LINK_FOLLOWUP_RECORD, record.id(), null, null, record.templateVersion()));
+    }
+
+    /** 关联录音去重（与新上传附件重复时只留一份）并校验合计上限（≤ file.upload.max.files.per.report，超限 40001）。 */
+    private List<Long> linkedAudioIdsOf(ContactLink link, List<Long> fileIds) {
+        if (link == null || link.audioFileIds().isEmpty()) {
+            return List.of();
+        }
+        List<Long> distinct = new ArrayList<>();
+        for (Long audioId : link.audioFileIds()) {
+            if (audioId != null && !fileIds.contains(audioId) && !distinct.contains(audioId)) {
+                distinct.add(audioId);
+            }
+        }
+        if (!distinct.isEmpty()
+                && !filePolicy.policy().withinFileCount(fileIds.size() + distinct.size())) {
+            throw bad(
+                    "附件数量超过上限（每份报告单最多 "
+                            + filePolicy.policy().maxFilesPerReport()
+                            + " 个，含关联沟通记录的录音）");
+        }
+        return distinct;
     }
 
     // ---------------------------------------------------------------- 位置（A-ATT-002 / C-SCAN-010）
@@ -1341,6 +1445,7 @@ public class ReportService {
                             row.typeCode(),
                             row.typeName(),
                             row.nameSnapshot(),
+                            row.contactLogId() == null ? null : String.valueOf(row.contactLogId()),
                             row.reportDate(),
                             row.findings(),
                             row.conclusion(),

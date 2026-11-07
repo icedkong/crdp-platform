@@ -4,13 +4,18 @@
  * 公共槽位（日期 / 所见 / 结论 / 备注）的标签从类型字段集推导；校验与提交载荷不掺 UI 状态。
  */
 import type {
+  ContactLogRow,
   ReportCatalogField,
   ReportCatalogName,
   ReportIndicatorInput,
   ReportLocationInput,
 } from '@crdp/api';
 
-import { reportIndicatorFlag, reportRefRangeFor } from '@crdp/api';
+import {
+  contactMethodText,
+  reportIndicatorFlag,
+  reportRefRangeFor,
+} from '@crdp/api';
 
 /** 公共槽位：类型字段集里映射到对话框公共部分的编码（其余字段值走 fields 提交）。 */
 const DATE_CODES = new Set([
@@ -207,4 +212,48 @@ export function moveItem<T>(list: T[], index: number, delta: -1 | 1): T[] {
   next[index] = next[target] as T;
   next[target] = current;
   return next;
+}
+
+// ------------------------------------------- E16-T08 通话记录关联（A-ATT-017）
+
+/** 「通话记录」类型编码（后端 rpt_type.code = CALL，V62 预置；仅该类型显示「关联沟通记录」）。 */
+export const CALL_TYPE_CODE = 'CALL';
+
+/** 关联沟通记录下拉选项（A-ATT-017「在报告单页签添加通话记录时可选关联某条沟通记录」）。 */
+export interface CallContactOption {
+  audioCount: number;
+  label: string;
+  /** 沟通记录 id（提交为 contactLogId） */
+  value: string;
+}
+
+/**
+ * 沟通记录 → 关联下拉选项：只列带录音的记录（录音即报告单附件，同一批文件不重复上传）；
+ * 后端分页倒序（最近在前），无录音的记录关联后没有附件、不列出。
+ */
+export function callContactOptions(logs: ContactLogRow[]): CallContactOption[] {
+  return logs
+    .filter((log) => log.audios.length > 0)
+    .map((log) => ({
+      audioCount: log.audios.length,
+      label: `${contactTimeText(log.contactTime)} · ${contactMethodText(log.method)}（录音 ${log.audios.length} 个）`,
+      value: log.id,
+    }));
+}
+
+/** ISO 时间 →「YYYY-MM-DD HH:mm」（与患者详情页展示同口径）。 */
+function contactTimeText(value: string): string {
+  const normalized = value.includes('T') ? value : `${value}T00:00:00`;
+  return normalized.slice(0, 16).replaceAll('T', ' ');
+}
+
+/**
+ * 位置是否必填：关联沟通记录的「通话记录」可空——后端自动取该沟通关联任务的随访记录（整条），
+ * 无对应记录进入「未指定位置」（A-ATT-017）；其余类型保持必填（A-ATT-002）。
+ */
+export function locationRequired(
+  typeCode: null | string,
+  contactLogId: null | string,
+): boolean {
+  return !(typeCode === CALL_TYPE_CODE && contactLogId);
 }

@@ -17,6 +17,7 @@ public class ReportInsert {
     private String note;
     private String fieldValues;
     private String digitizeStatus;
+    private Long contactLogId;
     private Long createdBy;
 
     public long getId() {
@@ -115,6 +116,14 @@ public class ReportInsert {
         this.digitizeStatus = digitizeStatus;
     }
 
+    public Long getContactLogId() {
+        return contactLogId;
+    }
+
+    public void setContactLogId(Long contactLogId) {
+        this.contactLogId = contactLogId;
+    }
+
     public Long getCreatedBy() {
         return createdBy;
     }
@@ -169,6 +178,10 @@ public class ReportInsert {
 
     public String digitizeStatus() {
         return digitizeStatus;
+    }
+
+    public Long contactLogId() {
+        return contactLogId;
     }
 
     public Long createdBy() {
