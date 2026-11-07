@@ -166,6 +166,8 @@ public final class ConfigTableRegistry {
                     // 导入提交批次与写数清单（E18-T05：回滚凭据属业务数据，绝不随模板复制）
                     "imp_batch",
                     "imp_batch_write",
+                    // 统计事实表（E19-T01：派生只读数据，每日按本院业务数据重建，不入模板）
+                    "st_node_occurrence",
                     // 文件、密钥、outbox
                     "sys_file",
                     "sys_webhook_delivery",

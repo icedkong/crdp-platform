@@ -9,6 +9,10 @@
 - 全部数字按当前用户数据范围统计（A-DASH-005、C-DASH-008）；范围为空 → 全 0，不报错。
 - 结果缓存 60s，缓存 key 含 `tenantId + userId(或范围哈希) + cardCode + 参数`；权限变更（`permissionVersion` 变化）时失效。
 - 卡片只返回聚合值；列表型卡片（如接近 ERI、异常标红）返回的患者信息按字段策略脱敏。
+- **节点随访率的数据底座是 `st_node_occurrence` 节点随访事实表**（E19-T01，followup V76）：每日 00:10
+  在任务创建与状态刷新之后整租户重建（作业编码 `st-node-refresh`，幂等）；`node_rate` / `yearly_rate`
+  共用 `NodeOccurrenceStatsService` 聚合（按节点 × 第 N 次出应随访、已随访数，Q38 口径），保证同一筛选下两处数字一致。
+  刷新时点与无锚点补录归属等暂行口径见 `docs/open-questions.md` OQ-106。
 
 ## 2. 接口
 
