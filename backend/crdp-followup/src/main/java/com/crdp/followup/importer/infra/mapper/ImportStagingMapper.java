@@ -214,7 +214,17 @@ public interface ImportStagingMapper {
         }
     }
 
-    /** 按 id 游标分批读暂存行（keyset 分页：内存只有一批，E18-T03 校验与大文件口径一致）。 */
+    /**
+     * 按 id 游标分批读暂存行（keyset 分页：内存只有一批，E18-T03 校验与大文件口径一致）。
+     *
+     * <p>IgnoreScope 理由：预检校验在作业维度读<strong>本作业自己暂存</strong>的行（job_id 限定）， 病案号查重走全院盲索引存在性（同 {@code
+     * PatientMapper.findLiveMrnBlinds} 口径）； 病区数据范围在导入确认时校验（E18-T04 / T06，与 imp_row 登记进
+     * ControlledTables 的口径一致——暂存行含患者数据，后续行级确认读数必须带范围或作业归属校验）。
+     */
+    @com.crdp.framework.datascope.IgnoreScope(
+            reason =
+                    "导入预检校验读本作业暂存行（job_id 限定，E18-T03）：暂存行尚无病区归属，"
+                            + "病区数据范围在导入确认时校验（E18-T04 / T06）；查重只做全院盲索引存在性，不输出患者数据")
     @Select(
             """
             SELECT id, sheet_name AS sheetName, row_no AS rowNo, row_type AS rowType,
