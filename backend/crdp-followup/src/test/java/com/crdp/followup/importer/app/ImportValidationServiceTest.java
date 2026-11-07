@@ -202,6 +202,8 @@ class ImportValidationServiceTest {
                 fieldKey,
                 label,
                 label,
+                null,
+                "json",
                 true,
                 type,
                 null,
@@ -252,7 +254,9 @@ class ImportValidationServiceTest {
                                 null),
                         rule("f257", "EF", FieldType.NUMBER, false, false, null, null)),
                 "f002",
-                null);
+                null,
+                "A_BASELINE（示例）",
+                "A_ANNUAL_FU（示例）");
     }
 
     private long wideJobWithTwoDuplicatePatients() {
@@ -405,6 +409,8 @@ class ImportValidationServiceTest {
             long id;
             String layout;
             String status = "UPLOADED";
+            String optionsJson;
+            String scopeJson;
             long stagedRows;
         }
 
@@ -433,6 +439,8 @@ class ImportValidationServiceTest {
                             null,
                             job.layout,
                             job.status,
+                            job.optionsJson,
+                            job.scopeJson,
                             job.stagedRows,
                             null,
                             null,

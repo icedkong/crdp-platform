@@ -117,6 +117,8 @@ class RealDictValidationReportTest {
                                             null,
                                             "WIDE",
                                             status,
+                                            null,
+                                            null,
                                             rows.size(),
                                             null,
                                             null,
@@ -283,6 +285,8 @@ class RealDictValidationReportTest {
                         "f005",
                         "手术年龄",
                         "手术年龄",
+                        null,
+                        "json",
                         true,
                         FieldType.DERIVED,
                         null,
@@ -302,6 +306,8 @@ class RealDictValidationReportTest {
                         "f215",
                         "是否死亡",
                         "死亡",
+                        null,
+                        "json",
                         true,
                         FieldType.RADIO,
                         null,
@@ -321,6 +327,8 @@ class RealDictValidationReportTest {
                         "f248",
                         "EF 射血分数",
                         "ef_射血分数",
+                        null,
+                        "json",
                         true,
                         FieldType.NUMBER,
                         "%",
@@ -359,14 +367,14 @@ class RealDictValidationReportTest {
                                                         FieldType.TEXT,
                                                         false,
                                                         false))));
-        return new ImportFieldRules(baseline, followup, "f002", null);
+        return new ImportFieldRules(baseline, followup, "f002", null, "A_BASELINE", "A_ANNUAL_FU");
     }
 
     private static ImportFieldRule rule(
             String fieldKey, String label, FieldType type, boolean required, boolean sensitive) {
         return new ImportFieldRule(
-                fieldKey, label, label, true, type, null, null, null, null, null, null, required,
-                sensitive, null, null);
+                fieldKey, label, label, null, "json", true, type, null, null, null, null, null,
+                null, required, sensitive, null, null);
     }
 
     /** EF 射血分数（f248，真实字典稳定键）。 */

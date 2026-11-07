@@ -30,6 +30,8 @@ public interface ImportStagingMapper {
             String storageKey,
             String layout,
             String status,
+            String optionsJson,
+            String scopeJson,
             long stagedRows,
             String layoutProblems,
             String failReason,
@@ -118,7 +120,8 @@ public interface ImportStagingMapper {
     @Select(
             """
             SELECT id, file_name AS fileName, file_size AS fileSize, file_sha256 AS fileSha256,
-                   storage_key AS storageKey, layout, status, staged_rows AS stagedRows,
+                   storage_key AS storageKey, layout, status,
+                   options_json AS optionsJson, scope_json AS scopeJson, staged_rows AS stagedRows,
                    layout_problems AS layoutProblems, fail_reason AS failReason,
                    operator_id AS operatorId, operator_name AS operatorName,
                    created_at AS createdAt, updated_at AS updatedAt

@@ -163,6 +163,9 @@ public final class ConfigTableRegistry {
                     "imp_job",
                     "imp_row",
                     "imp_issue",
+                    // 导入提交批次与写数清单（E18-T05：回滚凭据属业务数据，绝不随模板复制）
+                    "imp_batch",
+                    "imp_batch_write",
                     // 文件、密钥、outbox
                     "sys_file",
                     "sys_webhook_delivery",

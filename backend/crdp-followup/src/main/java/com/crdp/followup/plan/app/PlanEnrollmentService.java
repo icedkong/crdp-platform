@@ -255,6 +255,51 @@ public class PlanEnrollmentService {
         return enrolled;
     }
 
+    // ---------------------------------------------------------------- 历史导入入组（E18-T05）
+
+    /**
+     * 历史导入的入组（E18-T05 / tech-plan §12⑦「按规则自动入组」）：与 {@link #enroll} 的差别——
+     *
+     * <ul>
+     *   <li><b>不建任务</b>：历史导入按自身规则生成历史记录（有数据年度 HIST_IMPORT、窗口已结束无数据年度
+     *       HIST_MISSED，Q06），不为过去年度建补录任务（E14-T04 已定「导入不走入组即建」）；当前窗口的当年任务由每日 定时任务创建（A-PAT-018 流程
+     *       6「窗口正在开启中的年度由每日定时任务创建当年任务」）——每日调度对「开启日不晚于 逻辑日且窗口未在入组日前结束」的次数照常排期，无需此处预建；
+     *   <li>起算日期快照由调用方按计划起算字段解析（导入行出院日期；解析不到传 null，由每日调度沿用解析回填路径）；
+     *   <li>审计不在此写：导入作业级审计（E18-T05 confirm / rollback）覆盖，患者 × 计划逐条不重复写。
+     * </ul>
+     *
+     * <p>并发 / 重复导入撞 uk_fu_enrollment_active 视为已在组，返回既有入组 id（幂等）。
+     *
+     * @return 入组 id（计划在导入间隙被删返回 null——记录照常生成，无入组锚点）
+     */
+    public Long enrollForImport(
+            long patientId, long planId, java.time.LocalDate startDate, Long operatorId) {
+        PlanMapper.PlanRow plan = planMapper.findById(planId);
+        if (plan == null) {
+            return null;
+        }
+        Long existing = mapper.findActiveIdByPatientAndPlanCode(patientId, plan.code());
+        if (existing != null) {
+            return existing;
+        }
+        PlanEnrollmentInsertRow row =
+                new PlanEnrollmentInsertRow(
+                        patientId,
+                        planId,
+                        plan.code(),
+                        startDate,
+                        MODE_NORMAL,
+                        "ACTIVE",
+                        operatorId);
+        try {
+            mapper.insertEnrollment(row);
+            return row.getId();
+        } catch (DuplicateKeyException race) {
+            Long concurrent = mapper.findActiveIdByPatientAndPlanCode(patientId, plan.code());
+            return concurrent != null ? concurrent : row.getId();
+        }
+    }
+
     // ---------------------------------------------------------------- 暂停 / 恢复 / 移出（E14-T06 /
     // A-FU-008、A-PAT-011）
 
