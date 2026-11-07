@@ -428,12 +428,18 @@ public class ImportCommitService {
                 throw new IllegalStateException("批次事务未执行（jobId=" + job.id() + "）");
             }
         } catch (RuntimeException failure) {
+            // 带栈输出（E18-T07 压测演练发现：无消息异常只落「原因=」空串，向导与排障都看不到根因）
             log.warn(
                     "导入批次失败，可单独重试 jobId={} batchNo={} 原因={}",
                     job.id(),
                     batch.batchNo(),
-                    failure.getMessage());
-            commit.markBatchFailed(batch.id(), truncate(failure.getMessage()));
+                    failure.getMessage(),
+                    failure);
+            String reason =
+                    failure.getMessage() == null
+                            ? failure.getClass().getSimpleName()
+                            : failure.getMessage();
+            commit.markBatchFailed(batch.id(), truncate(reason));
         }
     }
 
@@ -915,6 +921,9 @@ public class ImportCommitService {
                     insert.setSlot("PHONE_" + label.group(1));
                     insert.setPhoneCipher(crypto.encrypt(PURPOSE_PHONE, normalized));
                     insert.setPhoneBlind(crypto.blindIndex(PURPOSE_PHONE, normalized));
+                    // 生效日期默认导入当天（真库 NOT NULL，E18-T07 压测演练发现；与
+                    // PatientContactService.addVersion 的缺省同口径，且不早于任何既有版本——服务侧禁止未来日期）
+                    insert.setEffectiveDate(context.today);
                     insert.setSource("IMPORT");
                     insert.setVersion(current == null ? 1 : current.version() + 1);
                     insert.setCreatedBy(job.operatorId());
