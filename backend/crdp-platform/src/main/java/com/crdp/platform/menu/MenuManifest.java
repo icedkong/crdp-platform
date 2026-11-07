@@ -240,6 +240,21 @@ public class MenuManifest {
                             "followup:patient:create",
                             null,
                             30),
+                    // E18-T06 / A-PAT-008、A-PAT-018：导入向导隐藏路由（患者档案下，平台库 V58 同构；
+                    // 权限 followup:patient:import，功能开关 wide_import 关闭 → 40301、入口按钮隐藏）
+                    new MenuManifestItem(
+                            "followup",
+                            "HOSPITAL",
+                            "MENU",
+                            "FollowupPatientImport",
+                            "FollowupPatient",
+                            "导入向导",
+                            "FollowupPatientImport",
+                            "/followup/patient/import",
+                            "followup/patient/import",
+                            "followup:patient:import",
+                            null,
+                            35),
                     // E13-T08 / A-WARD-005：患者档案下的「转病区」按钮
                     // （followup:patient:transfer，A/C 规格权限表；平台库 V40 同构）
                     new MenuManifestItem(

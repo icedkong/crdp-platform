@@ -98,6 +98,9 @@ const canDelete = computed(() => hasPermission('followup:patient:delete'));
 const canApproveExport = computed(() =>
   hasPermission('followup:patient:export:approve'),
 );
+// E18-T06 / A-PAT-008、A-PAT-018：历史数据「导入」进导入向导（隐藏路由 /followup/patient/import，
+// 权限 followup:patient:import；功能开关 wide_import 关闭时后端 40301，pages.md §3 [导入] 按钮）
+const canImport = computed(() => hasPermission('followup:patient:import'));
 const { isMobile, isTablet } = useBreakpoint();
 
 const RangePicker = DatePicker.RangePicker;
@@ -428,6 +431,13 @@ function handleEmptyAction() {
       <div class="title-row">
         <h1 class="crdp-page-title">患者管理</h1>
         <Space>
+          <Button
+            v-if="canImport"
+            data-testid="patient-import"
+            @click="router.push('/followup/patient/import')"
+          >
+            导入
+          </Button>
           <Button
             v-if="canExport"
             data-testid="patient-export"

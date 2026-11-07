@@ -133,6 +133,10 @@ public interface ImportStagingMapper {
     @Update("UPDATE imp_job SET status = #{to} WHERE id = #{id} AND status = #{from}")
     int casStatus(@Param("id") long id, @Param("from") String from, @Param("to") String to);
 
+    /** 回填原始文件的对象存储键（上传端点先建作业再落存储，E18-T06； 键为相对键——ObjectStorage 读写都按当前租户前缀解析）。 */
+    @Update("UPDATE imp_job SET storage_key = #{storageKey} WHERE id = #{id}")
+    int updateStorageKey(@Param("id") long id, @Param("storageKey") String storageKey);
+
     /** 进度：staged_rows 增量累加（写暂存行的批次粒度）。 */
     @Update("UPDATE imp_job SET staged_rows = staged_rows + #{delta} WHERE id = #{id}")
     int addStagedRows(@Param("id") long id, @Param("delta") long delta);
@@ -261,4 +265,39 @@ public interface ImportStagingMapper {
             "<script>SELECT COUNT(*) FROM imp_issue WHERE job_id = #{jobId}"
                     + " <if test='level != null'>AND level = #{level}</if></script>")
     long countIssues(@Param("jobId") long jobId, @Param("level") String level);
+
+    /** 校验问题行（导入向导分页展示，E18-T06；import-export.md §1「行号、列字母、表头、原因、级别」）。 */
+    record IssueRow(
+            long id,
+            String sheetName,
+            int rowNo,
+            Integer colNo,
+            String colLetters,
+            String header,
+            String level,
+            String code,
+            String message) {}
+
+    /**
+     * 分页读校验问题（按 id 正序 = 校验产出的工作表 → 行 → 列顺序，E18-T03 {@code compareIssues}）。 IgnoreScope
+     * 理由：问题清单不含敏感原值（原因文案与脱敏口径由校验阶段保证，OQ-101③）， 按作业维度展示给持 followup:patient:import
+     * 的操作人（病区范围在导入确认时校验，同 {@link #findRows} 口径）。
+     */
+    @com.crdp.framework.datascope.IgnoreScope(
+            reason =
+                    "导入向导分页读本校验问题（job_id 限定，E18-T06）：问题清单不回显敏感原值"
+                            + "（OQ-101③），病区数据范围在导入确认时校验（与 findRows 同口径）")
+    @Select(
+            """
+            <script>SELECT id, sheet_name AS sheetName, row_no AS rowNo, col_no AS colNo,
+                           col_letters AS colLetters, header, level, code, message
+            FROM imp_issue WHERE job_id = #{jobId}
+            <if test='level != null'>AND level = #{level}</if>
+            ORDER BY id LIMIT #{limit} OFFSET #{offset}</script>
+            """)
+    List<IssueRow> findIssues(
+            @Param("jobId") long jobId,
+            @Param("level") String level,
+            @Param("offset") long offset,
+            @Param("limit") int limit);
 }

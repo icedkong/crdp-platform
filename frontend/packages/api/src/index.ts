@@ -429,6 +429,34 @@ export type {
   PatientExportSubmitted,
   PatientExportValueMode,
 } from './patient-export';
+// E18-T06 患者历史数据导入向导（A-PAT-008、A-PAT-018）
+export {
+  canConfirmImport,
+  IMPORT_POLL_INTERVAL_MS,
+  importCommitPercent,
+  importFileSizeText,
+  importResultSummary,
+  importStatusColor,
+  importStatusText,
+  importStepStatus,
+  importWizardStep,
+  shouldPollImport,
+  validateImportConfirmForm,
+  validateImportUploadFile,
+} from './patient-import';
+export type {
+  ImportBatch,
+  ImportCommitStats,
+  ImportConfirmRequest,
+  ImportDuplicateStrategy,
+  ImportIssueItem,
+  ImportIssuePage,
+  ImportJobStatus,
+  ImportJobView,
+  ImportLayout,
+  ImportStepStatus,
+  ImportWizardStep,
+} from './patient-import';
 // E13-T05 档案概览与患者时间轴（A-PAT-004、A-PAT-013、C-PAT-010）
 export {
   completenessText,
