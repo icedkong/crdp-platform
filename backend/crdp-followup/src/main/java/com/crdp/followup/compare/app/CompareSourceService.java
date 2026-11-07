@@ -37,7 +37,8 @@ import org.springframework.stereotype.Service;
  * </ul>
  *
  * <p>求值已随 E17-T03 落地（{@link com.crdp.followup.compare.domain.CompareEvaluator} 与前端 packages/rules
- * 共享用例锁定一致）；结果持久化与补录后重算随 E17-T04；C 的「同一器械 / 电极」取法随 E21。
+ * 共享用例锁定一致）；结果持久化与补录后重算已随 E17-T04 落地（{@link CompareHighlightService} 批量重算经 {@link #previousOf}
+ * 复用本类同一份链定序与基线回落）；C 的「同一器械 / 电极」取法随 E21。
  */
 @Service
 public class CompareSourceService {
@@ -99,12 +100,33 @@ public class CompareSourceService {
         if (enabled.isEmpty()) {
             return null;
         }
-        Set<String> referencedKeys = referencedKeys(enabled);
         LocalDate effectiveDate = visitDate != null ? visitDate : source.findTaskPlanDate(recordId);
         List<CandidateRow> candidates =
                 source.findSubmittedCandidates(patientId, recordId, formCode);
-        Map<Long, LocalDate> planDates = planDatesOf(candidates);
-        CandidateRow previous = nearestEarlier(candidates, recordId, effectiveDate, planDates);
+        return previousOf(
+                enabled, candidates, planDatesOf(candidates), recordId, effectiveDate, patientId);
+    }
+
+    /**
+     * 链上取「当前记录的上一次」（E17-T04 批量重算与 {@link #resolve} 共用同一份定序与回落逻辑， 不再各写一份）： 候选里取对比时点早于本次、最近的一条（同点按 id
+     * 小者）；无候选回落基线分节。 不做功能开关与规则存在性检查（调用方先判）。
+     *
+     * @param enabled 启用规则（白名单键与基线回落列都来自它）
+     * @param candidates 对比候选（已排除计划外；含当前记录自身时由 id 排除）
+     * @param planDates 候选的任务计划日期（visit_date 为空的 TASK 候选的对比时点）
+     * @param recordId 当前记录（链定序排除自身）
+     * @param currentEffective 当前记录对比时点（visit_date ?? 任务计划日期）
+     * @param patientId 当前患者（基线回落查询）
+     */
+    PreviousView previousOf(
+            List<CompareRuleRow> enabled,
+            List<CandidateRow> candidates,
+            Map<Long, LocalDate> planDates,
+            long recordId,
+            LocalDate currentEffective,
+            long patientId) {
+        Set<String> referencedKeys = referencedKeys(enabled);
+        CandidateRow previous = nearestEarlier(candidates, recordId, currentEffective, planDates);
         if (previous != null) {
             Map<String, Object> values = pickKeys(readMap(previous.data()), referencedKeys);
             return PreviousView.followup(
@@ -191,7 +213,7 @@ public class CompareSourceService {
     }
 
     /** 候选的对比时点（visit_date ?? 任务计划日期）。 */
-    private static LocalDate effectiveOf(CandidateRow row, Map<Long, LocalDate> planDates) {
+    static LocalDate effectiveOf(CandidateRow row, Map<Long, LocalDate> planDates) {
         return row.visitDate() != null ? row.visitDate() : planDates.get(row.taskId());
     }
 

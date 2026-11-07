@@ -16,6 +16,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.crdp.followup.compare.app.CompareHighlightService;
 import com.crdp.followup.patient.app.BaselineLockService;
 import com.crdp.followup.patient.app.BaselineSectionService;
 import com.crdp.followup.record.app.FollowupRecordService;
@@ -67,6 +68,7 @@ class ReportMappingServiceTest {
     private final BaselineLockService lockService = mock(BaselineLockService.class);
     private final FieldHistoryService fieldHistory = mock(FieldHistoryService.class);
     private final AuditLogger audit = mock(AuditLogger.class);
+    private final CompareHighlightService compareHighlights = mock(CompareHighlightService.class);
 
     private final ReportMappingService service =
             new ReportMappingService(
@@ -77,7 +79,8 @@ class ReportMappingServiceTest {
                     baselineService,
                     lockService,
                     fieldHistory,
-                    audit);
+                    audit,
+                    compareHighlights);
 
     @BeforeEach
     void login() {
@@ -308,6 +311,8 @@ class ReportMappingServiceTest {
         assertTrue(
                 auditCaptor.getValue().description().contains("900"),
                 auditCaptor.getValue().description());
+        // A 规格流程第 5 步「录入时对比标红（A-FU-027）同样生效」：写入后重算该患者该表单已提交记录（E17-T04）
+        verify(compareHighlights).refreshSubmittedRecords(PATIENT, "A_ANNUAL_FU");
     }
 
     @Test
@@ -435,6 +440,8 @@ class ReportMappingServiceTest {
                         eq(ChangeSource.REPORT),
                         assertContains("心脏超声"));
         verify(audit).append(any(AuditEntry.class));
+        // 写基线分节 → 回落该基线表单的随访表单重算标红（E17-T04）
+        verify(compareHighlights).refreshBaselineDependents(PATIENT, "A_BASELINE");
     }
 
     @Test

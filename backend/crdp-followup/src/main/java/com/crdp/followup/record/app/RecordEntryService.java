@@ -1,5 +1,6 @@
 package com.crdp.followup.record.app;
 
+import com.crdp.followup.compare.app.CompareHighlightService;
 import com.crdp.followup.compare.app.CompareRuleService;
 import com.crdp.followup.compare.app.CompareSourceService;
 import com.crdp.followup.plan.app.FollowupTerminationService;
@@ -41,7 +42,9 @@ import org.springframework.transaction.annotation.Transactional;
  *       E15-T05，本流程不置失访）；
  *   <li>修改已提交（edit-session / PUT）、删除、报告单带入随 E16 / E21；{@code previous}（上一次记录解析，A-FU-027）已随 E17-T02
  *       接入（{@link CompareSourceService#resolve}）；{@code compareRules}（启用规则下发，前端实时标红与后端保存复算共用，
- *       tech-plan §11）随 E17-T03；标红结果持久化随 E17-T04。
+ *       tech-plan §11）随 E17-T03；标红结果持久化（提交后同一事务 {@link
+ *       CompareHighlightService#refreshSubmittedRecords} 重算并落 fu_record.highlight，含补录更早记录后的级联重算）已随
+ *       E17-T04 落地。
  * </ul>
  */
 @Service
@@ -60,6 +63,7 @@ public class RecordEntryService {
     private final FollowupTaskQueryMapper taskQueryMapper;
     private final CompareSourceService compareSource;
     private final CompareRuleService compareRules;
+    private final CompareHighlightService compareHighlights;
     private final CryptoService crypto;
     private final AuditLogger audit;
 
@@ -72,6 +76,7 @@ public class RecordEntryService {
             FollowupTaskQueryMapper taskQueryMapper,
             CompareSourceService compareSource,
             CompareRuleService compareRules,
+            CompareHighlightService compareHighlights,
             CryptoService crypto,
             AuditLogger audit) {
         this.recordService = recordService;
@@ -82,6 +87,7 @@ public class RecordEntryService {
         this.taskQueryMapper = taskQueryMapper;
         this.compareSource = compareSource;
         this.compareRules = compareRules;
+        this.compareHighlights = compareHighlights;
         this.crypto = crypto;
         this.audit = audit;
     }
@@ -184,6 +190,11 @@ public class RecordEntryService {
         FollowupRecordService.SubmitOutcome outcome =
                 recordService.submit(
                         recordId, command.baseVersion(), command.data(), command.dataMeta());
+        // 对比标红保存复算与持久化（E17-T04 / A-FU-027，tech-plan §11「后端保存时再算一次，结果存
+        // fu_record.highlight」）：同一事务重算该患者该表单全部已提交记录——含本次命中落库与补录更早记录后
+        // 排在后面的记录「上一次」变化；无启用规则 / 无命中置 NULL。RECORD_SUBMIT 审计已含本次提交事实，重算不单独写审计。
+        compareHighlights.refreshSubmittedRecords(
+                outcome.view().patientId(), outcome.view().formCode());
         // 字段历史（E11-T06：提交时比较 DRAFT→SUBMITTED 逐字段留痕；隐藏字段清空同样落 diff；E15-T07 起
         // 载体 fu_record，record_type = FU_RECORD）
         List<FieldHistoryService.FieldChange> changes =
