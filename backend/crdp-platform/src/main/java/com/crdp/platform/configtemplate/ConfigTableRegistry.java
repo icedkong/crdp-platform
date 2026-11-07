@@ -159,6 +159,9 @@ public final class ConfigTableRegistry {
                     "job_export",
                     "job_export_approval",
                     "job_tenant_run",
+                    // 导入作业与暂存行（E18-T02：业务数据 + 含密文载荷，绝不随模板复制）
+                    "imp_job",
+                    "imp_row",
                     // 文件、密钥、outbox
                     "sys_file",
                     "sys_webhook_delivery",

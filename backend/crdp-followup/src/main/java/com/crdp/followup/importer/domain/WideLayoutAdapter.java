@@ -5,6 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 
 /**
  * E18-T01 / A-PAT-018 宽表版面适配器：医院现有 Excel——一张工作表、一个患者一行， 「9 个前置列 + 基线列（带原表列名锚点的字段）+ N 组 × 随访列（每组列数 =
@@ -42,6 +43,19 @@ public final class WideLayoutAdapter implements ImportLayoutAdapter {
 
     @Override
     public ImportParseResult parse(ImportWorkbookData workbook, ImportFieldCatalog catalog) {
+        List<ImportPatientRecord> patients = new ArrayList<>();
+        stream(workbook, catalog, patients::add);
+        return new ImportParseResult(ImportLayout.WIDE, patients, List.of());
+    }
+
+    /**
+     * 流式解析（E18-T02 暂存管道接缝，验收「大文件不占满内存」）：先校验表头（结构性问题在任何行回调之前 整体报错），再逐行回调患者记录——一个数据行即一位患者，调用方按行写
+     * imp_row 后即可丢弃， 内存与文件行数无关（tech-plan §12「逐行读取，每行写入暂存表」）。 一次性模型 {@link #parse} 只是本方法的收集版。
+     */
+    public void stream(
+            ImportWorkbookData workbook,
+            ImportFieldCatalog catalog,
+            Consumer<ImportPatientRecord> sink) {
         if (workbook.sheets().size() != 1) {
             throw new ImportLayoutException(
                     "宽表导入需要一张工作表，实际 " + workbook.sheets().size() + " 张",
@@ -53,11 +67,11 @@ public final class WideLayoutAdapter implements ImportLayoutAdapter {
                                     + "）；两张工作表的长表模板见导入向导"));
         }
         ImportSheetData sheet = workbook.sheets().get(0);
-        List<ImportFieldCatalog.CatalogField> baselineFields = anchored(catalog.baselineFields());
-        List<ImportFieldCatalog.CatalogField> followupFields = anchored(catalog.followupFields());
-        ColumnLayout layout = validateHeader(sheet, baselineFields, followupFields);
-
-        List<ImportPatientRecord> patients = new ArrayList<>();
+        ColumnLayout layout =
+                validateHeader(
+                        sheet,
+                        anchored(catalog.baselineFields()),
+                        anchored(catalog.followupFields()));
         sheet.dataRows(
                 (rowNo, cells) -> {
                     ImportPatientRecord record = record(rowNo, cells, layout, catalog);
@@ -65,10 +79,9 @@ public final class WideLayoutAdapter implements ImportLayoutAdapter {
                     if (!record.frontColumns().isEmpty()
                             || !record.baseline().isEmpty()
                             || !record.followups().isEmpty()) {
-                        patients.add(record);
+                        sink.accept(record);
                     }
                 });
-        return new ImportParseResult(ImportLayout.WIDE, patients, List.of());
     }
 
     // ---------------------------------------------------------------- 表头识别

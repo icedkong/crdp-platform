@@ -1,8 +1,8 @@
 # 导入与导出（import-export）
 
-> 后端：`crdp-followup`（导入导出作业，异步）+ 平台审批。表：`job_import`、`job_import_error`、`job_export`、`job_export_approval`。
+> 后端：`crdp-followup`（导入导出作业，异步）+ 平台审批。表：`imp_job`、`imp_row`（E18-T02 起，tech-plan §12 命名）、`job_export`、`job_export_approval`。
 > 页面：`/followup/patient/import`（导入向导）、患者列表「导出」、审计中心导出。
-> 全部路径 **推断，待确认**。需求：A-PAT-008、A-PAT-009、A-PAT-018（开关 `wide_import`）、A-WARD-006、C-PAT-014、PLT-ORG-003、PLT-ORG-007、PLT-AUD-003、PLT-AUD-007。
+> 路径 **推断，待确认**（导入端点随 E18-T06 落地）。需求：A-PAT-008、A-PAT-009、A-PAT-018（开关 `wide_import`）、A-WARD-006、C-PAT-014、PLT-ORG-003、PLT-ORG-007、PLT-AUD-003、PLT-AUD-007。
 
 ## 1. 患者导入（A-PAT-008、A-PAT-018；`followup:patient:import`）
 
@@ -17,7 +17,8 @@
 | GET | `/api/hospital/followup/imports/{jobId}/result` | 结果文件（签名链接，写审计） |
 
 - 宽表（A-PAT-018）：识别 9 个前置列 + 212 个基线列 + N 组 × 54 个随访列（组数不限）；列定义来自字段字典（`docs/requirements/hospital-a-spec.md` 第 4 章“导入格式说明”与附录 A），**不要在代码里硬编码列号以外的业务含义**。
-- **版面适配器已落地（E18-T01，无独立 HTTP 端点）**：`crdp-followup` importer domain 的 `ImportWorkbookParser` 按工作表结构识别版面（「基线」+「随访记录」两张 → 长表；单张 → 宽表），`WideLayoutAdapter` / `LongLayoutAdapter` 都解析到同一模型 `ImportParseResult`（患者记录：病案号、原系统编号、前置列（宽表专属）、基线字段值、按年度的随访值；单元格保留行 / 列坐标与原文，供 T03 批注版校验报告）。列 / 表头不匹配抛 `ImportLayoutException` 整体报错（差异清单带列字母，不做猜测）；数据级问题（重复、随访年度解析不了、随访行找不到患者）留在模型里由校验阶段报告。表头匹配口径见 OQ-100：宽表列 = 字段字典带「原表列名」锚点的字段（212 基线 / 54 随访，停用的 #217 也在内），长表列 = 启用字段的显示名（213 / 53）。E18-T02 的导入作业（imp_job / imp_row、流式读取）从 `ImportWorkbookParser` + `ImportFieldCatalogLoader`（importer app，从字段字典构造目录）接入。
+- **版面适配器已落地（E18-T01，无独立 HTTP 端点）**：`crdp-followup` importer domain 的 `ImportWorkbookParser` 按工作表结构识别版面（「基线」+「随访记录」两张 → 长表；单张 → 宽表），`WideLayoutAdapter` / `LongLayoutAdapter` 都解析到同一模型 `ImportParseResult`（患者记录：病案号、原系统编号、前置列（宽表专属）、基线字段值、按年度的随访值；单元格保留行 / 列坐标与原文，供 T03 批注版校验报告）。列 / 表头不匹配抛 `ImportLayoutException` 整体报错（差异清单带列字母，不做猜测）；数据级问题（重复、随访年度解析不了、随访行找不到患者）留在模型里由校验阶段报告。表头匹配口径见 OQ-100：宽表列 = 字段字典带「原表列名」锚点的字段（212 基线 / 54 随访，停用的 #217 也在内），长表列 = 启用字段的显示名（213 / 53）。
+- **流式解析与暂存已落地（E18-T02，`ImportStagingService`，无独立 HTTP 端点；上传端点随 E18-T06）**：框架 `ExcelGateway`（ADR 0007，JDK zip + StAX 流式逐行，不引 POI）→ importer infra `StreamingImportWorkbook`（兑现 OQ-100④ 接入缝，适配器不改动）→ 适配器逐行回调 → `ImportStagingService` 按批（500 行）写 `imp_row` 并累加 `imp_job.staged_rows`——任何时刻内存只有一批（验收「大文件不占满内存」，`StreamingXlsxMemoryTest` 以 `-Xmx64m` 子进程读 130MB+ 内容核对）。状态机 `UPLOADED → PRECHECKING → PRECHECKED | PRECHECK_FAILED`；版面 / 表头整体错误落 `imp_job.layout_problems`（不写行）、预检失败清掉半成品行；建作业时同一租户已有活跃作业 → 40901（tech-plan §12「同一租户同一时间只允许一个导入作业」）。暂存口径见 OQ-101：宽表一行 = 一位患者（`row_type=PATIENT`）；长表基线行 / 随访行分存（`BASELINE` / `FOLLOWUP`），跨行「病案号 + 随访年度」关联与查重由校验阶段按 `imp_row.mrn_blind`（与 `pt_patient.mrn_blind` 同 purpose）做；整行解析结果（含姓名 / 病案号等敏感明文）加密落 `payload_cipher`（`imp-row-payload` purpose，`ImporterEncryptedColumns` 登记），解析阶段已知问题（随访年度解析不了、病案号为空）落行级 `problems`。
 - 病区按导入文件中的病区列或向导中选择的病区（A-WARD-006）；导入人必须有该病区范围。
 - 导入写审计（作业级 + 行级摘要）；上传的原始文件按租户加密存储，保留期限见 OQ-28。
 - **测试用例只能用虚构数据**；仓库里不得出现医院提供的样例文件。
