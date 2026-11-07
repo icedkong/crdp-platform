@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -131,6 +132,40 @@ public class ReportController {
             @PathVariable("id") long id) {
         return ApiResponse.ok(service.reportLocations(id));
     }
+
+    // ---------------------------------------------------------------- 修改位置（E16-T13 /
+    // A-ATT-020、C-SCAN-020）
+
+    @Operation(
+            summary =
+                    "修改位置（E16-T13 / A-ATT-020、C-SCAN-020）：{ add[], remove[] } 增删位置，"
+                            + "add 锚点按当前模板版本校验（不在当前版本 40001）、同一报告单同一位置唯一；"
+                            + "结果至少保留 1 个（全部移除 40001）；每次增删写 RPT_LOCATION_CHANGE 操作日志"
+                            + "（谁、何时、增加 / 移除了哪个位置）；无位置报告单（历史迁移 / 模板调整）"
+                            + "经 add 补指定（「未指定位置」组的指定位置入口）；越范围 / 已删 40400（写 DENIED 审计）")
+    @PutMapping("/reports/{id}/locations")
+    @RequireModule("followup")
+    @RequiresPermission("followup:scan:upload")
+    public ApiResponse<ReportService.LocationsChangedView> changeLocations(
+            @PathVariable("id") long id, @RequestBody(required = false) LocationsChangeBody body) {
+        if (body == null) {
+            throw new ApiException(400, 40001, "请求体不能为空");
+        }
+        ReportService.LocationChangeRequest request =
+                new ReportService.LocationChangeRequest(
+                        body.add() == null
+                                ? List.of()
+                                : body.add().stream().map(ReportController::toLocation).toList(),
+                        body.remove() == null
+                                ? List.of()
+                                : body.remove().stream()
+                                        .map(ReportController::toLocation)
+                                        .toList());
+        return ApiResponse.ok(service.changeLocations(id, request));
+    }
+
+    /** 修改位置请求体（report.md §2）：add / remove 至少一项非空；remove 按四元组匹配（模板版本不参与）。 */
+    record LocationsChangeBody(List<LocationBody> add, List<LocationBody> remove) {}
 
     // ---------------------------------------------------------------- 映射写入（E16-T07 /
     // A-ATT-013、C-SCAN-005）

@@ -3,7 +3,8 @@
  * （docs/api/report.md §2）——添加报告单对话框、位置选择（必填多选树）与患者内清单。
  *
  * 位置粒度三种（不细到字段）：基线某分类、某条随访记录整条、某条随访记录中的某分组；
- * C 的植入记录锚点（implant_record）随 E21-T32 开放。模板版本校验与「修改位置」随 E16-T13。
+ * C 的植入记录锚点（implant_record）随 E21-T32 开放。「修改位置」与按模板版本校验随 E16-T13 落地
+ * （PUT /reports/{id}/locations，至少保留 1 个位置）。
  * 运行时目录类型（ReportCatalogType / ReportCatalogName）见 report-config.ts（E16-T01）。
  */
 
@@ -150,6 +151,29 @@ export interface PatientReportsView {
 export interface ReportDeletedView {
   id: string;
   status: 'DELETED';
+}
+
+// ---------------------------------------------------------------- E16-T13 修改位置（A-ATT-020 / C-SCAN-020）
+
+/** 移除位置引用：按四元组（linkType / linkRecordId / anchorType / anchorKey）匹配在册行，模板版本不参与。 */
+export interface ReportLocationRemoveInput {
+  anchorKey?: string;
+  anchorType?: ReportAnchorType;
+  linkRecordId?: string;
+  linkType: ReportLinkType;
+}
+
+/** 修改位置请求（PUT /followup/reports/{id}/locations）：add / remove 至少一项非空；结果至少保留 1 个位置（40001）。 */
+export interface ReportLocationsChangeRequest {
+  add?: ReportLocationInput[];
+  remove?: ReportLocationRemoveInput[];
+}
+
+/** 修改位置结果（回读位置标签，与患者内清单同形；无位置报告单经 add 补指定——「未指定位置」组的指定位置入口）。 */
+export interface ReportLocationsChangedView {
+  id: string;
+  locationCount: number;
+  locations: ReportLocationTag[];
 }
 
 // ---------------------------------------------------------------- E16-T05 全院报告单（A-ATT-016 / C-SCAN-014）
