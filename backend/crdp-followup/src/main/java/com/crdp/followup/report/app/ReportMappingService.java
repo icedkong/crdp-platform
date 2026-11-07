@@ -1,5 +1,6 @@
 package com.crdp.followup.report.app;
 
+import com.crdp.followup.compare.app.CompareHighlightService;
 import com.crdp.followup.patient.app.BaselineLockService;
 import com.crdp.followup.patient.app.BaselineSectionService;
 import com.crdp.followup.record.app.FollowupRecordService;
@@ -46,6 +47,8 @@ import org.springframework.transaction.annotation.Transactional;
  *   <li><b>值转换</b>（{@link MappingValues}）：指标结果文本按目标字段类型转换（数值 / 日期 / 选项名→编码 / 长×宽）， 转换失败预览逐行提示、确认
  *       40001。
  *   <li><b>附带写入</b>：映射级（随访目标「复查超声 = 是」）与项目级（返流程度写入时「有无…返流 = 有」）按 V64 配置 一并列出，随确认一并写入。
+ *   <li><b>对比标红同样生效</b>（A 规格流程第 5 步；E17-T04）：写入随访记录或基线分节后，同一事务重算受影响患者的 fu_record.highlight（{@link
+ *       CompareHighlightService}，目标值变了命中可能翻转）。
  * </ul>
  *
  * <p>报告单越范围 / 不存在 / 已删 40400（不暴露对象存在）；预览不写任何数据。写入闸门与版本口径复用各目标记录 app 口（ {@code
@@ -76,6 +79,7 @@ public class ReportMappingService {
     private final BaselineLockService lockService;
     private final FieldHistoryService fieldHistory;
     private final AuditLogger audit;
+    private final CompareHighlightService compareHighlights;
 
     public ReportMappingService(
             ReportMapper mapper,
@@ -85,7 +89,8 @@ public class ReportMappingService {
             BaselineSectionService baselineService,
             BaselineLockService lockService,
             FieldHistoryService fieldHistory,
-            AuditLogger audit) {
+            AuditLogger audit,
+            CompareHighlightService compareHighlights) {
         this.mapper = mapper;
         this.config = config;
         this.formService = formService;
@@ -94,6 +99,7 @@ public class ReportMappingService {
         this.lockService = lockService;
         this.fieldHistory = fieldHistory;
         this.audit = audit;
+        this.compareHighlights = compareHighlights;
     }
 
     // ---------------------------------------------------------------- DTO（report.md §3）
@@ -275,6 +281,8 @@ public class ReportMappingService {
                             .size();
             targetRecordId = outcome.after().id();
             newVersion = outcome.after().version();
+            // 写基线分节 → 回落该基线表单的已提交随访记录重算标红（E17-T04；值变了命中可能翻转）
+            compareHighlights.refreshBaselineDependents(report.patientId(), outcome.formCode());
         } else {
             FollowupRecordService.MappingWriteOutcome outcome =
                     recordService.applyMappingWrite(
@@ -295,6 +303,10 @@ public class ReportMappingService {
                             .size();
             targetRecordId = String.valueOf(outcome.after().id());
             newVersion = outcome.after().version();
+            // 写随访记录 → 该患者该表单已提交记录重算标红（A 规格流程第 5 步「录入时对比标红同样生效」，E17-T04；
+            // 目标为草稿时无已提交行，重算自然为空操作）
+            compareHighlights.refreshSubmittedRecords(
+                    outcome.after().patientId(), outcome.after().formCode());
         }
         audit.append(
                 AuditEntry.operation("followup", "RPT_MAPPING_WRITE")

@@ -13,6 +13,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.crdp.followup.compare.app.CompareHighlightService;
 import com.crdp.followup.compare.app.CompareRuleService;
 import com.crdp.followup.compare.app.CompareSourceService;
 import com.crdp.followup.plan.app.FollowupTerminationService;
@@ -50,6 +51,7 @@ class RecordEntryServiceTest {
     private final FollowupTaskQueryMapper taskQueryMapper = mock(FollowupTaskQueryMapper.class);
     private final CompareSourceService compareSource = mock(CompareSourceService.class);
     private final CompareRuleService compareRules = mock(CompareRuleService.class);
+    private final CompareHighlightService compareHighlights = mock(CompareHighlightService.class);
     private final CryptoService crypto = mock(CryptoService.class);
     private final AuditLogger audit = mock(AuditLogger.class);
 
@@ -63,6 +65,7 @@ class RecordEntryServiceTest {
                     taskQueryMapper,
                     compareSource,
                     compareRules,
+                    compareHighlights,
                     crypto,
                     audit);
 
@@ -285,6 +288,8 @@ class RecordEntryServiceTest {
         assertEquals("9001", view.taskId());
         verify(terminationService, never()).terminateOnDeath(anyLong(), any(), any());
         verify(audit).append(any());
+        // E17-T04：提交后同一事务重算该患者该表单已提交记录的 fu_record.highlight（保存复算落库）
+        verify(compareHighlights).refreshSubmittedRecords(301L, "A_ANNUAL_FU");
     }
 
     @Test

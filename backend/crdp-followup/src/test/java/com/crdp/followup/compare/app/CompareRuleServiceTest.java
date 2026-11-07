@@ -9,7 +9,9 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.crdp.followup.compare.infra.mapper.CompareFeatureMapper;
@@ -37,8 +39,9 @@ import org.springframework.security.core.context.SecurityContextHolder;
 /**
  * E17-T01 / A-FU-027：对比规则维护单元测试。
  *
- * <p>锁定：清单解析 params 并带显示名、修改全量覆盖阈值与开关并写 COMPARE_RULE_UPDATE 审计（含前后值）、 功能开关 compare_highlight 关闭 →
- * 40301、无行视为开、规则不存在 40400、键集校验失败 40001 不落库。全部虚构数据。
+ * <p>锁定：清单解析 params 并带显示名、修改全量覆盖阈值与开关并写 COMPARE_RULE_UPDATE 审计（含前后值）、 修改后同一事务触发规则变更重算并写
+ * COMPARE_RULE_RECALC 汇总审计（E17-T04 验收「改规则后可重算已提交记录」）、功能开关 compare_highlight 关闭 → 40301、无行视为开、规则不存在
+ * 40400、键集校验失败 40001 不落库不重算。全部虚构数据。
  */
 @ExtendWith(MockitoExtension.class)
 class CompareRuleServiceTest {
@@ -46,8 +49,10 @@ class CompareRuleServiceTest {
     private final CompareRuleMapper rules = mock(CompareRuleMapper.class);
     private final CompareFeatureMapper features = mock(CompareFeatureMapper.class);
     private final AuditLogger audit = mock(AuditLogger.class);
+    private final CompareHighlightService highlights = mock(CompareHighlightService.class);
 
-    private final CompareRuleService service = new CompareRuleService(rules, features, audit);
+    private final CompareRuleService service =
+            new CompareRuleService(rules, features, audit, highlights);
 
     @BeforeEach
     void login() {
@@ -179,13 +184,19 @@ class CompareRuleServiceTest {
         assertTrue(paramsJson.getValue().contains("\"threshold\":15"));
 
         ArgumentCaptor<AuditEntry> entry = ArgumentCaptor.forClass(AuditEntry.class);
-        verify(audit).append(entry.capture());
-        assertEquals("COMPARE_RULE_UPDATE", entry.getValue().action());
-        assertEquals("FU_COMPARE_RULE", entry.getValue().objectType());
-        assertEquals("ef_drop", entry.getValue().objectId());
-        assertTrue(entry.getValue().beforeJson().contains("\"threshold\":10"));
-        assertTrue(entry.getValue().afterJson().contains("\"threshold\":15"));
-        assertTrue(entry.getValue().afterJson().contains("\"enabled\":false"));
+        verify(audit, times(2)).append(entry.capture());
+        assertEquals("COMPARE_RULE_UPDATE", entry.getAllValues().get(0).action());
+        assertEquals("FU_COMPARE_RULE", entry.getAllValues().get(0).objectType());
+        assertEquals("ef_drop", entry.getAllValues().get(0).objectId());
+        assertTrue(entry.getAllValues().get(0).beforeJson().contains("\"threshold\":10"));
+        assertTrue(entry.getAllValues().get(0).afterJson().contains("\"threshold\":15"));
+        assertTrue(entry.getAllValues().get(0).afterJson().contains("\"enabled\":false"));
+        // E17-T04：修改落库后同一事务按新开关与阈值重算该表单全部已提交记录（停用即清除）
+        verify(highlights).recalculateForm("A_ANNUAL_FU");
+        AuditEntry recalc = entry.getAllValues().get(1);
+        assertEquals("COMPARE_RULE_RECALC", recalc.action());
+        assertEquals("ef_drop", recalc.objectId());
+        assertTrue(recalc.afterJson().contains("\"formCode\":\"A_ANNUAL_FU\""));
     }
 
     /** 规则不存在 → 40400（不暴露存在性口径与其他租户行）。 */
@@ -222,6 +233,7 @@ class CompareRuleServiceTest {
                                                 true, Map.of("direction", "DROP"))));
         assertEquals(40001, badParams.code());
         verify(rules, never()).update(anyLong(), anyString(), anyString(), anyLong());
+        verifyNoInteractions(highlights);
     }
 
     /** 功能开关关闭 → 40301（GET / PUT 同口径，AGENTS.md 规则 7）；无行视为默认开。 */

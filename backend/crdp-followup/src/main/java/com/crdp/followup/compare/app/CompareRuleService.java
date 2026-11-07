@@ -6,6 +6,7 @@ import com.crdp.followup.compare.infra.mapper.CompareRuleMapper;
 import com.crdp.followup.compare.infra.mapper.CompareRuleRow;
 import com.crdp.framework.audit.AuditEntry;
 import com.crdp.framework.audit.AuditLogger;
+import com.crdp.framework.audit.AuditResult;
 import com.crdp.framework.security.CurrentSession;
 import com.crdp.framework.web.ApiException;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -26,8 +27,9 @@ import org.springframework.transaction.annotation.Transactional;
  * 口径：配置变更必审计，含前后值）。功能开关 compare_highlight 关闭 → 40301、 前端隐藏入口（AGENTS.md 规则 7）；无行视为默认开。
  *
  * <p>求值接入：上一次记录解析随 E17-T02（{@link CompareSourceService}）、规则下发与前后端实时求值随 E17-T03（{@link
- * #evaluationRules} + {@link com.crdp.followup.compare.domain.CompareEvaluator}）； 结果持久化与规则变更重算随
- * E17-T04。
+ * #evaluationRules} + {@link com.crdp.followup.compare.domain.CompareEvaluator}）； 结果持久化与规则变更重算已随
+ * E17-T04 落地——PUT 落库后同一事务内 {@link CompareHighlightService#recalculateForm} 按新开关与阈值重算该表单全部 已提交记录的
+ * fu_record.highlight，并写 COMPARE_RULE_RECALC 汇总审计。
  */
 @Service
 public class CompareRuleService {
@@ -40,12 +42,17 @@ public class CompareRuleService {
     private final CompareRuleMapper rules;
     private final CompareFeatureMapper features;
     private final AuditLogger audit;
+    private final CompareHighlightService highlights;
 
     public CompareRuleService(
-            CompareRuleMapper rules, CompareFeatureMapper features, AuditLogger audit) {
+            CompareRuleMapper rules,
+            CompareFeatureMapper features,
+            AuditLogger audit,
+            CompareHighlightService highlights) {
         this.rules = rules;
         this.features = features;
         this.audit = audit;
+        this.highlights = highlights;
     }
 
     /** 规则视图（followup.md §4）：params 已解析为对象；字段 / 表单显示名由查询带出。 */
@@ -126,6 +133,22 @@ public class CompareRuleService {
                         .description("修改对比提示规则：" + existing.name())
                         .beforeJson(compact(before))
                         .afterJson(compact(after))
+                        .build());
+        // 规则变更重算（E17-T04，验收「改规则后可重算已提交记录」）：同一事务内按新开关与阈值重算该表单全部
+        // 已提交记录的 fu_record.highlight（全停用即清除）；汇总审计一条（逐记录不写，与批量操作同口径）。
+        int recalculated = highlights.recalculateForm(existing.formCode());
+        audit.append(
+                AuditEntry.operation("followup", "COMPARE_RULE_RECALC")
+                        .objectType("FU_COMPARE_RULE")
+                        .objectId(existing.ruleCode())
+                        .description("规则变更重算：" + existing.name())
+                        .afterJson(
+                                "{\"formCode\":\""
+                                        + existing.formCode()
+                                        + "\",\"recalculated\":"
+                                        + recalculated
+                                        + "}")
+                        .result(AuditResult.SUCCESS)
                         .build());
         return after;
     }
