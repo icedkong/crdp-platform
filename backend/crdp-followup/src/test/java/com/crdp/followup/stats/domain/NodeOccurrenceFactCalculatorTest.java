@@ -458,6 +458,66 @@ class NodeOccurrenceFactCalculatorTest {
     }
 
     @Test
+    void fixedYearPlanAlsoMarksFollowupYear() {
+        // 固定次数年度子计划（FIXED × 2、周期 1 年，周期回落口径 OQ-78①）：随访年度照常 = 第 N 次
+        List<NodeDef> fixedYearlyNodes =
+                List.of(
+                        new NodeDef(
+                                SUBPLAN_ID,
+                                null,
+                                "SUBPLAN",
+                                "FIXED",
+                                2,
+                                1,
+                                "YEAR",
+                                null,
+                                null,
+                                null,
+                                0,
+                                "YEAR",
+                                0,
+                                "DAY",
+                                0,
+                                "DAY",
+                                0,
+                                "DAY"),
+                        new NodeDef(
+                                NODE_ID,
+                                SUBPLAN_ID,
+                                "NODE",
+                                null,
+                                null,
+                                null,
+                                null,
+                                "PLAN_START",
+                                null,
+                                "BACKFILL",
+                                1,
+                                "YEAR",
+                                7,
+                                "DAY",
+                                7,
+                                "DAY",
+                                7,
+                                "DAY"));
+        List<FactRow> rows =
+                NodeOccurrenceFactCalculator.compute(
+                        fixedYearlyNodes,
+                        new PlanVersion(PLAN_ID, "PLAN-IT-1", 1),
+                        enrollment(LocalDate.of(2025, 3, 20)),
+                        List.of(task(1, "COMPLETED", "ON_TIME"), task(2, "PENDING", null)),
+                        List.of(),
+                        List.of(),
+                        List.of(new StatusPoint("ACTIVE", LocalDate.of(2025, 3, 20))),
+                        null,
+                        LocalDate.of(2027, 6, 1));
+
+        assertEquals(2, rows.size(), "固定 2 次 → 两行，不因固定次数丢年度语义");
+        assertEquals(1, rows.get(0).followupYear());
+        assertEquals(2, rows.get(1).followupYear());
+    }
+
+    @Test
     void laterOccurrencesAccumulateWhenAllWindowsEnded() {
         List<FactRow> rows =
                 NodeOccurrenceFactCalculator.compute(

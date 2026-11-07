@@ -228,7 +228,9 @@ public final class NodeOccurrenceFactCalculator {
                 subplan.cycleUnit() != null
                         ? subplan.cycleUnit().toUpperCase()
                         : node.offsetUnit().toUpperCase();
-        boolean yearly = "CYCLE".equals(repeatMode) && "YEAR".equals(cycleUnit);
+        // 年度节点 = 周期单位为年的子计划（A 持续循环或固定次数的年度计划都算；「随访年度」列供每年随访率
+        // A-DASH-006 与节点随访率共用同一查询，固定次数年度计划同样适用）
+        boolean yearly = "YEAR".equals(cycleUnit);
         PlanDateCalculator.NodeTiming timing = timingOf(node);
         for (int occurrence = 1; occurrence <= MAX_OCCURRENCES; occurrence++) {
             if (fixed && occurrence > repeatCount) {
