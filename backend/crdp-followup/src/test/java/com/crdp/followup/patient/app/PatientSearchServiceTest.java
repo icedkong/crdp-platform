@@ -16,6 +16,7 @@ import static org.mockito.Mockito.when;
 
 import com.crdp.followup.patient.infra.mapper.PatientMapper;
 import com.crdp.followup.patient.infra.mapper.PatientSearchMapper;
+import com.crdp.followup.support.ViewStubGuard;
 import com.crdp.framework.audit.AuditEntry;
 import com.crdp.framework.audit.AuditLogger;
 import com.crdp.framework.crypto.CryptoService;
@@ -26,6 +27,7 @@ import com.crdp.framework.web.ApiException;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -395,6 +397,112 @@ class PatientSearchServiceTest {
         assertEquals(42L, entry.recordCount());
         assertFalse(entry.queryDigest().contains(NAME), "审计不得出现检索词明文");
         assertTrue(entry.queryDigest().contains("\"keyword\":true"), "摘要记录是否用了检索词");
+    }
+
+    // ---------------------------------------------------------------- 租户视角执行点（E20-T07 /
+    // PLT-VIEW-010、011）
+
+    /** 视角会话（TENANT_VIEW）：平台账号身份 + 被查看租户（与 crdp-server 视角会话同构）。 */
+    private static SessionPrincipal viewPrincipal() {
+        return new SessionPrincipal(
+                "view-token",
+                "TENANT_VIEW",
+                7L,
+                "demoa",
+                "虚构示例医院甲",
+                1L,
+                "platform.admin",
+                "平台管理员（示例）",
+                List.of("PLATFORM_ADMIN"),
+                List.of(),
+                List.of(),
+                List.of(),
+                1L,
+                ScopeSnapshot.allowAll(),
+                false,
+                null,
+                "127.0.0.1",
+                0L,
+                0L,
+                900L,
+                7200L,
+                com.crdp.framework.fieldpolicy.FieldPolicySnapshot.defaults());
+    }
+
+    private PatientSearchService serviceOf(TenantViewFieldGuard guard) {
+        return new PatientSearchService(gateway, patientMapper, crypto, audit, searchFields, guard);
+    }
+
+    private void stubSingleRow() {
+        when(gateway.count(any())).thenReturn(1L);
+        when(gateway.search(any(), anyInt(), anyInt()))
+                .thenReturn(
+                        List.of(
+                                new PatientSearchMapper.PatientRowRaw(
+                                        101L,
+                                        "CIPHER:" + NAME,
+                                        "CIPHER:" + MRN,
+                                        "OLD-A-1",
+                                        "M",
+                                        71,
+                                        "示例二病区",
+                                        "王医生（示例）",
+                                        LocalDate.of(2026, 3, 1),
+                                        LocalDate.of(2026, 3, 8),
+                                        "ACTIVE",
+                                        LocalDate.of(2026, 11, 5),
+                                        92,
+                                        new BigDecimal("78.00"))));
+    }
+
+    @Test
+    void searchBlindsAndHidesRowFieldsForViewSession() {
+        SecurityContextHolder.getContext()
+                .setAuthentication(
+                        new UsernamePasswordAuthenticationToken(viewPrincipal(), null, List.of()));
+        stubSingleRow();
+        PatientSearchService service =
+                serviceOf(
+                        ViewStubGuard.of(
+                                Set.of("patient:name"), Set.of("patient:medicalRecordNo")));
+
+        PatientSearchService.PatientPage page = service.search(request(null, null));
+
+        PatientSearchService.PatientRowView row = page.items().get(0);
+        assertEquals("已设盲", row.name(), "命中设盲规则的字段接口不返回原值（PLT-VIEW-011 页面显示已设盲）");
+        assertNull(row.patientNo(), "命中隐藏规则的字段不返回（HIDDEN → null，整字段不出现）");
+    }
+
+    @Test
+    void searchKeepsMaskedValuesForViewSessionWithoutFieldRule() {
+        SecurityContextHolder.getContext()
+                .setAuthentication(
+                        new UsernamePasswordAuthenticationToken(viewPrincipal(), null, List.of()));
+        stubSingleRow();
+        // 无规则命中（含 MASKED / PLAIN）：保留传入的脱敏值——视角不放宽列表明文（OQ-107④）
+        PatientSearchService service = serviceOf(ViewStubGuard.of(Set.of(), Set.of()));
+
+        PatientSearchService.PatientRowView row =
+                service.search(request(null, null)).items().get(0);
+
+        assertEquals("张*）", row.name(), "视角会话行内姓名仍是脱敏值（前端不接收原值）");
+        assertEquals("IT*******01", row.patientNo(), "视角会话行内病案号仍是脱敏值");
+    }
+
+    @Test
+    void searchIgnoresViewRulesForHospitalSession() {
+        stubSingleRow();
+        // 医院会话（@BeforeEach 登录 doctor.demo）：即使视角效果表有规则也原样（执行点只对视角生效）
+        PatientSearchService service =
+                serviceOf(
+                        ViewStubGuard.of(
+                                Set.of("patient:name"), Set.of("patient:medicalRecordNo")));
+
+        PatientSearchService.PatientRowView row =
+                service.search(request(null, null)).items().get(0);
+
+        assertEquals("张*）", row.name(), "医院会话不经视角执行点（行为不变）");
+        assertEquals("IT*******01", row.patientNo());
     }
 
     // ---------------------------------------------------------------- 筛选候选
