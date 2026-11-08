@@ -1,0 +1,73 @@
+{
+  "task": "E22-T05",
+  "source_region": "cn-north-4",
+  "availability_zones": ["cn-north-4a", "cn-north-4b"],
+  "cce": {
+    "cluster_type": "VirtualMachine",
+    "container_network_type": "vpc-router",
+    "authentication_mode": "rbac",
+    "nodes_per_az": 1,
+    "node_os": "EulerOS 2.9",
+    "node_login": "key_pair",
+    "autoscaling": false
+  },
+  "workload": {
+    "replicas": 2,
+    "container_port": 18080,
+    "node_port": 30080,
+    "readiness_probe": "/actuator/health",
+    "liveness_probe": "/actuator/health",
+    "rolling_max_surge": 1,
+    "rolling_max_unavailable": 0,
+    "run_as_non_root": true,
+    "run_as_user": 10001,
+    "topology_spread_zone": true
+  },
+  "elb": {
+    "type": "dedicated",
+    "https_port": 443,
+    "tls_policy": "tls-1-2-fs-with-1-3",
+    "http2": true,
+    "certificate_type": "wildcard",
+    "http_redirect_from_port": 80,
+    "backend_protocol": "HTTP",
+    "backend_port": 30080,
+    "lb_method": "ROUND_ROBIN",
+    "health_check_protocol": "HTTP",
+    "health_check_path": "/actuator/health"
+  },
+  "waf": {
+    "enabled": true,
+    "mode": "cloud",
+    "protection_mode": "block",
+    "tls": "TLS v1.2",
+    "cipher": "cipher_2",
+    "options": {
+      "basic_web_protection": true,
+      "general_check": true,
+      "webshell": true,
+      "crawler_engine": true,
+      "crawler_scanner": true,
+      "cc_attack_protection": true,
+      "blacklist": true,
+      "precise_protection": true
+    }
+  },
+  "hss": {
+    "version": "hss.version.enterprise",
+    "charging_mode": "prePaid",
+    "protect_all_nodes": true,
+    "vulnerability_scan": true,
+    "baseline_check": true,
+    "scheduled_antivirus_scan": false
+  },
+  "security_groups": {
+    "elb_ingress": [
+      { "protocol": "tcp", "port": 80, "source": "0.0.0.0/0" },
+      { "protocol": "tcp", "port": 443, "source": "0.0.0.0/0" }
+    ],
+    "node_ingress_from_elb": [
+      { "protocol": "tcp", "port": 30080, "source": "elb" }
+    ]
+  }
+}

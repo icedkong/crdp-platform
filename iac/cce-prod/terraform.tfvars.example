@@ -1,0 +1,35 @@
+# 复制为 terraform.tfvars（不入库）或用 TF_VAR_* 环境变量注入真实值。
+# 证书私钥等敏感值只经环境变量注入，不落盘、不进 shell 历史（与 iac/rds-prod 同口径）。
+
+region     = "cn-north-4"
+cluster_name = "crdp-prod"
+
+# E01-T06 的网络（尚未落地时先由运维给临时值，正式值以 E01-T06 输出为准）
+vpc_id        = "待填：E01-T06 VPC ID"
+subnet_id     = "待填：应用子网 ID（配置了 DNS 的那个）"
+elb_subnet_id = "待填：ELB 子网 ID（同一 VPC）"
+
+node_flavor_id = "c7.xlarge.2"
+node_key_pair  = "待填：节点登录密钥对名（私钥由运维保管）"
+
+# *.平台域名 通配符证书（SCM 购买 / 导入后导出 PEM）
+#   export TF_VAR_tls_certificate_pem="$(cat fullchain.pem)"
+#   export TF_VAR_tls_private_key_pem="$(cat privkey.pem)"
+tls_certificate_pem = "经 TF_VAR 注入，不写入本文件"
+tls_private_key_pem = "经 TF_VAR 注入，不写入本文件"
+
+# 域名（占位示例，接入时换成真实平台域名）
+hospital_wildcard_domain = "*.crdp.example.com"
+platform_domain          = "portal.crdp.example.com"
+
+# HSS 企业版配额按月购买；节点数变化时配额数量随之变化（main.tf 的 count 联动）
+hss_period_unit = "month"
+hss_period      = 1
+
+elb_bandwidth_size = 100
+elb_charging_mode  = "postPaid"
+
+tags = {
+  project = "crdp"
+  env     = "prod"
+}

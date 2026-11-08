@@ -19,6 +19,10 @@ jobs:
       # E22-T04：RDS 生产基线 JSON 与 iac/rds-prod IaC 不漂移（参数、主备、备份、跨区域配置）
       - name: RDS 生产基线校验
         run: python3 scripts/check_rds_baseline.py
+      # E22-T05：CCE 生产三级基线 JSON 与 iac/cce-prod IaC / K8s 清单 / Dockerfile 不漂移
+      # （集群跨可用区、ELB TLS 套件与跳转、WAF 阻断、HSS 版本、安全组最小开放、工作负载基线）
+      - name: CCE 生产基线校验
+        run: python3 scripts/check_cce_baseline.py
       # E02-T09：跨租户隔离与开通编排用例（*IT，按 CRDP_IT_MYSQL_PORT 门控）纳入 CI。
       # 与本地一致：docker compose 起 MySQL(13306)/Redis(16379)（含演示租户库初始化脚本），
       # 打包并短暂启动应用完成平台库与演示租户库的 Flyway 迁移与种子，再跑全量测试。
