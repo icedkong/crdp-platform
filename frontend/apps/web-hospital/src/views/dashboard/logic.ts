@@ -8,6 +8,7 @@ import type { RateRow, TrendCardView } from '@crdp/api';
  * - 默认时间范围（最近 24 个月，止于当月月末；A 规格 §9）。
  * - E19-T04 / A-DASH-006、A-DASH-012：随访率柱线图装配（柱 = 应随访 / 已随访，
  *   线 = 随访率，A 规格 §9「下方柱线图」）。
+ * - E19-T05 / A-DASH-010、A-DASH-011：完整度分布柱图（五段）与随访完整度按年度柱线图。
  */
 import type { EChartsOption } from 'echarts';
 
@@ -122,6 +123,79 @@ export function rateChartOption(rows: RateRow[]): EChartsOption {
         max: 100,
         min: 0,
         name: '随访率',
+        type: 'value' as const,
+      },
+    ],
+  };
+}
+
+/**
+ * 完整度分布柱图（E19-T05 / A-DASH-010、A-DASH-011；A 规格 §9「下方分布柱图」）：
+ * x = 五段分段（100% / 90–99% / 70–89% / 50–69% / 低于 50%），柱 = 段内人数（或记录数）。
+ */
+export function completenessBandChartOption(
+  bands: Array<{ count: number; label: string }>,
+): EChartsOption {
+  return {
+    grid: { bottom: 48, containLabel: true, left: 8, right: 16, top: 24 },
+    legend: { show: false },
+    series: [
+      {
+        barMaxWidth: 48,
+        data: bands.map((band) => band.count),
+        name: '人数',
+        type: 'bar' as const,
+      },
+    ],
+    tooltip: { trigger: 'axis' as const },
+    xAxis: {
+      axisLabel: { hideOverlap: true },
+      data: bands.map((band) => band.label),
+      type: 'category' as const,
+    },
+    yAxis: { minInterval: 1, type: 'value' as const },
+  };
+}
+
+/**
+ * 随访完整度按年度柱图（A-DASH-011 / Q40「按随访年度的表格加柱图」）：
+ * x = 第 N 年，柱 = 已完成记录数（左轴），线 = 平均完整度（右轴 %）。
+ */
+export function followupCompletenessYearChartOption(
+  rows: Array<{ averagePct: number; label: string; recordCount: number }>,
+): EChartsOption {
+  return {
+    grid: { bottom: 48, containLabel: true, left: 8, right: 16, top: 32 },
+    legend: { top: 0 },
+    series: [
+      {
+        data: rows.map((row) => row.recordCount),
+        name: '已完成记录数',
+        type: 'bar' as const,
+        yAxisIndex: 0,
+      },
+      {
+        data: rows.map((row) => row.averagePct),
+        lineStyle: { width: 2 },
+        name: '平均完整度',
+        symbolSize: 6,
+        type: 'line' as const,
+        yAxisIndex: 1,
+      },
+    ],
+    tooltip: { trigger: 'axis' as const },
+    xAxis: {
+      axisLabel: { hideOverlap: true },
+      data: rows.map((row) => row.label),
+      type: 'category' as const,
+    },
+    yAxis: [
+      { minInterval: 1, type: 'value' as const },
+      {
+        axisLabel: { formatter: '{value}%' },
+        max: 100,
+        min: 0,
+        name: '完整度',
         type: 'value' as const,
       },
     ],

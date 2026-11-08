@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import type {
   AdvancedSearchField,
+  CompletenessDrill,
   ConditionGroup,
   PatientFilterState,
   PatientSearchRow,
@@ -12,6 +13,7 @@ import { useRoute, useRouter } from 'vue-router';
 
 import {
   buildPatientSearchPayload,
+  completenessDrillOfQuery,
   conditionRowCount,
   emptyPatientFilters,
   hasActiveFilters,
@@ -121,6 +123,20 @@ const rows = ref<PatientSearchRow[]>([]);
 const total = ref(0);
 const wardOptions = ref<Array<{ label: string; value: number }>>([]);
 const statusOptions = patientStatusOptions();
+
+// E19-T05 / A-DASH-010、A-DASH-011 · 完整度缺失字段钻取：首页完整度卡片最常缺失字段
+// 下钻进入（路由 query 带 missingField / missingKind + 卡片筛选），列表按后端与卡片
+// 同一计算的 ID 集过滤（缺失人数 = total）；关闭标签即取消钻取恢复普通检索。
+const completenessDrill = ref<null | {
+  drill: CompletenessDrill;
+  label: string;
+}>(null);
+
+function clearCompletenessDrill() {
+  completenessDrill.value = null;
+  pageNo.value = 1;
+  void load();
+}
 
 // ---------------------------------------------------------------- 高级检索与我的筛选（E13-T06）
 
@@ -291,6 +307,7 @@ async function load() {
         pageSize.value,
         undefined,
         appliedCondition.value ?? undefined,
+        completenessDrill.value?.drill,
       ),
     );
     rows.value = page.items;
@@ -328,6 +345,7 @@ onMounted(() => {
   if (status) {
     filters.status = status;
   }
+  completenessDrill.value = completenessDrillOfQuery(route.query);
   void loadOptions();
   void load();
 });
@@ -345,6 +363,7 @@ function handleSearch() {
 function handleReset() {
   Object.assign(filters, emptyPatientFilters());
   appliedCondition.value = null;
+  completenessDrill.value = null;
   pageNo.value = 1;
   void load();
 }
@@ -600,6 +619,23 @@ function handleEmptyAction() {
           </Space>
         </FormItem>
       </Form>
+
+      <!-- E19-T05 / A-DASH-010、A-DASH-011 · 完整度缺失字段钻取：显示来源与字段，
+           关闭即取消钻取恢复普通检索（后端按钻取条件同一计算过滤） -->
+      <div v-if="completenessDrill" class="drill-bar">
+        <Tag
+          closable
+          color="blue"
+          data-testid="patient-completeness-drill"
+          @close.prevent="clearCompletenessDrill"
+        >
+          {{
+            completenessDrill.drill.kind === 'FOLLOWUP'
+              ? '随访资料缺失字段'
+              : '基线资料缺失字段'
+          }}：{{ completenessDrill.label }}
+        </Tag>
+      </div>
 
       <!-- 批量操作条（pages.md §3「☐ 已选 N 项」；手机不提供批量操作） -->
       <div v-if="!isMobile && selectedIds.length > 0" class="batch-bar">
@@ -873,6 +909,10 @@ function handleEmptyAction() {
   gap: 16px;
   align-items: center;
   justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.drill-bar {
   margin-bottom: 12px;
 }
 

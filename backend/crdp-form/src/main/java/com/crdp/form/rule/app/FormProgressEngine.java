@@ -11,7 +11,8 @@ import org.springframework.stereotype.Component;
 
 /**
  * E11-T11 / A-PAT-021、C-PAT-018（口径 A-PAT-019）：表单引擎<b>已填 / 应填进度</b>——按分类 / 分节汇总 「已填必填 ÷ 应填必填」，供分类条 /
- * 分组条（components.md §6 CategoryBar，E13-T11）与完整度统计 （A-DASH-010 / A-DASH-011）共用同一口径。
+ * 分组条（components.md §6 CategoryBar，E13-T11）与完整度统计 （A-DASH-010 / A-DASH-011）共用同一口径；E19-T05 增字段粒度形态
+ * {@link #fieldProgress}（完整度卡片的「最常缺失字段」与缺失钻取），两形态同一应填集合。
  *
  * <p>与前端 {@code packages/rules} 的 {@code computeCategoryProgress} 同语义（验收「前后端结果一致」）， 共享用例锁定： {@code
  * shared-cases/form-progress-cases.json}（components.md §10.5）。
@@ -43,26 +44,52 @@ public class FormProgressEngine {
     /** 一个分类 / 分节的进度（列表本身有序：声明 sortNo 升序 + 未声明兜底追加）。 */
     public record CategoryProgress(String key, String label, int filled, int total) {}
 
+    /**
+     * 一个<b>应填字段</b>的进度（E19-T05 / A-DASH-010、A-DASH-011：完整度卡片的「最常缺失字段」与缺失钻取需要字段粒度）： 只出现应填（显示中且有效必填且
+     * storage=json 且非派生）的字段，filled = 值非空（0 与 false 是已答）。 与 {@link #progress} 同一口径（progress
+     * 即本结果按分类加和），label / categoryKey 供卡片缺失字段列显示与分类归属。
+     */
+    public record FieldProgress(
+            String fieldKey, String label, String categoryKey, boolean filled) {}
+
+    /**
+     * 字段级已填 / 应填（{@link #progress} 的字段粒度形态，口径完全一致）： 应填字段按入参顺序（fe_form_version_field 的 category_key
+     * / sort_no 序）输出，逐字段给出 filled。 data / context 为空（null）按空表单处理。
+     */
+    public List<FieldProgress> fieldProgress(
+            List<VersionFieldRow> fields, Map<String, Object> data, Map<String, Object> context) {
+        Map<String, Object> values = data == null ? Map.of() : data;
+        Map<String, Object> ctx = context == null ? Map.of() : context;
+        if (fields == null || fields.isEmpty()) {
+            return List.of();
+        }
+        List<FieldProgress> items = new ArrayList<>(fields.size());
+        for (VersionFieldRow field : fields) {
+            if (!countable(field, values, ctx)) {
+                continue;
+            }
+            items.add(
+                    new FieldProgress(
+                            field.fieldKey(),
+                            field.label(),
+                            field.categoryKey(),
+                            !FormConditionEngine.isEmptyValue(values.get(field.fieldKey()))));
+        }
+        return List.copyOf(items);
+    }
+
     /** 按分类汇总已填 / 应填。data / context 为空（null）按空表单处理（无条件字段恒显示，ctx 叶子不成立）。 */
     public List<CategoryProgress> progress(
             List<VersionFieldRow> fields,
             List<Category> categories,
             Map<String, Object> data,
             Map<String, Object> context) {
-        Map<String, Object> values = data == null ? Map.of() : data;
-        Map<String, Object> ctx = context == null ? Map.of() : context;
         Map<String, int[]> counts = new LinkedHashMap<>(); // key → [filled, total]，首现序
-        if (fields != null) {
-            for (VersionFieldRow field : fields) {
-                if (!countable(field, values, ctx)) {
-                    continue;
-                }
-                String categoryKey = field.categoryKey();
-                int[] count = counts.computeIfAbsent(categoryKey, key -> new int[2]);
-                count[1]++; // 应填
-                if (!FormConditionEngine.isEmptyValue(values.get(field.fieldKey()))) {
-                    count[0]++; // 已填（空值口径与条件 DSL 同）
-                }
+        for (FieldProgress field : fieldProgress(fields, data, context)) {
+            int[] count = counts.computeIfAbsent(field.categoryKey(), key -> new int[2]);
+            count[1]++; // 应填
+            if (field.filled()) {
+                count[0]++; // 已填（空值口径与条件 DSL 同）
             }
         }
         LinkedHashSet<String> declared = new LinkedHashSet<>();

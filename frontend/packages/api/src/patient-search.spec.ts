@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildPatientSearchPayload,
+  completenessDrillOfQuery,
   emptyPatientFilters,
   hasActiveFilters,
   isKeywordValid,
@@ -122,5 +123,73 @@ describe('e19-T02 指标卡钻取进入患者列表（A-DASH-001 点击进入对
     expect(patientStatusOfQuery(['dead'])).toBe('DEAD');
     expect(patientStatusOfQuery('NOT_A_STATUS')).toBeUndefined();
     expect(patientStatusOfQuery(null)).toBeUndefined();
+  });
+});
+
+describe('e19-t05 完整度缺失字段钻取进入患者列表（A-DASH-010 / A-DASH-011）', () => {
+  it('路由 query 解析为 completenessDrill（missingFieldRoute 的逆过程）', () => {
+    expect(
+      completenessDrillOfQuery({
+        from: '2026-01-01',
+        missingField: 'f9t5b',
+        missingFieldLabel: '字段二（示例）',
+        missingKind: 'BASELINE',
+        patientType: 'ELECTIVE',
+        timeField: 'DISCHARGE',
+        to: '2026-12-31',
+        wardId: '3',
+      }),
+    ).toEqual({
+      drill: {
+        fieldKey: 'f9t5b',
+        from: '2026-01-01',
+        kind: 'BASELINE',
+        patientType: 'ELECTIVE',
+        timeField: 'DISCHARGE',
+        to: '2026-12-31',
+        wardId: 3,
+      },
+      label: '字段二（示例）',
+    });
+  });
+
+  it('缺 missingField 返回 null（非钻取进入）；kind 缺省 BASELINE、year 只在有值时带', () => {
+    expect(completenessDrillOfQuery({ status: 'ACTIVE' })).toBeNull();
+    expect(completenessDrillOfQuery({ missingField: ['f214'] })).toEqual({
+      drill: { fieldKey: 'f214', kind: 'BASELINE' },
+      label: 'f214',
+    });
+    expect(
+      completenessDrillOfQuery({
+        missingField: 'f214',
+        missingKind: 'FOLLOWUP',
+        year: '2',
+      }).drill.year,
+    ).toBe(2);
+  });
+
+  it('钻取条件进检索请求体（buildPatientSearchPayload 透传 completenessDrill）', () => {
+    const state: PatientFilterState = {
+      dischargeRange: null,
+      keyword: '',
+      nextVisitRange: null,
+      status: null,
+      wardId: null,
+    };
+    const payload = buildPatientSearchPayload(
+      state,
+      1,
+      20,
+      undefined,
+      undefined,
+      { fieldKey: 'f214', kind: 'FOLLOWUP' },
+    );
+    expect(payload.completenessDrill).toEqual({
+      fieldKey: 'f214',
+      kind: 'FOLLOWUP',
+    });
+    expect(
+      buildPatientSearchPayload(state, 1, 20).completenessDrill,
+    ).toBeUndefined();
   });
 });

@@ -47,6 +47,8 @@ public class PatientSearchController {
                             + "姓名 / 病案号盲索引精确匹配；filters 见 README §2.4；condition 为高级检索"
                             + "条件树（{logic: AND|OR, items: [{field, op, value?} | 组]}，字段只能是"
                             + "search-fields 目录中的字典字段，后端编译为参数化查询并自动追加病区条件）；"
+                            + "completenessDrill 为首页完整度卡片的缺失字段钻取（E19-T05：kind=BASELINE|"
+                            + "FOLLOWUP + fieldKey + 卡片筛选，ID 集与卡片数字同一计算）；"
                             + "排序白名单 nextVisitDate / dischargeDate，默认下次随访升序；行内姓名与病案号"
                             + "脱敏；批量查询写数据访问审计")
     @PostMapping("/search")
@@ -69,7 +71,8 @@ public class PatientSearchController {
                                                 .toList(),
                                 body == null ? null : body.keyword(),
                                 body == null ? null : toFilters(body.filters()),
-                                body == null ? null : body.condition())));
+                                body == null ? null : body.condition(),
+                                body == null ? null : toDrill(body.completenessDrill()))));
     }
 
     @Operation(summary = "筛选候选（列表页病区下拉，启用项）；随访状态等枚举文案由前端维护")
@@ -99,7 +102,8 @@ public class PatientSearchController {
             List<SortBody> sort,
             String keyword,
             FiltersBody filters,
-            JsonNode condition) {}
+            JsonNode condition,
+            CompletenessDrillBody completenessDrill) {}
 
     public record SortBody(String field, String order) {}
 
@@ -117,6 +121,35 @@ public class PatientSearchController {
             LocalDate dischargeTo,
             LocalDate nextVisitFrom,
             LocalDate nextVisitTo) {}
+
+    /**
+     * 完整度缺失字段钻取（E19-T05 / A-DASH-010、A-DASH-011「点击进入缺该字段的患者列表」）： 首页完整度卡片最常缺失字段下钻时由列表页按路由 query
+     * 组装；ID 集与卡片数字同一计算（见 {@link PatientSearchService.CompletenessDrill}）。
+     */
+    public record CompletenessDrillBody(
+            String kind,
+            String fieldKey,
+            Long wardId,
+            String patientType,
+            LocalDate from,
+            LocalDate to,
+            String timeField,
+            Integer year) {}
+
+    private static PatientSearchService.CompletenessDrill toDrill(CompletenessDrillBody drill) {
+        if (drill == null) {
+            return null;
+        }
+        return new PatientSearchService.CompletenessDrill(
+                drill.kind(),
+                drill.fieldKey(),
+                drill.wardId(),
+                drill.patientType(),
+                drill.from(),
+                drill.to(),
+                drill.timeField(),
+                drill.year());
+    }
 
     private static PatientSearchService.Filters toFilters(FiltersBody filters) {
         if (filters == null) {
