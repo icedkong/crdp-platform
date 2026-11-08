@@ -124,6 +124,7 @@ class TenantViewGuardFilterTest {
     void writeMethodsAndNonViewActionsAreNotRead() {
         assertFalse(TenantViewGuardFilter.readOnly("POST", "followup:patient:create"));
         assertFalse(TenantViewGuardFilter.readOnly("PUT", "followup:patient:edit"));
+        assertFalse(TenantViewGuardFilter.readOnly("PATCH", "followup:patient:edit"), "PATCH 同为写");
         assertFalse(TenantViewGuardFilter.readOnly("DELETE", "followup:patient:delete"));
         assertFalse(TenantViewGuardFilter.readOnly("GET", "followup:patient:plain"), "明文动作非读");
         assertFalse(TenantViewGuardFilter.readOnly("POST", null), "未绑码 POST 按写（fail closed）");

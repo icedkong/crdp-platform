@@ -21,6 +21,7 @@ import com.crdp.followup.report.infra.mapper.ReportSearchMapper.Criteria;
 import com.crdp.followup.report.infra.mapper.ReportSearchMapper.LinkRowRaw;
 import com.crdp.followup.report.infra.mapper.ReportSearchMapper.RowRaw;
 import com.crdp.followup.report.infra.mapper.ReportSearchMapper.UserOptionRow;
+import com.crdp.followup.support.ViewStubGuard;
 import com.crdp.form.record.app.FormService;
 import com.crdp.framework.audit.AuditEntry;
 import com.crdp.framework.audit.AuditLogger;
@@ -30,6 +31,7 @@ import com.crdp.framework.security.SessionPrincipal;
 import com.crdp.framework.web.ApiException;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -218,6 +220,100 @@ class ReportSearchServiceTest {
         assertEquals(0, page.items().get(0).locations().size(), "无位置报告单 → 前端显示「未指定位置」");
         assertNull(page.items().get(0).firstFile());
         assertNull(page.items().get(0).digitizeStatus());
+    }
+
+    // ---------------------------------------------------------------- 租户视角执行点（E20-T07 /
+    // PLT-VIEW-010、011；原件隐藏为 V109 默认规则）
+
+    /** 视角会话（TENANT_VIEW）：平台账号身份 + 被查看租户（与 crdp-server 视角会话同构）。 */
+    private static SessionPrincipal viewPrincipal() {
+        return new SessionPrincipal(
+                "view-token",
+                "TENANT_VIEW",
+                7L,
+                "demoa",
+                "虚构示例医院甲",
+                1L,
+                "platform.admin",
+                "平台管理员（示例）",
+                List.of("PLATFORM_ADMIN"),
+                List.of(),
+                List.of(),
+                List.of(),
+                1L,
+                com.crdp.framework.security.ScopeSnapshot.allowAll(),
+                false,
+                null,
+                "127.0.0.1",
+                0L,
+                0L,
+                900L,
+                7200L,
+                com.crdp.framework.fieldpolicy.FieldPolicySnapshot.defaults());
+    }
+
+    private ReportSearchService serviceOf(TenantViewFieldGuard guard) {
+        return new ReportSearchService(mapper, config, patients, formService, crypto, audit, guard);
+    }
+
+    private void stubReportRowWithFirstFile() {
+        when(mapper.search(any(), anyInt(), anyInt()))
+                .thenReturn(
+                        List.of(
+                                row(
+                                        901L,
+                                        "张小明",
+                                        "MRN-0001",
+                                        "105-2026-001",
+                                        "示例二病区",
+                                        "ECHO",
+                                        "心脏超声",
+                                        "经胸超声心动图",
+                                        LocalDate.of(2026, 10, 25),
+                                        "PENDING",
+                                        "王医生（示例）")));
+        when(mapper.count(any())).thenReturn(1L);
+        when(mapper.linksOfReports(anyList())).thenReturn(List.of());
+        when(mapper.fileCountsOfReports(anyList()))
+                .thenReturn(List.of(new ReportSearchMapper.FileCountRow(901L, 2L)));
+        when(mapper.firstFilesOfReports(anyList()))
+                .thenReturn(
+                        List.of(new ReportSearchMapper.FileRowRaw(901L, 71L, "jpg", "t/n/th.jpg")));
+        when(crypto.decrypt("name-cipher")).thenReturn("张小明");
+        when(crypto.decrypt("mrn-cipher")).thenReturn("MRN-0001");
+    }
+
+    @Test
+    void searchHidesOriginalsAndBlindsNameForViewSession() {
+        SecurityContextHolder.getContext()
+                .setAuthentication(
+                        new org.springframework.security.authentication
+                                .UsernamePasswordAuthenticationToken(
+                                viewPrincipal(), null, List.of()));
+        stubReportRowWithFirstFile();
+        // 报告单资源整体隐藏（V109 默认：原件与附件不可预览）+ 患者姓名设盲
+        ReportSearchService service =
+                serviceOf(ViewStubGuard.of(Set.of("patient:name"), Set.of("report:*")));
+
+        ReportSearchService.ReportPage page = service.search(null);
+
+        ReportSearchService.RowView view = page.items().get(0);
+        assertEquals("已设盲", view.patientName(), "报告单行内患者姓名按视角规则设盲（PLT-VIEW-011）");
+        assertEquals("MR****01", view.mrn(), "无规则命中的病案号保留脱敏值（OQ-107④）");
+        assertNull(view.firstFile(), "原件与附件对视角隐藏：首附件不返回（PLT-VIEW-008 / V109）");
+        assertEquals(2L, view.fileCount(), "目录行数照常（只隐藏内容通道，不改台账口径）");
+    }
+
+    @Test
+    void searchKeepsFirstFileAndMaskedNameForHospitalSession() {
+        stubReportRowWithFirstFile();
+        ReportSearchService service =
+                serviceOf(ViewStubGuard.of(Set.of("patient:name"), Set.of("report:*")));
+
+        ReportSearchService.RowView view = service.search(null).items().get(0);
+
+        assertEquals("张*明", view.patientName(), "医院会话不经视角执行点（行为不变）");
+        assertEquals("71", view.firstFile().fileId(), "医院会话首附件照常返回");
     }
 
     // ---------------------------------------------------------------- 条件装配（验收：位置筛选含未指定位置）

@@ -15,8 +15,10 @@ import static org.mockito.Mockito.when;
 import com.crdp.followup.patient.infra.mapper.PatientOverviewMapper;
 import com.crdp.followup.patient.infra.mapper.PatientStatusHistoryMapper;
 import com.crdp.followup.record.infra.mapper.FollowupRecordMapper;
+import com.crdp.followup.support.ViewStubGuard;
 import com.crdp.followup.task.infra.mapper.FollowupTaskQueryMapper;
 import com.crdp.framework.crypto.CryptoService;
+import com.crdp.framework.fieldpolicy.FieldPolicySnapshot;
 import com.crdp.framework.fieldpolicy.TenantViewFieldGuard;
 import com.crdp.framework.security.ScopeSnapshot;
 import com.crdp.framework.security.SessionPrincipal;
@@ -25,6 +27,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -413,6 +416,74 @@ class PatientOverviewServiceTest {
         assertEquals(
                 "2025-03-02", view.latestFollowup().endpointEvents().get("re_hospitalization"));
         assertNull(view.device(), "C 当前器械随 E21 植入数据开放，A / E21 前恒 null");
+    }
+
+    // ---------------------------------------------------------------- 租户视角执行点（E20-T07 /
+    // PLT-VIEW-010、011）
+
+    /** 视角会话（TENANT_VIEW）：平台账号身份 + 被查看租户（与 crdp-server 视角会话同构）。 */
+    private static SessionPrincipal viewPrincipal() {
+        return new SessionPrincipal(
+                "view-token",
+                "TENANT_VIEW",
+                7L,
+                "demoa",
+                "虚构示例医院甲",
+                1L,
+                "platform.admin",
+                "平台管理员（示例）",
+                List.of("PLATFORM_ADMIN"),
+                List.of(),
+                List.of(),
+                List.of(),
+                1L,
+                ScopeSnapshot.allowAll(),
+                false,
+                null,
+                "127.0.0.1",
+                0L,
+                0L,
+                900L,
+                7200L,
+                FieldPolicySnapshot.defaults());
+    }
+
+    private PatientOverviewService serviceOf(TenantViewFieldGuard guard) {
+        return new PatientOverviewService(
+                gateway, statusGateway, taskQueryMapper, recordMapper, crypto, guard);
+    }
+
+    @Test
+    void summaryBlindsMrnAndKeepsMaskedNameForViewSession() {
+        SecurityContextHolder.getContext()
+                .setAuthentication(
+                        new UsernamePasswordAuthenticationToken(viewPrincipal(), null, List.of()));
+        when(gateway.findOverview(PATIENT_ID)).thenReturn(row("ACTIVE"));
+        // 病案号设盲、姓名无规则：设盲字段替换占位，其余保留（已脱敏的）值
+        PatientOverviewService service =
+                serviceOf(ViewStubGuard.of(Set.of("patient:medicalRecordNo"), Set.of()));
+
+        PatientOverviewService.PatientOverviewView view = service.summaryOf(PATIENT_ID);
+
+        assertEquals("已设盲", view.patientNo(), "命中设盲规则的概览病案号替换占位（PLT-VIEW-011）");
+        assertEquals("张*）", view.name(), "无规则命中的姓名保留脱敏值（不放宽列表明文，OQ-107④）");
+    }
+
+    @Test
+    void summaryHidesNameForViewSessionAndIgnoresRulesForHospitalSession() {
+        when(gateway.findOverview(PATIENT_ID)).thenReturn(row("ACTIVE"));
+        TenantViewFieldGuard guard = ViewStubGuard.of(Set.of(), Set.of("patient:name"));
+
+        // 医院会话（@BeforeEach 登录）：规则表不生效
+        PatientOverviewService.PatientOverviewView hospital =
+                serviceOf(guard).summaryOf(PATIENT_ID);
+        assertEquals("张*）", hospital.name(), "医院会话不经视角执行点（行为不变）");
+
+        SecurityContextHolder.getContext()
+                .setAuthentication(
+                        new UsernamePasswordAuthenticationToken(viewPrincipal(), null, List.of()));
+        PatientOverviewService.PatientOverviewView view = serviceOf(guard).summaryOf(PATIENT_ID);
+        assertNull(view.name(), "命中隐藏规则的概览姓名不返回（HIDDEN → null，整字段不出现）");
     }
 
     @Test

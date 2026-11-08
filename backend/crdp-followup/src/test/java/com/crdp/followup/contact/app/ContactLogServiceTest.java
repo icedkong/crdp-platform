@@ -566,6 +566,90 @@ class ContactLogServiceTest {
         assertEquals(java.util.Map.of(), service.latestResultByPatients(List.of()));
     }
 
+    // ---------------------------------------------------------------- 租户视角执行点（E20-T07 /
+    // PLT-VIEW-011；录音隐藏为 V109 默认规则）
+
+    /** 视角会话（TENANT_VIEW）：平台账号身份 + 被查看租户（与 crdp-server 视角会话同构）。 */
+    private static SessionPrincipal viewPrincipal() {
+        return new SessionPrincipal(
+                "view-token",
+                "TENANT_VIEW",
+                7L,
+                "demoa",
+                "虚构示例医院甲",
+                1L,
+                "platform.admin",
+                "平台管理员（示例）",
+                List.of("PLATFORM_ADMIN"),
+                List.of(),
+                List.of(),
+                List.of(),
+                1L,
+                ScopeSnapshot.allowAll(),
+                false,
+                null,
+                "127.0.0.1",
+                0L,
+                0L,
+                900L,
+                7200L,
+                com.crdp.framework.fieldpolicy.FieldPolicySnapshot.defaults());
+    }
+
+    private ContactLogService serviceOf(TenantViewFieldGuard guard) {
+        return new ContactLogService(
+                mapper,
+                files,
+                patientScope,
+                taskMapper,
+                taskStatus,
+                unreachedFollowups,
+                termination,
+                filePolicy,
+                callReports,
+                audit,
+                guard);
+    }
+
+    @Test
+    void listHidesRecordingsForViewSessionAndKeepsThemForHospital() {
+        inScope();
+        when(mapper.pageOf(eq(PATIENT), anyInt(), anyInt()))
+                .thenReturn(List.of(row(5001L, "REACHED")));
+        when(mapper.countOf(PATIENT)).thenReturn(1L);
+        when(mapper.audiosOf(List.of(5001L)))
+                .thenReturn(
+                        List.of(
+                                new ContactLogMapper.AudioRow(
+                                        5001L,
+                                        6001L,
+                                        "mp3",
+                                        "通话录音（示例）.mp3",
+                                        "audio/mpeg",
+                                        2048L,
+                                        0)));
+        TenantViewFieldGuard guard =
+                com.crdp.followup.support.ViewStubGuard.of(
+                        java.util.Set.of(), java.util.Set.of("contact:recording"));
+
+        // 医院会话（@BeforeEach 登录）：录音清单照常
+        assertEquals(
+                1,
+                serviceOf(guard).list(PATIENT, 1, 20).items().get(0).audios().size(),
+                "医院会话不经视角执行点（行为不变）");
+
+        // 视角会话：通话录音对视角隐藏（V109 默认规则；BLINDED 对结构字段等同隐藏，OQ-107⑤）
+        SecurityContextHolder.getContext()
+                .setAuthentication(
+                        new org.springframework.security.authentication
+                                .UsernamePasswordAuthenticationToken(
+                                viewPrincipal(), null, List.of()));
+        assertEquals(
+                0,
+                serviceOf(guard).list(PATIENT, 1, 20).items().get(0).audios().size(),
+                "命中隐藏规则的录音清单置空（接口不返回，PLT-VIEW-011 / V109）");
+    }
+
     // ---------------------------------------------------------------- 通话记录联动（E16-T08 / A-ATT-017）
 
     @Test
