@@ -13,6 +13,7 @@ import { describe, expect, it } from 'vitest';
 import {
   boardGroups,
   buildSearchPayload,
+  dueRangeOfQuery,
   queryOfScope,
   queueFilterOfQuery,
   recordFormPath,
@@ -180,5 +181,25 @@ describe('recordFormPath / queueFilterOfQuery（筛选随链接往返）', () =>
       scope: 'MINE',
       unassigned: false,
     });
+  });
+});
+
+describe('dueRangeOfQuery（E19-T02 指标卡钻取「本月应随访」进任务列表）', () => {
+  it('两端齐备且合法才作为计划日期窗口', () => {
+    expect(dueRangeOfQuery('2026-11-01', '2026-11-30')).toEqual([
+      '2026-11-01',
+      '2026-11-30',
+    ]);
+    expect(dueRangeOfQuery(['2026-11-01'], '2026-11-30')).toEqual([
+      '2026-11-01',
+      '2026-11-30',
+    ]);
+  });
+
+  it('半选、非法日期或倒挂都不筛选', () => {
+    expect(dueRangeOfQuery('2026-11-01', null)).toBeNull();
+    expect(dueRangeOfQuery(null, '2026-11-30')).toBeNull();
+    expect(dueRangeOfQuery('2026/11/01', '2026-11-30')).toBeNull();
+    expect(dueRangeOfQuery('2026-12-01', '2026-11-30')).toBeNull();
   });
 });

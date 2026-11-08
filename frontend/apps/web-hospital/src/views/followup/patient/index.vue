@@ -8,7 +8,7 @@ import type {
 } from '@crdp/api';
 
 import { computed, onMounted, reactive, ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 
 import {
   buildPatientSearchPayload,
@@ -19,6 +19,7 @@ import {
   KEYWORD_MAX_LENGTH,
   PATIENT_STATUS_TEXT,
   patientEmptyText,
+  patientStatusOfQuery,
   patientStatusOptions,
 } from '@crdp/api';
 import { StatusTag } from '@crdp/status-tag';
@@ -85,6 +86,8 @@ defineOptions({ name: 'FollowupPatient' });
  * 行操作「⋮ 更多 → 删除」软删除（原因必填 + 二次认证，数据保留可恢复）。
  */
 const router = useRouter();
+// E19-T02 指标卡钻取：首页点状态指标带 status 进患者列表（未知值不筛选）
+const route = useRoute();
 const { hasPermission } = usePermission();
 const canCreate = computed(() => hasPermission('followup:patient:create'));
 const canTransfer = computed(() => hasPermission('followup:patient:transfer'));
@@ -321,6 +324,10 @@ async function loadOptions() {
 }
 
 onMounted(() => {
+  const status = patientStatusOfQuery(route.query.status);
+  if (status) {
+    filters.status = status;
+  }
   void loadOptions();
   void load();
 });

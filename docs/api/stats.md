@@ -16,22 +16,23 @@
 
 ## 2. 接口
 
+卡片接口已随 E19-T02 落地 `kpi` 与 `trend` 两张卡（`DashboardCardController`），钻取条件**内联在 kpi 响应里**（每项指标带 `drill.target` 与列表页路由 query，前端不自行拼业务条件，原「`POST /stats/drilldown` 返回条件树」的推断不再单独设接口）；其余卡片随 E19-T03 ~ E19-T05、E21 接入同一 `{cardCode}` 入口。
+
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| GET | `/api/hospital/followup/dashboard/layout` | 登录 | 当前用户合并后的卡片 `[{ code, title, order, visible, permission, feature }]`（角色布局 ∩ 功能开关 ∩ 用户隐藏） |
-| GET | `/api/hospital/followup/dashboard/cards/{cardCode}?wardId=&from=&to=&granularity=&groupBy=` | 卡片登记的权限码（多为 `followup:dashboard:view`） | 单卡数据；功能开关关闭 → 40301 |
-| PUT | `/api/hospital/followup/dashboard/user-pref` | 登录 | 用户隐藏 / 显示（P1，A-DASH-014） |
+| GET | `/api/hospital/followup/dashboard/layout` | 登录 | 当前用户合并后的卡片 `[{ code, title, order, visible, permission, feature }]`（角色布局 ∩ 功能开关 ∩ 用户隐藏；E19-T06） |
+| GET | `/api/hospital/followup/dashboard/cards/{cardCode}?wardId=&from=&to=&timeDimension=&granularity=&groupBy=` | 卡片登记的权限码（已落地两卡均 `followup:dashboard:view`，按钮 plt_menu 234） | 单卡数据；`cardCode` ∈ `kpi` / `trend`（其余随后续任务）；`kpi`：`{ style: A\|C, asOfMonth, metrics: [{ code, title, value, available, drill: { target: PATIENT_LIST\|TASK_LIST, query } }] }`；`trend`：`{ timeDimension, granularity, groupBy, from, to, buckets: [{ bucket, total, groups: [{ key, label, count }] }], legend }`（周期连续、空周期补 0） |
+| PUT | `/api/hospital/followup/dashboard/user-pref` | 登录 | 用户隐藏 / 显示（P1，A-DASH-014；E19-T06） |
 | GET | `/api/hospital/followup/stats/doctor-workload?wardId=` | `followup:dashboard:view` | 医护负责患者数（A-DASH-009，P1） |
-| GET | `/api/hospital/followup/stats/node-follow-rate?planId=&wardId=` | `followup:dashboard:view`；开关 `node_follow_rate` | 按节点随访率（A-DASH-012、C-DASH-004） |
-| GET | `/api/hospital/followup/stats/scan-progress?wardId=&uploaderId=&year=` | `followup:dashboard:view`；开关 `scan_progress` | C 补录进度（C-DASH-007） |
-| POST | `/api/hospital/followup/stats/drilldown` | 同对应卡片 | 点指标卡进入列表时生成的筛选条件（返回条件树，前端跳患者 / 任务列表） |
+| GET | `/api/hospital/followup/stats/node-follow-rate?planId=&wardId=` | `followup:dashboard:view`；开关 `node_follow_rate` | 按节点随访率（A-DASH-012、C-DASH-004；E19-T04） |
+| GET | `/api/hospital/followup/stats/scan-progress?wardId=&uploaderId=&year=` | `followup:dashboard:view`；开关 `scan_progress` | C 补录进度（C-DASH-007；E21-T15） |
 
 ## 3. 卡片目录（`cardCode`，种子配置）
 
 | cardCode | 需求 | 说明 |
 |---|---|---|
-| `kpi` | A-DASH-001、C-DASH-001 | 指标卡，A 与 C 指标不同，按租户配置 |
-| `trend` | A-DASH-002 | 默认按手术日期、按月 |
+| `kpi`（E19-T02 已落地） | A-DASH-001、C-DASH-001 | 指标卡，A 与 C 指标不同，按租户配置——暂行以 `implant` 开关判定（开 → C 七项、关 → A 七项，OQ-107③），随 E19-T06 卡片目录落库；C 的 `eriNear` / `scanPending` 数据源随 E21，先行 `available=false` 占位 |
+| `trend`（E19-T02 已落地） | A-DASH-002 | 默认按手术日期、按月、不分组、最近 24 个月；时间维度（手术 / 出院 / 入院）× 粒度（月 / 季度 / 年）× 分组（不分组 / 病区 / 性别 / 出院状态 / 患者类型 / 年龄段）可切换；指标暂只有患者数（死亡人数 / 随访完成数与术者 / 手术方式 / 急诊手术分组随后续任务，OQ-107⑤） |
 | `task_board` / `task_table` | A-DASH-003/004/008、C-DASH-003 | 看板与任务表（今日 / 超时 / 我负责） |
 | `yearly_rate` | A-DASH-006 | 每年随访率 = 年度节点的节点随访率，口径一致 |
 | `node_rate` | A-DASH-012、C-DASH-004 | 分母为窗口已结束的应随访任务 |

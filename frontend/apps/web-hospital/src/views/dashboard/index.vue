@@ -1,14 +1,142 @@
 <script lang="ts" setup>
+import type { KpiCardView, KpiMetric, TrendCardView } from '@crdp/api';
+
+import type { EchartsUIType } from '@vben/plugins/echarts';
+
+import { computed, onActivated, onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
 
-import { Button, Result } from 'ant-design-vue';
+import { IconifyIcon } from '@vben/icons';
+import { EchartsUI, useEcharts } from '@vben/plugins/echarts';
 
+import {
+  kpiMetricRoute,
+  TREND_GRANULARITY_OPTIONS,
+  TREND_GROUP_BY_OPTIONS,
+  TREND_TIME_DIMENSION_OPTIONS,
+  visibleKpiMetrics,
+} from '@crdp/api';
+import { sizes } from '@crdp/tokens';
+import {
+  Button,
+  Card,
+  Col,
+  DatePicker,
+  Empty,
+  message,
+  Result,
+  Row,
+  Select,
+  Space,
+  Spin,
+} from 'ant-design-vue';
+
+import { fetchKpiCard, fetchTrendCard } from '#/api/core/dashboard';
+import StatCard from '#/components/followup/stat-card.vue';
 import { useBreakpoint } from '#/reference/use-breakpoint';
+import { usePermission } from '#/reference/use-permission';
 
+import { defaultTrendRange, metricIcon, trendChartOption } from './logic';
+
+defineOptions({ name: 'HospitalDashboard' });
+
+/**
+ * E19-T02 / A-DASH-001、A-DASH-002、C-DASH-001 · 首页（pages.md §2）：
+ * 第一行指标卡（A 七项 / C 七项按租户 implant 开关）、第二行趋势图
+ * （时间维度 / 粒度 / 分组 / 时间范围可切换，默认手术日期 · 月 · 不分组 · 最近 24 个月）。
+ *
+ * 数字与列表钻取一致：钻取目标与筛选参数由后端随指标下发（同一条件树），
+ * 前端只透传路由 query；范围内无患者时后端返回全 0（不报错）。
+ * 任务区（看板 / 任务表）、每年随访率、完整度卡片随 E19-T03 ~ E19-T05 进同一页；
+ * 病区筛选（A-DASH-005）与卡片设置（A-DASH-013/014）随后续任务接入。
+ * 权限 followup:dashboard:view（按钮 234）；无权限只隐藏卡片不报错。
+ */
 const router = useRouter();
+const { hasPermission } = usePermission();
+const canViewCards = computed(() => hasPermission('followup:dashboard:view'));
 const { isMobile } = useBreakpoint();
 const responsive = false;
-const title = '工作台';
+const title = '首页';
+
+const RangePicker = DatePicker.RangePicker;
+
+// ---------------------------------------------------------------- 指标卡（A-DASH-001 / C-DASH-001）
+
+const kpiLoading = ref(false);
+const kpi = ref<KpiCardView | null>(null);
+
+const metrics = computed(() =>
+  kpi.value ? visibleKpiMetrics(kpi.value.metrics) : [],
+);
+
+async function loadKpi() {
+  kpiLoading.value = true;
+  try {
+    kpi.value = await fetchKpiCard();
+  } catch {
+    message.error('首页指标加载失败，请稍后重试');
+  } finally {
+    kpiLoading.value = false;
+  }
+}
+
+/** 点指标卡钻取（条件由后端下发：患者列表 status、任务列表 tab/status/dueFrom/dueTo）。 */
+function handleDrill(metric: KpiMetric) {
+  const target = kpiMetricRoute(metric);
+  if (target) {
+    void router.push(target);
+  }
+}
+
+// ---------------------------------------------------------------- 趋势图（A-DASH-002）
+
+const trendFilters = reactive({
+  groupBy: 'NONE' as (typeof TREND_GROUP_BY_OPTIONS)[number]['value'],
+  granularity: 'MONTH' as (typeof TREND_GRANULARITY_OPTIONS)[number]['value'],
+  range: null as [string, string] | null,
+  timeDimension:
+    'SURGERY' as (typeof TREND_TIME_DIMENSION_OPTIONS)[number]['value'],
+});
+const trendLoading = ref(false);
+const trend = ref<null | TrendCardView>(null);
+
+const chartRef = ref<EchartsUIType>();
+const { renderEcharts } = useEcharts(chartRef);
+
+async function loadTrend() {
+  trendLoading.value = true;
+  try {
+    const fallback = defaultTrendRange();
+    trend.value = await fetchTrendCard({
+      from: trendFilters.range?.[0] ?? fallback.from,
+      granularity: trendFilters.granularity,
+      groupBy: trendFilters.groupBy,
+      timeDimension: trendFilters.timeDimension,
+      to: trendFilters.range?.[1] ?? fallback.to,
+    });
+    renderEcharts(trendChartOption(trend.value));
+  } catch {
+    message.error('趋势图加载失败，请稍后重试');
+  } finally {
+    trendLoading.value = false;
+  }
+}
+
+// ---------------------------------------------------------------- 装配
+
+function loadAll() {
+  // 首页不在 5 个响应式页面内：手机显示 MobileBlocker（OQ-24）
+  if (isMobile.value && !responsive) return;
+  if (canViewCards.value) {
+    void loadKpi();
+    void loadTrend();
+  }
+}
+
+onMounted(loadAll);
+
+// 多标签页 keep-alive：从患者 / 任务列表回到首页时刷新数字（钻取后可能已改动数据）
+onActivated(loadAll);
 </script>
 
 <template>
@@ -25,12 +153,108 @@ const title = '工作台';
   </Result>
   <div v-else class="page">
     <h1 class="crdp-page-title">{{ title }}</h1>
-    <p>占位页面。业务尚未实现。没有真实患者数据。</p>
+
+    <template v-if="canViewCards">
+      <!-- 第一行：指标卡（点击进入对应列表，pages.md §2） -->
+      <Row :gutter="sizes.gutter" class="kpi-row">
+        <Col
+          v-for="metric in metrics"
+          :key="metric.code"
+          :lg="6"
+          :md="8"
+          :sm="12"
+          :xs="24"
+        >
+          <StatCard
+            :data-testid="`kpi-${metric.code}`"
+            :icon="metricIcon(metric.code)"
+            :loading="kpiLoading"
+            :metric-code="metric.code"
+            :title="metric.title"
+            :value="metric.value"
+            @drill="handleDrill(metric)"
+          />
+        </Col>
+      </Row>
+      <Empty
+        v-if="!kpiLoading && metrics.length === 0"
+        description="暂无随访数据 · 去新建计划"
+      />
+
+      <!-- 第二行：趋势图（时间维度 / 粒度 / 分组 / 时间范围可切换） -->
+      <Card class="trend-card" title="趋势图">
+        <template #extra>
+          <Space wrap>
+            <Select
+              v-model:value="trendFilters.timeDimension"
+              :options="TREND_TIME_DIMENSION_OPTIONS"
+              :style="{ width: 120 }"
+              data-testid="trend-dimension"
+              @change="loadTrend"
+            />
+            <Select
+              v-model:value="trendFilters.granularity"
+              :options="TREND_GRANULARITY_OPTIONS"
+              :style="{ width: 96 }"
+              data-testid="trend-granularity"
+              @change="loadTrend"
+            />
+            <Select
+              v-model:value="trendFilters.groupBy"
+              :options="TREND_GROUP_BY_OPTIONS"
+              :style="{ width: 120 }"
+              data-testid="trend-group"
+              @change="loadTrend"
+            />
+            <RangePicker
+              v-model:value="trendFilters.range"
+              data-testid="trend-range"
+              value-format="YYYY-MM-DD"
+              @change="loadTrend"
+            />
+          </Space>
+        </template>
+        <Spin :spinning="trendLoading">
+          <Empty
+            v-if="
+              !trendLoading && (trend === null || trend.buckets.length === 0)
+            "
+            description="暂无患者数据"
+          />
+          <EchartsUI
+            v-show="trend !== null && trend.buckets.length > 0"
+            ref="chartRef"
+            height="360px"
+          />
+        </Spin>
+      </Card>
+    </template>
+
+    <Empty
+      v-else
+      description="暂无首页卡片权限 · 联系租户管理员在角色中授予「首页统计卡片」"
+    >
+      <template #image>
+        <IconifyIcon icon="ant-design:dashboard-outlined" />
+      </template>
+    </Empty>
   </div>
 </template>
 
 <style scoped>
 .page {
   padding: 16px;
+}
+
+.kpi-row {
+  margin-bottom: 16px;
+}
+
+.kpi-row :deep(.ant-col) {
+  margin-bottom: 16px;
+}
+
+.trend-card {
+  border-radius: 8px;
 }
 </style>
