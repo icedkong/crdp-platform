@@ -265,6 +265,58 @@ class NodeOccurrenceFactCalculatorTest {
     }
 
     @Test
+    void recordVisitOnWindowBoundaryDaysCountsAsInWindow() {
+        // Q38「窗口内完成率：实际随访日期在窗口内（含首尾两天）」——记录路径（历史导入 / 补录）的首末日边界（E19-T08 口径核对）
+        LocalDate[] boundaryDays = {LocalDate.of(2026, 3, 8), LocalDate.of(2026, 3, 22)};
+        for (LocalDate visit : boundaryDays) {
+            FactRow row =
+                    soleRow(
+                            NodeOccurrenceFactCalculator.compute(
+                                    annualNodes(),
+                                    new PlanVersion(PLAN_ID, "PLAN-IT-1", 1),
+                                    enrollment(LocalDate.of(2025, 3, 20)),
+                                    List.of(),
+                                    List.of(
+                                            new RecordInput(
+                                                    702L,
+                                                    NODE_ID,
+                                                    1,
+                                                    "HIST_IMPORT",
+                                                    "SUBMITTED",
+                                                    visit)),
+                                    List.of(),
+                                    List.of(new StatusPoint("ACTIVE", LocalDate.of(2025, 3, 20))),
+                                    null,
+                                    AS_OF));
+
+            assertTrue(row.followed(), visit + " 已提交 → 已随访");
+            assertTrue(row.inWindow(), visit + " = 窗口首 / 末日 → 计入窗口内完成（含首尾两天）");
+        }
+        FactRow dayAfter =
+                soleRow(
+                        NodeOccurrenceFactCalculator.compute(
+                                annualNodes(),
+                                new PlanVersion(PLAN_ID, "PLAN-IT-1", 1),
+                                enrollment(LocalDate.of(2025, 3, 20)),
+                                List.of(),
+                                List.of(
+                                        new RecordInput(
+                                                703L,
+                                                NODE_ID,
+                                                1,
+                                                "HIST_IMPORT",
+                                                "SUBMITTED",
+                                                LocalDate.of(2026, 3, 23))),
+                                List.of(),
+                                List.of(new StatusPoint("ACTIVE", LocalDate.of(2025, 3, 20))),
+                                null,
+                                AS_OF));
+
+        assertTrue(dayAfter.followed(), "窗口外日期照常算已随访");
+        assertTrue(!dayAfter.inWindow(), "窗口结束次日 → 不计入窗口内完成");
+    }
+
+    @Test
     void histMissedDraftIsDueButNotFollowed() {
         FactRow row =
                 soleRow(
