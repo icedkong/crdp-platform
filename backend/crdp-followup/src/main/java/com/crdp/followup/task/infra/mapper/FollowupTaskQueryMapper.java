@@ -49,7 +49,8 @@ public interface FollowupTaskQueryMapper {
      * 检索条件（除 scope 外全部可空 = 不过滤）。scope：MINE / WARD / ALL（页签语义，userId 由服务层填）； nameBlind / mrnBlind
      * 同源于一个检索词，OR 匹配；status 为空时 MINE 页签默认未完成五态（PENDING / IN_PROGRESS / OVERDUE / LOST_CANDIDATE /
      * SKIPPED_SUSPENDED——失访候选仍需医生确认，E15-T05）；unassigned 只看待认领（assignee NULL，病区公共池，A-FU-009 /
-     * E15-T03）。
+     * E15-T03）； windowFrom / windowTo（窗口包含区间，E19-T03「今日任务」钻取）与 completedFrom /
+     * completedTo（完成时间区间，看板已完成列钻取） 为钻取专用筛选，页面筛选条暂不提供。
      */
     record TaskCriteria(
             String scope,
@@ -60,6 +61,10 @@ public interface FollowupTaskQueryMapper {
             Long doctorId,
             LocalDate dueFrom,
             LocalDate dueTo,
+            LocalDate windowFrom,
+            LocalDate windowTo,
+            LocalDate completedFrom,
+            LocalDate completedTo,
             String nodeName,
             String nameBlind,
             String mrnBlind,
@@ -116,6 +121,13 @@ public interface FollowupTaskQueryMapper {
             <if test="c.unassigned">AND t.assignee_id IS NULL</if>
             <if test="c.dueFrom != null">AND t.plan_date &gt;= #{c.dueFrom}</if>
             <if test="c.dueTo != null">AND t.plan_date &lt;= #{c.dueTo}</if>
+            <if test="c.windowFrom != null">
+              AND t.window_end &gt;= #{c.windowFrom} AND t.window_start &lt;= #{c.windowTo}
+            </if>
+            <if test="c.completedFrom != null">
+              AND DATE(t.completed_at) &gt;= #{c.completedFrom}
+              AND DATE(t.completed_at) &lt;= #{c.completedTo}
+            </if>
             <if test="c.nodeName != null">AND n.name LIKE CONCAT('%', #{c.nodeName}, '%')</if>
             ORDER BY t.plan_date ASC, t.id ASC
             LIMIT #{offset}, #{limit}
@@ -162,6 +174,13 @@ public interface FollowupTaskQueryMapper {
             <if test="c.unassigned">AND t.assignee_id IS NULL</if>
             <if test="c.dueFrom != null">AND t.plan_date &gt;= #{c.dueFrom}</if>
             <if test="c.dueTo != null">AND t.plan_date &lt;= #{c.dueTo}</if>
+            <if test="c.windowFrom != null">
+              AND t.window_end &gt;= #{c.windowFrom} AND t.window_start &lt;= #{c.windowTo}
+            </if>
+            <if test="c.completedFrom != null">
+              AND DATE(t.completed_at) &gt;= #{c.completedFrom}
+              AND DATE(t.completed_at) &lt;= #{c.completedTo}
+            </if>
             <if test="c.nodeName != null">AND n.name LIKE CONCAT('%', #{c.nodeName}, '%')</if>
             </script>
             """)
@@ -201,6 +220,13 @@ public interface FollowupTaskQueryMapper {
             <if test="c.unassigned">AND t.assignee_id IS NULL</if>
             <if test="c.dueFrom != null">AND t.plan_date &gt;= #{c.dueFrom}</if>
             <if test="c.dueTo != null">AND t.plan_date &lt;= #{c.dueTo}</if>
+            <if test="c.windowFrom != null">
+              AND t.window_end &gt;= #{c.windowFrom} AND t.window_start &lt;= #{c.windowTo}
+            </if>
+            <if test="c.completedFrom != null">
+              AND DATE(t.completed_at) &gt;= #{c.completedFrom}
+              AND DATE(t.completed_at) &lt;= #{c.completedTo}
+            </if>
             <if test="c.nodeName != null">AND n.name LIKE CONCAT('%', #{c.nodeName}, '%')</if>
             </script>
             """)
@@ -295,6 +321,13 @@ public interface FollowupTaskQueryMapper {
             <if test="c.unassigned">AND t.assignee_id IS NULL</if>
             <if test="c.dueFrom != null">AND t.plan_date &gt;= #{c.dueFrom}</if>
             <if test="c.dueTo != null">AND t.plan_date &lt;= #{c.dueTo}</if>
+            <if test="c.windowFrom != null">
+              AND t.window_end &gt;= #{c.windowFrom} AND t.window_start &lt;= #{c.windowTo}
+            </if>
+            <if test="c.completedFrom != null">
+              AND DATE(t.completed_at) &gt;= #{c.completedFrom}
+              AND DATE(t.completed_at) &lt;= #{c.completedTo}
+            </if>
             <if test="c.nodeName != null">AND n.name LIKE CONCAT('%', #{c.nodeName}, '%')</if>
             <if test="after">
               AND (t.plan_date &gt; #{cursorPlanDate}

@@ -1,12 +1,21 @@
 /**
- * E19-T02 / A-DASH-001、A-DASH-002、C-DASH-001：首页卡片接口
- * （docs/api/stats.md §2，后端 DashboardCardController；页面 pages.md §2 首页）。
+ * E19-T02 / A-DASH-001、A-DASH-002、C-DASH-001；E19-T03 / A-DASH-003、004、005、008、C-DASH-003、008：
+ * 首页卡片接口（docs/api/stats.md §2，后端 DashboardCardController；页面 pages.md §2 首页）。
  *
  * 权限 followup:dashboard:view（按钮 plt_menu 234，平台库 V59 / 种子 V129）；
  * 数据范围由后端 @DataScope 出行（范围内无患者返回全 0 / 空序列，不报错）。
- * 病区筛选参数 wardId 随 E19-T03 病区筛选器接入，接口先行支持。
+ * 病区筛选（A-DASH-005）：wardId 为页面级参数全部卡片共用，候选 GET /wards 按登录快照取可见病区。
  */
-import type { KpiCardView, TrendCardParams, TrendCardView } from '@crdp/api';
+import type {
+  DashboardWardsView,
+  KpiCardView,
+  TaskBoardParams,
+  TaskBoardView,
+  TaskTableParams,
+  TaskTableView,
+  TrendCardParams,
+  TrendCardView,
+} from '@crdp/api';
 
 import { apiPath, requestClient } from '#/api/request';
 
@@ -27,5 +36,28 @@ export function fetchTrendCard(params: TrendCardParams) {
     {
       params,
     },
+  );
+}
+
+/** 任务看板（task_board）：四列各前 20 张卡片；scope 我的 / 本病区 / 全部 + 负责人筛选（A-DASH-004）。 */
+export function fetchTaskBoardCard(params: TaskBoardParams) {
+  return requestClient.get<TaskBoardView>(
+    apiPath('/followup/dashboard/cards/task_board'),
+    { params },
+  );
+}
+
+/** 任务表（task_table）：今日 / 超时 / 我负责页签（页签显示数量）+ 当前页签前 10 行。 */
+export function fetchTaskTableCard(params: TaskTableParams) {
+  return requestClient.get<TaskTableView>(
+    apiPath('/followup/dashboard/cards/task_table'),
+    { params },
+  );
+}
+
+/** 病区筛选候选（A-DASH-005 / C-DASH-008）：默认本人全部可见病区。 */
+export function fetchDashboardWards() {
+  return requestClient.get<DashboardWardsView>(
+    apiPath('/followup/dashboard/wards'),
   );
 }

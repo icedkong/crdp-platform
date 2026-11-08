@@ -1,11 +1,16 @@
 /**
- * E19-T02 / A-DASH-001、C-DASH-001：首页指标卡类型与钻取路由（数字与列表钻取一致——
- * 钻取条件由后端随指标下发，前端只透传 query，不自行拼业务条件）。
+ * E19-T02 / A-DASH-001、C-DASH-001；E19-T03 / A-DASH-003、004、008、C-DASH-003：
+ * 首页指标卡、任务看板与任务表的类型与钻取路由（数字与列表钻取一致——
+ * 钻取条件由后端随指标 / 列 / 页签下发，前端只透传 query，不自行拼业务条件）。
  */
 import { describe, expect, it } from 'vitest';
 
 import {
+  BOARD_SCOPE_OPTIONS,
+  boardColumnRoute,
   kpiMetricRoute,
+  TASK_TABLE_TABS,
+  taskTableTabRoute,
   TREND_GRANULARITY_OPTIONS,
   TREND_GROUP_BY_OPTIONS,
   TREND_TIME_DIMENSION_OPTIONS,
@@ -124,5 +129,102 @@ describe('e19-T02 趋势图可选项（A-DASH-002）', () => {
       value: 'NONE',
     });
     expect(TREND_GROUP_BY_OPTIONS.map((item) => item.value)).toContain('WARD');
+  });
+});
+
+describe('e19-T03 任务看板与任务表（A-DASH-003、004、008、C-DASH-003）', () => {
+  it('看板筛选选项 = 我的 / 本病区 / 全部（A-DASH-004）', () => {
+    expect(BOARD_SCOPE_OPTIONS).toEqual([
+      { label: '我的', value: 'MINE' },
+      { label: '本病区', value: 'WARD' },
+      { label: '全部', value: 'ALL' },
+    ]);
+  });
+
+  it('看板列「查看全部」→ 任务列表（筛选由后端随列下发，只透传）', () => {
+    const route = boardColumnRoute({
+      drill: { query: { status: 'PENDING', tab: 'all' }, target: 'TASK_LIST' },
+      status: 'PENDING',
+      tasks: [],
+      title: '待随访',
+      total: 25,
+    });
+    expect(route).toEqual({
+      path: '/followup/task',
+      query: { status: 'PENDING', tab: 'all' },
+    });
+  });
+
+  it('看板已完成列「查看全部」带完成时间窗口（与列表 completedFrom/To 同参数）', () => {
+    const route = boardColumnRoute({
+      drill: {
+        query: {
+          completedFrom: '2026-11-01',
+          completedTo: '2026-11-30',
+          status: 'COMPLETED',
+          tab: 'all',
+        },
+        target: 'TASK_LIST',
+      },
+      status: 'COMPLETED',
+      tasks: [],
+      title: '本月已完成',
+      total: 8,
+    });
+    expect(route).toEqual({
+      path: '/followup/task',
+      query: {
+        completedFrom: '2026-11-01',
+        completedTo: '2026-11-30',
+        status: 'COMPLETED',
+        tab: 'all',
+      },
+    });
+  });
+
+  it('看板列无钻取目标返回 null', () => {
+    expect(
+      boardColumnRoute({
+        status: 'PENDING',
+        tasks: [],
+        title: '待随访',
+        total: 0,
+      }),
+    ).toBeNull();
+  });
+
+  it('任务表页签「查看全部」→ 任务列表（今日带窗口当日与未完成五态）', () => {
+    const route = taskTableTabRoute({
+      drill: {
+        query: {
+          status:
+            'PENDING,IN_PROGRESS,OVERDUE,LOST_CANDIDATE,SKIPPED_SUSPENDED',
+          tab: 'all',
+          windowFrom: '2026-11-08',
+          windowTo: '2026-11-08',
+        },
+        target: 'TASK_LIST',
+      },
+      tab: 'TODAY',
+      title: '今日任务',
+      total: 4,
+    });
+    expect(route).toEqual({
+      path: '/followup/task',
+      query: {
+        status: 'PENDING,IN_PROGRESS,OVERDUE,LOST_CANDIDATE,SKIPPED_SUSPENDED',
+        tab: 'all',
+        windowFrom: '2026-11-08',
+        windowTo: '2026-11-08',
+      },
+    });
+  });
+
+  it('任务表页签定义与顺序 = 今日任务 / 超时任务 / 我负责的任务（A-DASH-008）', () => {
+    expect(TASK_TABLE_TABS).toEqual([
+      { label: '今日任务', value: 'TODAY' },
+      { label: '超时任务', value: 'OVERDUE' },
+      { label: '我负责的任务', value: 'MINE' },
+    ]);
   });
 });

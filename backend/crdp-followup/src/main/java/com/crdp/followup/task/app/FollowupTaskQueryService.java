@@ -83,7 +83,11 @@ public class FollowupTaskQueryService {
 
     // ---------------------------------------------------------------- DTO
 
-    /** 检索请求（docs/api/followup.md §2 tasks/search body；scope 对应页签，缺省 MINE 我的待办）。 */
+    /**
+     * 检索请求（docs/api/followup.md §2 tasks/search body；scope 对应页签，缺省 MINE 我的待办）。 windowFrom /
+     * windowTo（窗口包含区间， E19-T03 首页任务表「今日任务」钻取）与 completedFrom / completedTo（完成时间区间，看板已完成列钻取）为钻取专用筛选，
+     * 页面筛选条暂不提供。
+     */
     public record SearchRequest(
             String scope,
             List<String> status,
@@ -91,6 +95,10 @@ public class FollowupTaskQueryService {
             Long doctorId,
             LocalDate dueFrom,
             LocalDate dueTo,
+            LocalDate windowFrom,
+            LocalDate windowTo,
+            LocalDate completedFrom,
+            LocalDate completedTo,
             String nodeName,
             String keyword,
             Boolean unassigned,
@@ -222,7 +230,9 @@ public class FollowupTaskQueryService {
     // ---------------------------------------------------------------- 内部
 
     private static SearchRequest emptyRequest() {
-        return new SearchRequest(null, null, null, null, null, null, null, null, null, null, null);
+        return new SearchRequest(
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+                null);
     }
 
     /** 条件装配（检索词盲索引、筛选校验；scope 与 userId 由调用方解析）。 */
@@ -236,6 +246,8 @@ public class FollowupTaskQueryService {
             mrnBlind = crypto.blindIndex(PatientRegistrationService.PURPOSE_MRN, keyword);
         }
         validateRange(safe.dueFrom(), safe.dueTo(), "dueFrom / dueTo");
+        validateRange(safe.windowFrom(), safe.windowTo(), "windowFrom / windowTo");
+        validateRange(safe.completedFrom(), safe.completedTo(), "completedFrom / completedTo");
         return new FollowupTaskQueryMapper.TaskCriteria(
                 scope,
                 userId,
@@ -245,6 +257,10 @@ public class FollowupTaskQueryService {
                 positiveOrNull(safe.doctorId(), "doctorId"),
                 safe.dueFrom(),
                 safe.dueTo(),
+                safe.windowFrom(),
+                safe.windowTo(),
+                safe.completedFrom(),
+                safe.completedTo(),
                 normalizeNodeName(safe.nodeName()),
                 nameBlind,
                 mrnBlind,
@@ -398,6 +414,16 @@ public class FollowupTaskQueryService {
                 + safe.dueFrom()
                 + ","
                 + safe.dueTo()
+                + "]"
+                + ",window=["
+                + safe.windowFrom()
+                + ","
+                + safe.windowTo()
+                + "]"
+                + ",completed=["
+                + safe.completedFrom()
+                + ","
+                + safe.completedTo()
                 + "]"
                 + ",unassigned="
                 + Boolean.TRUE.equals(safe.unassigned())

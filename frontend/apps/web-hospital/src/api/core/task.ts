@@ -66,6 +66,8 @@ export function startTask(taskId: string) {
 export function fetchTaskQueue(cursor: string, filter: TaskSearchRequest) {
   return requestClient.get<TaskQueueView>(apiPath('/followup/tasks/queue'), {
     params: {
+      completedFrom: filter.completedFrom,
+      completedTo: filter.completedTo,
       cursor,
       doctorId: filter.doctorId,
       dueFrom: filter.dueFrom,
@@ -76,6 +78,8 @@ export function fetchTaskQueue(cursor: string, filter: TaskSearchRequest) {
       status: filter.status,
       unassigned: filter.unassigned,
       wardIds: filter.wardIds,
+      windowFrom: filter.windowFrom,
+      windowTo: filter.windowTo,
     },
   });
 }

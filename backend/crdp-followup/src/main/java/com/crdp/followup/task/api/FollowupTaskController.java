@@ -188,6 +188,10 @@ public class FollowupTaskController {
             @RequestParam(value = "doctorId", required = false) Long doctorId,
             @RequestParam(value = "dueFrom", required = false) LocalDate dueFrom,
             @RequestParam(value = "dueTo", required = false) LocalDate dueTo,
+            @RequestParam(value = "windowFrom", required = false) LocalDate windowFrom,
+            @RequestParam(value = "windowTo", required = false) LocalDate windowTo,
+            @RequestParam(value = "completedFrom", required = false) LocalDate completedFrom,
+            @RequestParam(value = "completedTo", required = false) LocalDate completedTo,
             @RequestParam(value = "nodeName", required = false) String nodeName,
             @RequestParam(value = "keyword", required = false) String keyword,
             @RequestParam(value = "unassigned", required = false) Boolean unassigned) {
@@ -201,6 +205,10 @@ public class FollowupTaskController {
                                 doctorId,
                                 dueFrom,
                                 dueTo,
+                                windowFrom,
+                                windowTo,
+                                completedFrom,
+                                completedTo,
                                 nodeName,
                                 keyword,
                                 unassigned,
@@ -208,7 +216,10 @@ public class FollowupTaskController {
                                 null)));
     }
 
-    /** 检索请求体（docs/api/followup.md §2；字段全部可空）。 */
+    /**
+     * 检索请求体（docs/api/followup.md §2；字段全部可空）。windowFrom / windowTo（窗口包含区间）与 completedFrom /
+     * completedTo（完成时间区间）为 E19-T03 首页钻取专用筛选，页面筛选条暂不提供。
+     */
     public record SearchBody(
             String scope,
             List<String> status,
@@ -216,6 +227,10 @@ public class FollowupTaskController {
             Long doctorId,
             LocalDate dueFrom,
             LocalDate dueTo,
+            LocalDate windowFrom,
+            LocalDate windowTo,
+            LocalDate completedFrom,
+            LocalDate completedTo,
             String nodeName,
             String keyword,
             Boolean unassigned,
@@ -248,6 +263,10 @@ public class FollowupTaskController {
                 body.doctorId(),
                 body.dueFrom(),
                 body.dueTo(),
+                body.windowFrom(),
+                body.windowTo(),
+                body.completedFrom(),
+                body.completedTo(),
                 body.nodeName(),
                 body.keyword(),
                 body.unassigned(),

@@ -21,7 +21,8 @@
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
 | GET | `/api/hospital/followup/dashboard/layout` | 登录 | 当前用户合并后的卡片 `[{ code, title, order, visible, permission, feature }]`（角色布局 ∩ 功能开关 ∩ 用户隐藏；E19-T06） |
-| GET | `/api/hospital/followup/dashboard/cards/{cardCode}?wardId=&from=&to=&timeDimension=&granularity=&groupBy=` | 卡片登记的权限码（已落地两卡均 `followup:dashboard:view`，按钮 plt_menu 234） | 单卡数据；`cardCode` ∈ `kpi` / `trend`（其余随后续任务）；`kpi`：`{ style: A\|C, asOfMonth, metrics: [{ code, title, value, available, drill: { target: PATIENT_LIST\|TASK_LIST, query } }] }`；`trend`：`{ timeDimension, granularity, groupBy, from, to, buckets: [{ bucket, total, groups: [{ key, label, count }] }], legend }`（周期连续、空周期补 0） |
+| GET | `/api/hospital/followup/dashboard/cards/{cardCode}?wardId=&from=&to=&timeDimension=&granularity=&groupBy=&scope=&assigneeId=&tab=` | 卡片登记的权限码（已落地各卡均 `followup:dashboard:view`，按钮 plt_menu 234） | 单卡数据；`cardCode` ∈ `kpi` / `trend` / `task_board` / `task_table`（其余随后续任务）；`kpi`：`{ style: A\|C, asOfMonth, metrics: [{ code, title, value, available, drill: { target: PATIENT_LIST\|TASK_LIST, query } }] }`；`trend`：`{ timeDimension, granularity, groupBy, from, to, buckets: [{ bucket, total, groups: [{ key, label, count }] }], legend }`（周期连续、空周期补 0）；`task_board`（A-DASH-003/004、C-DASH-003，E19-T03 已落地）：`{ scope, doneColumn, doneFrom, doneTo, columns: [{ status, title, total, tasks: [任务行], drill }] }`——四列待随访 / 进行中 / 逾期 / 本月已完成（C 本周完成，按 `implant` 开关，OQ-107③ 同判定），每列前 20 张卡片（未完成列按窗口结束日升序、已完成列按完成时间倒序，OQ-108），`scope` = MINE 默认 / WARD / ALL（A-DASH-004，↔ 列表页签）、`assigneeId` 负责人筛选（↔ 列表 doctorId），行同任务列表行（脱敏姓名 / 病区 / 节点 / 窗口 / 负责人 / 最近联系结果）；`task_table`（A-DASH-008，E19-T03 已落地）：`{ tab, today, total, tabs: [{ tab: TODAY\|OVERDUE\|MINE, title, total, drill }], items }`——今日任务（今天处于窗口内且未完成五态，含当天到期的跟进任务与站内提醒）/ 超时任务（OVERDUE）/ 我负责的任务（负责人或责任医生为本人且未完成），`tab` 缺省 TODAY，当前页签前 10 行（行同任务列表，可直接进入随访工作台）；各列 / 页签钻取 query 内联（tab / status / windowFrom+windowTo / completedFrom+completedTo，与列表检索同参数） |
+| GET | `/api/hospital/followup/dashboard/wards` | `followup:dashboard:view` | 病区筛选候选（A-DASH-005 / C-DASH-008「默认本人全部可见病区」，E19-T03 已落地）：`{ wards: [{ id, name }] }`——登录快照带病区清单时按清单交集，全院 / 科室 / 本人快照回落全部启用病区（行级隔离仍由各卡片 `@DataScope` 出行，选到范围外病区结果恒为空） |
 | PUT | `/api/hospital/followup/dashboard/user-pref` | 登录 | 用户隐藏 / 显示（P1，A-DASH-014；E19-T06） |
 | GET | `/api/hospital/followup/stats/doctor-workload?wardId=` | `followup:dashboard:view` | 医护负责患者数（A-DASH-009，P1） |
 | GET | `/api/hospital/followup/stats/node-follow-rate?planId=&wardId=` | `followup:dashboard:view`；开关 `node_follow_rate` | 按节点随访率（A-DASH-012、C-DASH-004；E19-T04） |
@@ -33,7 +34,7 @@
 |---|---|---|
 | `kpi`（E19-T02 已落地） | A-DASH-001、C-DASH-001 | 指标卡，A 与 C 指标不同，按租户配置——暂行以 `implant` 开关判定（开 → C 七项、关 → A 七项，OQ-107③），随 E19-T06 卡片目录落库；C 的 `eriNear` / `scanPending` 数据源随 E21，先行 `available=false` 占位 |
 | `trend`（E19-T02 已落地） | A-DASH-002 | 默认按手术日期、按月、不分组、最近 24 个月；时间维度（手术 / 出院 / 入院）× 粒度（月 / 季度 / 年）× 分组（不分组 / 病区 / 性别 / 出院状态 / 患者类型 / 年龄段）可切换；指标暂只有患者数（死亡人数 / 随访完成数与术者 / 手术方式 / 急诊手术分组随后续任务，OQ-107⑤） |
-| `task_board` / `task_table` | A-DASH-003/004/008、C-DASH-003 | 看板与任务表（今日 / 超时 / 我负责） |
+| `task_board` / `task_table`（E19-T03 已落地） | A-DASH-003/004/008、C-DASH-003/008 | 任务看板（待随访 / 进行中 / 逾期 / 本月已完成〔C 本周完成〕，每列前 20 张卡片）与任务表（今日 / 超时 / 我负责，页签显示数量）；计数与任务列表检索同一条件树（scope / 病区 / 负责人 / 窗口 / 完成时间）；病区筛选候选 `GET /dashboard/wards` |
 | `yearly_rate` | A-DASH-006 | 每年随访率 = 年度节点的节点随访率，口径一致 |
 | `node_rate` | A-DASH-012、C-DASH-004 | 分母为窗口已结束的应随访任务 |
 | `baseline_completeness` / `followup_completeness` | A-DASH-010/011、C-DASH-009 | 因条件不显示的字段不计入分母 |
