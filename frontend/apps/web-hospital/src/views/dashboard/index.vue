@@ -1,5 +1,10 @@
 <script lang="ts" setup>
-import type { KpiCardView, KpiMetric, TrendCardView } from '@crdp/api';
+import type {
+  DashboardLayoutView,
+  KpiCardView,
+  KpiMetric,
+  TrendCardView,
+} from '@crdp/api';
 
 import type { EchartsUIType } from '@vben/plugins/echarts';
 
@@ -10,7 +15,10 @@ import { IconifyIcon } from '@vben/icons';
 import { EchartsUI, useEcharts } from '@vben/plugins/echarts';
 
 import {
+  DASHBOARD_DEFAULT_LAYOUT,
   kpiMetricRoute,
+  layoutAreas,
+  layoutCardVisible,
   TREND_GRANULARITY_OPTIONS,
   TREND_GROUP_BY_OPTIONS,
   TREND_TIME_DIMENSION_OPTIONS,
@@ -32,6 +40,7 @@ import {
 } from 'ant-design-vue';
 
 import {
+  fetchDashboardLayout,
   fetchDashboardWards,
   fetchKpiCard,
   fetchTrendCard,
@@ -40,6 +49,7 @@ import StatCard from '#/components/followup/stat-card.vue';
 import { useBreakpoint } from '#/reference/use-breakpoint';
 import { usePermission } from '#/reference/use-permission';
 
+import CardSettings from './card-settings.vue';
 import CompletenessArea from './completeness-area.vue';
 import { defaultTrendRange, metricIcon, trendChartOption } from './logic';
 import RateArea from './rate-area.vue';
@@ -50,18 +60,16 @@ defineOptions({ name: 'HospitalDashboard' });
 /**
  * E19-T02 / A-DASH-001、A-DASH-002、C-DASH-001 · E19-T03 / A-DASH-003、004、005、008、C-DASH-003、008 ·
  * E19-T04 / A-DASH-006、A-DASH-012、C-DASH-004 · E19-T05 / A-DASH-010、A-DASH-011、C-DASH-009 ·
- * 首页（pages.md §2）：第一行指标卡（A 七项 / C 七项按租户 implant 开关）、第二行趋势图
- * （时间维度 / 粒度 / 分组 / 时间范围可切换，默认手术日期 · 月 · 不分组 · 最近 24 个月）、
- * 第三行任务区（看板 / 任务表切换，task-area 组件）、第四行统计区随访率卡片
- * （每年随访率 + 节点随访率〔node_follow_rate 开关，医院 A 默认不显示〕，rate-area 组件）、
- * 第五行数据完整度区（基线资料完整度与随访资料完整度左右并列，completeness-area 组件——
- * 最常缺失字段可钻取到缺该字段的患者列表）。
+ * E19-T06 / A-DASH-013、A-DASH-014 · 首页（pages.md §2）：卡片与顺序由 GET /dashboard/layout
+ * 下发（目录 ∩ 功能开关 ∩ 权限 × 角色布局 ∩ 用户隐藏——租户管理员按角色配置后即生效），
+ * 布局接口失败时按目录默认布局兜底渲染（不白屏）。任务区（看板 | 任务表切换）、统计区
+ * （每年随访率 + 节点随访率）、完整度区（基线 / 随访资料完整度半行并列）各按组内第一张
+ * 可见卡片的位置渲染，组内单卡可见时不显示切换 / 只占整行。
  *
- * 病区筛选（A-DASH-005）：头部「病区 [全部▾]」全页共用——候选 = 本人全部可见病区
- * （GET /dashboard/wards 按登录快照），未选 = 全部可见病区；切换后指标卡 / 趋势图 /
- * 任务区 / 随访率卡片 / 完整度卡片联动重载（行级隔离由后端 @DataScope 出行，选到范围外病区结果恒为空）。
- * 数字与列表钻取一致：钻取目标与筛选参数由后端随指标下发（同一条件树），前端只透传
- * 路由 query；范围内无患者时后端返回全 0（不报错）。卡片设置（A-DASH-013/014）随后续任务接入。
+ * 卡片设置（A-DASH-014，P1）：右上角入口，用户在角色允许的卡片内隐藏 / 重新显示、
+ * 恢复默认（不能加入角色未允许的卡片、不能调顺序）。病区筛选（A-DASH-005）：头部
+ * 「病区 [全部▾]」全页共用——候选 = 本人全部可见病区，切换后各可见卡片联动重载。
+ * 数字与列表钻取一致（钻取条件由后端随指标下发，前端只透传路由 query）。
  * 权限 followup:dashboard:view（按钮 234）；无权限只隐藏卡片不报错。
  */
 const router = useRouter();
@@ -72,6 +80,25 @@ const responsive = false;
 const title = '首页';
 
 const RangePicker = DatePicker.RangePicker;
+
+// ---------------------------------------------------------------- 卡片目录布局（A-DASH-013 / A-DASH-014）
+
+const layout = ref<DashboardLayoutView>(DASHBOARD_DEFAULT_LAYOUT);
+/** 首次布局加载完成前不下结论「无卡片」，避免默认布局闪烁成空态。 */
+const layoutLoaded = ref(false);
+
+async function loadLayout() {
+  try {
+    layout.value = await fetchDashboardLayout();
+  } catch {
+    layout.value = DASHBOARD_DEFAULT_LAYOUT; // 兜底：目录默认布局（页面不因布局接口故障白屏）
+  } finally {
+    layoutLoaded.value = true;
+  }
+}
+
+/** 区块序列（同区卡片归并；顺序 = 布局响应顺序）。 */
+const areas = computed(() => layoutAreas(layout.value));
 
 // ---------------------------------------------------------------- 病区筛选（A-DASH-005 / C-DASH-008）
 
@@ -166,6 +193,7 @@ async function loadTrend() {
 function loadAll() {
   // 首页不在 5 个响应式页面内：手机显示 MobileBlocker（OQ-24）
   if (isMobile.value && !responsive) return;
+  void loadLayout();
   void loadWardOptions();
   if (canViewCards.value) {
     void loadKpi();
@@ -175,8 +203,13 @@ function loadAll() {
 
 onMounted(loadAll);
 
-// 多标签页 keep-alive：从患者 / 任务列表回到首页时刷新数字（钻取后可能已改动数据）
+// 多标签页 keep-alive：从患者 / 任务列表回到首页时刷新数字与布局（配置可能在设置页已变）
 onActivated(loadAll);
+
+/** 卡片设置保存后：更新布局（新增 / 移除卡片区块，未受影响的卡片不重载）。 */
+function handleLayoutSaved(view: DashboardLayoutView) {
+  layout.value = view;
+}
 </script>
 
 <template>
@@ -194,103 +227,141 @@ onActivated(loadAll);
   <div v-else class="page">
     <div class="title-row">
       <h1 class="crdp-page-title">{{ title }}</h1>
-      <!-- 病区筛选（A-DASH-005 / C-DASH-008）：全页共用，未选 = 本人全部可见病区 -->
-      <Select
-        v-model:value="wardId"
-        allow-clear
-        :options="wardOptions"
-        placeholder="全部病区"
-        :style="{ width: 180 }"
-        data-testid="dashboard-ward"
-        @change="handleWardChange"
-      />
+      <Space>
+        <!-- 病区筛选（A-DASH-005 / C-DASH-008）：全页共用，未选 = 本人全部可见病区 -->
+        <Select
+          v-model:value="wardId"
+          allow-clear
+          :options="wardOptions"
+          placeholder="全部病区"
+          :style="{ width: 180 }"
+          data-testid="dashboard-ward"
+          @change="handleWardChange"
+        />
+        <!-- 卡片设置（A-DASH-014，P1）：角色允许范围内隐藏 / 显示、恢复默认 -->
+        <CardSettings :layout="layout" @saved="handleLayoutSaved" />
+      </Space>
     </div>
 
     <template v-if="canViewCards">
-      <!-- 第一行：指标卡（点击进入对应列表，pages.md §2） -->
-      <Row :gutter="sizes.gutter" class="kpi-row">
-        <Col
-          v-for="metric in metrics"
-          :key="metric.code"
-          :lg="6"
-          :md="8"
-          :sm="12"
-          :xs="24"
+      <!-- 卡片与顺序由布局下发（A-DASH-013）；同区卡片归并到组内第一张可见卡片的位置 -->
+      <template v-for="area in areas" :key="area.kind">
+        <!-- 指标卡（点击进入对应列表，pages.md §2） -->
+        <Row v-if="area.kind === 'kpi'" :gutter="sizes.gutter" class="kpi-row">
+          <Col
+            v-for="metric in metrics"
+            :key="metric.code"
+            :lg="6"
+            :md="8"
+            :sm="12"
+            :xs="24"
+          >
+            <StatCard
+              :data-testid="`kpi-${metric.code}`"
+              :icon="metricIcon(metric.code)"
+              :loading="kpiLoading"
+              :metric-code="metric.code"
+              :title="metric.title"
+              :value="metric.value"
+              @drill="handleDrill(metric)"
+            />
+          </Col>
+        </Row>
+
+        <!-- 趋势图（时间维度 / 粒度 / 分组 / 时间范围可切换） -->
+        <Card
+          v-else-if="area.kind === 'trend'"
+          class="trend-card"
+          title="趋势图"
         >
-          <StatCard
-            :data-testid="`kpi-${metric.code}`"
-            :icon="metricIcon(metric.code)"
-            :loading="kpiLoading"
-            :metric-code="metric.code"
-            :title="metric.title"
-            :value="metric.value"
-            @drill="handleDrill(metric)"
-          />
+          <template #extra>
+            <Space wrap>
+              <Select
+                v-model:value="trendFilters.timeDimension"
+                :options="TREND_TIME_DIMENSION_OPTIONS"
+                :style="{ width: 120 }"
+                data-testid="trend-dimension"
+                @change="loadTrend"
+              />
+              <Select
+                v-model:value="trendFilters.granularity"
+                :options="TREND_GRANULARITY_OPTIONS"
+                :style="{ width: 96 }"
+                data-testid="trend-granularity"
+                @change="loadTrend"
+              />
+              <Select
+                v-model:value="trendFilters.groupBy"
+                :options="TREND_GROUP_BY_OPTIONS"
+                :style="{ width: 120 }"
+                data-testid="trend-group"
+                @change="loadTrend"
+              />
+              <RangePicker
+                v-model:value="trendFilters.range"
+                data-testid="trend-range"
+                value-format="YYYY-MM-DD"
+                @change="loadTrend"
+              />
+            </Space>
+          </template>
+          <Spin :spinning="trendLoading">
+            <Empty
+              v-if="
+                !trendLoading && (trend === null || trend.buckets.length === 0)
+              "
+              description="暂无患者数据"
+            />
+            <EchartsUI
+              v-show="trend !== null && trend.buckets.length > 0"
+              ref="chartRef"
+              height="360px"
+            />
+          </Spin>
+        </Card>
+
+        <!-- 任务区（看板 / 任务表切换，A-DASH-003、008；组内单卡可见时不显示切换） -->
+        <TaskArea
+          v-else-if="area.kind === 'task'"
+          :show-board="area.codes.includes('task_board')"
+          :show-table="area.codes.includes('task_table')"
+          :ward-id="wardId"
+        />
+
+        <!-- 统计区：每年随访率与节点随访率（A-DASH-006、A-DASH-012 / C-DASH-004；节点随访率
+             由布局解析显隐——目录 default_visible=0〔医院 A 默认不显示〕+ node_follow_rate 开关） -->
+        <RateArea
+          v-else-if="area.kind === 'rate'"
+          :show-node="layoutCardVisible(layout, 'node_rate')"
+          :show-yearly="layoutCardVisible(layout, 'yearly_rate')"
+          :ward-id="wardId"
+        />
+
+        <!-- 数据完整度：基线资料完整度与随访资料完整度左右并列（A-DASH-010 / A-DASH-011 /
+             C-DASH-009；单卡可见时占整行） -->
+        <CompletenessArea
+          v-else-if="area.kind === 'completeness'"
+          :show-baseline="layoutCardVisible(layout, 'baseline_completeness')"
+          :show-followup="layoutCardVisible(layout, 'followup_completeness')"
+          :ward-id="wardId"
+        />
+      </template>
+
+      <Row
+        v-if="layoutLoaded && areas.length === 0 && !kpiLoading"
+        :gutter="sizes.gutter"
+        class="kpi-row"
+      >
+        <Col :span="24">
+          <Empty
+            description="首页卡片已全部隐藏 · 可在「卡片设置」中重新显示，或联系租户管理员调整角色布局"
+          >
+            <template #image>
+              <IconifyIcon icon="ant-design:dashboard-outlined" />
+            </template>
+          </Empty>
         </Col>
       </Row>
-      <Empty
-        v-if="!kpiLoading && metrics.length === 0"
-        description="暂无随访数据 · 去新建计划"
-      />
-
-      <!-- 第二行：趋势图（时间维度 / 粒度 / 分组 / 时间范围可切换） -->
-      <Card class="trend-card" title="趋势图">
-        <template #extra>
-          <Space wrap>
-            <Select
-              v-model:value="trendFilters.timeDimension"
-              :options="TREND_TIME_DIMENSION_OPTIONS"
-              :style="{ width: 120 }"
-              data-testid="trend-dimension"
-              @change="loadTrend"
-            />
-            <Select
-              v-model:value="trendFilters.granularity"
-              :options="TREND_GRANULARITY_OPTIONS"
-              :style="{ width: 96 }"
-              data-testid="trend-granularity"
-              @change="loadTrend"
-            />
-            <Select
-              v-model:value="trendFilters.groupBy"
-              :options="TREND_GROUP_BY_OPTIONS"
-              :style="{ width: 120 }"
-              data-testid="trend-group"
-              @change="loadTrend"
-            />
-            <RangePicker
-              v-model:value="trendFilters.range"
-              data-testid="trend-range"
-              value-format="YYYY-MM-DD"
-              @change="loadTrend"
-            />
-          </Space>
-        </template>
-        <Spin :spinning="trendLoading">
-          <Empty
-            v-if="
-              !trendLoading && (trend === null || trend.buckets.length === 0)
-            "
-            description="暂无患者数据"
-          />
-          <EchartsUI
-            v-show="trend !== null && trend.buckets.length > 0"
-            ref="chartRef"
-            height="360px"
-          />
-        </Spin>
-      </Card>
-
-      <!-- 第三行：任务区（看板 / 任务表切换，A-DASH-003、008；病区筛选联动） -->
-      <TaskArea :ward-id="wardId" />
-
-      <!-- 第四行统计区：每年随访率与节点随访率（A-DASH-006、A-DASH-012 / C-DASH-004；
-           节点随访率受 node_follow_rate 开关控制，病区筛选联动） -->
-      <RateArea :ward-id="wardId" />
-
-      <!-- 第五行数据完整度：基线资料完整度与随访资料完整度左右并列
-           （A-DASH-010 / A-DASH-011 / C-DASH-009；最常缺失字段可钻取患者列表） -->
-      <CompletenessArea :ward-id="wardId" />
     </template>
 
     <Empty

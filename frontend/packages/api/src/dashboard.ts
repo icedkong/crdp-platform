@@ -457,3 +457,246 @@ export function missingFieldRoute(
   if (params.year !== undefined) query.year = params.year;
   return { path: '/followup/patient', query };
 }
+
+// ---------------------------------------------------------------- 首页卡片目录与布局（E19-T06 / A-DASH-013、A-DASH-014）
+
+/** 卡片宽度（A 规格 §9 卡片目录：整行 / 半行——相邻两张半行卡并排）。 */
+export type DashboardCardWidth = 'FULL' | 'HALF';
+
+/** 合并后的一张卡片（visible=false 仅来自用户隐藏；角色隐藏 / 开关关 / 无权限的卡片不在响应里）。 */
+export interface DashboardLayoutCard {
+  allowUserHide: boolean;
+  code: string;
+  feature?: null | string;
+  order: number;
+  permission: string;
+  title: string;
+  userHidden: boolean;
+  visible: boolean;
+  width: DashboardCardWidth;
+}
+
+/** 当前用户布局（GET /dashboard/layout）：source=DEFAULT 目录默认 / ROLE_CONFIG 角色配置。 */
+export interface DashboardLayoutView {
+  cards: DashboardLayoutCard[];
+  source: 'DEFAULT' | 'ROLE_CONFIG';
+}
+
+/** 配置页角色候选（随 role-layouts 响应下发，不依赖 tenant:role:view）。 */
+export interface DashboardRoleOption {
+  code: string;
+  id: number;
+  name: string;
+}
+
+/** 配置页一行卡片（全目录列出；featureOn=false 表示开关关闭、配置了也不显示）。 */
+export interface DashboardRoleCard {
+  allowUserHide: boolean;
+  code: string;
+  feature?: null | string;
+  featureOn: boolean;
+  order: number;
+  permission: string;
+  title: string;
+  visible: boolean;
+  width: DashboardCardWidth;
+}
+
+/** 单个角色的布局视图（configured=false 时 visible / order / allowUserHide 为目录默认值）。 */
+export interface DashboardRoleLayoutView {
+  cards: DashboardRoleCard[];
+  configured: boolean;
+  roleId: number;
+  roleName: string;
+}
+
+/** GET /dashboard/role-layouts 响应：角色候选 + 当前查看角色。 */
+export interface DashboardRoleLayoutsView {
+  current: DashboardRoleLayoutView;
+  roles: DashboardRoleOption[];
+}
+
+/** PUT /dashboard/role-layouts/{roleId} 请求体（全量覆盖；allowUserHide 缺省 = 目录默认）。 */
+export interface DashboardRoleCardSave {
+  allowUserHide?: boolean;
+  code: string;
+  order: number;
+  visible: boolean;
+}
+
+/** 用户卡片设置请求体（PUT /dashboard/user-pref；hidden 为全量清单，空 = 恢复角色默认）。 */
+export interface DashboardUserPrefSave {
+  hidden: string[];
+}
+
+/**
+ * 目录默认布局的兜底常量（与 followup V77 种子同构，医院 A 默认不显示节点随访率）：
+ * GET /dashboard/layout 失败时首页按它渲染（页面不因布局接口故障白屏），文案与目录一致。
+ */
+const DASHBOARD_DEFAULT_CARD_ROWS: Array<{
+  code: string;
+  order: number;
+  title: string;
+  width: DashboardCardWidth;
+}> = [
+  { code: 'kpi', order: 10, title: '指标卡', width: 'FULL' },
+  { code: 'trend', order: 20, title: '趋势图', width: 'FULL' },
+  { code: 'task_board', order: 30, title: '任务看板', width: 'FULL' },
+  { code: 'task_table', order: 40, title: '任务表', width: 'FULL' },
+  { code: 'yearly_rate', order: 50, title: '每年随访率', width: 'FULL' },
+  {
+    code: 'baseline_completeness',
+    order: 70,
+    title: '基线资料完整度',
+    width: 'HALF',
+  },
+  {
+    code: 'followup_completeness',
+    order: 71,
+    title: '随访资料完整度',
+    width: 'HALF',
+  },
+];
+
+export const DASHBOARD_DEFAULT_LAYOUT: DashboardLayoutView = {
+  cards: DASHBOARD_DEFAULT_CARD_ROWS.map((row) => ({
+    allowUserHide: true,
+    code: row.code,
+    feature: null,
+    order: row.order,
+    permission: 'followup:dashboard:view',
+    title: row.title,
+    userHidden: false,
+    visible: true,
+    width: row.width,
+  })),
+  source: 'DEFAULT',
+};
+
+/** 展示的卡片（按响应顺序，过滤用户隐藏行）。 */
+export function visibleLayoutCards(
+  view: DashboardLayoutView,
+): DashboardLayoutCard[] {
+  return [...view.cards]
+    .filter((card) => card.visible)
+    .toSorted((a, b) => a.order - b.order);
+}
+
+/** 某张卡片当前是否显示（未出现 = false；用于子区域的显隐回退）。 */
+export function layoutCardVisible(
+  view: DashboardLayoutView,
+  code: string,
+): boolean {
+  return view.cards.some((card) => card.code === code && card.visible);
+}
+
+/** 用户已隐藏的卡片编码（卡片设置抽屉的初始勾选）。 */
+export function userHiddenCodes(view: DashboardLayoutView): string[] {
+  return view.cards.filter((card) => card.userHidden).map((card) => card.code);
+}
+
+/** 首页渲染区块（layout → 区块序列；两张同区卡片归并到首次出现的位置）。 */
+export type DashboardAreaKind =
+  | 'completeness'
+  | 'kpi'
+  | 'rate'
+  | 'task'
+  | 'trend';
+
+export interface DashboardArea {
+  codes: string[];
+  kind: DashboardAreaKind;
+}
+
+const AREA_KIND_BY_CODE: Record<string, DashboardAreaKind> = {
+  baseline_completeness: 'completeness',
+  followup_completeness: 'completeness',
+  kpi: 'kpi',
+  node_rate: 'rate',
+  task_board: 'task',
+  task_table: 'task',
+  trend: 'trend',
+  yearly_rate: 'rate',
+};
+
+/**
+ * 可见卡片 → 首页区块序列（E19-T06 按角色布局与顺序渲染）：
+ * 任务区（task_board / task_table）、统计区（yearly_rate / node_rate）、完整度区
+ * （baseline / followup_completeness）各归并为一个区块，排在组内第一张可见卡片的位置；
+ * 未知编码（E21 的 C 卡片等尚未接入的目录项）跳过，不渲染也不报错。
+ */
+export function layoutAreas(view: DashboardLayoutView): DashboardArea[] {
+  const areas: DashboardArea[] = [];
+  for (const card of visibleLayoutCards(view)) {
+    const kind = AREA_KIND_BY_CODE[card.code];
+    if (!kind) continue;
+    const existing = areas.find((area) => area.kind === kind);
+    if (existing) {
+      existing.codes.push(card.code);
+    } else {
+      areas.push({ codes: [card.code], kind });
+    }
+  }
+  return areas;
+}
+
+// ---------------------------------------------------------------- 配置页纯逻辑（followup:dashboard:config）
+
+/**
+ * 勾选 / 取消一张卡片（目录侧勾选 = 已选列表增减）：取消后从已选列表移除；
+ * 新勾选的卡片插到已选末尾。返回新数组（纯函数）。
+ */
+export function toggleRoleCard(
+  cards: DashboardRoleCard[],
+  code: string,
+  visible: boolean,
+): DashboardRoleCard[] {
+  if (visible) {
+    return cards.map((card) =>
+      card.code === code ? { ...card, visible: true } : card,
+    );
+  }
+  return cards.map((card) =>
+    card.code === code ? { ...card, visible: false } : card,
+  );
+}
+
+/**
+ * 已选卡片上移 / 下移（index 在已选〔visible〕列表内）：与相邻的已选卡片换位，
+ * 其间不可见卡片不动。越界返回原数组（纯函数）。
+ */
+export function moveRoleCard(
+  cards: DashboardRoleCard[],
+  index: number,
+  direction: -1 | 1,
+): DashboardRoleCard[] {
+  const visibleOrder = cards.filter((card) => card.visible);
+  const target = visibleOrder[index];
+  const neighbor = visibleOrder[index + direction];
+  if (!target || !neighbor) {
+    return cards;
+  }
+  const next = [...cards];
+  const targetAt = next.indexOf(target);
+  const neighborAt = next.indexOf(neighbor);
+  next[targetAt] = neighbor;
+  next[neighborAt] = target;
+  return next;
+}
+
+/**
+ * 保存请求体（全量覆盖）：已选卡片按列表顺序 order 从 1 起，未选卡片排在末尾
+ * （保留 allowUserHide 原值，供「取消勾选不丢配置」的恢复场景）。
+ */
+export function roleLayoutSaveOf(
+  cards: DashboardRoleCard[],
+): DashboardRoleCardSave[] {
+  const selected = cards.filter((card) => card.visible);
+  const unselected = cards.filter((card) => !card.visible);
+  return [...selected, ...unselected].map((card, index) => ({
+    allowUserHide: card.allowUserHide,
+    code: card.code,
+    order: index + 1,
+    visible: card.visible,
+  }));
+}

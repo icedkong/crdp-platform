@@ -13,6 +13,10 @@
 import type {
   BaselineCompletenessCardView,
   CompletenessParams,
+  DashboardLayoutView,
+  DashboardRoleCardSave,
+  DashboardRoleLayoutsView,
+  DashboardUserPrefSave,
   DashboardWardsView,
   FollowupCompletenessCardView,
   KpiCardView,
@@ -113,5 +117,51 @@ export function fetchFollowupCompletenessCard(params: CompletenessParams) {
 export function fetchDashboardWards() {
   return requestClient.get<DashboardWardsView>(
     apiPath('/followup/dashboard/wards'),
+  );
+}
+
+// ---------------------------------------------------------------- 卡片目录与布局（E19-T06 / A-DASH-013、A-DASH-014）
+
+/**
+ * 当前用户合并后的卡片（登录即可）：目录 ∩ 功能开关 ∩ 权限 × 角色布局 ∩ 用户隐藏；
+ * cards 按展示顺序，visible=false 仅来自用户隐藏（卡片设置抽屉据此列出可重新显示的卡片）。
+ */
+export function fetchDashboardLayout() {
+  return requestClient.get<DashboardLayoutView>(
+    apiPath('/followup/dashboard/layout'),
+  );
+}
+
+/** 用户隐藏 / 显示卡片（P1）：hidden 全量覆盖；空清单 = 恢复角色默认。 */
+export function saveDashboardUserPref(hidden: string[]) {
+  return requestClient.put<DashboardLayoutView>(
+    apiPath('/followup/dashboard/user-pref'),
+    { hidden } satisfies DashboardUserPrefSave,
+  );
+}
+
+/** 角色卡片布局（配置页）：角色候选 + 当前角色视图（roleId 缺省取第一个角色）。 */
+export function fetchDashboardRoleLayout(roleId?: number) {
+  return requestClient.get<DashboardRoleLayoutsView>(
+    apiPath('/followup/dashboard/role-layouts'),
+    { params: { roleId } },
+  );
+}
+
+/** 保存角色布局（全量覆盖；下一次 GET /dashboard/layout 即生效）。 */
+export function saveDashboardRoleLayout(
+  roleId: number,
+  cards: DashboardRoleCardSave[],
+) {
+  return requestClient.put<DashboardRoleLayoutsView>(
+    apiPath(`/followup/dashboard/role-layouts/${roleId}`),
+    { cards },
+  );
+}
+
+/** 恢复角色默认布局（清空配置行）。 */
+export function resetDashboardRoleLayout(roleId: number) {
+  return requestClient.delete<DashboardRoleLayoutsView>(
+    apiPath(`/followup/dashboard/role-layouts/${roleId}`),
   );
 }

@@ -8,7 +8,7 @@ import type {
 
 import type { EchartsUIType } from '@vben/plugins/echarts';
 
-import { onMounted, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 
 import { EchartsUI, useEcharts } from '@vben/plugins/echarts';
@@ -59,13 +59,25 @@ defineOptions({ name: 'DashboardCompletenessArea' });
  * 同一计算，缺失人数 = 列表 total。卡片旁注明「完整度只统计已填写的资料，随访做没做
  * 见每年随访率」。统计时点 = 当前数据实时计算（Q39 / Q40，无 asOf）。
  */
-const props = defineProps<{
-  /** 页面级病区筛选（A-DASH-005）：全部卡片共用，未选 = 本人全部可见病区。 */
-  wardId?: number;
-}>();
+const props = withDefaults(
+  defineProps<{
+    /** 是否显示基线资料完整度卡片（E19-T06 布局解析；两块仍并列时各占半行）。 */
+    showBaseline?: boolean;
+    /** 是否显示随访资料完整度卡片（E19-T06 布局解析）。 */
+    showFollowup?: boolean;
+    /** 页面级病区筛选（A-DASH-005）：全部卡片共用，未选 = 本人全部可见病区。 */
+    wardId?: number;
+  }>(),
+  { showBaseline: true, showFollowup: true, wardId: undefined },
+);
 
 const router = useRouter();
 const RangePicker = DatePicker.RangePicker;
+
+/** 半行并排（A 规格 §9「相邻的两张半行卡片并排显示」）：只显示一块时占整行。 */
+const halfSpan = computed(() =>
+  props.showBaseline && props.showFollowup ? 12 : 24,
+);
 
 // ---------------------------------------------------------------- 共用筛选（两块共用：患者类型、时间范围）
 
@@ -198,8 +210,12 @@ function drillMissing(
 // ---------------------------------------------------------------- 装配
 
 function reload() {
-  void loadBaseline();
-  void loadFollowup();
+  if (props.showBaseline) {
+    void loadBaseline();
+  }
+  if (props.showFollowup) {
+    void loadFollowup();
+  }
 }
 
 watch(
@@ -245,7 +261,7 @@ defineExpose({ reload });
 
     <!-- 第五行数据完整度：左右两块并列（A 规格 §9「主要页面 4」） -->
     <Row :gutter="sizes.gutter">
-      <Col :lg="12" :xs="24">
+      <Col v-if="showBaseline" :lg="halfSpan" :xs="24">
         <Card class="completeness-card" title="基线资料完整度">
           <template #extra>
             <Space wrap>
@@ -366,7 +382,7 @@ defineExpose({ reload });
           </Spin>
         </Card>
       </Col>
-      <Col :lg="12" :xs="24">
+      <Col v-if="showFollowup" :lg="halfSpan" :xs="24">
         <Card class="completeness-card" title="随访资料完整度">
           <template #extra>
             <Space wrap>

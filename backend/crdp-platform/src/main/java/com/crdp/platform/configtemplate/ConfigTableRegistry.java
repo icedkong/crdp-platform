@@ -90,6 +90,9 @@ public final class ConfigTableRegistry {
                             "对比标红规则",
                             "录入时对比提示规则（每条可开关、调阈值；form_code / rule_code 自然键合并，"
                                     + "引用的 fe_field 字段随字段字典整包同序导入后自然一致）"),
+                    // ---- followup：首页卡片配置（E19-T06 / A-DASH-013「随配置模板复制」；role_id 重映射，
+                    //      card_code 为编码引用不改写——目录行不入模板、由目标租户迁移种子提供）----
+                    entry("dash_role_layout", "followup", "首页卡片配置", "按角色的首页卡片显示与顺序（含「允许用户隐藏」）"),
                     // ---- followup：只复制结构（A-FLD-014「术者、病区 / 中心」）----
                     structure(
                             "ward",
@@ -168,6 +171,10 @@ public final class ConfigTableRegistry {
                     "imp_batch_write",
                     // 统计事实表（E19-T01：派生只读数据，每日按本院业务数据重建，不入模板）
                     "st_node_occurrence",
+                    // 首页卡片目录与用户偏好（E19-T06：目录随卡片发版以迁移落库，属代码能力不是租户数据；
+                    // dash_user_pref 是个人隐藏偏好，同 ntf_user_pref 不复制）
+                    "dash_card",
+                    "dash_user_pref",
                     // 文件、密钥、outbox
                     "sys_file",
                     "sys_webhook_delivery",

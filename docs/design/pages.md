@@ -108,7 +108,7 @@
 | 权限 | 页面无；每张卡片按卡片目录登记的权限码（多为 `followup:dashboard:view`）+ 功能开关显示 |
 | 需求 | A-DASH-001、002、003、004、005、006、008、009、010、011、012、013、014；C-DASH-001…010；（A-DASH-007 生存分析延后） |
 | 组件 | `StatCard`、`a-row :gutter="16"`、`a-card`、`StatusTag`、`a-segmented`（看板 / 任务表）、ECharts（推断，待确认图表库；仓库若已有则沿用） |
-| 接口 | `GET /api/hospital/followup/dashboard/layout`（当前用户合并后的卡片列表）；每张卡片独立接口 `GET /api/hospital/followup/dashboard/cards/{cardCode}?wardId=&from=&to=`（推断，待确认）；卡片设置 `PUT /api/hospital/followup/dashboard/user-pref`（P1） |
+| 接口 | `GET /api/hospital/followup/dashboard/layout`（当前用户合并后的卡片列表，E19-T06 已落地：目录 ∩ 开关 ∩ 权限 × 角色布局 ∩ 用户隐藏，布局失败按目录默认兜底渲染）；每张卡片独立接口 `GET /api/hospital/followup/dashboard/cards/{cardCode}?wardId=&from=&to=`；卡片设置 `PUT /api/hospital/followup/dashboard/user-pref`（P1，E19-T06 已落地：角色允许范围内隐藏 / 显示、恢复默认，不能加卡也不能调序）；按角色配置入口见 §10「首页卡片配置」（`followup:dashboard:config`） |
 
 ```text
 ┌ 首页 ───────────────────────────────────────────────── 病区 [全部▾] [卡片设置] ┐
@@ -131,7 +131,7 @@
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- A 默认顺序：指标卡 → 趋势图 → 任务区（看板 / 任务表切换）→ 每年随访率（另有节点随访率，开关 `node_follow_rate`）→ 数据完整度左右并列；医护负责患者数（A-DASH-009）。
+- A 默认顺序：指标卡 → 趋势图 → 任务区（看板 / 任务表切换）→ 每年随访率（另有节点随访率，目录默认不显示 + 开关 `node_follow_rate`，B / C 初始化后在卡片配置中开启）→ 数据完整度左右并列；医护负责患者数（A-DASH-009）。卡片与顺序由 `GET /dashboard/layout` 下发（A-DASH-013）：租户管理员按角色配置后即生效，任务区 / 统计区 / 完整度区按组内第一张可见卡片的位置渲染，组内单卡可见时不显示切换、半行卡单卡可见时占整行；「卡片设置」（A-DASH-014，P1）在角色允许的卡片内隐藏 / 显示与恢复默认。
 - C 默认顺序：指标卡 → 任务看板 → 器械类型分布与随访率并列 → 接近 ERI 列表（需 `implant`）与异常标红记录并列 → 补录进度（需 `scan_progress`）。
 - 所有数字按本人可见病区统计（后端），**点击数字进入对应患者 / 任务列表**（带筛选参数）。
 - 空：卡片内「暂无随访任务 · 去新建计划」（有 `followup:plan:edit` 才显示按钮）。

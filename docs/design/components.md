@@ -704,6 +704,7 @@ interface WatermarkPreviewProps {
 | `StatCard` | 首页统计卡 | `a-statistic` 24–28/600 + 右上线性图标 + 「较昨日 +n / −n」12px |
 | `EmptyBlock` | 带下一步的空状态 | 文案「暂无随访任务 · 去新建计划」，按钮按权限显示 |
 | `TenantViewBanner` | 平台进入租户视角时的顶部常驻提示条 + 一键退出（PLT-VIEW-003） | 橙色 `a-alert banner`，显示剩余时长；不可关闭 |
+| `DashboardCardSettings` | 首页右上角「卡片设置」（A-DASH-014，P1，E19-T06） | `a-popover`（trigger 按钮文案「卡片设置」，280 宽）：选项只来自布局响应（角色允许的卡片），勾选 = 显示、allowUserHide=false 的禁用并注「（不可隐藏）」；按钮「保存」（全量隐藏清单）/「恢复默认」（空清单回到角色配置顺序）；保存后 emit `saved` 交首页更新布局 |
 | `NoticeBell` | 顶栏站内信铃铛（A-NTF-002 / C-NTF-002，E09-T02；**推断，待确认**——线框未画顶栏通知位） | `a-popover`（360 宽，最近 20 条）+ `a-badge` 未读角标（60s 轮询 + 页面可见时刷新，`tokens.timings.notifyPollMs`）；条目：标题（未读加粗）/ 摘要两行截断 / 脱敏姓名 `a-tag` / 时间（当天 HH:mm，跨天 MM-DD HH:mm）；点击 = 未读先标已读再按 target 跳转（TASK→`/followup/task?taskId=`、PATIENT→`/followup/patient?patientId=`、RECORD→`/followup/record/{id}`，路由未开放提示「该消息对应的页面尚未开放」）；「全部已读」写回并提示条数；空态「暂无站内信」 |
 
 ---

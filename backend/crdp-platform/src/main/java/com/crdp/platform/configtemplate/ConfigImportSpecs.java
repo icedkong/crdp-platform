@@ -110,7 +110,12 @@ public final class ConfigImportSpecs {
                             List.of("mapping_id", "item_code"),
                             Map.of("mapping_id", "rpt_mapping")),
                     // ---- followup：对比标红规则（E17-T01；form_code 为编码引用不改写，与 fe_rule 同口径）----
-                    ConfigImportSpec.copy("fu_compare_rule", List.of("form_code", "rule_code")));
+                    ConfigImportSpec.copy("fu_compare_rule", List.of("form_code", "rule_code")),
+                    // ---- followup：首页卡片配置（E19-T06 / A-DASH-013；role_id 重映射，card_code 编码引用不改写）----
+                    ConfigImportSpec.copy(
+                            "dash_role_layout",
+                            List.of("role_id", "card_code"),
+                            Map.of("role_id", "sys_role")));
 
     private static final Map<String, ConfigImportSpec> BY_TABLE = index(SPECS);
 

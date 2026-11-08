@@ -1,3 +1,5 @@
+import type { DashboardRoleCard } from './dashboard';
+
 /**
  * E19-T02 / A-DASH-001、C-DASH-001；E19-T03 / A-DASH-003、004、008、C-DASH-003；
  * E19-T05 / A-DASH-010、A-DASH-011：完整度最常缺失字段钻取路由（患者列表
@@ -11,16 +13,24 @@ import {
   BOARD_SCOPE_OPTIONS,
   boardColumnRoute,
   cohortYearOptions,
+  DASHBOARD_DEFAULT_LAYOUT,
   followupYearOptions,
   formatRatePct,
   kpiMetricRoute,
+  layoutAreas,
+  layoutCardVisible,
   missingFieldRoute,
+  moveRoleCard,
+  roleLayoutSaveOf,
   TASK_TABLE_TABS,
   taskTableTabRoute,
+  toggleRoleCard,
   TREND_GRANULARITY_OPTIONS,
   TREND_GROUP_BY_OPTIONS,
   TREND_TIME_DIMENSION_OPTIONS,
+  userHiddenCodes,
   visibleKpiMetrics,
+  visibleLayoutCards,
 } from './dashboard';
 
 describe('e19-T02 指标卡钻取路由（A-DASH-001 点击进入对应列表）', () => {
@@ -300,5 +310,107 @@ describe('e19-t05 数据完整度卡片纯逻辑（A-DASH-010 / A-DASH-011，口
       { label: '第1年', value: 1 },
     ]);
     expect(followupYearOptions([])).toEqual([]);
+  });
+});
+
+describe('e19-T06 卡片目录与布局（A-DASH-013 / A-DASH-014）', () => {
+  const card = (code: string, order: number, extra = {}) => ({
+    allowUserHide: true,
+    code,
+    feature: null,
+    order,
+    permission: 'followup:dashboard:view',
+    title: code,
+    userHidden: false,
+    visible: true,
+    ...extra,
+  });
+
+  it('visibleLayoutCards：按 order 排序并过滤用户隐藏行', () => {
+    const view = {
+      cards: [
+        card('kpi', 1),
+        card('trend', 2, { visible: false, userHidden: true }),
+        card('task_board', 3),
+      ],
+      source: 'ROLE_CONFIG' as const,
+    };
+    expect(visibleLayoutCards(view).map((item) => item.code)).toEqual([
+      'kpi',
+      'task_board',
+    ]);
+    expect(userHiddenCodes(view)).toEqual(['trend']);
+    expect(layoutCardVisible(view, 'trend')).toBe(false);
+    expect(layoutCardVisible(view, 'kpi')).toBe(true);
+    expect(layoutCardVisible(view, 'node_rate')).toBe(false);
+  });
+
+  it('layoutAreas：同区卡片归并到首次出现位置，未知编码跳过', () => {
+    // 验收场景：任务区排第一、指标卡第二（顺序按角色配置下发）
+    const view = {
+      cards: [
+        card('task_board', 1),
+        card('kpi', 2),
+        card('task_table', 3),
+        card('device_dist', 4), // E21 卡片尚未接入：跳过不渲染
+        card('yearly_rate', 5),
+        card('baseline_completeness', 6),
+        card('followup_completeness', 7),
+        card('node_rate', 8),
+      ],
+      source: 'ROLE_CONFIG' as const,
+    };
+    expect(layoutAreas(view)).toEqual([
+      { codes: ['task_board', 'task_table'], kind: 'task' },
+      { codes: ['kpi'], kind: 'kpi' },
+      { codes: ['yearly_rate', 'node_rate'], kind: 'rate' },
+      {
+        codes: ['baseline_completeness', 'followup_completeness'],
+        kind: 'completeness',
+      },
+    ]);
+  });
+
+  it('dASHBOARD_DEFAULT_LAYOUT：A 默认布局不含节点随访率（兜底渲染不白屏）', () => {
+    const codes = visibleLayoutCards(DASHBOARD_DEFAULT_LAYOUT).map(
+      (item) => item.code,
+    );
+    expect(codes).toEqual([
+      'kpi',
+      'trend',
+      'task_board',
+      'task_table',
+      'yearly_rate',
+      'baseline_completeness',
+      'followup_completeness',
+    ]);
+    expect(DASHBOARD_DEFAULT_LAYOUT.source).toBe('DEFAULT');
+  });
+
+  it('toggleRoleCard / moveRoleCard / roleLayoutSaveOf：配置页勾选、换位与保存载荷', () => {
+    const cards = [
+      { ...card('kpi', 1), visible: true },
+      { ...card('trend', 2), visible: true },
+      { ...card('task_board', 3), visible: false },
+    ] as DashboardRoleCard[];
+
+    // 取消勾选：仍保留在目录、保存时排在末尾（不丢 allowUserHide）
+    const toggled = toggleRoleCard(cards, 'trend', false);
+    expect(toggled[1]?.visible).toBe(false);
+    // 已选列表只剩一张时移动越界：返回原数组（不换位、不报错）
+    expect(moveRoleCard(toggled, 0, 1)).toEqual(toggled);
+    // 已选内上移 / 下移换位
+    const moved = moveRoleCard(cards, 1, -1);
+    expect(moved.map((item) => item.code)).toEqual([
+      'trend',
+      'kpi',
+      'task_board',
+    ]);
+    // 保存载荷：已选按列表顺序 1 起，未选排在末尾
+    expect(roleLayoutSaveOf(moved)).toEqual([
+      { allowUserHide: true, code: 'trend', order: 1, visible: true },
+      { allowUserHide: true, code: 'kpi', order: 2, visible: true },
+      { allowUserHide: true, code: 'task_board', order: 3, visible: false },
+    ]);
   });
 });

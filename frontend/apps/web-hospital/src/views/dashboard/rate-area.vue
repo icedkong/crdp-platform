@@ -20,7 +20,6 @@ import {
 } from 'ant-design-vue';
 
 import { fetchNodeRateCard, fetchYearlyRateCard } from '#/api/core/dashboard';
-import { useFeature } from '#/reference/use-feature';
 
 import { rateChartOption } from './logic';
 
@@ -40,13 +39,17 @@ defineOptions({ name: 'DashboardRateArea' });
  * 以最近刷新为准，OQ-106①）。点击数字下钻患者列表需要患者检索支持按随访年度 / 节点
  * 筛选，随 E19-T08 口径核对后接入（OQ-109①）。
  */
-const props = defineProps<{
-  /** 页面级病区筛选（A-DASH-005）：全部卡片共用，未选 = 本人全部可见病区。 */
-  wardId?: number;
-}>();
-
-const { isEnabled } = useFeature();
-const nodeRateVisible = () => isEnabled('node_follow_rate');
+const props = withDefaults(
+  defineProps<{
+    /** 是否显示节点随访率卡片（E19-T06 布局解析：目录默认不显示〔医院 A〕、角色配置 / 开关开启时显示）。 */
+    showNode?: boolean;
+    /** 是否显示每年随访率卡片（E19-T06 布局解析）。 */
+    showYearly?: boolean;
+    /** 页面级病区筛选（A-DASH-005）：全部卡片共用，未选 = 本人全部可见病区。 */
+    wardId?: number;
+  }>(),
+  { showNode: false, showYearly: true, wardId: undefined },
+);
 
 // ---------------------------------------------------------------- 表格列（两卡同列，A 规格 §9 统计区）
 
@@ -149,8 +152,10 @@ async function loadNodeRate() {
 // ---------------------------------------------------------------- 装配
 
 function reload() {
-  void loadYearly();
-  if (nodeRateVisible()) {
+  if (props.showYearly) {
+    void loadYearly();
+  }
+  if (props.showNode) {
     void loadNodeRate();
   }
 }
@@ -170,7 +175,7 @@ defineExpose({ reload });
 <template>
   <div class="rate-area">
     <!-- 第四行统计区：每年随访率（A-DASH-006，表格 + 柱线图；随访率为醒目主列） -->
-    <Card class="rate-card" title="每年随访率">
+    <Card v-if="showYearly" class="rate-card" title="每年随访率">
       <template #extra>
         <Space wrap>
           <Select
@@ -223,8 +228,9 @@ defineExpose({ reload });
       </Spin>
     </Card>
 
-    <!-- 节点随访率（A-DASH-012 / C-DASH-004；node_follow_rate 开关控制显隐，医院 A 默认不显示） -->
-    <Card v-if="nodeRateVisible()" class="rate-card" title="节点随访率">
+    <!-- 节点随访率（A-DASH-012 / C-DASH-004；E19-T06 布局控制显隐——目录 default_visible=0〔医院 A
+         默认不显示〕+ node_follow_rate 开关，角色配置可开启，A 规格 §14） -->
+    <Card v-if="showNode" class="rate-card" title="节点随访率">
       <template #extra>
         <Space wrap>
           <Select
