@@ -118,13 +118,16 @@ E06-T02 已实现（院区与科室树；病区字典属 `crdp-followup`，科�
 
 `me.tenantName` 与登录页显示名称同口径：个性化 `displayName` 优先，未配置回落平台租户名称；改名后重新登录或会话权限重算时生效。
 
-## 5. 首页卡片配置（A-DASH-013/014）
+## 5. 首页卡片配置（A-DASH-013/014，E19-T06 已实现）
+
+权限码 `followup:dashboard:config`（平台库 V60 建菜单「首页卡片配置」/system/dashboard-layout + 授权范围模板，种子 V130 授 TENANT_ADMIN）；数据底座 `dash_card` / `dash_role_layout` / `dash_user_pref`（followup V77）。配置只决定显示与顺序，不放宽数据权限；保存后下一次 `GET /dashboard/layout` 即生效（读取实时查库，无缓存）。
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| GET | `/api/hospital/followup/dashboard/role-layouts?roleId=` | `followup:dashboard:config` | 角色卡片布局（`dash_role_layout`） |
-| PUT | `/api/hospital/followup/dashboard/role-layouts/{roleId}` | `followup:dashboard:config` | `{ cards: [{ code, order, visible }] }`；恢复默认 = `DELETE` |
-| PUT | `/api/hospital/followup/dashboard/user-pref` | 登录 | 用户隐藏 / 显示卡片（`dash_user_pref`，P1） |
+| GET | `/api/hospital/followup/dashboard/role-layouts?roleId=` | `followup:dashboard:config` | 角色候选 + 当前角色布局：`{ roles: [{ id, code, name }], current: { roleId, roleName, configured, cards: [{ code, title, width, visible, order, allowUserHide, featureOn, permission, feature }] } }`——roleId 缺省取第一个角色；configured=false 时 visible / order / allowUserHide 为目录默认值；全目录卡片列出（featureOn=false 表示开关关闭、配置了也不显示）；角色候选随响应下发，配置页不依赖 `tenant:role:view` |
+| PUT | `/api/hospital/followup/dashboard/role-layouts/{roleId}` | `followup:dashboard:config` | `{ cards: [{ code, visible, order, allowUserHide? }] }` 全量覆盖：code 须在目录内、order 从 1 起且不重复（40001）、角色不存在 40400；allowUserHide 缺省 = 目录默认（「允许用户隐藏」，A-DASH-014 前置）；未列出的卡片 = 该角色不显示；写 `DASHBOARD_ROLE_LAYOUT` 审计（before/after） |
+| DELETE | `/api/hospital/followup/dashboard/role-layouts/{roleId}` | `followup:dashboard:config` | 恢复默认：清空该角色配置行，未配置的角色使用目录默认布局（A-DASH-013）；写 `DASHBOARD_ROLE_LAYOUT` 审计 |
+| PUT | `/api/hospital/followup/dashboard/user-pref` | 登录 | 用户隐藏 / 显示卡片（`dash_user_pref`，P1，A-DASH-014）——见 stats.md §2 |
 
 ## 6. 报告单设置、对比规则、通知设置
 

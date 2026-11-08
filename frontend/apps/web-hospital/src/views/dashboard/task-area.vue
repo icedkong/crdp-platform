@@ -60,17 +60,24 @@ defineOptions({ name: 'DashboardTaskArea' });
  * （TaskAssignModal，followup:task:assign）。
  */
 
-const props = defineProps<{
-  /** 页面级病区筛选（A-DASH-005）：全部卡片共用，未选 = 本人全部可见病区。 */
-  wardId?: number;
-}>();
+const props = withDefaults(
+  defineProps<{
+    /** 是否显示任务看板模式（E19-T06 布局解析：目录 task_board 卡；A 默认显示、医院 C 常只用看板）。 */
+    showBoard?: boolean;
+    /** 是否显示任务表模式（E19-T06 布局解析：目录 task_table 卡；两卡都可见时「看板 | 任务表」切换）。 */
+    showTable?: boolean;
+    /** 页面级病区筛选（A-DASH-005）：全部卡片共用，未选 = 本人全部可见病区。 */
+    wardId?: number;
+  }>(),
+  { showBoard: true, showTable: true, wardId: undefined },
+);
 
 const router = useRouter();
 const { hasPermission } = usePermission();
 const canEditRecord = computed(() => hasPermission('followup:record:edit'));
 const canAssign = computed(() => hasPermission('followup:task:assign'));
 
-const taskMode = ref<'board' | 'table'>('board');
+const taskMode = ref<'board' | 'table'>(props.showBoard ? 'board' : 'table');
 const EMPTY_HINT = '暂无随访任务 · 去新建计划';
 
 // ---------------------------------------------------------------- 看板（A-DASH-003 / A-DASH-004）
@@ -242,7 +249,7 @@ watch(assigneeId, () => {
 watch(taskMode, () => reload());
 
 void loadAssigneeOptions();
-void loadBoard();
+reload();
 </script>
 
 <template>
@@ -250,6 +257,7 @@ void loadBoard();
     <template #extra>
       <Space wrap>
         <Segmented
+          v-if="showBoard && showTable"
           v-model:value="taskMode"
           :options="[
             { label: '看板', value: 'board' },
@@ -277,7 +285,7 @@ void loadBoard();
 
     <!-- 看板（A-DASH-003：按状态四列，每列前 20 张卡片；其余「查看全部」） -->
     <div
-      v-if="taskMode === 'board'"
+      v-if="showBoard && taskMode === 'board'"
       class="board"
       data-testid="dashboard-board"
     >
@@ -363,7 +371,7 @@ void loadBoard();
     </div>
 
     <!-- 任务表（A-DASH-008：今日 / 超时 / 我负责，页签显示数量；行可直接进入随访工作台） -->
-    <div v-else class="table" data-testid="dashboard-task-table">
+    <div v-else-if="showTable" class="table" data-testid="dashboard-task-table">
       <Tabs
         :active-key="tableTab"
         data-testid="dashboard-task-table-tabs"

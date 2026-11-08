@@ -1,7 +1,8 @@
 // E19-T04 / A-DASH-006、A-DASH-012、C-DASH-004（pages.md §2 首页统计区）：每年随访率与
 // 节点随访率两张卡片——表格行与主列（随访率 + 小字窗口内完成 / 率）、柱线图、
-// 队列 / 计划筛选、node_follow_rate 开关显隐（components.md §1.3 useFeature）、
-// 病区筛选（wardId）变更联动重载。测试数据全部虚构。
+// 队列 / 计划筛选、病区筛选（wardId）变更联动重载。E19-T06 起两张卡片的显隐由首页
+// 布局解析下发（showYearly / showNode props：目录 default_visible=0〔医院 A 默认不显示
+// 节点随访率〕+ node_follow_rate 开关 + 角色配置，A-DASH-013）。测试数据全部虚构。
 import type { NodeRateCardView, YearlyRateCardView } from '@crdp/api';
 
 import { mount } from '@vue/test-utils';
@@ -13,17 +14,10 @@ import RateArea from './rate-area.vue';
 
 const fetchYearlyRateCard = vi.fn();
 const fetchNodeRateCard = vi.fn();
-let featureSwitches: Record<string, boolean> = {};
 
 vi.mock('#/api/core/dashboard', () => ({
   fetchNodeRateCard: (...args: unknown[]) => fetchNodeRateCard(...args),
   fetchYearlyRateCard: (...args: unknown[]) => fetchYearlyRateCard(...args),
-}));
-vi.mock('#/reference/use-feature', () => ({
-  useFeature: () => ({
-    isEnabled: (code: string) => featureSwitches[code] === true,
-    switches: { value: featureSwitches },
-  }),
 }));
 
 const yearlyView: YearlyRateCardView = {
@@ -106,7 +100,6 @@ afterEach(() => {
   for (const wrapper of mounted.splice(0)) wrapper.unmount();
   document.body.innerHTML = '';
   vi.clearAllMocks();
-  featureSwitches = {};
 });
 
 function mountArea(
@@ -181,9 +174,8 @@ describe('e19-t04 首页统计区 · 每年随访率（A-DASH-006）', () => {
 });
 
 describe('e19-t04 首页统计区 · 节点随访率（A-DASH-012 / C-DASH-004）', () => {
-  it('开关开启显示：节点行标签（年度循环 = 第 N 年、固定节点 = 节点名）与计划候选缺省预置计划', async () => {
-    featureSwitches = { node_follow_rate: true };
-    const wrapper = mountArea();
+  it('布局显示（showNode）：节点行标签（年度循环 = 第 N 年、固定节点 = 节点名）与计划候选缺省预置计划', async () => {
+    const wrapper = mountArea({ showNode: true });
     await flush();
 
     expect(fetchNodeRateCard).toHaveBeenCalledWith({
@@ -203,7 +195,7 @@ describe('e19-t04 首页统计区 · 节点随访率（A-DASH-012 / C-DASH-004�
     );
   });
 
-  it('开关关闭（医院 A 默认）隐藏节点随访率卡片——不发起请求（后端仍 40301 兜底）', async () => {
+  it('布局未配置（医院 A 默认）不显示节点随访率卡片——不发起请求（开关与后端 40301 兜底在布局解析层）', async () => {
     const wrapper = mountArea();
     await flush();
 

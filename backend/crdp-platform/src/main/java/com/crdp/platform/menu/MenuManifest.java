@@ -165,6 +165,21 @@ public class MenuManifest {
                             "followup:abnormal:config",
                             null,
                             56),
+                    // E19-T06 / A-DASH-013：首页卡片配置（挂 base 的系统设置目录下，平台库 V60 同构；
+                    // 租户管理员按角色配置首页卡片的显示与顺序，种子 V130 只授 TENANT_ADMIN）
+                    new MenuManifestItem(
+                            "followup",
+                            "HOSPITAL",
+                            "MENU",
+                            "FollowupDashboardLayout",
+                            "HospitalSystem",
+                            "首页卡片配置",
+                            "FollowupDashboardLayout",
+                            "/system/dashboard-layout",
+                            "followup/dashboard/layout",
+                            "followup:dashboard:config",
+                            null,
+                            57),
                     // E13-T08 / A-WARD-001、A-WARD-008：病区管理（挂 base 的系统设置目录下，平台库 V40 同构；
                     // A-WARD-001「租户管理员维护」，内置角色只授 TENANT_ADMIN）
                     new MenuManifestItem(

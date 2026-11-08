@@ -460,6 +460,18 @@ class MenuSyncServiceTest {
                         null,
                         "followup:dashboard:view",
                         10,
+                        "ENABLED"),
+                // E19-T06 首页卡片配置（平台库 V60 同构）：挂 base 的系统设置目录（30）下
+                manifestRow(
+                        41L,
+                        30L,
+                        "MENU",
+                        "首页卡片配置",
+                        "FollowupDashboardLayout",
+                        "/system/dashboard-layout",
+                        "followup/dashboard/layout",
+                        "followup:dashboard:config",
+                        57,
                         "ENABLED"));
     }
 
