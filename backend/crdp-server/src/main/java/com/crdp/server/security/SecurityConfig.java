@@ -29,6 +29,7 @@ public class SecurityConfig {
             MustChangePasswordFilter mustChangePasswordFilter,
             GraceReadOnlyFilter graceReadOnlyFilter,
             ApiResourceGuardFilter apiResourceGuardFilter,
+            TenantViewGuardFilter tenantViewGuardFilter,
             ApiErrorWriter errors)
             throws Exception {
         http.csrf(AbstractHttpConfigurer::disable)
@@ -140,10 +141,22 @@ public class SecurityConfig {
                                         .hasAnyAuthority(
                                                 TokenAuthenticationFilter
                                                         .SESSION_PLATFORM_AUTHORITY)
-                                        .requestMatchers("/api/hospital/**")
+                                        // 医院端身份类接口（登录、登出、改密、在线会话）只接受医院会话：
+                                        // 视角会话的身份自救走 /api/hospital/view/**（E20-T04）
+                                        .requestMatchers("/api/hospital/auth/**")
                                         .hasAnyAuthority(
                                                 TokenAuthenticationFilter
                                                         .SESSION_HOSPITAL_AUTHORITY)
+                                        // E20-T03 / PLT-VIEW-012：医院端业务接口对视角令牌放开读路径——
+                                        // 写 / 导出 / 明文由 TenantViewGuardFilter 按视角规则拦截（40303），
+                                        // 读由 PermissionAuthorizationAspect 视角分支放行并经
+                                        // ViewRuleFieldGuard
+                                        // 脱敏 / 设盲（PLT-VIEW-010、011）
+                                        .requestMatchers("/api/hospital/**")
+                                        .hasAnyAuthority(
+                                                TokenAuthenticationFilter
+                                                        .SESSION_HOSPITAL_AUTHORITY,
+                                                TokenAuthenticationFilter.SESSION_VIEW_AUTHORITY)
                                         .requestMatchers(
                                                 "/actuator/health",
                                                 "/actuator/health/**",
@@ -164,7 +177,11 @@ public class SecurityConfig {
                 // E05-T06 / PLT-PERM-004 验收「未登记接口默认拒绝」：/api/** 必须登记在
                 // plt_api_resource（公共或绑定权限码），否则 40307；放在认证之后（要读会话权限码）、
                 // 端别与 permitAll 判定之前（登记缺失是部署缺陷，先于 40100/40300 暴露）
-                .addFilterAfter(apiResourceGuardFilter, GraceReadOnlyFilter.class);
+                .addFilterAfter(apiResourceGuardFilter, GraceReadOnlyFilter.class)
+                // E20-T03 / PLT-VIEW-010..012：租户视角的执行点——放在登记闸门之后
+                // （未登记 40307 对视角同样适用），对视角会话按视角规则拦截写 / 导出 / 明文
+                // （40303）并放行读（脱敏 / 设盲在响应装配点执行）；医院 / 平台会话零开销直通
+                .addFilterAfter(tenantViewGuardFilter, ApiResourceGuardFilter.class);
         return http.build();
     }
 

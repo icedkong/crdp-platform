@@ -75,6 +75,13 @@ public class ApiResourceGuardFilter extends OncePerRequestFilter {
             return;
         }
         SessionPrincipal principal = currentPrincipal();
+        // E20-T03：租户视角会话不适用医院权限码（平台账号以自身身份查看，无医院授权）——
+        // 读 / 写 / 导出由 TenantViewGuardFilter 按视角规则执行（40303），这里放行；
+        // @RequiresPermission 切面的视角分支（只放行 view 动作）为内层防线
+        if (principal != null && principal.tenantView()) {
+            filterChain.doFilter(request, response);
+            return;
+        }
         // 接口校验链顺序（platform-spec §4）：模块开通在权限码之前——模块未开通时放行，
         // 由 @RequireModule 切面返回 40301（否则这里会抢先用 40300 掩盖模块口径）
         if (principal != null

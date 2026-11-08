@@ -5,6 +5,7 @@ import com.crdp.followup.record.infra.mapper.FollowupRecordMapper;
 import com.crdp.followup.task.infra.mapper.FollowupTaskQueryMapper;
 import com.crdp.framework.crypto.CryptoService;
 import com.crdp.framework.fieldpolicy.SensitiveValueMasker;
+import com.crdp.framework.fieldpolicy.TenantViewFieldGuard;
 import com.crdp.framework.security.CurrentSession;
 import com.crdp.framework.security.SessionPrincipal;
 import com.crdp.framework.web.ApiException;
@@ -71,18 +72,21 @@ public class PatientOverviewService {
     private final FollowupTaskQueryMapper taskQueryMapper;
     private final FollowupRecordMapper recordMapper;
     private final CryptoService crypto;
+    private final TenantViewFieldGuard viewGuard;
 
     public PatientOverviewService(
             PatientOverviewGateway gateway,
             PatientStatusGateway statusGateway,
             FollowupTaskQueryMapper taskQueryMapper,
             FollowupRecordMapper recordMapper,
-            CryptoService crypto) {
+            CryptoService crypto,
+            TenantViewFieldGuard viewGuard) {
         this.gateway = gateway;
         this.statusGateway = statusGateway;
         this.taskQueryMapper = taskQueryMapper;
         this.recordMapper = recordMapper;
         this.crypto = crypto;
+        this.viewGuard = viewGuard;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -396,8 +400,14 @@ public class PatientOverviewService {
         boolean terminated = TERMINATED_STATUSES.contains(row.status());
         return new PatientOverviewView(
                 String.valueOf(row.id()),
-                name == null ? "" : SensitiveValueMasker.mask("name", name),
-                mrn == null ? "" : SensitiveValueMasker.mask("medicalRecordNo", mrn),
+                viewGuard.apply(
+                        "patient",
+                        "name",
+                        name == null ? "" : SensitiveValueMasker.mask("name", name)),
+                viewGuard.apply(
+                        "patient",
+                        "medicalRecordNo",
+                        mrn == null ? "" : SensitiveValueMasker.mask("medicalRecordNo", mrn)),
                 row.legacyNo(),
                 row.visitNo(),
                 row.gender(),

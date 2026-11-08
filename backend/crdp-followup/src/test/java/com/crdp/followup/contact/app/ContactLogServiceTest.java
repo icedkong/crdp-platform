@@ -24,6 +24,7 @@ import com.crdp.followup.task.app.FollowupTaskStatusService;
 import com.crdp.followup.task.app.UnreachedFollowupService;
 import com.crdp.followup.task.infra.mapper.FollowupTaskMapper;
 import com.crdp.framework.audit.AuditLogger;
+import com.crdp.framework.fieldpolicy.TenantViewFieldGuard;
 import com.crdp.framework.security.ScopeSnapshot;
 import com.crdp.framework.security.SessionPrincipal;
 import com.crdp.framework.web.ApiException;
@@ -74,7 +75,8 @@ class ContactLogServiceTest {
                     termination,
                     filePolicy,
                     callReports,
-                    audit);
+                    audit,
+                    TenantViewFieldGuard.passthrough());
 
     @BeforeEach
     void login() {

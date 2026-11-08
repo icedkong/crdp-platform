@@ -17,6 +17,7 @@ import com.crdp.followup.task.infra.mapper.FollowupTaskMapper;
 import com.crdp.framework.audit.AuditEntry;
 import com.crdp.framework.audit.AuditLogger;
 import com.crdp.framework.audit.AuditResult;
+import com.crdp.framework.fieldpolicy.TenantViewFieldGuard;
 import com.crdp.framework.security.CurrentSession;
 import com.crdp.framework.web.ApiException;
 import java.time.LocalDateTime;
@@ -79,6 +80,7 @@ public class ContactLogService {
     private final FilePolicyService filePolicy;
     private final CallReportService callReports;
     private final AuditLogger audit;
+    private final TenantViewFieldGuard viewGuard;
 
     public ContactLogService(
             ContactLogMapper mapper,
@@ -90,7 +92,8 @@ public class ContactLogService {
             FollowupTerminationService termination,
             FilePolicyService filePolicy,
             CallReportService callReports,
-            AuditLogger audit) {
+            AuditLogger audit,
+            TenantViewFieldGuard viewGuard) {
         this.mapper = mapper;
         this.files = files;
         this.patientScope = patientScope;
@@ -101,6 +104,7 @@ public class ContactLogService {
         this.filePolicy = filePolicy;
         this.callReports = callReports;
         this.audit = audit;
+        this.viewGuard = viewGuard;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -588,6 +592,7 @@ public class ContactLogService {
                                         inlinePlayable(audio.format())));
             }
         }
+        boolean recordingHidden = viewGuard.hidden("contact", "recording");
         List<ContactLogView> views = new ArrayList<>(rows.size());
         for (ContactLogMapper.ContactLogRow row : rows) {
             views.add(
@@ -607,7 +612,9 @@ public class ContactLogService {
                             row.creatorName(),
                             row.createdAt(),
                             row.updatedAt(),
-                            audios.getOrDefault(row.id(), List.of())));
+                            recordingHidden
+                                    ? List.of()
+                                    : audios.getOrDefault(row.id(), List.of())));
         }
         return views;
     }

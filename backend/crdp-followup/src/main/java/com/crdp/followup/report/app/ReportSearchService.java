@@ -16,6 +16,7 @@ import com.crdp.framework.audit.AuditEntry;
 import com.crdp.framework.audit.AuditLogger;
 import com.crdp.framework.crypto.CryptoService;
 import com.crdp.framework.fieldpolicy.SensitiveValueMasker;
+import com.crdp.framework.fieldpolicy.TenantViewFieldGuard;
 import com.crdp.framework.web.ApiException;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -69,6 +70,7 @@ public class ReportSearchService {
     private final FormService formService;
     private final CryptoService crypto;
     private final AuditLogger audit;
+    private final TenantViewFieldGuard viewGuard;
 
     public ReportSearchService(
             ReportSearchMapper mapper,
@@ -76,13 +78,15 @@ public class ReportSearchService {
             PatientMapper patients,
             FormService formService,
             CryptoService crypto,
-            AuditLogger audit) {
+            AuditLogger audit,
+            TenantViewFieldGuard viewGuard) {
         this.mapper = mapper;
         this.config = config;
         this.patients = patients;
         this.formService = formService;
         this.crypto = crypto;
         this.audit = audit;
+        this.viewGuard = viewGuard;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -177,9 +181,10 @@ public class ReportSearchService {
                 firstFiles.putIfAbsent(row.reportId(), row);
             }
         }
+        boolean originalHidden = viewGuard.hidden("report", null);
         List<RowView> items = new ArrayList<>();
         for (RowRaw row : rows) {
-            FileRowRaw first = firstFiles.get(row.id());
+            FileRowRaw first = originalHidden ? null : firstFiles.get(row.id());
             items.add(
                     new RowView(
                             String.valueOf(row.id()),
@@ -404,12 +409,16 @@ public class ReportSearchService {
     /** 行内姓名脱敏（解密失败按未知处理，不抛错——列表口径与任务列表一致）。 */
     private String maskName(String cipher) {
         String name = cipher == null ? null : crypto.decrypt(cipher);
-        return name == null ? "" : SensitiveValueMasker.mask("name", name);
+        return viewGuard.apply(
+                "patient", "name", name == null ? "" : SensitiveValueMasker.mask("name", name));
     }
 
     private String maskMrn(String cipher) {
         String mrn = cipher == null ? null : crypto.decrypt(cipher);
-        return mrn == null ? "" : SensitiveValueMasker.mask("medicalRecordNo", mrn);
+        return viewGuard.apply(
+                "patient",
+                "medicalRecordNo",
+                mrn == null ? "" : SensitiveValueMasker.mask("medicalRecordNo", mrn));
     }
 
     private static ApiException invalid(String message) {
