@@ -132,6 +132,7 @@ export {
   showBaselineUnlock,
   sliceSchemaCategory,
 } from './baseline';
+
 export type {
   BaselineCategoryProgress,
   BaselineDraftPayload,
@@ -145,7 +146,6 @@ export type {
   BaselineSectionStatus,
   PatientBaseline,
 } from './baseline';
-
 export {
   BATCH_SKIP_REASON_TEXT,
   batchOutcomeText,
@@ -192,6 +192,7 @@ export {
   toCompareRuleUpdate,
   validateCompareRuleModel,
 } from './compare-rule';
+
 export type {
   CompareRule,
   CompareRuleParams,
@@ -213,7 +214,6 @@ export {
   paramValueTypeText,
   validateOverrideValue,
 } from './config';
-
 export type {
   DictItemSource,
   DictStatus,
@@ -236,6 +236,7 @@ export type {
 
 // E12-T04 配置模板管理页与导入预览（A-FLD-014，接口随 E12-T01/T02/T03 已交付）
 export * from './config-template';
+
 // E15-T04 沟通记录与录音（A-FU-006、A-FU-025、C-FU-019；pages.md §4.8）
 export {
   CONTACT_METHOD_OPTIONS,
@@ -256,6 +257,8 @@ export type {
   ContactMethod,
   ContactResult,
 } from './contact';
+// E19-T02 首页指标卡与趋势图（A-DASH-001、A-DASH-002、C-DASH-001）
+export * from './dashboard';
 export {
   DEPT_IMPORT_COLUMNS,
   deptImportActionText,
@@ -509,6 +512,7 @@ export {
   isKeywordValid,
   KEYWORD_MAX_LENGTH,
   patientEmptyText,
+  patientStatusOfQuery,
   patientStatusOptions,
 } from './patient-search';
 

@@ -81,11 +81,12 @@ class PlatformTenantScopeMySqlIT {
                             // 39 报告单设置为 E16-T01 新增的非敏感 followup 菜单（V53 同口径）；
                             // 233 删除报告单按钮为 E16-T09 新增（平台库 V55 同口径，进授权范围模板）；
                             // 40 对比规则为 E17-T01 新增的非敏感 followup 菜单（V57 同口径）；
-                            // 353 导入向导隐藏路由为 E18-T06 新增（平台库 V58 同口径，进授权范围模板）
+                            // 353 导入向导隐藏路由为 E18-T06 新增（平台库 V58 同口径，进授权范围模板）；
+                            // 234 首页统计卡片按钮为 E19-T02 新增（平台库 V59 同口径，进授权范围模板）
                             List.of(
                                     20L, 21L, 23L, 24L, 25L, 36L, 37L, 38L, 39L, 40L, 213L, 214L,
                                     215L, 216L, 218L, 219L, 220L, 221L, 222L, 224L, 225L, 226L,
-                                    227L, 231L, 233L, 353L)
+                                    227L, 231L, 233L, 234L, 353L)
                                     .stream())
                     .toList();
 
@@ -517,7 +518,8 @@ class PlatformTenantScopeMySqlIT {
         List<String> after =
                 menuTitles(request(HttpMethod.GET, "/api/hospital/menus", doctorToken, null));
         assertFalse(after.contains("我的任务"), "收回后菜单应消失：" + after);
-        assertTrue(after.contains("工作台"), "base 固定能力不受影响：" + after);
+        // E19-T02（平台库 V59）：医院端首页菜单改名「首页」（pages.md §1）
+        assertTrue(after.contains("首页"), "base 固定能力不受影响：" + after);
         assertEquals(
                 40300,
                 code(request(HttpMethod.GET, "/api/hospital/followup/ping", doctorToken, null)),

@@ -25,7 +25,8 @@ import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
     "com.crdp.followup.report.infra.mapper",
     "com.crdp.followup.compare.infra.mapper",
     "com.crdp.followup.importer.infra.mapper",
-    "com.crdp.followup.stats.infra.mapper"
+    "com.crdp.followup.stats.infra.mapper",
+    "com.crdp.followup.dashboard.infra.mapper"
 })
 public class CrdpApplication {
 

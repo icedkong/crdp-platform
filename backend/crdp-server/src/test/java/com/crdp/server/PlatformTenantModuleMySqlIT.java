@@ -268,7 +268,8 @@ class PlatformTenantModuleMySqlIT {
         List<String> closed =
                 menuTitles(request(HttpMethod.GET, "/api/hospital/menus", hospitalToken, null));
         assertFalse(closed.contains("随访"), "关闭后菜单应收回：" + closed);
-        assertTrue(closed.contains("工作台"), "基础模块菜单不受影响：" + closed);
+        // E19-T02（平台库 V59）：医院端首页菜单改名「首页」（pages.md §1）
+        assertTrue(closed.contains("首页"), "基础模块菜单不受影响：" + closed);
 
         // 关闭后的痕迹：状态、关闭时间与原因；数据保留（租户库角色授权不动）
         assertEquals(

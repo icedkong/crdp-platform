@@ -8,6 +8,7 @@ import {
   hasActiveFilters,
   isKeywordValid,
   patientEmptyText,
+  patientStatusOfQuery,
   patientStatusOptions,
 } from './patient-search';
 
@@ -112,5 +113,14 @@ describe('e13-T04 检索词与筛选状态', () => {
     const options = patientStatusOptions();
     expect(options[0]).toEqual({ label: '随访中', value: 'ACTIVE' });
     expect(options).toHaveLength(6);
+  });
+});
+
+describe('e19-T02 指标卡钻取进入患者列表（A-DASH-001 点击进入对应列表）', () => {
+  it('路由 query status 解析为随访状态筛选（未知值不筛选）', () => {
+    expect(patientStatusOfQuery('ACTIVE')).toBe('ACTIVE');
+    expect(patientStatusOfQuery(['dead'])).toBe('DEAD');
+    expect(patientStatusOfQuery('NOT_A_STATUS')).toBeUndefined();
+    expect(patientStatusOfQuery(null)).toBeUndefined();
   });
 });

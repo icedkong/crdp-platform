@@ -52,6 +52,7 @@ import {
   ASSIGNEE_FILTER_OPTIONS,
   boardGroups,
   buildSearchPayload,
+  dueRangeOfQuery,
   queryOfScope,
   recordFormPath,
   recordRouteTarget,
@@ -195,6 +196,11 @@ onMounted(() => {
   const status = statusOfQuery(route.query.status);
   if (status) {
     filters.status = status;
+  }
+  // E19-T02 指标卡钻取：首页点「本月应随访」带 tab=all&dueFrom&dueTo 进列表
+  const dueRange = dueRangeOfQuery(route.query.dueFrom, route.query.dueTo);
+  if (dueRange) {
+    filters.dueRange = dueRange;
   }
   void load();
 });

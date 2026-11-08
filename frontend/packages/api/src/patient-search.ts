@@ -164,6 +164,21 @@ export function patientStatusOptions(): Array<{
   }));
 }
 
+/**
+ * 路由 query status → 随访状态筛选（E19-T02 指标卡钻取入口：首页点状态指标带
+ * status 进患者列表）；未知值回落 undefined（不筛选），与列表页 query 互转口径一致。
+ */
+export function patientStatusOfQuery(
+  status: null | string | string[],
+): null | string | undefined {
+  const value = Array.isArray(status) ? status[0] : status;
+  if (!value) return undefined;
+  const normalized = value.trim().toUpperCase();
+  return Object.hasOwn(PATIENT_STATUS_TEXT, normalized)
+    ? normalized
+    : undefined;
+}
+
 /** 空态提示（pages.md §3）：canCreate 决定「暂无患者」是否带新建入口。 */
 export function patientEmptyText(
   filtered: boolean,

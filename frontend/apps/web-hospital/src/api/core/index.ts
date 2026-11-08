@@ -5,6 +5,7 @@ export * from './brand';
 export * from './compareRule';
 export * from './config';
 export * from './contact';
+export * from './dashboard';
 export * from './file';
 export * from './form';
 export * from './menu';

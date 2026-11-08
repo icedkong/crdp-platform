@@ -65,6 +65,22 @@ export function statusOfQuery(
   return parsed.length === 0 ? undefined : parsed;
 }
 
+/**
+ * 路由 query dueFrom / dueTo → 计划日期窗口筛选（E19-T02 指标卡钻取入口：首页点「本月应随访」
+ * 带 tab=all&dueFrom&dueTo 进任务列表）；两端齐备才作为区间（半选不筛选），非法日期丢弃。
+ */
+export function dueRangeOfQuery(
+  dueFrom: null | string | string[],
+  dueTo: null | string | string[],
+): [string, string] | null {
+  const from = Array.isArray(dueFrom) ? dueFrom[0] : dueFrom;
+  const to = Array.isArray(dueTo) ? dueTo[0] : dueTo;
+  if (!from || !to) return null;
+  const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+  if (!datePattern.test(from) || !datePattern.test(to)) return null;
+  return from <= to ? [from, to] : null;
+}
+
 /** 负责人筛选（A-FU-004 负责人维度的最小面：全部 / 待认领，E15-T03 公共池入口）。 */
 export const ASSIGNEE_FILTER_OPTIONS = [
   { label: '全部', value: 'ALL' },
