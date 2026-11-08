@@ -5,7 +5,12 @@ import type { TrendCardView } from '@crdp/api';
 
 import { describe, expect, it } from 'vitest';
 
-import { defaultTrendRange, metricIcon, trendChartOption } from './logic';
+import {
+  defaultTrendRange,
+  metricIcon,
+  rateChartOption,
+  trendChartOption,
+} from './logic';
 
 const view: TrendCardView = {
   buckets: [
@@ -90,5 +95,65 @@ describe('e19-t02 指标图标与默认时间范围', () => {
       from: '2024-12-01',
       to: '2026-11-30',
     });
+  });
+});
+
+describe('e19-t04 随访率柱线图装配（A-DASH-006 / A-DASH-012）', () => {
+  const rows = [
+    {
+      deathCount: 1,
+      dueCount: 4,
+      followRatePct: 75,
+      followedCount: 3,
+      inWindowCount: 2,
+      inWindowRatePct: 50,
+      label: '第1年',
+      lostRatePct: 0,
+      occurrence: 1,
+      year: 1,
+    },
+    {
+      deathCount: 0,
+      dueCount: 3,
+      followRatePct: 66.7,
+      followedCount: 2,
+      inWindowCount: 2,
+      inWindowRatePct: 66.7,
+      label: '第2年',
+      lostRatePct: 0,
+      occurrence: 2,
+      year: 2,
+    },
+  ];
+
+  it('柱 = 应随访 / 已随访（左轴），线 = 随访率（右轴 0–100%）', () => {
+    const option = rateChartOption(rows);
+    const series = option.series as Array<{
+      data: number[];
+      name: string;
+      type: string;
+      yAxisIndex?: number;
+    }>;
+    expect(series).toHaveLength(3);
+    expect(series[0]).toMatchObject({
+      name: '应随访',
+      data: [4, 3],
+      type: 'bar',
+    });
+    expect(series[1]).toMatchObject({
+      name: '已随访',
+      data: [3, 2],
+      type: 'bar',
+    });
+    expect(series[2]).toMatchObject({
+      name: '随访率',
+      data: [75, 66.7],
+      type: 'line',
+      yAxisIndex: 1,
+    });
+    const axis = option.yAxis as Array<{ max?: number; min?: number }>;
+    expect(axis[1]).toMatchObject({ max: 100, min: 0 });
+    const xAxis = option.xAxis as { data: string[] };
+    expect(xAxis.data).toEqual(['第1年', '第2年']);
   });
 });

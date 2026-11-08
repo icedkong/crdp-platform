@@ -1,4 +1,4 @@
-import type { TrendCardView } from '@crdp/api';
+import type { RateRow, TrendCardView } from '@crdp/api';
 /**
  * E19-T02 / A-DASH-001、A-DASH-002：首页（pages.md §2）的纯逻辑。
  *
@@ -6,6 +6,8 @@ import type { TrendCardView } from '@crdp/api';
  * - 趋势图 ECharts 装配：x 轴 = 周期键（YYYY-MM / YYYY-Qn / YYYY），系列 = 图例分组
  *   （不分组单系列「患者数」，按病区 / 性别等分组多系列柱图；空周期后端已补 0）；
  * - 默认时间范围（最近 24 个月，止于当月月末；A 规格 §9）。
+ * - E19-T04 / A-DASH-006、A-DASH-012：随访率柱线图装配（柱 = 应随访 / 已随访，
+ *   线 = 随访率，A 规格 §9「下方柱线图」）。
  */
 import type { EChartsOption } from 'echarts';
 
@@ -78,4 +80,50 @@ export function defaultTrendRange(now = new Date()): {
       date.getDate(),
     ).padStart(2, '0')}`;
   return { from: format(from), to: format(to) };
+}
+
+/** 随访率柱线图（E19-T04 / A-DASH-006、A-DASH-012；A 规格 §9）：柱 = 应随访 / 已随访（左轴，人），线 = 随访率（右轴，%）。 */
+export function rateChartOption(rows: RateRow[]): EChartsOption {
+  return {
+    grid: { bottom: 48, containLabel: true, left: 8, right: 16, top: 32 },
+    legend: { top: 0 },
+    series: [
+      {
+        data: rows.map((row) => row.dueCount),
+        name: '应随访',
+        type: 'bar' as const,
+        yAxisIndex: 0,
+      },
+      {
+        data: rows.map((row) => row.followedCount),
+        name: '已随访',
+        type: 'bar' as const,
+        yAxisIndex: 0,
+      },
+      {
+        data: rows.map((row) => row.followRatePct),
+        lineStyle: { width: 2 },
+        name: '随访率',
+        symbolSize: 6,
+        type: 'line' as const,
+        yAxisIndex: 1,
+      },
+    ],
+    tooltip: { trigger: 'axis' as const },
+    xAxis: {
+      axisLabel: { hideOverlap: true },
+      data: rows.map((row) => row.label),
+      type: 'category' as const,
+    },
+    yAxis: [
+      { minInterval: 1, name: '人', type: 'value' as const },
+      {
+        axisLabel: { formatter: '{value}%' },
+        max: 100,
+        min: 0,
+        name: '随访率',
+        type: 'value' as const,
+      },
+    ],
+  };
 }

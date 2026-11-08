@@ -50,6 +50,7 @@ class NodeOccurrenceRefreshServiceTest {
     @Mock private JobScheduler jobScheduler;
     @Mock private NodeOccurrenceMapper occurrenceMapper;
     @Mock private PlanMapper planMapper;
+    @Mock private com.crdp.followup.dashboard.infra.mapper.DashboardFeatureMapper features;
     @Mock private AuditLogger audit;
     @Mock private JdbcTemplate jdbc;
 
@@ -276,7 +277,8 @@ class NodeOccurrenceRefreshServiceTest {
                         List.of(
                                 new NodeOccurrenceMapper.NodeCountRow(
                                         NODE_ID, "电话随访（示例）", 1, 2, 1, 1, 0, 0)));
-        NodeOccurrenceStatsService statsService = new NodeOccurrenceStatsService(occurrenceMapper);
+        NodeOccurrenceStatsService statsService =
+                new NodeOccurrenceStatsService(occurrenceMapper, features);
 
         List<NodeOccurrenceStatsService.NodeCountView> counts = statsService.nodeCounts(PLAN_ID);
 

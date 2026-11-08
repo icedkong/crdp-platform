@@ -41,22 +41,25 @@ import { useBreakpoint } from '#/reference/use-breakpoint';
 import { usePermission } from '#/reference/use-permission';
 
 import { defaultTrendRange, metricIcon, trendChartOption } from './logic';
+import RateArea from './rate-area.vue';
 import TaskArea from './task-area.vue';
 
 defineOptions({ name: 'HospitalDashboard' });
 
 /**
  * E19-T02 / A-DASH-001、A-DASH-002、C-DASH-001 · E19-T03 / A-DASH-003、004、005、008、C-DASH-003、008 ·
+ * E19-T04 / A-DASH-006、A-DASH-012、C-DASH-004 ·
  * 首页（pages.md §2）：第一行指标卡（A 七项 / C 七项按租户 implant 开关）、第二行趋势图
  * （时间维度 / 粒度 / 分组 / 时间范围可切换，默认手术日期 · 月 · 不分组 · 最近 24 个月）、
- * 第三行任务区（看板 / 任务表切换，task-area 组件）。
+ * 第三行任务区（看板 / 任务表切换，task-area 组件）、第四行统计区随访率卡片
+ * （每年随访率 + 节点随访率〔node_follow_rate 开关，医院 A 默认不显示〕，rate-area 组件）。
  *
  * 病区筛选（A-DASH-005）：头部「病区 [全部▾]」全页共用——候选 = 本人全部可见病区
  * （GET /dashboard/wards 按登录快照），未选 = 全部可见病区；切换后指标卡 / 趋势图 /
- * 任务区联动重载（行级隔离由后端 @DataScope 出行，选到范围外病区结果恒为空）。
+ * 任务区 / 随访率卡片联动重载（行级隔离由后端 @DataScope 出行，选到范围外病区结果恒为空）。
  * 数字与列表钻取一致：钻取目标与筛选参数由后端随指标下发（同一条件树），前端只透传
- * 路由 query；范围内无患者时后端返回全 0（不报错）。每年随访率、完整度卡片随
- * E19-T04 ~ T05 进同一页；卡片设置（A-DASH-013/014）随后续任务接入。
+ * 路由 query；范围内无患者时后端返回全 0（不报错）。完整度卡片随
+ * E19-T05 进同一页；卡片设置（A-DASH-013/014）随后续任务接入。
  * 权限 followup:dashboard:view（按钮 234）；无权限只隐藏卡片不报错。
  */
 const router = useRouter();
@@ -278,6 +281,10 @@ onActivated(loadAll);
 
       <!-- 第三行：任务区（看板 / 任务表切换，A-DASH-003、008；病区筛选联动） -->
       <TaskArea :ward-id="wardId" />
+
+      <!-- 第四行统计区：每年随访率与节点随访率（A-DASH-006、A-DASH-012 / C-DASH-004；
+           节点随访率受 node_follow_rate 开关控制，病区筛选联动） -->
+      <RateArea :ward-id="wardId" />
     </template>
 
     <Empty

@@ -20,6 +20,20 @@ import org.apache.ibatis.annotations.Update;
 @Mapper
 public interface ConfigMapper {
 
+    // --------------------------------------------------------------- 功能开关（cfg_feature）
+
+    /** cfg_feature 行：code → 是否开通（PLT-CFG / OQ-03：/api/hospital/auth/features 的数据源）。 */
+    record FeatureRow(String featureCode, boolean enabled) {}
+
+    /** 全部功能开关（配置表读取，不输出患者数据；无行 = 该院未配置该开关，调用侧按默认关闭处理）。 */
+    @Select(
+            """
+            SELECT feature_code AS featureCode, enabled
+            FROM cfg_feature
+            ORDER BY feature_code
+            """)
+    List<FeatureRow> listFeatures();
+
     // --------------------------------------------------------------- 租户字典
 
     @Select(

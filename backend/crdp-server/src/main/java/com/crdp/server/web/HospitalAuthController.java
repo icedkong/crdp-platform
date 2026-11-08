@@ -15,12 +15,15 @@ import com.crdp.server.auth.ReauthService;
 import com.crdp.server.auth.SessionAdminService;
 import com.crdp.server.auth.TenantIdentifier;
 import com.crdp.server.platform.TenantViewService;
+import com.crdp.system.infra.mapper.ConfigMapper;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -47,6 +50,7 @@ public class HospitalAuthController {
     private final SessionAdminService sessionAdminService;
     private final LoginBrandService loginBrandService;
     private final TenantViewService tenantViewService;
+    private final ConfigMapper configMapper;
 
     public HospitalAuthController(
             AuthService authService,
@@ -59,7 +63,8 @@ public class HospitalAuthController {
             SecurityProperties securityProperties,
             SessionAdminService sessionAdminService,
             LoginBrandService loginBrandService,
-            TenantViewService tenantViewService) {
+            TenantViewService tenantViewService,
+            ConfigMapper configMapper) {
         this.authService = authService;
         this.passwordChangeService = passwordChangeService;
         this.passwordResetService = passwordResetService;
@@ -71,6 +76,7 @@ public class HospitalAuthController {
         this.sessionAdminService = sessionAdminService;
         this.loginBrandService = loginBrandService;
         this.tenantViewService = tenantViewService;
+        this.configMapper = configMapper;
     }
 
     @Operation(
@@ -205,6 +211,21 @@ public class HospitalAuthController {
     @GetMapping("/api/hospital/auth/codes")
     public ApiResponse<List<String>> codes() {
         return ApiResponse.ok(CurrentSession.requireHospitalShell().permissionCodes());
+    }
+
+    @Operation(
+            summary =
+                    "当前租户功能开关（OQ-03 定稿：独立端点返回 { featureCode: enabled }）。"
+                            + "前端按开关隐藏入口（如首页节点随访率卡片 node_follow_rate，E19-T04）；"
+                            + "未配置的开关不在返回里，调用侧按默认关闭处理。开关关闭的接口仍由后端 40301 兜底（AGENTS §5.7）。")
+    @GetMapping("/api/hospital/auth/features")
+    public ApiResponse<Map<String, Boolean>> features() {
+        CurrentSession.requireHospitalShell();
+        Map<String, Boolean> featureMap = new LinkedHashMap<>();
+        for (ConfigMapper.FeatureRow row : configMapper.listFeatures()) {
+            featureMap.put(row.featureCode(), row.enabled());
+        }
+        return ApiResponse.ok(featureMap);
     }
 
     @Operation(
