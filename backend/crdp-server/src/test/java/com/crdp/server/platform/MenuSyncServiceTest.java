@@ -447,6 +447,19 @@ class MenuSyncServiceTest {
                         "followup/patient/baseline-edit",
                         null,
                         25,
+                        "ENABLED"),
+                // E19-T02 首页统计卡片按钮（平台库 V59 同构）：挂 base 模块的首页菜单（10）下，
+                // 父项按路由名解析（HospitalDashboard → 10）
+                manifestRow(
+                        234L,
+                        10L,
+                        "BUTTON",
+                        "首页统计卡片",
+                        null,
+                        null,
+                        null,
+                        "followup:dashboard:view",
+                        10,
                         "ENABLED"));
     }
 
@@ -460,6 +473,10 @@ class MenuSyncServiceTest {
         lenient()
                 .when(platformMapper.findMenuIdByRouteName("HOSPITAL", "Followup"))
                 .thenReturn(20L);
+        // E19-T02 首页统计卡片（234）父项 = base 模块首页菜单（10），按路由名解析
+        lenient()
+                .when(platformMapper.findMenuIdByRouteName("HOSPITAL", "HospitalDashboard"))
+                .thenReturn(10L);
         lenient()
                 .when(platformMapper.findMenuIdByRouteName("HOSPITAL", "FollowupPatient"))
                 .thenReturn(21L);

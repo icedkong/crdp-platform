@@ -225,6 +225,21 @@ public class MenuManifest {
                             "followup:scan:delete",
                             null,
                             30),
+                    // E19-T02 / A-DASH-001、A-DASH-002、C-DASH-001：首页卡片权限码（挂 base 模块的首页菜单下，
+                    // 父项按路由名引用 HospitalDashboard；平台库 V59 同构，OQ-19 统计页与首页卡片同码）
+                    new MenuManifestItem(
+                            "followup",
+                            "HOSPITAL",
+                            "BUTTON",
+                            "followup:dashboard:view",
+                            "HospitalDashboard",
+                            "首页统计卡片",
+                            null,
+                            null,
+                            null,
+                            "followup:dashboard:view",
+                            null,
+                            10),
                     // E13-T01 / A-PAT-003、C-PAT-001：新建患者隐藏路由（患者档案下，平台库 V37 同构；
                     // hidden 是平台端维护值，不在清单结构字段里）
                     new MenuManifestItem(
