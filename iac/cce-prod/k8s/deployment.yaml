@@ -1,0 +1,81 @@
+# E22-T05：crdp-server 生产工作负载（基线取值与 iac/cce-prod/cce-baseline.json 一致，
+# 由 scripts/check_cce_baseline.py 校验不漂移）。
+# 镜像来自 SWR 私有仓库（E01-T05）；CRDP_* 环境变量（数据库 / OBS / DEW 凭据、签名密钥）
+# 由运维从 DEW 凭据管理装配成 Secret crdp-server-env 后注入，不进镜像、不进 Git。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crdp-server
+  namespace: crdp
+  labels:
+    app.kubernetes.io/name: crdp-server
+    app.kubernetes.io/part-of: crdp
+spec:
+  replicas: 2
+  # NFR-AVL-005：滚动发布不停机（先扩 1 新副本，就绪后才收旧副本）
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: crdp-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: crdp-server
+        app.kubernetes.io/part-of: crdp
+    spec:
+      # NFR-AVL-003：副本按可用区打散，单可用区故障不丢全部副本
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: crdp-server
+      imagePullSecrets:
+        - name: swr-credentials
+      containers:
+        - name: crdp-server
+          # 镜像标签由发布流水线写入（占位示例；漏洞扫描随 SWR 镜像仓库开启，NFR-SEC-006）
+          image: swr.cn-north-4.myhuaweicloud.com/crdp/crdp-server:1.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 18080
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: prod
+          envFrom:
+            - secretRef:
+                name: crdp-server-env
+          securityContext:
+            # 与 backend/Dockerfile 的 USER 10001 一致；容器提权防护（等保应用基线）
+            runAsNonRoot: true
+            runAsUser: 10001
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+            limits:
+              cpu: "2"
+              memory: 3Gi
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 18080
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 18080
+            initialDelaySeconds: 90
+            periodSeconds: 10
+            failureThreshold: 9

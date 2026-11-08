@@ -1,0 +1,7 @@
+# E22-T05：生产命名空间。应用全部落在 crdp 命名空间，便于网络策略与审计按命名空间收敛。
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: crdp
+  labels:
+    app.kubernetes.io/part-of: crdp
