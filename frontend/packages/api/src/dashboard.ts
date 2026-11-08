@@ -1,6 +1,7 @@
 /**
- * E19-T02 / A-DASH-001、A-DASH-002、C-DASH-001；E19-T03 / A-DASH-003、004、005、008、C-DASH-003、008：
- * 首页指标卡、趋势图、任务看板与任务表的类型与纯逻辑
+ * E19-T02 / A-DASH-001、A-DASH-002、C-DASH-001；E19-T03 / A-DASH-003、004、005、008、C-DASH-003、008；
+ * E19-T04 / A-DASH-006、A-DASH-012、C-DASH-004：
+ * 首页指标卡、趋势图、任务看板、任务表与随访率卡片的类型与纯逻辑
  * （接口契约 docs/api/stats.md §2、§3，后端 `com.crdp.followup.dashboard.api.DashboardCardController`；
  * 页面 pages.md §2 首页）。
  *
@@ -8,7 +9,9 @@
  * 每页签的钻取目标（target + query）；前端用 `kpiMetricRoute` / `boardColumnRoute` /
  * `taskTableTabRoute` 把它换成列表页路由（患者列表 /followup/patient?status=…、任务列表
  * /followup/task?tab=all&status=…），不自行拼业务条件。数据源未落地的指标（C 的 ERI /
- * 扫描件随 E21）available=false，前端隐藏。
+ * 扫描件随 E21）available=false，前端隐藏。随访率卡片（Q38 口径）数据时点 = 节点随访
+ * 事实表最近一次每日刷新（asOf 回显）；点击数字下钻患者列表需要患者检索支持按随访
+ * 年度 / 节点筛选，随 E19-T08 口径核对后接入（OQ-109①）。
  */
 import type { RouteLocationRaw } from 'vue-router';
 
@@ -214,6 +217,77 @@ export interface DashboardWardOption {
 /** 病区候选响应。 */
 export interface DashboardWardsView {
   wards: DashboardWardOption[];
+}
+
+// ---------------------------------------------------------------- 随访率卡片（E19-T04 / A-DASH-006、A-DASH-012、C-DASH-004）
+
+/**
+ * 一行随访率（每年 / 节点两卡共用，口径 Q38）：followRatePct 随访率为唯一主指标
+ * （已随访含窗口内完成、逾期完成、补录及窗口外日期的记录），inWindowRatePct 仅作参考。
+ */
+export interface RateRow {
+  deathCount: number;
+  dueCount: number;
+  followedCount: number;
+  followRatePct: number;
+  inWindowCount: number;
+  inWindowRatePct: number;
+  label: string;
+  lostRatePct: number;
+  nodeName?: null | string;
+  occurrence: number;
+  year?: null | number;
+}
+
+/** 每年随访率（A-DASH-006）：rows 一行一个随访年度（第 N 年，只列有应随访患者的年度）。 */
+export interface YearlyRateCardView {
+  asOf?: null | string;
+  cohortYear?: null | number;
+  cohortYears: number[];
+  rows: RateRow[];
+}
+
+/** 随访计划候选（A-DASH-012「先选随访计划（默认本租户的预置计划）」）。 */
+export interface NodeRatePlanOption {
+  id: number;
+  name: string;
+}
+
+/** 节点随访率（A-DASH-012 / C-DASH-004）：rows 一行一个节点 × 第 N 次，按计划内顺序。 */
+export interface NodeRateCardView {
+  asOf?: null | string;
+  cohortYear?: null | number;
+  cohortYears: number[];
+  planId: number;
+  planName?: null | string;
+  plans: NodeRatePlanOption[];
+  rows: RateRow[];
+}
+
+/** 每年随访率请求参数（cohortYear = 出院年份队列；wardId 为页面级病区筛选）。 */
+export interface YearlyRateParams {
+  cohortYear?: number;
+  wardId?: number;
+}
+
+/** 节点随访率请求参数（planId 缺省 = 预置计划；受 node_follow_rate 开关控制）。 */
+export interface NodeRateParams {
+  cohortYear?: number;
+  planId?: number;
+  wardId?: number;
+}
+
+/** 队列年份下拉候选（值 = 年份，label 带「年」后缀，倒序 = 最近年份在前）。 */
+export function cohortYearOptions(years: number[]): Array<{
+  label: string;
+  value: number;
+}> {
+  return years.map((year) => ({ label: `${year} 年`, value: year }));
+}
+
+/** 比率展示：百分数一位小数（如 75 → 「75.0%」）。 */
+export function formatRatePct(pct: number): string {
+  return `${pct.toFixed(1)}%`;
 }
 
 /** 带钻取目标的最小载体（列 / 页签共用；便于以最小对象调用路由函数）。 */

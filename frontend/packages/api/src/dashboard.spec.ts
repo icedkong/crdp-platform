@@ -8,6 +8,8 @@ import { describe, expect, it } from 'vitest';
 import {
   BOARD_SCOPE_OPTIONS,
   boardColumnRoute,
+  cohortYearOptions,
+  formatRatePct,
   kpiMetricRoute,
   TASK_TABLE_TABS,
   taskTableTabRoute,
@@ -226,5 +228,22 @@ describe('e19-T03 任务看板与任务表（A-DASH-003、004、008、C-DASH-003
       { label: '超时任务', value: 'OVERDUE' },
       { label: '我负责的任务', value: 'MINE' },
     ]);
+  });
+});
+
+describe('e19-T04 随访率卡片纯逻辑（A-DASH-006 / A-DASH-012，口径 Q38）', () => {
+  it('cohortYearOptions：队列年份下拉候选（label 带年，倒序由后端给序）', () => {
+    expect(cohortYearOptions([2025, 2024])).toEqual([
+      { label: '2025 年', value: 2025 },
+      { label: '2024 年', value: 2024 },
+    ]);
+    expect(cohortYearOptions([])).toEqual([]);
+  });
+
+  it('formatRatePct：百分数一位小数（主指标与参考列共用）', () => {
+    expect(formatRatePct(75)).toBe('75.0%');
+    expect(formatRatePct(66.7)).toBe('66.7%');
+    expect(formatRatePct(100)).toBe('100.0%');
+    expect(formatRatePct(0)).toBe('0.0%');
   });
 });

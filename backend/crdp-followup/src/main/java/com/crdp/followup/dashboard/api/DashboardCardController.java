@@ -3,6 +3,7 @@ package com.crdp.followup.dashboard.api;
 import com.crdp.followup.dashboard.app.DashboardKpiService;
 import com.crdp.followup.dashboard.app.DashboardTaskService;
 import com.crdp.followup.dashboard.app.DashboardTrendService;
+import com.crdp.followup.stats.app.NodeOccurrenceStatsService;
 import com.crdp.framework.security.RequireModule;
 import com.crdp.framework.security.RequiresPermission;
 import com.crdp.framework.web.ApiException;
@@ -18,15 +19,17 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * 首页卡片数据（E19-T02 / A-DASH-001、A-DASH-002、C-DASH-001；E19-T03 /
- * A-DASH-003、004、005、008、C-DASH-003、008； docs/api/stats.md §2）： 每张卡片独立取数 {@code GET
- * /api/hospital/followup/dashboard/cards/{cardCode}}，已落地 kpi（指标卡）、trend（趋势图）与 task_board /
- * task_table（任务看板与任务表）；每年随访率、节点随访率、完整度等卡片随 E19-T04 ~ E19-T05 接入同一入口。
+ * A-DASH-003、004、005、008、C-DASH-003、008；E19-T04 / A-DASH-006、A-DASH-012、C-DASH-004；
+ * docs/api/stats.md §2）： 每张卡片独立取数 {@code GET /api/hospital/followup/dashboard/cards/{cardCode}}，已落地
+ * kpi（指标卡）、trend（趋势图）、task_board / task_table（任务看板与任务表）与 yearly_rate / node_rate（每年随访率与节点随访率，口径
+ * Q38）； 完整度等卡片随 E19-T05 接入同一入口。
  *
  * <p>权限：卡片按卡片目录登记的权限码（均为 {@code followup:dashboard:view}，OQ-19；平台库 V59 建码、种子 V129 授角色）； 数据范围由
  * Mapper 语句上的 {@code @DataScope(resource = "patient")} 出行（越范围不可见，范围内无患者返回全 0 / 空序列）；
  * 接口资源由启动扫描登记（SCAN）。
  *
- * <p>病区筛选（A-DASH-005）：wardId 为页面级参数，全部卡片共用；病区候选 {@code GET /wards} 按登录快照取本人可见病区。
+ * <p>病区筛选（A-DASH-005）：wardId 为页面级参数，全部卡片共用；病区候选 {@code GET /wards} 按登录快照取本人可见病区。 随访率卡片的数据时点 =
+ * 节点随访事实表最近一次每日刷新（响应回显 asOf；当日完成 / 补录次日刷新前以最近刷新为准，OQ-106①）。
  */
 @Tag(name = "医院端首页 Dashboard 卡片")
 @RestController
@@ -36,14 +39,17 @@ public class DashboardCardController {
     private final DashboardKpiService kpiService;
     private final DashboardTrendService trendService;
     private final DashboardTaskService taskService;
+    private final NodeOccurrenceStatsService rateService;
 
     public DashboardCardController(
             DashboardKpiService kpiService,
             DashboardTrendService trendService,
-            DashboardTaskService taskService) {
+            DashboardTaskService taskService,
+            NodeOccurrenceStatsService rateService) {
         this.kpiService = kpiService;
         this.trendService = trendService;
         this.taskService = taskService;
+        this.rateService = rateService;
     }
 
     @Operation(
@@ -56,8 +62,11 @@ public class DashboardCardController {
                             + " C-DASH-003：四列各前 20 张卡片；scope 我的 MINE 默认 / 本病区 WARD / 全部 ALL"
                             + " ——A-DASH-004，assigneeId 负责人筛选）、task_table 任务表（A-DASH-008：页签"
                             + " tab TODAY 今日默认 / OVERDUE 超时 / MINE 我负责，页签显示数量 + 当前页签前 10"
-                            + " 行）；wardId 病区筛选（A-DASH-005）全部卡片共用；数字与列表钻取共用同一条件树"
-                            + "（各列 / 页签响应内联 drill 目标与筛选参数）")
+                            + " 行）、yearly_rate 每年随访率（A-DASH-006：按随访年度 N 一行，cohortYear"
+                            + " 出院年份队列筛选，口径 Q38——逾期完成 / 补录 / 历史导入都计入已随访）、node_rate"
+                            + " 节点随访率（A-DASH-012 / C-DASH-004：planId 随访计划缺省预置计划，行 = 节点 ×"
+                            + " 第 N 次；开关 node_follow_rate 关闭返回 40301）；wardId 病区筛选（A-DASH-005）"
+                            + "全部卡片共用；数字与列表钻取共用同一条件树（各列 / 页签响应内联 drill 目标与筛选参数）")
     @GetMapping("/cards/{cardCode}")
     @RequireModule("followup")
     @RequiresPermission("followup:dashboard:view")
@@ -71,7 +80,9 @@ public class DashboardCardController {
             @RequestParam(value = "groupBy", required = false) String groupBy,
             @RequestParam(value = "scope", required = false) String scope,
             @RequestParam(value = "assigneeId", required = false) Long assigneeId,
-            @RequestParam(value = "tab", required = false) String tab) {
+            @RequestParam(value = "tab", required = false) String tab,
+            @RequestParam(value = "planId", required = false) Long planId,
+            @RequestParam(value = "cohortYear", required = false) Integer cohortYear) {
         return switch (cardCode) {
             case "kpi" -> ApiResponse.ok(kpiService.kpi(wardId));
             case "trend" ->
@@ -80,9 +91,14 @@ public class DashboardCardController {
                                     wardId, from, to, timeDimension, granularity, groupBy));
             case "task_board" -> ApiResponse.ok(taskService.board(wardId, scope, assigneeId));
             case "task_table" -> ApiResponse.ok(taskService.table(wardId, tab));
+            case "yearly_rate" -> ApiResponse.ok(rateService.yearlyRate(wardId, cohortYear));
+            case "node_rate" -> ApiResponse.ok(rateService.nodeRate(planId, wardId, cohortYear));
             default ->
                     throw new ApiException(
-                            400, 40001, "cardCode（kpi / trend / task_board / task_table）不合法");
+                            400,
+                            40001,
+                            "cardCode（kpi / trend / task_board / task_table / yearly_rate /"
+                                    + " node_rate）不合法");
         };
     }
 

@@ -96,8 +96,8 @@ type FeatureCode =
   | 'report_inbox';      // 待归档区（C-SCAN-009，P1）
 ```
 
-- 功能开关存租户库 `cfg_feature`（`feature_code`, `enabled`），随 `GET /api/hospital/auth/me` 一起下发（若 `me` 尚未返回开关，需要后端补字段，推断，待确认，OQ-03）。样板页先用 fixture 上的 `features`，见 `reference-pages.md`。
-- 关闭的功能：页签、按钮、卡片**直接隐藏**，不置灰。
+- 功能开关存租户库 `cfg_feature`（`feature_code`, `enabled`），由独立端点 `GET /api/hospital/auth/features` 下发 `{ featureCode: enabled }`（OQ-03 定稿，E19-T04 已实现；未配置的开关不在返回里＝默认关闭）；`useFeature` 已落地（`apps/web-hospital/src/reference/use-feature.ts`，会话内缓存一次）。样板页的 fixture `features` 仅参考页用，见 `reference-pages.md`。
+- 关闭的功能：页签、按钮、卡片**直接隐藏**，不置灰；对应接口后端仍按开关 40301 兜底（AGENTS §5.7）。
 
 ### 1.4 `useAutoSave(options)`（随访表单、基线分节编辑共用）
 

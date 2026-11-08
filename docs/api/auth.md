@@ -12,6 +12,7 @@
 | POST | `/api/hospital/auth/logout` | 登录 | — | 空 |
 | GET | `/api/hospital/auth/me` | 登录 | — | `MeResponse { userId, username, displayName, sessionType, tenantCode, tenantName, roles[], permissionVersion }` |
 | GET | `/api/hospital/auth/codes` | 登录 | — | `string[]` 权限码 |
+| GET | `/api/hospital/auth/features` | 登录 | — | `{ [featureCode]: boolean }` 当前租户功能开关（OQ-03 定稿独立端点；E19-T04 已实现，cfg_feature 只读，未配置的开关不在返回里＝默认关闭；前端 `useFeature` 按开关隐藏入口，接口仍按开关 40301 兜底） |
 | GET | `/api/hospital/menus` | 登录 | — | `MenuNode[]`（`id, name, path, component, type, meta, children`；`component` 为 `LAYOUT` 或 views 下相对路径） |
 | POST | `/api/platform/auth/login` | 免登录 | `PlatformLoginRequest { username, password }` | `LoginResult` |
 | POST | `/api/platform/auth/logout` | 登录 | — | 空 |
@@ -101,16 +102,16 @@
 <!-- E04-T07 已实现并移至第 1 节：/auth/password/forgot、/auth/password/reset（医院端；平台端忘记密码暂不做，见 OQ-41） -->
 <!-- E06-T11 已实现并移至第 1 节：/auth/tenant?code=（登录页租户识别，PLT-CFG-008、PLT-AUTH-004） -->
 <!-- E04-T08 已实现并移至第 1 节：/auth/reauth（两端，敏感操作二次认证 PLT-AUTH-012，X-Reauth-Token / 40304） -->
-| GET | `/api/hospital/auth/features` | 当前租户功能开关 `{ [featureCode]: boolean }`；或把 `features` 并入 `me`（二选一，见 OQ-03） | 技术方案“各院功能不同怎么办” |
+<!-- E19-T04 已实现并移至第 1 节：/auth/features（医院端功能开关，OQ-03 定稿独立端点，未选「并入 me」方案） -->
 
 ### 2.1 `me` 建议扩展字段（推断，待确认）
 
 ```ts
 // E04-T05 已实现：mustChangePassword 恒返回；passwordExpiresInDays 仅在到期前 7 天窗口内返回（可为负）
+// OQ-03 定稿：功能开关走独立端点 /auth/features（E19-T04 已实现），me 不带 features 字段
 interface MeResponseExt extends MeResponse {
   mustChangePassword: boolean;
   passwordExpiresInDays?: number;
-  features?: Record<string, boolean>;   // 若不单独提供 /auth/features
   wardIds?: number[];                    // 当前用户负责病区（仅用于默认筛选，不用于前端鉴权）
   tenantView?: { platformAccount: string; readonly: boolean; expiresAt: string }; // 平台人员进入租户视角时
   watermark: { text: string };           // “姓名（账号）· 医院名称”，前端补“预览时间（精确到分钟）”

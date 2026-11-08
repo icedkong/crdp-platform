@@ -70,6 +70,39 @@ public interface NodeOccurrenceMapper {
             long lostCount,
             long deathCount) {}
 
+    /**
+     * 按随访年度聚合结果（E19-T04 / A-DASH-006 每年随访率）：患者级去重计数（COUNT DISTINCT —— 多计划并行时 同一患者同一年度只计一次分母 /
+     * 分子，暂行口径见 OQ-109②）；refreshedDate 随行供 asOf（最近刷新日）。
+     */
+    record YearCountRow(
+            int followupYear,
+            long dueCount,
+            long followedCount,
+            long inWindowCount,
+            long lostCount,
+            long deathCount,
+            LocalDate refreshedDate) {}
+
+    /**
+     * 节点随访率卡片行（E19-T04 / A-DASH-012、C-DASH-004）：一行 = 一个节点 × 第 N 次（入组行计数）； repeatMode / followupYear
+     * 供服务层拼行标签（固定节点 = 节点名、年度循环 = 第 N 年、其余循环 = 第 N 次）。
+     */
+    record NodeRateRow(
+            long nodeId,
+            String nodeName,
+            String repeatMode,
+            int occurrence,
+            Integer followupYear,
+            long dueCount,
+            long followedCount,
+            long inWindowCount,
+            long lostCount,
+            long deathCount,
+            LocalDate refreshedDate) {}
+
+    /** 随访计划候选（节点随访率卡片「先选随访计划」，A-DASH-012：配置表读取，不输出患者数据）。 */
+    record PlanOptionRow(long id, String name) {}
+
     // ---------------------------------------------------------------- 刷新加载（@IgnoreScope：每日作业）
 
     @IgnoreScope(reason = "每日刷新（E19-T01）无用户上下文：只取入组定位列与起算日期重建派生事实表，" + "不输出患者明细；查询侧按 @DataScope 出行")
@@ -177,4 +210,91 @@ public interface NodeOccurrenceMapper {
             ORDER BY n.sort_no, o.node_id, o.occurrence
             """)
     List<NodeCountRow> aggregateByNode(@Param("planId") long planId);
+
+    // ---------------------------------------------------------------- 卡片查询（E19-T04：@DataScope 出行 +
+    // 病区 / 队列收窄）
+
+    /**
+     * 按随访年度聚合（A-DASH-006 每年随访率 = 年度节点的节点随访率，口径 Q38）： 只计年度节点（followup_year 非空）与 due = 1
+     * 的行；患者级去重（多计划并行时同一患者同一年度只计一次，OQ-109②）。 病区按患者当前病区收窄（join pt_patient），队列为起算年份。
+     */
+    @DataScope(resource = "patient")
+    @Select(
+            """
+            <script>
+            SELECT o.followup_year AS followupYear,
+                   COUNT(DISTINCT o.patient_id) AS dueCount,
+                   COUNT(DISTINCT CASE WHEN o.followed = 1 THEN o.patient_id END) AS followedCount,
+                   COUNT(DISTINCT CASE WHEN o.in_window = 1 THEN o.patient_id END) AS inWindowCount,
+                   COUNT(DISTINCT CASE WHEN o.lost = 1 THEN o.patient_id END) AS lostCount,
+                   COUNT(DISTINCT CASE WHEN o.death_confirmed = 1 THEN o.patient_id END) AS deathCount,
+                   MAX(o.refreshed_date) AS refreshedDate
+            FROM st_node_occurrence o
+            JOIN pt_patient p ON p.id = o.patient_id AND p.deleted = 0
+            WHERE o.due = 1 AND o.followup_year IS NOT NULL
+            <if test="wardId != null">AND p.ward_id = #{wardId}</if>
+            <if test="cohortYear != null">AND o.cohort_year = #{cohortYear}</if>
+            GROUP BY o.followup_year
+            ORDER BY o.followup_year
+            </script>
+            """)
+    List<YearCountRow> aggregateByYear(
+            @Param("wardId") Long wardId, @Param("cohortYear") Integer cohortYear);
+
+    /**
+     * 节点随访率卡片聚合（A-DASH-012、C-DASH-004；口径与 aggregateByNode 同、加病区 / 队列筛选与标签列）： 一行 = 一个节点 × 第 N
+     * 次的入组行计数；repeatMode / followupYear 供服务层拼行标签。
+     */
+    @DataScope(resource = "patient")
+    @Select(
+            """
+            <script>
+            SELECT o.node_id AS nodeId, n.name AS nodeName, n.repeat_mode AS repeatMode,
+                   o.occurrence, o.followup_year AS followupYear,
+                   COUNT(*) AS dueCount,
+                   COALESCE(SUM(o.followed), 0) AS followedCount,
+                   COALESCE(SUM(o.in_window), 0) AS inWindowCount,
+                   COALESCE(SUM(o.lost), 0) AS lostCount,
+                   COALESCE(SUM(o.death_confirmed), 0) AS deathCount,
+                   MAX(o.refreshed_date) AS refreshedDate
+            FROM st_node_occurrence o
+            JOIN fu_plan_node n ON n.id = o.node_id
+            JOIN pt_patient p ON p.id = o.patient_id AND p.deleted = 0
+            WHERE o.plan_id = #{planId} AND o.due = 1
+            <if test="wardId != null">AND p.ward_id = #{wardId}</if>
+            <if test="cohortYear != null">AND o.cohort_year = #{cohortYear}</if>
+            GROUP BY o.node_id, n.name, n.repeat_mode, n.sort_no, o.occurrence, o.followup_year
+            ORDER BY n.sort_no, o.node_id, o.occurrence
+            </script>
+            """)
+    List<NodeRateRow> aggregateNodeRates(
+            @Param("planId") long planId,
+            @Param("wardId") Long wardId,
+            @Param("cohortYear") Integer cohortYear);
+
+    /** 队列年份候选（起算日期年份，A-DASH-006「出院年份队列」/ A-DASH-012「队列」筛选的下拉候选，倒序）。 */
+    @DataScope(resource = "patient")
+    @Select(
+            """
+            <script>
+            SELECT DISTINCT o.cohort_year
+            FROM st_node_occurrence o
+            WHERE o.due = 1 AND o.cohort_year IS NOT NULL
+            <if test="planId != null">AND o.plan_id = #{planId}</if>
+            ORDER BY o.cohort_year DESC
+            </script>
+            """)
+    List<Integer> findCohortYears(@Param("planId") Long planId);
+
+    /**
+     * 已发布计划候选（A-DASH-012「先选随访计划（默认本租户的预置计划）」；id 升序 = 预置计划在前）。 fu_plan 是配置表且不带在组人数子查询，不触达受控表，无需范围声明。
+     */
+    @Select(
+            """
+            SELECT p.id, p.name
+            FROM fu_plan p
+            WHERE p.status = 'PUBLISHED'
+            ORDER BY p.id
+            """)
+    List<PlanOptionRow> findPublishedPlans();
 }

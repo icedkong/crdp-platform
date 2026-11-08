@@ -152,3 +152,12 @@ export async function getAccessCodesApi() {
 }
 
 export type { Me };
+
+/**
+ * 当前租户功能开关（OQ-03 定稿：独立端点 /auth/features 返回 { featureCode: enabled }）。
+ * 前端按开关隐藏入口（components.md §1.3 useFeature；如首页节点随访率卡片 node_follow_rate，
+ * E19-T04）；未配置的开关不在返回里，调用侧按默认关闭处理；开关关闭的接口仍由后端 40301 兜底。
+ */
+export async function getFeatureSwitchesApi() {
+  return requestClient.get<Record<string, boolean>>(apiPath('/auth/features'));
+}
