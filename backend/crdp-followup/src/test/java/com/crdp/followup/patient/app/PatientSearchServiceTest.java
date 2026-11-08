@@ -55,6 +55,8 @@ class PatientSearchServiceTest {
     private final CryptoService crypto = mock(CryptoService.class);
     private final AuditLogger audit = mock(AuditLogger.class);
     private final PatientSearchFieldService searchFields = mock(PatientSearchFieldService.class);
+    private final com.crdp.followup.stats.app.CompletenessStatsService completenessStats =
+            mock(com.crdp.followup.stats.app.CompletenessStatsService.class);
 
     private final PatientSearchService service =
             new PatientSearchService(
@@ -63,7 +65,8 @@ class PatientSearchServiceTest {
                     crypto,
                     audit,
                     searchFields,
-                    TenantViewFieldGuard.passthrough());
+                    TenantViewFieldGuard.passthrough(),
+                    completenessStats);
 
     @BeforeEach
     void login() {
@@ -231,6 +234,80 @@ class PatientSearchServiceTest {
         assertInvalid(requestWithSort("mrnCipher; DROP TABLE pt_patient", "asc"), "sort.field");
         assertInvalid(requestWithSort("unknownField", "asc"), "sort.field");
         assertInvalid(requestWithSort("dischargeDate", "random"), "sort.order");
+    }
+
+    // ---------------------------------------------------------------- 完整度缺失字段钻取（E19-T05 /
+    // A-DASH-010、A-DASH-011）
+
+    @Test
+    void searchResolvesCompletenessDrillToMissingPatientIds() {
+        when(gateway.count(any())).thenReturn(0L);
+        when(gateway.search(any(), anyInt(), anyInt())).thenReturn(List.of());
+        when(completenessStats.patientsMissingBaselineField(
+                        eq("f214"),
+                        eq(
+                                new com.crdp.followup.stats.app.CompletenessStatsService.Query(
+                                        WARD_ID,
+                                        null,
+                                        LocalDate.of(2026, 1, 1),
+                                        LocalDate.of(2026, 6, 30),
+                                        "DISCHARGE",
+                                        null))))
+                .thenReturn(List.of(101L, 102L));
+
+        service.search(
+                new PatientSearchService.SearchRequest(
+                        null,
+                        null,
+                        null,
+                        null,
+                        emptyFilters(),
+                        null,
+                        new PatientSearchService.CompletenessDrill(
+                                "BASELINE",
+                                "f214",
+                                WARD_ID,
+                                null,
+                                LocalDate.of(2026, 1, 1),
+                                LocalDate.of(2026, 6, 30),
+                                "DISCHARGE",
+                                null)));
+
+        ArgumentCaptor<PatientSearchMapper.SearchCriteria> captor =
+                ArgumentCaptor.forClass(PatientSearchMapper.SearchCriteria.class);
+        verify(gateway).search(captor.capture(), anyInt(), anyInt());
+        assertEquals(
+                List.of(101L, 102L),
+                captor.getValue().missingPatientIds(),
+                "钻取 ID 集按完整度服务同一计算给出（卡片数字 = 列表 total）");
+    }
+
+    @Test
+    void searchWithoutDrillKeepsMissingPatientIdsNull() {
+        when(gateway.count(any())).thenReturn(0L);
+        when(gateway.search(any(), anyInt(), anyInt())).thenReturn(List.of());
+
+        service.search(request(null, null));
+
+        ArgumentCaptor<PatientSearchMapper.SearchCriteria> captor =
+                ArgumentCaptor.forClass(PatientSearchMapper.SearchCriteria.class);
+        verify(gateway).search(captor.capture(), anyInt(), anyInt());
+        assertNull(captor.getValue().missingPatientIds(), "无钻取 = 不过滤（null 而非空集——空集语义是恒空结果）");
+    }
+
+    @Test
+    void searchRejectsUnknownDrillKind() {
+        assertInvalid(
+                new PatientSearchService.SearchRequest(
+                        null,
+                        null,
+                        null,
+                        null,
+                        emptyFilters(),
+                        null,
+                        new PatientSearchService.CompletenessDrill(
+                                "SIDEWAYS", "f1", null, null, null, null, null, null)),
+                "completenessDrill.kind");
     }
 
     // ---------------------------------------------------------------- 高级检索（E13-T06 /
@@ -430,7 +507,8 @@ class PatientSearchServiceTest {
     }
 
     private PatientSearchService serviceOf(TenantViewFieldGuard guard) {
-        return new PatientSearchService(gateway, patientMapper, crypto, audit, searchFields, guard);
+        return new PatientSearchService(
+                gateway, patientMapper, crypto, audit, searchFields, guard, completenessStats);
     }
 
     private void stubSingleRow() {

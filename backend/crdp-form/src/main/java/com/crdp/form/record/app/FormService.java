@@ -269,6 +269,44 @@ public class FormService {
             int templateVersion,
             List<FormProgressEngine.CategoryProgress> categories) {}
 
+    /**
+     * 字段级已填 / 应填进度（E19-T05 / A-DASH-010、A-DASH-011：完整度卡片「最常缺失字段」与缺失钻取；口径与 {@link #progress}
+     * 完全一致——同一应填集合，见 {@link FormProgressEngine#fieldProgress}）： 只返回应填字段（显示中且有效必填且 storage=json
+     * 且非派生），每字段带 filled / label / categoryKey。 version 省略取当前发布版；记录按保存时固化的 templateVersion
+     * 取口径（旧版本可读）。
+     */
+    public List<FormProgressEngine.FieldProgress> fieldProgress(
+            String formCode,
+            Integer version,
+            Map<String, Object> data,
+            Map<String, Object> context) {
+        FormRow form = requireForm(formCode);
+        int resolved = version == null ? form.currentVersion() : version;
+        FormVersionRow snapshot = requireVersion(form, resolved);
+        return progressEngine.fieldProgress(
+                recordMapper.findVersionFields(formCode, snapshot.version()), data, context);
+    }
+
+    /**
+     * 字段级进度的批量形态（E19-T05 完整度统计：一次范围加载 = 数千患者 / 记录）： 版本字段只查一次，逐单位（患者基线合并值 / 一条随访记录值）求值，输出与入参顺序一一对应；
+     * 单位 data 为 null 按空表单处理。口径与 {@link #fieldProgress} 完全一致。
+     */
+    public List<List<FormProgressEngine.FieldProgress>> fieldProgressBatch(
+            String formCode,
+            Integer version,
+            List<Map<String, Object>> unitDatas,
+            Map<String, Object> context) {
+        FormRow form = requireForm(formCode);
+        int resolved = version == null ? form.currentVersion() : version;
+        FormVersionRow snapshot = requireVersion(form, resolved);
+        List<VersionFieldRow> fields = recordMapper.findVersionFields(formCode, snapshot.version());
+        List<List<FormProgressEngine.FieldProgress>> results = new ArrayList<>(unitDatas.size());
+        for (Map<String, Object> data : unitDatas) {
+            results.add(progressEngine.fieldProgress(fields, data, context));
+        }
+        return List.copyOf(results);
+    }
+
     /** 快照 categories JSON → 分类声明（sortNo 升序、label 空 / 缺回落 key；复用 buildSchema 同一防御口径）。 */
     private List<FormProgressEngine.Category> progressCategories(String categoriesJson) {
         List<FormProgressEngine.Category> categories = new ArrayList<>();

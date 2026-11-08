@@ -1,5 +1,7 @@
 /**
- * E19-T02 / A-DASH-001、C-DASH-001；E19-T03 / A-DASH-003、004、008、C-DASH-003：
+ * E19-T02 / A-DASH-001、C-DASH-001；E19-T03 / A-DASH-003、004、008、C-DASH-003；
+ * E19-T05 / A-DASH-010、A-DASH-011：完整度最常缺失字段钻取路由（患者列表
+ * completenessDrill 与卡片同一计算，缺失人数 = 列表 total）。
  * 首页指标卡、任务看板与任务表的类型与钻取路由（数字与列表钻取一致——
  * 钻取条件由后端随指标 / 列 / 页签下发，前端只透传 query，不自行拼业务条件）。
  */
@@ -9,8 +11,10 @@ import {
   BOARD_SCOPE_OPTIONS,
   boardColumnRoute,
   cohortYearOptions,
+  followupYearOptions,
   formatRatePct,
   kpiMetricRoute,
+  missingFieldRoute,
   TASK_TABLE_TABS,
   taskTableTabRoute,
   TREND_GRANULARITY_OPTIONS,
@@ -245,5 +249,56 @@ describe('e19-T04 随访率卡片纯逻辑（A-DASH-006 / A-DASH-012，口径 Q3
     expect(formatRatePct(66.7)).toBe('66.7%');
     expect(formatRatePct(100)).toBe('100.0%');
     expect(formatRatePct(0)).toBe('0.0%');
+  });
+});
+
+describe('e19-t05 数据完整度卡片纯逻辑（A-DASH-010 / A-DASH-011，口径 Q39 / Q40）', () => {
+  it('missingFieldRoute：缺失字段 → 患者列表路由（query 带钻取条件与卡片筛选）', () => {
+    const field = {
+      categoryKey: 'fu_contact',
+      fieldKey: 'f214',
+      label: '随访日期（示例）',
+      missingCount: 3,
+      missingRatePct: 37.5,
+    };
+    expect(
+      missingFieldRoute('FOLLOWUP', field, {
+        from: '2026-01-01',
+        patientType: 'ELECTIVE',
+        timeField: 'VISIT',
+        to: '2026-12-31',
+        wardId: 3,
+        year: 1,
+      }),
+    ).toEqual({
+      path: '/followup/patient',
+      query: {
+        from: '2026-01-01',
+        missingField: 'f214',
+        missingFieldLabel: '随访日期（示例）',
+        missingKind: 'FOLLOWUP',
+        patientType: 'ELECTIVE',
+        timeField: 'VISIT',
+        to: '2026-12-31',
+        wardId: 3,
+        year: 1,
+      },
+    });
+    // 基线钻取不带 year；未选筛选不进 query
+    expect(missingFieldRoute('BASELINE', field, {})).toEqual({
+      path: '/followup/patient',
+      query: {
+        missingField: 'f214',
+        missingFieldLabel: '随访日期（示例）',
+        missingKind: 'BASELINE',
+      },
+    });
+  });
+
+  it('followupYearOptions：随访年度下拉候选（label 带第 N 年）', () => {
+    expect(followupYearOptions([{ label: '第1年', year: 1 }])).toEqual([
+      { label: '第1年', value: 1 },
+    ]);
+    expect(followupYearOptions([])).toEqual([]);
   });
 });

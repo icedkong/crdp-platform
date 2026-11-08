@@ -3,6 +3,7 @@ package com.crdp.followup.patient.app;
 import com.crdp.followup.patient.domain.AdvancedConditionCompiler;
 import com.crdp.followup.patient.infra.mapper.PatientMapper;
 import com.crdp.followup.patient.infra.mapper.PatientSearchMapper;
+import com.crdp.followup.stats.app.CompletenessStatsService;
 import com.crdp.framework.audit.AuditEntry;
 import com.crdp.framework.audit.AuditLogger;
 import com.crdp.framework.crypto.CryptoService;
@@ -60,6 +61,7 @@ public class PatientSearchService {
     private final AuditLogger audit;
     private final PatientSearchFieldService searchFields;
     private final TenantViewFieldGuard viewGuard;
+    private final CompletenessStatsService completenessStats;
 
     public PatientSearchService(
             PatientSearchGateway gateway,
@@ -67,25 +69,55 @@ public class PatientSearchService {
             CryptoService crypto,
             AuditLogger audit,
             PatientSearchFieldService searchFields,
-            TenantViewFieldGuard viewGuard) {
+            TenantViewFieldGuard viewGuard,
+            CompletenessStatsService completenessStats) {
         this.gateway = gateway;
         this.patientMapper = patientMapper;
         this.crypto = crypto;
         this.audit = audit;
         this.searchFields = searchFields;
         this.viewGuard = viewGuard;
+        this.completenessStats = completenessStats;
     }
 
     // ---------------------------------------------------------------- DTO
 
-    /** 检索请求（body 见 docs/api/README.md §2.4；filters / condition 全部可空）。 */
+    /** 检索请求（body 见 docs/api/README.md §2.4；filters / condition / completenessDrill 全部可空）。 */
     public record SearchRequest(
             Integer pageNo,
             Integer pageSize,
             List<SortSpec> sort,
             String keyword,
             Filters filters,
-            JsonNode condition) {}
+            JsonNode condition,
+            CompletenessDrill completenessDrill) {
+
+        /** 兼容旧调用方的构造器（无完整度钻取）。 */
+        public SearchRequest(
+                Integer pageNo,
+                Integer pageSize,
+                List<SortSpec> sort,
+                String keyword,
+                Filters filters,
+                JsonNode condition) {
+            this(pageNo, pageSize, sort, keyword, filters, condition, null);
+        }
+    }
+
+    /**
+     * 完整度「缺该字段的患者」钻取（E19-T05 / A-DASH-010、A-DASH-011「点击进入缺该字段的患者列表」）： kind = BASELINE 基线 / FOLLOWUP
+     * 随访；fieldKey 为字段稳定键；其余为钻取时随卡片下发的完整度筛选（与卡片数字同一棵条件树—— ID 集由 {@link CompletenessStatsService}
+     * 按同一计算给出，卡片缺失人数 = 列表 total）。
+     */
+    public record CompletenessDrill(
+            String kind,
+            String fieldKey,
+            Long wardId,
+            String patientType,
+            LocalDate from,
+            LocalDate to,
+            String timeField,
+            Integer year) {}
 
     /** 排序项：field 为白名单字段码，order 为 asc / desc。 */
     public record SortSpec(String field, String order) {}
@@ -136,7 +168,9 @@ public class PatientSearchService {
     /** 条件检索一页（校验 → 盲索引 → 高级条件编译 → 范围内查询 → 脱敏 → 批量查询审计）。 */
     public PatientPage search(SearchRequest request) {
         SearchRequest safe =
-                request == null ? new SearchRequest(null, null, null, null, null, null) : request;
+                request == null
+                        ? new SearchRequest(null, null, null, null, null, null, null)
+                        : request;
         int pageNo = safe.pageNo() == null ? 1 : safe.pageNo();
         int pageSize = safe.pageSize() == null ? PAGE_SIZE_DEFAULT : safe.pageSize();
         if (pageNo < 1) {
@@ -197,7 +231,8 @@ public class PatientSearchService {
 
     private static SearchRequest exportRequest(ExportQuery query) {
         ExportQuery safe = query == null ? new ExportQuery(null, null) : query;
-        return new SearchRequest(null, null, null, null, safe.filters(), safe.condition());
+        // 导出不带完整度钻取（钻取是首页卡片的列表下钻，不进导出条件）
+        return new SearchRequest(null, null, null, null, safe.filters(), safe.condition(), null);
     }
 
     /** 条件装配产物：检索条件 + 摘要要素（审计摘要用 keyword 布尔与条件行数，不落明文）。 */
@@ -209,7 +244,7 @@ public class PatientSearchService {
     /** 列表与导出共用的条件装配与校验（检索词盲索引、筛选校验、高级条件树编译、排序白名单）。 */
     private SearchCriteriaBuilt criteriaOf(SearchRequest safe) {
         SearchRequest request =
-                safe == null ? new SearchRequest(null, null, null, null, null, null) : safe;
+                safe == null ? new SearchRequest(null, null, null, null, null, null, null) : safe;
         Filters filters = request.filters() == null ? emptyFilters() : request.filters();
         String keyword = normalizeKeyword(request.keyword());
         String orderClause = orderClauseOf(request.sort());
@@ -250,8 +285,34 @@ public class PatientSearchService {
                         filters.nextVisitTo(),
                         orderClause,
                         advanced.where(),
-                        advanced.binds());
+                        advanced.binds(),
+                        missingPatientIdsOf(request.completenessDrill()));
         return new SearchCriteriaBuilt(criteria, keyword, advanced);
+    }
+
+    /**
+     * 完整度钻取 ID 集（E19-T05）：按钻取筛选（卡片下发的同一棵条件树）重算缺该字段的患者； kind 非法 / fieldKey 空 40001；无钻取 → null
+     * （不过滤）。空集表示范围内没有缺该字段的患者（列表返回空，不报错）。
+     */
+    private List<Long> missingPatientIdsOf(CompletenessDrill drill) {
+        if (drill == null) {
+            return null;
+        }
+        CompletenessStatsService.Query query =
+                new CompletenessStatsService.Query(
+                        drill.wardId(),
+                        drill.patientType(),
+                        drill.from(),
+                        drill.to(),
+                        drill.timeField(),
+                        drill.year());
+        if ("BASELINE".equals(drill.kind())) {
+            return completenessStats.patientsMissingBaselineField(drill.fieldKey(), query);
+        }
+        if ("FOLLOWUP".equals(drill.kind())) {
+            return completenessStats.patientsMissingFollowupField(drill.fieldKey(), query);
+        }
+        throw invalid("completenessDrill.kind（BASELINE / FOLLOWUP）");
     }
 
     /** 筛选候选（列表页病区下拉；随访状态等枚举文案由前端 enums 维护）。 */

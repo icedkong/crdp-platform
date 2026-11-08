@@ -82,12 +82,67 @@ export function isKeywordValid(keyword: string): boolean {
 
 /** 组装后的检索请求体（docs/api/README.md §2.4 结构；condition 为高级检索条件树）。 */
 export interface PatientSearchPayload {
+  completenessDrill?: CompletenessDrill;
   condition?: ConditionGroup;
   filters: Record<string, unknown>;
   keyword?: string;
   pageNo: number;
   pageSize: number;
   sort?: PatientSortSpec[];
+}
+
+/**
+ * 完整度缺失字段钻取（E19-T05 / A-DASH-010、A-DASH-011「点击进入缺该字段的患者列表」）：
+ * 首页完整度卡片最常缺失字段下钻时由列表页按路由 query 组装（missingField / missingKind +
+ * 卡片筛选）；后端用与卡片同一计算的 ID 集过滤——卡片缺失人数 = 列表 total。清除标签即取消钻取。
+ */
+export interface CompletenessDrill {
+  fieldKey: string;
+  from?: string;
+  kind: 'BASELINE' | 'FOLLOWUP';
+  patientType?: string;
+  timeField?: string;
+  to?: string;
+  wardId?: number;
+  year?: number;
+}
+
+/** 路由 query 值形态（数组时取首个；非字符串视为缺省）。 */
+function queryText(value: unknown): null | string {
+  const first = Array.isArray(value) ? value[0] : value;
+  return typeof first === 'string' && first.length > 0 ? first : null;
+}
+
+/**
+ * 钻取路由 query → 检索钻取条件（missingFieldRoute 的逆过程）：
+ * missingField + missingKind（BASELINE / FOLLOWUP，缺省 BASELINE）+ 卡片筛选
+ * （wardId / patientType / timeField / from+to / year）；缺 missingField 返回 null（非钻取进入）。
+ */
+export function completenessDrillOfQuery(query: {
+  [key: string]: unknown;
+}): null | { drill: CompletenessDrill; label: string } {
+  const fieldKey = queryText(query.missingField);
+  if (!fieldKey) return null;
+  const kindText = queryText(query.missingKind);
+  const kind = kindText === 'FOLLOWUP' ? 'FOLLOWUP' : 'BASELINE';
+  const from = queryText(query.from);
+  const to = queryText(query.to);
+  const yearText = queryText(query.year);
+  const wardText = queryText(query.wardId);
+  const drill: CompletenessDrill = {
+    fieldKey,
+    kind,
+    patientType: queryText(query.patientType) ?? undefined,
+    timeField: queryText(query.timeField) ?? undefined,
+    from: from && to ? from : undefined,
+    to: from && to ? to : undefined,
+    wardId: wardText ? Number.parseInt(wardText, 10) : undefined,
+    year: yearText ? Number.parseInt(yearText, 10) : undefined,
+  };
+  return {
+    drill,
+    label: queryText(query.missingFieldLabel) ?? fieldKey,
+  };
 }
 
 /** 组装检索请求体：空筛选不进 filters；日期区间未选全不发送（后端按闭区间过滤）。 */
@@ -97,6 +152,7 @@ export function buildPatientSearchPayload(
   pageSize: number,
   sort?: PatientSortSpec,
   condition?: ConditionGroup,
+  completenessDrill?: CompletenessDrill,
 ): PatientSearchPayload {
   const payload: PatientSearchPayload = { pageNo, pageSize, filters: {} };
 
@@ -123,6 +179,9 @@ export function buildPatientSearchPayload(
   }
   if (condition && condition.items.length > 0) {
     payload.condition = condition;
+  }
+  if (completenessDrill) {
+    payload.completenessDrill = completenessDrill;
   }
   return payload;
 }

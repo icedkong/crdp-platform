@@ -1,7 +1,7 @@
 /**
- * E19-T02 / A-DASH-001、A-DASH-002、C-DASH-001；E19-T03 / A-DASH-003、004、005、008、C-DASH-003、008；
- * E19-T04 / A-DASH-006、A-DASH-012、C-DASH-004：
- * 首页指标卡、趋势图、任务看板、任务表与随访率卡片的类型与纯逻辑
+ * E19-T02 / A-DASH-001、A-DASH-002、C-DASH-001；E19-T03 / A-DASH-003、A-DASH-004、A-DASH-005、A-DASH-008、C-DASH-003、008；
+ * E19-T04 / A-DASH-006、A-DASH-012、C-DASH-004；E19-T05 / A-DASH-010、A-DASH-011、C-DASH-009：
+ * 首页指标卡、趋势图、任务看板、任务表、随访率卡片与数据完整度两卡的类型与纯逻辑
  * （接口契约 docs/api/stats.md §2、§3，后端 `com.crdp.followup.dashboard.api.DashboardCardController`；
  * 页面 pages.md §2 首页）。
  *
@@ -11,7 +11,9 @@
  * /followup/task?tab=all&status=…），不自行拼业务条件。数据源未落地的指标（C 的 ERI /
  * 扫描件随 E21）available=false，前端隐藏。随访率卡片（Q38 口径）数据时点 = 节点随访
  * 事实表最近一次每日刷新（asOf 回显）；点击数字下钻患者列表需要患者检索支持按随访
- * 年度 / 节点筛选，随 E19-T08 口径核对后接入（OQ-109①）。
+ * 年度 / 节点筛选，随 E19-T08 口径核对后接入（OQ-109①）。完整度两卡（Q39 / Q40 口径）
+ * 按当前数据实时计算（无 asOf），最常缺失字段经 `missingFieldRoute` 钻取患者列表
+ * （患者检索 completenessDrill 与卡片同一计算，E19-T05）。
  */
 import type { RouteLocationRaw } from 'vue-router';
 
@@ -318,3 +320,140 @@ export const TASK_TABLE_TABS: Array<{ label: string; value: TaskTableTab }> = [
   { label: '超时任务', value: 'OVERDUE' },
   { label: '我负责的任务', value: 'MINE' },
 ];
+
+// ---------------------------------------------------------------- 数据完整度卡片（E19-T05 / A-DASH-010、A-DASH-011、C-DASH-009）
+
+/** 完整度时间范围维度（基线 DISCHARGE 出院默认 / REGISTERED 登记；随访 VISIT 实际随访默认 / DISCHARGE）。 */
+export type CompletenessTimeField = 'DISCHARGE' | 'REGISTERED' | 'VISIT';
+
+/** 基线卡时间范围维度选项（A-DASH-010「默认按出院日期，可切换为登记日期」）。 */
+export const BASELINE_TIME_FIELD_OPTIONS: Array<{
+  label: string;
+  value: CompletenessTimeField;
+}> = [
+  { label: '出院日期', value: 'DISCHARGE' },
+  { label: '登记日期', value: 'REGISTERED' },
+];
+
+/** 随访卡时间范围维度选项（A-DASH-011「默认按实际随访日期，可切换为出院日期」）。 */
+export const FOLLOWUP_TIME_FIELD_OPTIONS: Array<{
+  label: string;
+  value: CompletenessTimeField;
+}> = [
+  { label: '实际随访日期', value: 'VISIT' },
+  { label: '出院日期', value: 'DISCHARGE' },
+];
+
+/** 完整度分布分段（Q39 / Q40 固定五段；顺序即展示顺序，label 与规格文案一致）。 */
+export interface CompletenessBand {
+  band: string;
+  count: number;
+  label: string;
+  pct: number;
+}
+
+/** 最常缺失字段行（点击进入缺该字段的患者列表——钻取条件由 missingFieldRoute 生成）。 */
+export interface CompletenessMissingField {
+  categoryKey: string;
+  fieldKey: string;
+  label: string;
+  missingCount: number;
+  missingRatePct: number;
+}
+
+/** 患者类型候选（范围内 DISTINCT 值；label = 编码，OQ-110⑤）。 */
+export interface CompletenessPatientTypeOption {
+  code: string;
+  label: string;
+}
+
+/** 完整度筛选（两卡共用形态；随随访年度 year 仅随访卡）。 */
+export interface CompletenessParams {
+  from?: string;
+  patientType?: string;
+  timeField?: CompletenessTimeField;
+  to?: string;
+  wardId?: number;
+  year?: number;
+}
+
+/** 基线资料完整度卡（A-DASH-010：平均值 / 中位数、五段分布、8 分类明细、最常缺失字段前 10）。 */
+export interface BaselineCompletenessCardView {
+  averagePct: number;
+  categories: Array<{
+    averagePct: number;
+    categoryKey: string;
+    label: string;
+    patientCount: number;
+  }>;
+  distribution: CompletenessBand[];
+  from?: null | string;
+  medianPct: number;
+  patientCount: number;
+  patientTypes: CompletenessPatientTypeOption[];
+  timeField: CompletenessTimeField;
+  to?: null | string;
+  topMissing: CompletenessMissingField[];
+  wardId?: null | number;
+}
+
+/** 随访资料完整度按年度行（Q40：已完成记录数、平均完整度、中位数、记录级分布）。 */
+export interface FollowupCompletenessYearRow {
+  averagePct: number;
+  distribution: CompletenessBand[];
+  label: string;
+  medianPct: number;
+  recordCount: number;
+  year: number;
+}
+
+/** 随访资料完整度卡（A-DASH-011：平均值与已统计记录数、按年度表格、最常缺失字段前 10）。 */
+export interface FollowupCompletenessCardView {
+  averagePct: number;
+  distribution: CompletenessBand[];
+  from?: null | string;
+  medianPct: number;
+  patientCount: number;
+  patientTypes: CompletenessPatientTypeOption[];
+  recordCount: number;
+  timeField: CompletenessTimeField;
+  to?: null | string;
+  topMissing: CompletenessMissingField[];
+  wardId?: null | number;
+  year?: null | number;
+  yearOptions: Array<{ label: string; year: number }>;
+  years: FollowupCompletenessYearRow[];
+}
+
+/** 随访年度下拉候选（label 带「第 N 年」）。 */
+export function followupYearOptions(
+  options: Array<{ label: string; year: number }>,
+): Array<{ label: string; value: number }> {
+  return options.map((item) => ({ label: item.label, value: item.year }));
+}
+
+/**
+ * 最常缺失字段 → 患者列表路由（A-DASH-010 / 011「点击进入缺该字段的患者列表」）：
+ * 患者列表按路由 query 组装 completenessDrill（kind = BASELINE / FOLLOWUP + 卡片筛选），
+ * 后端用同一计算给出 ID 集——卡片缺失人数 = 列表 total。
+ */
+export function missingFieldRoute(
+  kind: 'BASELINE' | 'FOLLOWUP',
+  field: CompletenessMissingField,
+  params: CompletenessParams,
+): RouteLocationRaw {
+  const query: Record<string, unknown> = {
+    missingField: field.fieldKey,
+    missingFieldLabel: field.label,
+    missingKind: kind,
+  };
+  if (params.wardId) query.wardId = params.wardId;
+  if (params.patientType) query.patientType = params.patientType;
+  if (params.timeField) query.timeField = params.timeField;
+  if (params.from && params.to) {
+    query.from = params.from;
+    query.to = params.to;
+  }
+  if (params.year !== undefined) query.year = params.year;
+  return { path: '/followup/patient', query };
+}

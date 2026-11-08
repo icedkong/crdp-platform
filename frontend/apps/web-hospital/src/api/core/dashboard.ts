@@ -1,15 +1,20 @@
 /**
- * E19-T02 / A-DASH-001、A-DASH-002、C-DASH-001；E19-T03 / A-DASH-003、004、005、008、C-DASH-003、008；
- * E19-T04 / A-DASH-006、A-DASH-012、C-DASH-004：
+ * E19-T02 / A-DASH-001、A-DASH-002、C-DASH-001；E19-T03 / A-DASH-003、A-DASH-004、A-DASH-005、A-DASH-008、C-DASH-003、008；
+ * E19-T04 / A-DASH-006、A-DASH-012、C-DASH-004；E19-T05 / A-DASH-010、A-DASH-011、C-DASH-009：
  * 首页卡片接口（docs/api/stats.md §2，后端 DashboardCardController；页面 pages.md §2 首页）。
  *
  * 权限 followup:dashboard:view（按钮 plt_menu 234，平台库 V59 / 种子 V129）；
  * 数据范围由后端 @DataScope 出行（范围内无患者返回全 0 / 空序列，不报错）。
  * 病区筛选（A-DASH-005）：wardId 为页面级参数全部卡片共用，候选 GET /wards 按登录快照取可见病区。
  * 随访率卡片（Q38 口径）数据来自节点随访事实表每日刷新，响应回显 asOf；逾期完成与补录计入已随访。
+ * 完整度两卡（Q39 / Q40 口径）按当前数据实时计算（无 asOf）；最常缺失字段钻取患者列表
+ * （患者检索 completenessDrill 与卡片同一计算）。
  */
 import type {
+  BaselineCompletenessCardView,
+  CompletenessParams,
   DashboardWardsView,
+  FollowupCompletenessCardView,
   KpiCardView,
   NodeRateCardView,
   NodeRateParams,
@@ -76,6 +81,30 @@ export function fetchYearlyRateCard(params: YearlyRateParams) {
 export function fetchNodeRateCard(params: NodeRateParams) {
   return requestClient.get<NodeRateCardView>(
     apiPath('/followup/dashboard/cards/node_rate'),
+    { params },
+  );
+}
+
+/**
+ * 基线资料完整度（baseline_completeness，A-DASH-010）：平均值 / 中位数、五段分布、8 分类明细、
+ * 最常缺失字段前 10；筛选 patientType 患者类型、from+to 时间范围（timeField 出院 DISCHARGE
+ * 默认 / 登记 REGISTERED）。按当前数据实时计算。
+ */
+export function fetchBaselineCompletenessCard(params: CompletenessParams) {
+  return requestClient.get<BaselineCompletenessCardView>(
+    apiPath('/followup/dashboard/cards/baseline_completeness'),
+    { params },
+  );
+}
+
+/**
+ * 随访资料完整度（followup_completeness，A-DASH-011 / Q40）：平均值与已统计记录数、按随访年度
+ * 表格、最常缺失字段前 10；筛选 patientType、from+to（timeField 实际随访日期 VISIT 默认 /
+ * 出院 DISCHARGE）、year 随访年度。
+ */
+export function fetchFollowupCompletenessCard(params: CompletenessParams) {
+  return requestClient.get<FollowupCompletenessCardView>(
+    apiPath('/followup/dashboard/cards/followup_completeness'),
     { params },
   );
 }

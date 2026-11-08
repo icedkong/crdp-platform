@@ -507,6 +507,7 @@ export type {
 } from './patient-registration';
 export {
   buildPatientSearchPayload,
+  completenessDrillOfQuery,
   emptyPatientFilters,
   hasActiveFilters,
   isKeywordValid,
@@ -517,6 +518,7 @@ export {
 } from './patient-search';
 
 export type {
+  CompletenessDrill,
   PatientFilterOptions,
   PatientFilterState,
   PatientSearchPage,

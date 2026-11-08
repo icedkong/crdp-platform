@@ -50,7 +50,8 @@ public interface PatientSearchMapper {
 
     /**
      * 检索条件（全部可空 = 不过滤；nameBlind / mrnBlind 同源于一个检索词，OR 匹配）。 advancedWhere / advancedBinds
-     * 为高级检索条件树的编译产物（参数化片段 + 参数位取值）。
+     * 为高级检索条件树的编译产物（参数化片段 + 参数位取值）。missingPatientIds 为完整度「缺该字段的患者」钻取的 ID 集 （E19-T05：由
+     * CompletenessStatsService 按卡片同一计算给出；空集 = 范围内没有缺该字段的患者 → 恒空结果）。
      */
     record SearchCriteria(
             String nameBlind,
@@ -69,7 +70,12 @@ public interface PatientSearchMapper {
             LocalDate nextVisitTo,
             String orderClause,
             String advancedWhere,
-            List<Object> advancedBinds) {}
+            List<Object> advancedBinds,
+            List<Long> missingPatientIds) {}
+
+    //
+    // 钻取 ID 过滤（search / count 两语句内联同款 <choose>）：有 ID → IN 预编译位；空集 → AND (1 = 0)
+    // （范围内无缺该字段的患者 → 空列表不报错，与数据范围「范围为空返回空结果」同语义）。
 
     /** 分页检索一页（排序子句由服务层白名单生成后经 ${} 注入，字段码不透传）。 */
     @DataScope(resource = "patient")
@@ -116,6 +122,13 @@ public interface PatientSearchMapper {
             <if test="c.advancedWhere != null">
               AND ${c.advancedWhere}
             </if>
+            <choose>
+              <when test="c.missingPatientIds != null and c.missingPatientIds.size() > 0">
+                AND p.id IN
+                <foreach collection="c.missingPatientIds" item="item" open="(" separator="," close=")">#{item}</foreach>
+              </when>
+              <when test="c.missingPatientIds != null">AND (1 = 0)</when>
+            </choose>
             ORDER BY ${c.orderClause}
             LIMIT #{offset}, #{limit}
             </script>
@@ -161,6 +174,13 @@ public interface PatientSearchMapper {
             <if test="c.advancedWhere != null">
               AND ${c.advancedWhere}
             </if>
+            <choose>
+              <when test="c.missingPatientIds != null and c.missingPatientIds.size() > 0">
+                AND p.id IN
+                <foreach collection="c.missingPatientIds" item="item" open="(" separator="," close=")">#{item}</foreach>
+              </when>
+              <when test="c.missingPatientIds != null">AND (1 = 0)</when>
+            </choose>
             </script>
             """)
     long count(@Param("c") SearchCriteria criteria);
