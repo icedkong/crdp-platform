@@ -1,14 +1,18 @@
 /**
- * E19-T02 / A-DASH-001、A-DASH-002、C-DASH-001：首页指标卡与趋势图的类型与纯逻辑
+ * E19-T02 / A-DASH-001、A-DASH-002、C-DASH-001；E19-T03 / A-DASH-003、004、005、008、C-DASH-003、008：
+ * 首页指标卡、趋势图、任务看板与任务表的类型与纯逻辑
  * （接口契约 docs/api/stats.md §2、§3，后端 `com.crdp.followup.dashboard.api.DashboardCardController`；
  * 页面 pages.md §2 首页）。
  *
- * 「数字与列表钻取一致」：后端卡片与列表接口共用同一条件树，响应内联每项指标的
- * 钻取目标（target + query）；前端用 `kpiMetricRoute` 把它换成列表页路由
- * （患者列表 /followup/patient?status=…、任务列表 /followup/task?tab=all&status=…），
- * 不自行拼业务条件。数据源未落地的指标（C 的 ERI / 扫描件随 E21）available=false，前端隐藏。
+ * 「数字与列表钻取一致」：后端卡片与列表接口共用同一条件树，响应内联每项指标 / 每列 /
+ * 每页签的钻取目标（target + query）；前端用 `kpiMetricRoute` / `boardColumnRoute` /
+ * `taskTableTabRoute` 把它换成列表页路由（患者列表 /followup/patient?status=…、任务列表
+ * /followup/task?tab=all&status=…），不自行拼业务条件。数据源未落地的指标（C 的 ERI /
+ * 扫描件随 E21）available=false，前端隐藏。
  */
 import type { RouteLocationRaw } from 'vue-router';
+
+import type { TaskRow } from './task';
 
 /** 一项指标的钻取目标（query 为列表页路由 query 参数）。 */
 export interface KpiDrill {
@@ -132,3 +136,111 @@ export function kpiMetricRoute(metric: KpiMetric): null | RouteLocationRaw {
 export function visibleKpiMetrics(metrics: KpiMetric[]): KpiMetric[] {
   return metrics.filter((metric) => metric.available);
 }
+
+// ---------------------------------------------------------------- 任务看板（E19-T03 / A-DASH-003、A-DASH-004、C-DASH-003）
+
+/** 看板筛选（A-DASH-004：我的 / 本病区 / 全部〔可见范围内〕；缺省我的，OQ-108）。 */
+export type BoardScope = 'ALL' | 'MINE' | 'WARD';
+
+/** 看板筛选选项（与任务列表页签同语义：mine / ward / all）。 */
+export const BOARD_SCOPE_OPTIONS: Array<{ label: string; value: BoardScope }> =
+  [
+    { label: '我的', value: 'MINE' },
+    { label: '本病区', value: 'WARD' },
+    { label: '全部', value: 'ALL' },
+  ];
+
+/** 看板一列（A-DASH-003 按状态分列；tasks 为前 20 张卡片，行同任务列表）。 */
+export interface TaskBoardColumn {
+  drill?: KpiDrill | null;
+  status: string;
+  tasks: TaskRow[];
+  title: string;
+  total: number;
+}
+
+/** 看板数据（doneColumn / doneFrom / doneTo = 已完成列口径：A 本月已完成 / C 本周完成）。 */
+export interface TaskBoardView {
+  columns: TaskBoardColumn[];
+  doneColumn: string;
+  doneFrom: string;
+  doneTo: string;
+  scope: BoardScope;
+}
+
+/** 看板请求参数（scope / assigneeId 为看板筛选；wardId 为页面级病区筛选）。 */
+export interface TaskBoardParams {
+  assigneeId?: number | string;
+  scope?: BoardScope;
+  wardId?: number;
+}
+
+// ---------------------------------------------------------------- 首页任务表（E19-T03 / A-DASH-008）
+
+/** 任务表页签编码（A-DASH-008：今日任务 / 超时任务 / 我负责的任务）。 */
+export type TaskTableTab = 'MINE' | 'OVERDUE' | 'TODAY';
+
+/** 任务表一个页签（页签上显示数量 total；drill 为「查看全部」的列表筛选）。 */
+export interface TaskTableTabView {
+  drill?: KpiDrill | null;
+  tab: TaskTableTab;
+  title: string;
+  total: number;
+}
+
+/** 任务表数据（当前页签前 10 行，行同任务列表——可直接进入随访工作台）。 */
+export interface TaskTableView {
+  items: TaskRow[];
+  tab: TaskTableTab;
+  tabs: TaskTableTabView[];
+  today: string;
+  total: number;
+}
+
+/** 任务表请求参数（tab 缺省 TODAY；wardId 为页面级病区筛选）。 */
+export interface TaskTableParams {
+  tab?: TaskTableTab;
+  wardId?: number;
+}
+
+// ---------------------------------------------------------------- 病区筛选（A-DASH-005 / C-DASH-008）
+
+/** 病区筛选候选（默认本人全部可见病区：快照病区清单交集，无清单时全部启用病区）。 */
+export interface DashboardWardOption {
+  id: string;
+  name: string;
+}
+
+/** 病区候选响应。 */
+export interface DashboardWardsView {
+  wards: DashboardWardOption[];
+}
+
+/** 带钻取目标的最小载体（列 / 页签共用；便于以最小对象调用路由函数）。 */
+export interface DrillCarrier {
+  drill?: KpiDrill | null;
+}
+
+/**
+ * 看板列「查看全部」→ 任务列表路由（A 规格 §9：每列前 20 张卡片，其余进任务列表）。
+ * 筛选参数由后端随列下发（tab / status / 完成时间窗口 / doctorId），前端只透传。
+ */
+export function boardColumnRoute(
+  column: DrillCarrier,
+): null | RouteLocationRaw {
+  if (!column.drill) return null;
+  return { path: '/followup/task', query: column.drill.query ?? {} };
+}
+
+/** 任务表页签「查看全部」→ 任务列表路由（今日任务带窗口当日、超时带状态、我负责进 MINE 页签）。 */
+export function taskTableTabRoute(tab: DrillCarrier): null | RouteLocationRaw {
+  if (!tab.drill) return null;
+  return { path: '/followup/task', query: tab.drill.query ?? {} };
+}
+
+/** 任务表页签定义（展示顺序 = A-DASH-008：今日任务 / 超时任务 / 我负责的任务）。 */
+export const TASK_TABLE_TABS: Array<{ label: string; value: TaskTableTab }> = [
+  { label: '今日任务', value: 'TODAY' },
+  { label: '超时任务', value: 'OVERDUE' },
+  { label: '我负责的任务', value: 'MINE' },
+];

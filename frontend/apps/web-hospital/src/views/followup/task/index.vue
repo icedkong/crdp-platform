@@ -52,6 +52,7 @@ import {
   ASSIGNEE_FILTER_OPTIONS,
   boardGroups,
   buildSearchPayload,
+  dateRangeOfQuery,
   dueRangeOfQuery,
   queryOfScope,
   recordFormPath,
@@ -101,15 +102,19 @@ const RangePicker = DatePicker.RangePicker;
 const scope = ref<TaskScope>(scopeOfQuery(route.query.tab));
 const filters = reactive({
   assignee: 'ALL' as AssigneeFilter,
+  completedRange: null as [string, string] | null,
   dueRange: null as [string, string] | null,
   status: undefined as null | TaskStatus[],
   wardIds: [] as number[],
+  windowRange: null as [string, string] | null,
 });
 const applied = ref({
   assignee: 'ALL' as AssigneeFilter,
+  completedRange: null,
   dueRange: null,
   status: null,
   wardIds: [],
+  windowRange: null,
 });
 const pageNo = ref(1);
 const pageSize = ref(sizes.tablePageSize);
@@ -180,9 +185,11 @@ function handleSearch() {
 
 function handleReset() {
   filters.assignee = 'ALL';
+  filters.completedRange = null;
   filters.dueRange = null;
   filters.status = null;
   filters.wardIds = [];
+  filters.windowRange = null;
   handleSearch();
 }
 
@@ -201,6 +208,22 @@ onMounted(() => {
   const dueRange = dueRangeOfQuery(route.query.dueFrom, route.query.dueTo);
   if (dueRange) {
     filters.dueRange = dueRange;
+  }
+  // E19-T03 首页钻取：任务表「今日任务」带 windowFrom=windowTo=当日、看板已完成列带
+  // completedFrom/completedTo（页面筛选条暂无控件，随「清除筛选」一并清空）
+  const windowRange = dateRangeOfQuery(
+    route.query.windowFrom,
+    route.query.windowTo,
+  );
+  if (windowRange) {
+    filters.windowRange = windowRange;
+  }
+  const completedRange = dateRangeOfQuery(
+    route.query.completedFrom,
+    route.query.completedTo,
+  );
+  if (completedRange) {
+    filters.completedRange = completedRange;
   }
   void load();
 });
@@ -343,6 +366,8 @@ const hasActiveFilters = computed(
     (applied.value.status?.length ?? 0) > 0 ||
     (applied.value.wardIds?.length ?? 0) > 0 ||
     Boolean(applied.value.dueRange) ||
+    Boolean(applied.value.windowRange) ||
+    Boolean(applied.value.completedRange) ||
     applied.value.assignee !== 'ALL',
 );
 

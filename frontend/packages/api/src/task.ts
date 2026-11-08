@@ -95,6 +95,9 @@ export interface TaskPage {
 
 /** 检索请求（docs/api/followup.md §2；scope 缺省 MINE 我的待办 = 未完成四态）。 */
 export interface TaskSearchRequest {
+  /** 完成时间区间闭端（E19-T03 看板已完成列钻取，DATE(completed_at)；页面筛选条暂不提供）。 */
+  completedFrom?: null | string;
+  completedTo?: null | string;
   doctorId?: number | string;
   dueFrom?: null | string;
   dueTo?: null | string;
@@ -108,6 +111,9 @@ export interface TaskSearchRequest {
   /** 只看待认领（assignee NULL，病区公共池，A-FU-009 / E15-T03）。 */
   unassigned?: boolean;
   wardIds?: null | number[];
+  /** 窗口包含区间（E19-T03 任务表「今日任务」钻取：window_start ≤ windowTo 且 window_end ≥ windowFrom）。 */
+  windowFrom?: null | string;
+  windowTo?: null | string;
 }
 
 /** 队列结果（表单页「上一条 / 下一条」，尽头 null）。 */

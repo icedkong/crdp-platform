@@ -68,13 +68,23 @@ export function statusOfQuery(
 /**
  * 路由 query dueFrom / dueTo → 计划日期窗口筛选（E19-T02 指标卡钻取入口：首页点「本月应随访」
  * 带 tab=all&dueFrom&dueTo 进任务列表）；两端齐备才作为区间（半选不筛选），非法日期丢弃。
+ * dateRangeOfQuery 同时服务 E19-T03 的窗口（windowFrom/windowTo）与完成时间
+ * （completedFrom/completedTo）钻取参数（首页任务看板 / 任务表「查看全部」）。
  */
 export function dueRangeOfQuery(
   dueFrom: null | string | string[],
   dueTo: null | string | string[],
 ): [string, string] | null {
-  const from = Array.isArray(dueFrom) ? dueFrom[0] : dueFrom;
-  const to = Array.isArray(dueTo) ? dueTo[0] : dueTo;
+  return dateRangeOfQuery(dueFrom, dueTo);
+}
+
+/** 路由 query 日期区间 → 筛选区间（两端齐备且合法才生效；页面筛选条暂无对应控件，仅钻取入口）。 */
+export function dateRangeOfQuery(
+  fromValue: null | string | string[],
+  toValue: null | string | string[],
+): [string, string] | null {
+  const from = Array.isArray(fromValue) ? fromValue[0] : fromValue;
+  const to = Array.isArray(toValue) ? toValue[0] : toValue;
   if (!from || !to) return null;
   const datePattern = /^\d{4}-\d{2}-\d{2}$/;
   if (!datePattern.test(from) || !datePattern.test(to)) return null;
@@ -92,10 +102,12 @@ export type AssigneeFilter = (typeof ASSIGNEE_FILTER_OPTIONS)[number]['value'];
 /** 检索请求装配（页签 + 状态 / 病区 / 计划日期窗口 / 负责人筛选；MINE 未显式选状态时不传 status——后端按未完成四态取）。 */
 export function buildSearchPayload(input: {
   assignee: AssigneeFilter;
+  completedRange?: [string, string] | null;
   dueRange?: [string, string] | null;
   scope: TaskScope;
   status: null | TaskStatus[];
   wardIds: number[];
+  windowRange?: [string, string] | null;
 }): TaskSearchRequest {
   const payload: TaskSearchRequest = { scope: input.scope };
   if (input.status && input.status.length > 0) {
@@ -107,6 +119,19 @@ export function buildSearchPayload(input: {
   if (input.dueRange && input.dueRange[0] && input.dueRange[1]) {
     payload.dueFrom = input.dueRange[0];
     payload.dueTo = input.dueRange[1];
+  }
+  // E19-T03 首页钻取专用（页面筛选条暂无控件）：窗口包含区间与完成时间区间
+  if (input.windowRange && input.windowRange[0] && input.windowRange[1]) {
+    payload.windowFrom = input.windowRange[0];
+    payload.windowTo = input.windowRange[1];
+  }
+  if (
+    input.completedRange &&
+    input.completedRange[0] &&
+    input.completedRange[1]
+  ) {
+    payload.completedFrom = input.completedRange[0];
+    payload.completedTo = input.completedRange[1];
   }
   if (input.assignee === 'UNASSIGNED') {
     payload.unassigned = true;
@@ -163,16 +188,24 @@ export function recordFormPath(
   }
   if (filter.dueFrom) params.set('dueFrom', filter.dueFrom);
   if (filter.dueTo) params.set('dueTo', filter.dueTo);
+  if (filter.windowFrom) params.set('windowFrom', filter.windowFrom);
+  if (filter.windowTo) params.set('windowTo', filter.windowTo);
+  if (filter.completedFrom) params.set('completedFrom', filter.completedFrom);
+  if (filter.completedTo) params.set('completedTo', filter.completedTo);
   if (filter.unassigned) params.set('unassigned', '1');
   return `/followup/record/${recordId}?${params.toString()}`;
 }
 
 /** 表单页侧的队列筛选还原（recordFormPath 的逆过程；scope 或 tab 均可）。 */
 export function queueFilterOfQuery(query: Record<string, unknown>): {
+  completedFrom?: string;
+  completedTo?: string;
   scope: TaskScope;
   status?: TaskStatus[];
   unassigned?: boolean;
   wardIds?: number[];
+  windowFrom?: string;
+  windowTo?: string;
 } {
   const scopeRaw =
     (query.scope as null | string) ?? (query.tab as null | string);
@@ -187,11 +220,23 @@ export function queueFilterOfQuery(query: Record<string, unknown>): {
   const wardIds = wardIdsRaw
     .map((item) => Number.parseInt(String(item), 10))
     .filter((item) => Number.isInteger(item) && item > 0);
+  const window = dateRangeOfQuery(
+    query.windowFrom as null | string,
+    query.windowTo as null | string,
+  );
+  const completed = dateRangeOfQuery(
+    query.completedFrom as null | string,
+    query.completedTo as null | string,
+  );
   return {
+    completedFrom: completed?.[0],
+    completedTo: completed?.[1],
     scope,
     status,
     unassigned: query.unassigned === '1' || query.unassigned === 'true',
     wardIds: wardIds.length > 0 ? wardIds : undefined,
+    windowFrom: window?.[0],
+    windowTo: window?.[1],
   };
 }
 

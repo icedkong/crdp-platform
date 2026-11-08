@@ -31,24 +31,32 @@ import {
   Spin,
 } from 'ant-design-vue';
 
-import { fetchKpiCard, fetchTrendCard } from '#/api/core/dashboard';
+import {
+  fetchDashboardWards,
+  fetchKpiCard,
+  fetchTrendCard,
+} from '#/api/core/dashboard';
 import StatCard from '#/components/followup/stat-card.vue';
 import { useBreakpoint } from '#/reference/use-breakpoint';
 import { usePermission } from '#/reference/use-permission';
 
 import { defaultTrendRange, metricIcon, trendChartOption } from './logic';
+import TaskArea from './task-area.vue';
 
 defineOptions({ name: 'HospitalDashboard' });
 
 /**
- * E19-T02 / A-DASH-001、A-DASH-002、C-DASH-001 · 首页（pages.md §2）：
- * 第一行指标卡（A 七项 / C 七项按租户 implant 开关）、第二行趋势图
- * （时间维度 / 粒度 / 分组 / 时间范围可切换，默认手术日期 · 月 · 不分组 · 最近 24 个月）。
+ * E19-T02 / A-DASH-001、A-DASH-002、C-DASH-001 · E19-T03 / A-DASH-003、004、005、008、C-DASH-003、008 ·
+ * 首页（pages.md §2）：第一行指标卡（A 七项 / C 七项按租户 implant 开关）、第二行趋势图
+ * （时间维度 / 粒度 / 分组 / 时间范围可切换，默认手术日期 · 月 · 不分组 · 最近 24 个月）、
+ * 第三行任务区（看板 / 任务表切换，task-area 组件）。
  *
- * 数字与列表钻取一致：钻取目标与筛选参数由后端随指标下发（同一条件树），
- * 前端只透传路由 query；范围内无患者时后端返回全 0（不报错）。
- * 任务区（看板 / 任务表）、每年随访率、完整度卡片随 E19-T03 ~ E19-T05 进同一页；
- * 病区筛选（A-DASH-005）与卡片设置（A-DASH-013/014）随后续任务接入。
+ * 病区筛选（A-DASH-005）：头部「病区 [全部▾]」全页共用——候选 = 本人全部可见病区
+ * （GET /dashboard/wards 按登录快照），未选 = 全部可见病区；切换后指标卡 / 趋势图 /
+ * 任务区联动重载（行级隔离由后端 @DataScope 出行，选到范围外病区结果恒为空）。
+ * 数字与列表钻取一致：钻取目标与筛选参数由后端随指标下发（同一条件树），前端只透传
+ * 路由 query；范围内无患者时后端返回全 0（不报错）。每年随访率、完整度卡片随
+ * E19-T04 ~ T05 进同一页；卡片设置（A-DASH-013/014）随后续任务接入。
  * 权限 followup:dashboard:view（按钮 234）；无权限只隐藏卡片不报错。
  */
 const router = useRouter();
@@ -59,6 +67,31 @@ const responsive = false;
 const title = '首页';
 
 const RangePicker = DatePicker.RangePicker;
+
+// ---------------------------------------------------------------- 病区筛选（A-DASH-005 / C-DASH-008）
+
+const wardId = ref<number | undefined>();
+const wardOptions = ref<Array<{ label: string; value: number }>>([]);
+
+async function loadWardOptions() {
+  try {
+    const view = await fetchDashboardWards();
+    wardOptions.value = view.wards.map((item) => ({
+      label: item.name,
+      value: Number(item.id),
+    }));
+  } catch {
+    // 候选加载失败不阻断首页（不选病区 = 全部可见病区）
+  }
+}
+
+/** 病区切换：全页联动重载（A-DASH-005「全页按所选病区统计」）。 */
+function handleWardChange() {
+  if (canViewCards.value) {
+    void loadKpi();
+    void loadTrend();
+  }
+}
 
 // ---------------------------------------------------------------- 指标卡（A-DASH-001 / C-DASH-001）
 
@@ -72,7 +105,7 @@ const metrics = computed(() =>
 async function loadKpi() {
   kpiLoading.value = true;
   try {
-    kpi.value = await fetchKpiCard();
+    kpi.value = await fetchKpiCard(wardId.value);
   } catch {
     message.error('首页指标加载失败，请稍后重试');
   } finally {
@@ -113,6 +146,7 @@ async function loadTrend() {
       groupBy: trendFilters.groupBy,
       timeDimension: trendFilters.timeDimension,
       to: trendFilters.range?.[1] ?? fallback.to,
+      wardId: wardId.value,
     });
     renderEcharts(trendChartOption(trend.value));
   } catch {
@@ -127,6 +161,7 @@ async function loadTrend() {
 function loadAll() {
   // 首页不在 5 个响应式页面内：手机显示 MobileBlocker（OQ-24）
   if (isMobile.value && !responsive) return;
+  void loadWardOptions();
   if (canViewCards.value) {
     void loadKpi();
     void loadTrend();
@@ -152,7 +187,19 @@ onActivated(loadAll);
     </template>
   </Result>
   <div v-else class="page">
-    <h1 class="crdp-page-title">{{ title }}</h1>
+    <div class="title-row">
+      <h1 class="crdp-page-title">{{ title }}</h1>
+      <!-- 病区筛选（A-DASH-005 / C-DASH-008）：全页共用，未选 = 本人全部可见病区 -->
+      <Select
+        v-model:value="wardId"
+        allow-clear
+        :options="wardOptions"
+        placeholder="全部病区"
+        :style="{ width: 180 }"
+        data-testid="dashboard-ward"
+        @change="handleWardChange"
+      />
+    </div>
 
     <template v-if="canViewCards">
       <!-- 第一行：指标卡（点击进入对应列表，pages.md §2） -->
@@ -228,6 +275,9 @@ onActivated(loadAll);
           />
         </Spin>
       </Card>
+
+      <!-- 第三行：任务区（看板 / 任务表切换，A-DASH-003、008；病区筛选联动） -->
+      <TaskArea :ward-id="wardId" />
     </template>
 
     <Empty
@@ -246,6 +296,13 @@ onActivated(loadAll);
   padding: 16px;
 }
 
+.title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
 .kpi-row {
   margin-bottom: 16px;
 }
@@ -255,6 +312,7 @@ onActivated(loadAll);
 }
 
 .trend-card {
+  margin-bottom: 16px;
   border-radius: 8px;
 }
 </style>

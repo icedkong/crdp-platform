@@ -4,7 +4,8 @@
  * 锁定：路由 query 与页签互转（默认我的待办）；MINE 未显式选状态时不传 status
  * （后端按未完成四态取）；看板按状态分四列；录入入口只对未完成 FORM 任务开放
  * （已有关联草稿直接用 recordId，否则先 start）；录入链接携带当前筛选供
- * 「上一条 / 下一条」还原队列。
+ * 「上一条 / 下一条」还原队列；E19-T03 起窗口（windowFrom/windowTo）与完成
+ * 时间（completedFrom/completedTo）钻取参数同样随链接往返。
  */
 import type { TaskRow } from '@crdp/api';
 
@@ -13,6 +14,7 @@ import { describe, expect, it } from 'vitest';
 import {
   boardGroups,
   buildSearchPayload,
+  dateRangeOfQuery,
   dueRangeOfQuery,
   queryOfScope,
   queueFilterOfQuery,
@@ -201,5 +203,68 @@ describe('dueRangeOfQuery（E19-T02 指标卡钻取「本月应随访」进任�
     expect(dueRangeOfQuery(null, '2026-11-30')).toBeNull();
     expect(dueRangeOfQuery('2026/11/01', '2026-11-30')).toBeNull();
     expect(dueRangeOfQuery('2026-12-01', '2026-11-30')).toBeNull();
+  });
+});
+
+describe('dateRangeOfQuery / 窗口与完成时间钻取（E19-T03 首页任务区「查看全部」）', () => {
+  it('窗口区间解析（今日任务钻取带 windowFrom=windowTo=当日）', () => {
+    expect(dateRangeOfQuery('2026-11-08', '2026-11-08')).toEqual([
+      '2026-11-08',
+      '2026-11-08',
+    ]);
+    expect(dateRangeOfQuery('2026-11-01', null)).toBeNull();
+  });
+
+  it('完成时间区间解析（看板已完成列钻取带当月闭区间）', () => {
+    expect(dateRangeOfQuery('2026-11-01', '2026-11-30')).toEqual([
+      '2026-11-01',
+      '2026-11-30',
+    ]);
+    expect(dateRangeOfQuery('11-01', '2026-11-30')).toBeNull();
+  });
+
+  it('buildSearchPayload 装配窗口与完成时间（页面筛选条暂无控件，仅钻取入口）', () => {
+    const payload = buildSearchPayload({
+      assignee: 'ALL',
+      completedRange: ['2026-11-01', '2026-11-30'],
+      dueRange: null,
+      scope: 'ALL',
+      status: ['COMPLETED'],
+      wardIds: [],
+      windowRange: ['2026-11-08', '2026-11-08'],
+    });
+    expect(payload).toMatchObject({
+      completedFrom: '2026-11-01',
+      completedTo: '2026-11-30',
+      scope: 'ALL',
+      status: ['COMPLETED'],
+      windowFrom: '2026-11-08',
+      windowTo: '2026-11-08',
+    });
+  });
+
+  it('录入链接随窗口 / 完成时间往返（表单页队列顺当前列表）', () => {
+    const path = recordFormPath('5001', {
+      completedFrom: '2026-11-01',
+      completedTo: '2026-11-30',
+      scope: 'ALL',
+      status: ['COMPLETED'],
+      windowFrom: '2026-11-08',
+      windowTo: '2026-11-08',
+    });
+    const query: Record<string, unknown> = {};
+    for (const [key, value] of new URLSearchParams(path.split('?')[1])) {
+      query[key] = value;
+    }
+    expect(path).toContain('record/5001');
+    expect(query.windowFrom).toBe('2026-11-08');
+    expect(query.completedFrom).toBe('2026-11-01');
+    expect(queueFilterOfQuery(query)).toMatchObject({
+      completedFrom: '2026-11-01',
+      completedTo: '2026-11-30',
+      scope: 'ALL',
+      windowFrom: '2026-11-08',
+      windowTo: '2026-11-08',
+    });
   });
 });
