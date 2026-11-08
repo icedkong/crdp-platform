@@ -46,6 +46,9 @@ frontend/.stylelintcache
 crash.log
 .terraform/
 
+# E22-T06 单院恢复工作目录（含租户库转储，数据不得入库）
+restore-work/
+
 # Uploaded source documents (not part of the skeleton)
 uploads/
 

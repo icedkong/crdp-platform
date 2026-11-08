@@ -46,6 +46,10 @@ jobs:
         run: mvn -B -f backend/pom.xml spotless:check test
         env:
           CRDP_IT_MYSQL_PORT: "13306"
+      # E22-T06：单院恢复脚本。静态校验（护栏 / 五阶段 / 注册表切换）+ 在 compose MySQL 上
+      # 用虚构租户 rstcheck 演练「PITR 快照 → 导出 → 导入 → 切换注册表 → 回滚」全流程。
+      - name: 单院恢复脚本校验与本地演练
+        run: python3 scripts/check_restore_script.py --drill
       - name: 关闭依赖容器
         if: always()
         run: docker compose down -v
