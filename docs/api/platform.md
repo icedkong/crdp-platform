@@ -125,7 +125,7 @@ E20-T01 落地口径（PLT-VIEW-001、004、005、006）：
 - **会话台账** `plt_view_session`（迁移 V50）：会话号 = 视角令牌 SHA-256 前 16 位（与登录会话号同款单向推导）；进入 / 退出 / 被拒进入写平台访问审计 `aud_platform_access_log`（action=`VIEW_ENTER` / `VIEW_EXIT`，OQ-58 ⑥ 写入侧已接）；页面 / 查询 / 被拒 / 代为操作计数列随 E20-T03 起递增。
 - **会话时长（PLT-VIEW-004）**：单次最长 2 小时（`SessionPrincipal.absoluteSeconds=7200` 冻结进会话，优先于全局 12 小时）、空闲 15 分钟（平台端口径）——由 Redis TTL 执行，令牌到时即失效（下一次请求 40100）；台账收尾（到时 / 空闲超时）由调度 `TenantViewScheduler` 每分钟补记结束方式。
 - **授权（PLT-VIEW-005、006）**：角色六字段 + `plt_role_view_tenant`（SPECIFIED 清单）+ `plt_account_tenant`（账号负责租户，V50）；多角色取并集（任一 ALL → 任意租户；否则 负责租户 ∪ 指定清单）；租户列表 / 详情行带 `viewEnterable`（角色可进入 + 范围内 + 未注销）供前端显隐「进入租户视角」。负责关系、角色视角授权、账号角色 / 状态、密码重置变化 → 进行中的视角会话按「权限变更」立即结束。
-- **视角令牌（TENANT_VIEW）**：平台账号以自身身份进入（不借用医院用户）；医院端装壳（菜单 / 横幅 / 退出）已由 **E20-T04** 落地（下节），脱敏 / 设盲 / 只读执行（PLT-VIEW-010..012）随 E20-T03——视角令牌带 `SESSION_VIEW` 端别权限，只能调医院端装壳接口（me / codes / menus / view/session），对其余 `/api/hospital/**` 业务接口与 `/api/platform/**` 一律 40300（fail closed）。权限码 `platform:view:enter`（按钮 143）/ `platform:view:grant:edit`（按钮 144）经 V50 登记、种子 V107 授予全部预置角色（四角色默认「可进入」均为是）。
+- **视角令牌（TENANT_VIEW）**：平台账号以自身身份进入（不借用医院用户）；医院端装壳（菜单 / 横幅 / 退出）已由 **E20-T04** 落地（下节），脱敏 / 设盲 / 只读执行（PLT-VIEW-010..012）已由 **E20-T03** 落地（见「E20-T03 落地口径」）——视角令牌带 `SESSION_VIEW` 端别权限，可调医院端装壳接口与**只读**业务接口（按视角规则脱敏 / 设盲后返回）；写 / 明文 / 导出下载 / 原件预览一律 40303（fail closed），`/api/platform/**` 与 `/api/hospital/auth/**` 仍只接受对应端会话（40300）。权限码 `platform:view:enter`（按钮 143）/ `platform:view:grant:edit`（按钮 144）经 V50 登记、种子 V107 授予全部预置角色（四角色默认「可进入」均为是）。
 
 E20-T04 落地口径（PLT-VIEW-002、003）：
 
@@ -141,11 +141,16 @@ E20-T02 落地口径（PLT-VIEW-007、008、009）：
 - **生效规则版本**：进入视角时 `plt_view_session.rule_version` 写 ACTIVE 规则集内容哈希（SHA-256 前 16 位，V50 预留列写实值），规则一变即换值供审计对账；规则变更不结束进行中的会话（下一次请求按新规则执行，platform-spec §8）。
 - **权限码**：`platform:view:rule:view`（菜单 147）/ `platform:view:rule:edit`（按钮 148）经 V56 登记、种子 V109 授予 PLATFORM_ADMIN（默认仅平台管理员配置，V104 职责口径）；变更写平台访问审计 `VIEW_RULE_*`（审计中心「视角规则变更」页签，OQ-56 ④）。
 
-视角令牌在医院端的执行（PLT-VIEW-010..013、017、018）：
+E20-T03 落地口径（PLT-VIEW-010、011、012，验收「只读视角写接口全部拒绝」）：
 
-- 视角令牌访问 `/api/hospital/**` 时会话类型为 `TENANT_VIEW`（OQ-09 已定论）；菜单与页面与租户一致（PLT-VIEW-002，E20-T04）。
-- 字段脱敏、设盲、只读在**后端**执行；写接口默认返回 40303，除非平台角色允许“代为配置”“代重置密码”“编辑业务数据”。
-- 视角审计**只写平台库**，不写租户审计（PLT-VIEW-016）。
+- **只读执行（PLT-VIEW-012）**：视角令牌对 `/api/hospital/**` 的新增、修改、删除与批量接口一律 **40303**（`TenantViewGuardFilter`，文案「租户视角只读，禁止写入」）——规则 `operation=EDITABLE` 的受控放行（代为配置 / 代重置密码 / 编辑业务数据的二次确认与前后值记录，PLT-VIEW-013、017、018）随 E20-T06，在此之前不开任何口子（fail closed）。导出 / 下载接口按规则 `allowExport` 单独控制（默认禁止，40303「租户视角禁止导出与下载」）；明文查看专用接口（`followup:patient:plain`）对视角一律 40303；文件预览 / 下载**签发口**（`GET /api/hospital/files/{id}/preview-url`、`/download-url`）一律 40303（报告单与电子化资料原件对视角隐藏，PLT-VIEW-008）。
+- **读放行**：GET / HEAD 与只读动作（权限码第三段 `view`，含复杂查询 `POST .../search`，登记多候选码任一 view 即读）放行；医院权限码对视角会话不适用（平台账号无医院授权，`ApiResourceGuardFilter` / `PermissionAuthorizationAspect` 的视角分支），`@RequireReauth` 接口（如审计敏感查询）仍按 40304 自行拦截；模块开关按**该院实时**开通状态判 40301（与视角菜单同口径）。放行读写平台访问审计 `VIEW_QUERY` 并递增台账 `query_count`（`GET /api/hospital/menus` 记 `page_count`）；被拒写 `VIEW_DENIED`（result=DENIED + 原因）并递增 `denied_count`。
+- **脱敏 / 设盲执行（PLT-VIEW-010、011）**：响应装配点经 `TenantViewFieldGuard`（实现 `ViewRuleFieldGuard`，与效果预览共用 `ViewRuleResolver`——预览值即执行值）按视角规则落值：`MASKED` / `PLAIN` 保留（已脱敏的）值——列表只输出脱敏值是平台铁律（AGENTS.md §5.3），视角规则的 PLAIN 不放宽列表明文；`BLINDED` 替换为「已设盲」占位（结构字段如录音清单等同隐藏）；`HIDDEN` 不返回。已接入装配点：患者列表与概览的姓名 / 病案号（`PatientSearchService` / `PatientOverviewService`）、报告单列表的姓名 / 病案号与首附件缩略（`ReportSearchService`，原件隐藏时 `firstFile=null`、条数 `fileCount` 保留）、联系记录的录音清单（`ContactLogService`，隐藏时空列表）；用户手机号本就只回脱敏值（`phoneMasked`）。RCT 分组 / 随机表 / 揭盲信息字段目录先行（模块留空），rct 模块上线后接口落地即自动命中。规则变更即时生效（下一次请求按新规则执行，platform-spec §8）。
+- **视角审计只写平台库**，不写租户审计（PLT-VIEW-016；查询的「对象与条数」明细随 E20-T05）。
+
+视角令牌在医院端的后续执行（PLT-VIEW-013、017、018）：
+
+- 代为配置、代重置密码与编辑业务数据为**可分配权限**（角色 `view_can_configure` / `view_can_reset_password` / `view_can_edit_business`，V20/V104），受控放行（规则 `EDITABLE` ∧ 角色授权 ∧ 二次确认 ∧ 前后值审计）随 **E20-T06**。
 
 ## 7. 平台配置（PLT-CFG-001/003/005/006/007/009/010/011）
 

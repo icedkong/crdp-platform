@@ -7,6 +7,7 @@ import com.crdp.framework.audit.AuditEntry;
 import com.crdp.framework.audit.AuditLogger;
 import com.crdp.framework.crypto.CryptoService;
 import com.crdp.framework.fieldpolicy.SensitiveValueMasker;
+import com.crdp.framework.fieldpolicy.TenantViewFieldGuard;
 import com.crdp.framework.web.ApiException;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -58,18 +59,21 @@ public class PatientSearchService {
     private final CryptoService crypto;
     private final AuditLogger audit;
     private final PatientSearchFieldService searchFields;
+    private final TenantViewFieldGuard viewGuard;
 
     public PatientSearchService(
             PatientSearchGateway gateway,
             PatientMapper patientMapper,
             CryptoService crypto,
             AuditLogger audit,
-            PatientSearchFieldService searchFields) {
+            PatientSearchFieldService searchFields,
+            TenantViewFieldGuard viewGuard) {
         this.gateway = gateway;
         this.patientMapper = patientMapper;
         this.crypto = crypto;
         this.audit = audit;
         this.searchFields = searchFields;
+        this.viewGuard = viewGuard;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -261,14 +265,23 @@ public class PatientSearchService {
 
     // ---------------------------------------------------------------- 内部
 
-    /** 行视图：姓名 / 病案号解密后脱敏（列表不提供逐行明文，明文走 E07-T05 专用接口）。 */
+    /**
+     * 行视图：姓名 / 病案号解密后脱敏（列表不提供逐行明文，明文走 E07-T05 专用接口）。 租户视角会话再经视角规则执行点（E20-T03 /
+     * PLT-VIEW-010、011）：设盲替换「已设盲」、隐藏不返回，脱敏 / 明文规则保留脱敏值（视角不放宽列表明文）。
+     */
     private PatientRowView toView(PatientSearchMapper.PatientRowRaw row) {
         String name = decrypt(row.nameCipher());
         String mrn = decrypt(row.mrnCipher());
         return new PatientRowView(
                 String.valueOf(row.id()),
-                name == null ? "" : SensitiveValueMasker.mask("name", name),
-                mrn == null ? "" : SensitiveValueMasker.mask("medicalRecordNo", mrn),
+                viewGuard.apply(
+                        "patient",
+                        "name",
+                        name == null ? "" : SensitiveValueMasker.mask("name", name)),
+                viewGuard.apply(
+                        "patient",
+                        "medicalRecordNo",
+                        mrn == null ? "" : SensitiveValueMasker.mask("medicalRecordNo", mrn)),
                 row.legacyNo(),
                 row.gender(),
                 row.age(),

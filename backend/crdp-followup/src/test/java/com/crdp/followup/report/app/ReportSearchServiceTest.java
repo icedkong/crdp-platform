@@ -25,6 +25,7 @@ import com.crdp.form.record.app.FormService;
 import com.crdp.framework.audit.AuditEntry;
 import com.crdp.framework.audit.AuditLogger;
 import com.crdp.framework.crypto.CryptoService;
+import com.crdp.framework.fieldpolicy.TenantViewFieldGuard;
 import com.crdp.framework.security.SessionPrincipal;
 import com.crdp.framework.web.ApiException;
 import java.time.LocalDate;
@@ -54,7 +55,14 @@ class ReportSearchServiceTest {
     private final AuditLogger audit = mock(AuditLogger.class);
 
     private final ReportSearchService service =
-            new ReportSearchService(mapper, config, patients, formService, crypto, audit);
+            new ReportSearchService(
+                    mapper,
+                    config,
+                    patients,
+                    formService,
+                    crypto,
+                    audit,
+                    TenantViewFieldGuard.passthrough());
 
     @BeforeEach
     void login() {

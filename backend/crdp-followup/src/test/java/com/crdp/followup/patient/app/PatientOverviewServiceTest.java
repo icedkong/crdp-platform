@@ -17,6 +17,7 @@ import com.crdp.followup.patient.infra.mapper.PatientStatusHistoryMapper;
 import com.crdp.followup.record.infra.mapper.FollowupRecordMapper;
 import com.crdp.followup.task.infra.mapper.FollowupTaskQueryMapper;
 import com.crdp.framework.crypto.CryptoService;
+import com.crdp.framework.fieldpolicy.TenantViewFieldGuard;
 import com.crdp.framework.security.ScopeSnapshot;
 import com.crdp.framework.security.SessionPrincipal;
 import com.crdp.framework.web.ApiException;
@@ -53,7 +54,12 @@ class PatientOverviewServiceTest {
 
     private final PatientOverviewService service =
             new PatientOverviewService(
-                    gateway, statusGateway, taskQueryMapper, recordMapper, crypto);
+                    gateway,
+                    statusGateway,
+                    taskQueryMapper,
+                    recordMapper,
+                    crypto,
+                    TenantViewFieldGuard.passthrough());
 
     @BeforeEach
     void login() {

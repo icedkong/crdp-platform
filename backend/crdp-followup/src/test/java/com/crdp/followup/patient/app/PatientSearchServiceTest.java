@@ -19,6 +19,7 @@ import com.crdp.followup.patient.infra.mapper.PatientSearchMapper;
 import com.crdp.framework.audit.AuditEntry;
 import com.crdp.framework.audit.AuditLogger;
 import com.crdp.framework.crypto.CryptoService;
+import com.crdp.framework.fieldpolicy.TenantViewFieldGuard;
 import com.crdp.framework.security.ScopeSnapshot;
 import com.crdp.framework.security.SessionPrincipal;
 import com.crdp.framework.web.ApiException;
@@ -54,7 +55,13 @@ class PatientSearchServiceTest {
     private final PatientSearchFieldService searchFields = mock(PatientSearchFieldService.class);
 
     private final PatientSearchService service =
-            new PatientSearchService(gateway, patientMapper, crypto, audit, searchFields);
+            new PatientSearchService(
+                    gateway,
+                    patientMapper,
+                    crypto,
+                    audit,
+                    searchFields,
+                    TenantViewFieldGuard.passthrough());
 
     @BeforeEach
     void login() {

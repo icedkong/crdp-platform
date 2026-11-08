@@ -47,8 +47,8 @@ import org.springframework.test.context.ActiveProfiles;
  *       台账按「到时」关账并写 VIEW_EXIT 审计。
  *   <li>权限边界：无 platform:view:enter 的角色 40300 + 被拒尝试也写平台访问审计；退出他人会话 40400。
  *   <li>医院端视角外壳（E20-T04 / PLT-VIEW-002、003，验收：视角中页面顶部常驻标识）：进入凭据一次性（60 秒）→ 医院端凭 ticket 换视角令牌（只出现一次）→
- *       me/codes/menus 装壳（TENANT_VIEW、菜单与该院一致、无业务权限码）→ 横幅会话信息 → 一键退出（ENDED / 主动退出 + VIEW_EXIT）；业务接口
- *       40300（fail closed，E20-T03 放开）。
+ *       me/codes/menus 装壳（TENANT_VIEW、菜单与该院一致、无业务权限码）→ 横幅会话信息 → 一键退出（ENDED / 主动退出 +
+ *       VIEW_EXIT）；业务读接口 随 E20-T03 放行（只读执行见 PlatformTenantViewExecutionMySqlIT）。
  *   <li>仅配置类（E20-T04 / PLT-VIEW-002）：运维角色菜单裁掉随访业务子树、保留系统管理与配置页；平台 / 视角令牌端别互斥。
  * </ol>
  *
@@ -494,11 +494,12 @@ class PlatformTenantViewMySqlIT {
         assertEquals("虚构示例医院甲", session.get("tenantName"));
         assertEquals("TROUBLESHOOT", session.get("purpose"));
 
-        // 业务接口保持默认拒绝（视角令牌无医院会话端别权限，E20-T03 执行点放开前 fail closed）
+        // 业务读接口随 E20-T03 放开（只读 + 按视角规则脱敏 / 设盲；写 / 导出一律 40303，
+        // 见 PlatformTenantViewExecutionMySqlIT）
         assertEquals(
-                40300,
+                0,
                 codeOf(get("/api/hospital/system/users?pageNo=1&pageSize=20", viewToken)),
-                "视角令牌不能调医院端业务接口");
+                "视角令牌可调医院端只读业务接口（PLT-VIEW-012）");
 
         // 一键退出（医院端横幅按钮）：台账 ENDED / 主动退出 + VIEW_EXIT 审计；令牌随即失效
         Map<?, ?> exit = delete("/api/hospital/view/session", viewToken);

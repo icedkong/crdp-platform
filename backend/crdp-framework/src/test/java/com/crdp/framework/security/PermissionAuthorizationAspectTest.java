@@ -29,6 +29,31 @@ class PermissionAuthorizationAspectTest {
         SecurityContextHolder.clearContext();
     }
 
+    /** 视角会话（E20-T03）：平台账号身份，无医院权限码。 */
+    private void loginView() {
+        SessionPrincipal principal =
+                new SessionPrincipal(
+                        "view-token",
+                        "TENANT_VIEW",
+                        7L,
+                        "demoa",
+                        "示例医院 A",
+                        1L,
+                        "platform.admin",
+                        "平台管理员（示例）",
+                        List.of("PLATFORM_ADMIN"),
+                        List.of(),
+                        List.of(),
+                        List.of(),
+                        1L,
+                        null,
+                        false,
+                        null);
+        SecurityContextHolder.getContext()
+                .setAuthentication(
+                        new UsernamePasswordAuthenticationToken(principal, null, List.of()));
+    }
+
     private void login(String... permissionCodes) {
         SessionPrincipal principal =
                 new SessionPrincipal(
@@ -68,6 +93,14 @@ class PermissionAuthorizationAspectTest {
 
     private final Endpoint endpoint = new Endpoint();
 
+    static final class EditEndpoint {
+
+        @RequiresPermission("followup:patient:edit")
+        public String edit() {
+            return "edit";
+        }
+    }
+
     @Test
     void singleCodeStillEnforced() throws Throwable {
         login("followup:plan:view");
@@ -89,6 +122,28 @@ class PermissionAuthorizationAspectTest {
                                                 .getMethod("single")
                                                 .getAnnotation(RequiresPermission.class)));
         assertEquals(40300, denied.code());
+    }
+
+    @Test
+    void viewSessionPassesReadActionsOnly() throws Throwable {
+        RequiresPermission view =
+                Endpoint.class.getMethod("single").getAnnotation(RequiresPermission.class);
+        RequiresPermission mixed =
+                Endpoint.class.getMethod("anyOf").getAnnotation(RequiresPermission.class);
+
+        loginView();
+        assertEquals(
+                "single",
+                aspect.check(joinPoint("single"), view),
+                "视角令牌对只读动作（view）放行（E20-T03 / PLT-VIEW-012）");
+        assertEquals("anyOf", aspect.check(joinPoint("anyOf"), mixed), "多候选码任一 view 即读（OQ-13）");
+
+        loginView();
+        RequiresPermission edit =
+                EditEndpoint.class.getMethod("edit").getAnnotation(RequiresPermission.class);
+        ApiException denied =
+                assertThrows(ApiException.class, () -> aspect.check(joinPoint("edit"), edit));
+        assertEquals(40303, denied.code(), "视角令牌对写动作（edit）40303，fail closed");
     }
 
     @Test

@@ -58,7 +58,7 @@
 | `ABNORMAL_LOGIN` 异常登录 | 登录日志 `action=LOCK` | 连续失败达到阈值锁定（E04-T05，一次锁定只告警一次） |
 | `BATCH_EXPORT` 批量导出 | 数据访问 `access_method=EXPORT` | 导出即成批数据离站，一律告警；后续患者导出（E13）等自动覆盖 |
 | `PERMISSION_CHANGE` 权限变更 | 操作日志 event_type / action 前缀 `ROLE_` | 角色、菜单授权、成员、字段策略调整 |
-| `PLATFORM_ACCESS` 平台访问 | 平台访问日志 action 前缀 `VIEW_` | 进入租户视角与视角规则变更；写入侧随 E20-T01，规则已就绪 |
+| `PLATFORM_ACCESS` 平台访问 | 平台访问日志 action 前缀 `VIEW_` | 进入租户视角与视角规则变更（E20-T01 起 `VIEW_ENTER` / `VIEW_EXIT`）；视角执行点访问随 E20-T03 起写入：读放行 `VIEW_QUERY`（page=请求路径，`GET /api/hospital/menus` 记页面）、被拒 `VIEW_DENIED`（result=DENIED + 原因，40303 / 40301）；查询的「对象与条数」明细随 E20-T05（PLT-VIEW-016） |
 | `PLAINTEXT_ABUSE` 明文查看滥用 | 数据访问 `VIEW_PLAIN` 且 `result=DENIED`、`reason=RATE_LIMITED` | 患者明文接口频控拒绝（每分钟 30 次上限，patient.md §5）——「只看 SUCCESS」的唯一例外，被拒本身就是信号（E07-T05） |
 
 接收人 = 全部启用的 PLATFORM_ADMIN（按租户指定平台负责人随 PLT-VIEW-006，回落口径同 OQ-44）；唯一键 `(rule_code, alert_key=traceId, recipient_id)` 同一触发不重发。站内信收件箱与 PENDING → SENT/FAILED 投递随 E09 通知域消费本表（`NotifySender` 仍为占位实现，与 `plt_tenant_expire_notice` 同一消费契约）。告警派发失败只记 ERROR 日志不阻断业务（事实源是审计日志，可对账）；断链告警（PLT-AUD-009）复用本通道，随 E09 一并触达。
