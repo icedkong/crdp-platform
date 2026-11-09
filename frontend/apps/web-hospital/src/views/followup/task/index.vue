@@ -8,6 +8,7 @@ import { useRoute, useRouter } from 'vue-router';
 
 import {
   contactResultText,
+  deepCloneJson,
   isTaskAcknowledgable,
   isTaskClaimable,
   isTaskEnterable,
@@ -173,7 +174,9 @@ async function load() {
       label: item.name,
       value: item.id,
     }));
-    applied.value = structuredClone(filters);
+    // E24-T07：deepCloneJson 替代 structuredClone（微信 XWeb 等旧内核无此 API）；
+    // filters 是纯 JSON（状态 / 病区 / 日期区间），JSON 往返等价
+    applied.value = deepCloneJson(filters);
   } catch {
     message.error('任务列表加载失败，请稍后重试');
   } finally {

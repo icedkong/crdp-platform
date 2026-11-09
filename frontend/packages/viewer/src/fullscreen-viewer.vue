@@ -36,6 +36,8 @@ import { createWatermarkGuard, watermarkText } from './watermark';
  * 内容短时链接由父级解析后经 `url` 传入（null = 解析中）；Esc 或「关闭」抛 close，
  * 由父级收起遮罩。手机 / 平板工具栏图标 ≥ 40px（sizes.touchTarget）；图片支持
  * **双指缩放**（E24-T06 / NFR-RESP-003，与工具栏按钮共用 50%–500% 上下限）。
+ * E24-T07 真机兼容：iOS Safari 忽略 user-scalable=no，双指缩放图片时在 document
+ * 上拦 gesturestart / gesturechange，防止整页跟着缩放（遮罩 / 水印错位）。
  */
 const props = withDefaults(
   defineProps<{
@@ -102,6 +104,33 @@ const cssVars = computed(() => {
 
 let guard: ReturnType<typeof createWatermarkGuard> | undefined;
 
+// ------------------ E24-T07 真机兼容：iOS Safari 页面级双指缩放不干扰查看器
+// iOS Safari 自 10 起忽略 user-scalable=no（无障碍），双指捏合仍会缩放整页——
+// 图片双指缩放时遮罩 / 水印一起被缩放错位。WebKit 专属的 gesturestart /
+// gesturechange 在 document 上 preventDefault（passive:false）是标准做法；
+// 其它内核不派发这两个事件，等同无操作。随 pinchEnabled（图片模式）挂摘。
+function preventGesture(event: Event): void {
+  event.preventDefault();
+}
+
+watch(
+  pinchEnabled,
+  (enabled) => {
+    if (enabled) {
+      document.addEventListener('gesturestart', preventGesture, {
+        passive: false,
+      });
+      document.addEventListener('gesturechange', preventGesture, {
+        passive: false,
+      });
+    } else {
+      document.removeEventListener('gesturestart', preventGesture);
+      document.removeEventListener('gesturechange', preventGesture);
+    }
+  },
+  { immediate: true },
+);
+
 onMounted(() => {
   if (root.value) {
     guard = createWatermarkGuard(root.value, {
@@ -131,6 +160,8 @@ watch(
 );
 
 onBeforeUnmount(() => {
+  document.removeEventListener('gesturestart', preventGesture);
+  document.removeEventListener('gesturechange', preventGesture);
   document.removeEventListener('keydown', onKeydown);
   guard?.destroy();
   guard = undefined;

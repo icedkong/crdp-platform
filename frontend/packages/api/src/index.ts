@@ -107,6 +107,7 @@ export type {
   SavedFilter,
   SavedFilterPayload,
 } from './advanced-search';
+
 // E08-T04 审计中心（PLT-AUD-005~007）
 export * from './audit';
 export {
@@ -115,7 +116,6 @@ export {
   maskPhone,
   pickTwoFactorChallenge,
 } from './auth-flow';
-
 export type { TwoFactorChallenge } from './auth-flow';
 
 // E13-T02 基线分节、基线锁定与解锁（A-PAT-003、A-PAT-005、A-PAT-006）
@@ -146,6 +146,7 @@ export type {
   BaselineSectionStatus,
   PatientBaseline,
 } from './baseline';
+
 export {
   BATCH_SKIP_REASON_TEXT,
   batchOutcomeText,
@@ -153,7 +154,6 @@ export {
   doctorOptionLabel,
   filterDoctorsByWards,
 } from './batch-operation';
-
 export type {
   BatchOutcomeItem,
   BatchResult,
@@ -199,6 +199,10 @@ export type {
   CompareRuleType,
   CompareRuleUpdate,
 } from './compare-rule';
+
+// E24-T07 真机兼容：structuredClone / Object.hasOwn 的全内核替身（微信 XWeb 等
+// 旧内核没有这两个 API，调用即 TypeError）
+export { deepCloneJson, hasOwnProp } from './compat';
 export {
   DICT_LOG_ACTION_TEXT,
   DICT_SOURCE_TEXT,

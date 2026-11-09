@@ -10,6 +10,7 @@
  */
 import type { ConditionGroup } from './advanced-search';
 
+import { hasOwnProp } from './compat';
 import { PATIENT_STATUS_TEXT } from './enums';
 
 /** 列表行（patient.md §1 PatientRow）：name / patientNo（本系统编号 = 病案号）只含后端脱敏值。 */
@@ -233,9 +234,8 @@ export function patientStatusOfQuery(
   const value = Array.isArray(status) ? status[0] : status;
   if (!value) return undefined;
   const normalized = value.trim().toUpperCase();
-  return Object.hasOwn(PATIENT_STATUS_TEXT, normalized)
-    ? normalized
-    : undefined;
+  // E24-T07：hasOwnProp 替代 Object.hasOwn（微信 XWeb 等旧内核无此 API）
+  return hasOwnProp(PATIENT_STATUS_TEXT, normalized) ? normalized : undefined;
 }
 
 /** 空态提示（pages.md §3）：canCreate 决定「暂无患者」是否带新建入口。 */

@@ -187,3 +187,34 @@ describe('e24-t03 AdvancedSearch：手机底部抽屉形态（pages.md §3、des
     wrapper.unmount();
   });
 });
+
+// E24-T07 真机兼容：structuredClone 在微信 XWeb 等旧内核（Chromium < 98）不存在，
+// 打开高级检索即 TypeError——患者列表 / 任务页真机阻断。删掉全局 structuredClone
+// 模拟旧内核，续编回显必须照常。
+describe('e24-t07 AdvancedSearch：structuredClone 缺失（微信 XWeb）时打开不崩溃', () => {
+  it('无 structuredClone 环境下带条件树打开：正常回显且草稿不回写父状态', async () => {
+    const source: ConditionGroup = {
+      logic: 'and',
+      items: [{ field: 'ward', op: 'EQ', value: 3 }],
+    };
+    const clone = globalThis.structuredClone;
+    Object.defineProperty(globalThis, 'structuredClone', {
+      configurable: true,
+      value: undefined,
+    });
+    let wrapper: undefined | { unmount: () => void };
+    try {
+      wrapper = await mountModal({ value: source });
+      expect(bodyText()).toContain('病区/中心');
+      expect(bodyText()).toContain('等于');
+    } finally {
+      Object.defineProperty(globalThis, 'structuredClone', {
+        configurable: true,
+        value: clone,
+      });
+      wrapper?.unmount();
+    }
+    // 源条件树未被续编草稿改动
+    expect(source.items[0]?.value).toBe(3);
+  });
+});

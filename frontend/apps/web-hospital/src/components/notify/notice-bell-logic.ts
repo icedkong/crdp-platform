@@ -29,6 +29,19 @@ export function shouldMarkRead(message: NoticeMessage): boolean {
   return !message.read;
 }
 
+/**
+ * 落点路由是否已注册：resolve 结果的末位记录存在且不是 404 兜底
+ * （RECORD 隐藏路由随 E15 菜单下发）。E24-T07 抽成纯函数并改为下标取末位——
+ * matched.at(-1) 在微信 XWeb 等旧内核（Chromium < 92）不存在，顶栏铃铛会直接
+ * TypeError，属真机阻断。
+ */
+export function routeMatchIsRegistered(
+  matched: Array<{ name?: unknown }>,
+): boolean {
+  const last = matched[matched.length - 1];
+  return Boolean(last) && last?.name !== 'FallbackNotFound';
+}
+
 /** 时间文案：当天只写时分，更早写「MM-DD HH:mm」（站内信只看相对近的待办）。 */
 export function noticeTimeText(iso: string, now = new Date()): string {
   const time = new Date(iso);

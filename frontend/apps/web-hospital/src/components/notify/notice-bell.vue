@@ -28,6 +28,7 @@ import {
 import {
   noticeJumpLocation,
   noticeTimeText,
+  routeMatchIsRegistered,
   shouldMarkRead,
 } from './notice-bell-logic';
 
@@ -128,14 +129,14 @@ async function onMarkAllRead() {
   }
 }
 
-/** 落点路由是否已注册（404 兜底不算——RECORD 隐藏路由随 E15 菜单下发）。 */
+/** 落点路由是否已注册（404 兜底不算——RECORD 隐藏路由随 E15 菜单下发；
+ * E24-T07 末位判定抽到 notice-bell-logic，微信 XWeb 旧内核无 Array.prototype.at）。 */
 function routeExists(location: {
   path: string;
   query?: Record<string, string>;
 }) {
   const resolved = router.resolve(location);
-  const last = resolved.matched.at(-1);
-  return Boolean(last) && last?.name !== 'FallbackNotFound';
+  return routeMatchIsRegistered(resolved.matched);
 }
 
 const poll = useIntervalFn(refreshUnread, timings.notifyPollMs, {

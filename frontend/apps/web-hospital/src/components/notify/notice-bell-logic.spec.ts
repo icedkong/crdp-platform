@@ -69,3 +69,36 @@ describe('e09-T02 站内信铃铛逻辑', () => {
     expect(noticeTimeText('not-a-time', now)).toBe('');
   });
 });
+
+// E24-T07 真机兼容：Array.prototype.at（Chromium 92+）在微信 XWeb 等旧内核上
+// 不存在，顶栏铃铛的落点路由判定 matched.at(-1) 直接 TypeError——每个页面顶栏
+// 都挂铃铛，属真机阻断。删掉该原型方法模拟旧内核回归。
+describe('e24-t07 铃铛落点路由判定：Array.prototype.at 缺失时正常', () => {
+  it('命中末位路由且非 404 兜底 → 已注册；404 兜底 / 空 matched → 未注册', async () => {
+    const { routeMatchIsRegistered } = await import('./notice-bell-logic');
+    const arrayAt = Array.prototype.at;
+    // oxlint-disable-next-line no-extend-native -- 测试临时摘除原型方法模拟旧内核，finally 恢复
+    Object.defineProperty(Array.prototype, 'at', {
+      configurable: true,
+      value: undefined,
+    });
+    try {
+      expect(
+        routeMatchIsRegistered([{ name: 'Layout' }, { name: 'FollowupTask' }]),
+      ).toBe(true);
+      expect(
+        routeMatchIsRegistered([
+          { name: 'Layout' },
+          { name: 'FallbackNotFound' },
+        ]),
+      ).toBe(false);
+      expect(routeMatchIsRegistered([])).toBe(false);
+    } finally {
+      // oxlint-disable-next-line no-extend-native -- 测试临时摘除原型方法模拟旧内核，finally 恢复
+      Object.defineProperty(Array.prototype, 'at', {
+        configurable: true,
+        value: arrayAt,
+      });
+    }
+  });
+});
