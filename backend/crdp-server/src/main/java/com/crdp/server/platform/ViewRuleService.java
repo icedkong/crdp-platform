@@ -26,11 +26,16 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 /**
- * 视角规则的配置与效果预览（E20-T02 / PLT-VIEW-007、008、009，docs/api/platform.md §6）。
+ * 视角规则的配置与效果预览（E20-T02 / PLT-VIEW-007、008、009；E20-T05 / PLT-VIEW-014、015，docs/api/platform.md §6）。
  *
  * <p>配置（PLT-VIEW-007）：平台管理员按层级（全局默认 / 租户 / 模块 / 字段）维护规则——可见性（明文 / 脱敏 / 设盲 / 隐藏）、操作（只读 /
- * 可编辑）、是否允许导出，适用平台角色（全部或指定）；无需医院参与。 普通变更即时生效（高敏变更的「待复核 + 第二人复核」随 E20-T05 /
- * PLT-VIEW-014，本任务先落状态与版本列）。 增删改写平台访问审计（action 前缀 {@code VIEW_RULE}，审计中心「视角规则变更」页签，OQ-56 ④）。
+ * 可编辑）、是否允许导出，适用平台角色（全部或指定）；无需医院参与。 增删改写平台访问审计（action 前缀 {@code VIEW_RULE}，审计中心「视角规则变更」页签，OQ-56 ④）。
+ *
+ * <p>高敏复核与版本链（E20-T05 / PLT-VIEW-014、015，口径 OQ-99 ③）：规则每次变更（新建 / 维护 /
+ * 回滚）生成一条版本行（plt_view_rule_version， 记录变更人、前后值与复核人）；高敏变更（{@link ViewRuleReviewPolicy}：改明文、取消设盲 /
+ * 隐藏、取消只读、允许导出， 以及收窄生效中限制性规则的作用范围）进入 PENDING_REVIEW——规则行保持原状，由发起人以外的另一名平台管理员
+ * 复核通过后才写入生效（PLT-VIEW-014「复核前规则保持原状」）；普通变更提交即生效。 同一规则同时只允许一条待复核变更（40901）。 回滚 =
+ * 以历史生效版本的内容发起一次新变更（是否待复核按同一高敏判定）。
  *
  * <p>默认规则（PLT-VIEW-008）：系统初始默认以种子规则行（V109）交付——敏感字段脱敏、原件附件隐藏、RCT
  * 设盲字段设盲、禁止导出；平台管理员可修改、停用。默认布局避免同层互相抵消（OQ-99）。
@@ -46,18 +51,26 @@ public class ViewRuleService {
 
     private static final int NAME_MAX = 128;
 
+    private static final int COMMENT_MAX = 500;
+
     private final JdbcTemplate platform;
 
     private final AuditLogger audit;
 
-    public ViewRuleService(JdbcTemplate platform, AuditLogger audit) {
+    private final com.fasterxml.jackson.databind.ObjectMapper json;
+
+    public ViewRuleService(
+            JdbcTemplate platform,
+            AuditLogger audit,
+            com.fasterxml.jackson.databind.ObjectMapper json) {
         this.platform = platform;
         this.audit = audit;
+        this.json = json;
     }
 
     // ---------------------------------------------------------------- DTO
 
-    /** 规则行（配置页列表 / 详情）。roleCodes 为空 = 全部平台角色。 */
+    /** 规则行（配置页列表 / 详情）。roleCodes 为空 = 全部平台角色；pendingChange = 存在待复核变更。 */
     public record RuleView(
             long id,
             String code,
@@ -79,6 +92,7 @@ public class ViewRuleService {
             boolean allowExport,
             String status,
             int version,
+            boolean pendingChange,
             OffsetDateTime updatedAt) {}
 
     /** 新建 / 维护请求（状态与版本为系统字段：status 允许 ACTIVE / DISABLED，version 服务端维护）。 */
@@ -110,6 +124,56 @@ public class ViewRuleService {
             String operation,
             boolean allowExport,
             String status) {}
+
+    /**
+     * 新建 / 维护 / 回滚结果（E20-T05）：规则行当前视图 + 是否进入待复核。 高敏变更时规则保持原状 （PLT-VIEW-014），前端据 pendingReview
+     * 提示「已提交，待另一名平台管理员复核」。
+     */
+    public record SaveOutcome(RuleView rule, boolean pendingReview, long pendingVersionId) {}
+
+    /**
+     * 版本快照（PLT-VIEW-015 前后值）：内容 + 适用角色（id 落库回放、编码展示）。 序列化为 plt_view_rule_version.before_json /
+     * after_json；复核通过按 after_json 写回规则行。
+     */
+    public record ContentJson(
+            String name,
+            String layer,
+            Long tenantId,
+            String moduleCode,
+            String resource,
+            String field,
+            List<Long> roleIds,
+            List<String> roleCodes,
+            String visibility,
+            String maskRule,
+            String operation,
+            boolean allowExport,
+            String status) {}
+
+    /** 版本行（版本记录抽屉与待复核列表；ruleName 便于跨规则展示）。 */
+    public record VersionView(
+            long id,
+            long ruleId,
+            String ruleCode,
+            String ruleName,
+            int version,
+            String changeType,
+            boolean sensitive,
+            String status,
+            String beforeJson,
+            String afterJson,
+            String proposedByName,
+            OffsetDateTime proposedAt,
+            String reviewedByName,
+            OffsetDateTime reviewedAt,
+            String reviewComment,
+            OffsetDateTime appliedAt) {}
+
+    /** 复核动作（approve / reject 共用 body）：comment 复核意见 ≤500。 */
+    public record ReviewAction(boolean approve, String comment) {}
+
+    /** 回滚请求：toVersion = 版本链上已生效过的版本号。 */
+    public record RollbackRequest(Integer toVersion) {}
 
     /** 视角字段目录（配置页 FIELD 层与预览用）。 */
     public record CatalogField(
@@ -243,19 +307,26 @@ public class ViewRuleService {
                 List.copyOf(new TreeSet<>(ViewRuleCatalog.MASK_RULES)));
     }
 
-    // ---------------------------------------------------------------- 新建 / 维护
+    // ---------------------------------------------------------------- 新建 / 维护（版本链 + 高敏复核，E20-T05）
 
-    /** 新建规则（PLT-VIEW-007）：规则编号服务端生成（VR-00001），普通变更即时生效。 */
-    public RuleView create(SaveRequest request) {
+    /**
+     * 新建规则（PLT-VIEW-007、014）：规则编号服务端生成（VR-00001）。普通变更即时生效（版本行 APPLIED）； 高敏变更（新建即放宽，如可编辑 / 允许导出）规则行置
+     * PENDING_REVIEW、版本行待复核，第二人复核通过才生效。
+     */
+    public SaveOutcome create(SaveRequest request) {
         SaveCommand command = validate(request);
         SessionPrincipal caller = CurrentSession.requirePlatform();
         return TenantContext.callAsPlatform(
                 () -> {
                     requireReferences(command);
                     requireRoles(command.roleIds());
+                    boolean sensitive =
+                            ViewRuleReviewPolicy.sensitive(null, effectiveContent(command));
                     var keyHolder = new org.springframework.jdbc.support.GeneratedKeyHolder();
                     // code 占位（NOT NULL 唯一列）：插入拿自增 id 后立即改为 VR-00001；占位带随机尾避免并发冲突
                     String placeholder = "PENDING-" + java.util.UUID.randomUUID();
+                    String rowStatus =
+                            sensitive ? ViewRuleCatalog.STATUS_PENDING_REVIEW : command.status();
                     platform.update(
                             con -> {
                                 java.sql.PreparedStatement statement =
@@ -263,10 +334,10 @@ public class ViewRuleService {
                                                 "INSERT INTO plt_view_rule (code, name, layer,"
                                                         + " tenant_id, module_code, resource, field,"
                                                         + " visibility, mask_rule, operation,"
-                                                        + " allow_export, status, created_by,"
-                                                        + " updated_by)"
+                                                        + " allow_export, status, version,"
+                                                        + " created_by, updated_by)"
                                                         + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
-                                                        + " ?, ?, ?, ?)",
+                                                        + " ?, ?, 1, ?, ?)",
                                                 java.sql.Statement.RETURN_GENERATED_KEYS);
                                 statement.setString(1, placeholder);
                                 statement.setString(2, command.name());
@@ -279,7 +350,7 @@ public class ViewRuleService {
                                 setNullable(statement, 9, command.maskRule());
                                 statement.setString(10, command.operation());
                                 statement.setBoolean(11, command.allowExport());
-                                statement.setString(12, command.status());
+                                statement.setString(12, rowStatus);
                                 setNullable(statement, 13, caller.userId());
                                 setNullable(statement, 14, caller.userId());
                                 return statement;
@@ -289,6 +360,16 @@ public class ViewRuleService {
                     String code = "VR-%05d".formatted(id);
                     platform.update("UPDATE plt_view_rule SET code = ? WHERE id = ?", code, id);
                     replaceRoles(id, command.roleIds());
+                    long versionId =
+                            insertVersion(
+                                    id,
+                                    code,
+                                    1,
+                                    "CREATE",
+                                    sensitive,
+                                    null,
+                                    snapshot(command),
+                                    caller);
                     audit.append(
                             ruleAudit(command, "VIEW_RULE_CREATE", caller)
                                     .objectId(code)
@@ -299,48 +380,88 @@ public class ViewRuleService {
                                                     + command.name()
                                                     + "（"
                                                     + describe(command)
+                                                    + "；"
+                                                    + (sensitive ? "高敏，待复核" : "已生效")
                                                     + "）")
                                     .success()
                                     .build());
-                    return viewOf(id);
+                    return new SaveOutcome(viewOf(id), sensitive, versionId);
                 });
     }
 
-    /** 维护规则（含停用 / 启用，PLT-VIEW-007）：版本 +1；高敏变更复核随 E20-T05。 */
-    public RuleView update(long id, SaveRequest request) {
+    /**
+     * 维护规则（含停用 / 启用，PLT-VIEW-007、014、015）：普通变更即时写入（版本 +1，版本行 APPLIED）； 高敏变更（放宽或收窄生效中限制性规则，{@link
+     * ViewRuleReviewPolicy}）不改动规则行，只落一条待复核版本行—— 复核前规则保持原状；同一规则同时只允许一条待复核变更（40901）。
+     */
+    public SaveOutcome update(long id, SaveRequest request) {
         SaveCommand command = validate(request);
         SessionPrincipal caller = CurrentSession.requirePlatform();
         return TenantContext.callAsPlatform(
                 () -> {
-                    String before = existing(id);
+                    Map<String, Object> row = existingRow(id);
                     requireReferences(command);
-                    String code = beforeCode(id);
-                    platform.update(
-                            "UPDATE plt_view_rule SET name = ?, layer = ?, tenant_id = ?,"
-                                    + " module_code = ?, resource = ?, field = ?, visibility = ?,"
-                                    + " mask_rule = ?, operation = ?, allow_export = ?, status = ?,"
-                                    + " version = version + 1, updated_by = ? WHERE id = ?",
-                            command.name(),
-                            command.layer(),
-                            command.tenantId(),
-                            command.moduleCode(),
-                            command.resource(),
-                            command.field(),
-                            command.visibility(),
-                            command.maskRule(),
-                            command.operation(),
-                            command.allowExport(),
-                            command.status(),
-                            caller.userId(),
-                            id);
-                    replaceRoles(id, command.roleIds());
-                    String action =
-                            switch (command.status()) {
-                                case "DISABLED" -> "VIEW_RULE_DISABLE";
-                                default -> "VIEW_RULE_UPDATE";
-                            };
+                    String code = str(row.get("code"));
+                    String rowStatus = str(row.get("status"));
+                    Set<Long> currentRoles = roleIdsOf(id);
+                    ContentJson beforeSnapshot =
+                            snapshotOf(row, currentRoles, roleCodeList(currentRoles));
+                    boolean beforeEnforced = ViewRuleCatalog.STATUS_ACTIVE.equals(rowStatus);
+                    boolean sensitive =
+                            ViewRuleReviewPolicy.sensitive(
+                                    beforeEnforced ? toContent(beforeSnapshot) : null,
+                                    effectiveContent(command));
+                    ensureNoPendingVersion(id);
+                    int nextVersion = nextVersion(id);
+                    String changeAction =
+                            ViewRuleCatalog.STATUS_DISABLED.equals(command.status())
+                                    ? "VIEW_RULE_DISABLE"
+                                    : "VIEW_RULE_UPDATE";
+                    String beforeText =
+                            beforeEnforced
+                                    ? "变更前 " + describeRow(row, currentRoles)
+                                    : "变更前未生效（系统初始默认）";
+                    if (sensitive) {
+                        long versionId =
+                                insertVersion(
+                                        id,
+                                        code,
+                                        nextVersion,
+                                        "UPDATE",
+                                        true,
+                                        beforeEnforced ? toJson(beforeSnapshot) : null,
+                                        snapshot(command),
+                                        caller);
+                        audit.append(
+                                ruleAudit(command, changeAction, caller)
+                                        .objectId(code)
+                                        .description(
+                                                "修改视角规则 "
+                                                        + code
+                                                        + "："
+                                                        + command.name()
+                                                        + "（"
+                                                        + describe(command)
+                                                        + "；"
+                                                        + beforeText
+                                                        + "）为高敏变更，待另一名平台管理员复核（版本 v"
+                                                        + nextVersion
+                                                        + "）")
+                                        .success()
+                                        .build());
+                        return new SaveOutcome(viewOf(id), true, versionId);
+                    }
+                    applyToRow(id, nextVersion, command, caller.userId());
+                    insertVersion(
+                            id,
+                            code,
+                            nextVersion,
+                            "UPDATE",
+                            false,
+                            beforeEnforced ? toJson(beforeSnapshot) : null,
+                            snapshot(command),
+                            caller);
                     audit.append(
-                            ruleAudit(command, action, caller)
+                            ruleAudit(command, changeAction, caller)
                                     .objectId(code)
                                     .description(
                                             "修改视角规则 "
@@ -349,12 +470,202 @@ public class ViewRuleService {
                                                     + command.name()
                                                     + "（"
                                                     + describe(command)
-                                                    + "；变更前 "
-                                                    + before
+                                                    + "；"
+                                                    + beforeText
+                                                    + "）已生效（版本 v"
+                                                    + nextVersion
                                                     + "）")
                                     .success()
                                     .build());
-                    return viewOf(id);
+                    return new SaveOutcome(viewOf(id), false, 0);
+                });
+    }
+
+    // ---------------------------------------------------------------- 复核、版本链与回滚（E20-T05 /
+    // PLT-VIEW-014、015）
+
+    /** 待复核清单（复核入口）：全部 PENDING_REVIEW 版本行（含规则编号与名称），按提交时间倒序。 */
+    public List<VersionView> pendingReviews() {
+        return TenantContext.callAsPlatform(
+                () -> versionRows(" WHERE v.status = 'PENDING_REVIEW' ORDER BY v.id DESC"));
+    }
+
+    /** 版本链（PLT-VIEW-015）：该规则全部版本行（含被驳回的），版本号倒序。 */
+    public List<VersionView> versions(long ruleId) {
+        return TenantContext.callAsPlatform(
+                () -> {
+                    requireRuleExists(ruleId);
+                    return versionRows(" WHERE v.rule_id = " + ruleId + " ORDER BY v.version DESC");
+                });
+    }
+
+    /**
+     * 复核高敏变更（PLT-VIEW-014，验收「高敏变更需第二人批准」）：发起人以外的平台管理员同意 / 驳回。 同意 → 按 after_json 写回规则行（版本号 =
+     * 版本行号，状态取快照值）、版本行 APPLIED； 驳回 → 规则行不动（新建即待复核的行置 DISABLED），版本行 REJECTED。写审计 VIEW_RULE_APPROVE /
+     * VIEW_RULE_REJECT。
+     */
+    public RuleView review(long versionId, ReviewAction action) {
+        if (action == null) {
+            throw new ApiException(400, 40001, "请求体不能为空");
+        }
+        String comment = trimToNull(action.comment());
+        if (comment != null && comment.length() > COMMENT_MAX) {
+            throw new ApiException(400, 40001, "复核意见过长（最多 " + COMMENT_MAX + " 个字符）");
+        }
+        SessionPrincipal reviewer = CurrentSession.requirePlatform();
+        return TenantContext.callAsPlatform(
+                () -> {
+                    Map<String, Object> vrow = versionRow(versionId);
+                    long ruleId = ((Number) vrow.get("rule_id")).longValue();
+                    String code = str(vrow.get("rule_code"));
+                    if (!"PENDING_REVIEW".equals(str(vrow.get("status")))) {
+                        throw new ApiException(409, 40901, "该变更不在待复核状态，请刷新后重试");
+                    }
+                    Long proposer =
+                            vrow.get("proposed_by") == null
+                                    ? null
+                                    : ((Number) vrow.get("proposed_by")).longValue();
+                    if (reviewer.userId() != null && reviewer.userId().equals(proposer)) {
+                        throw new ApiException(409, 40901, "高敏变更须由发起人以外的另一名平台管理员复核");
+                    }
+                    ContentJson after = fromJson(str(vrow.get("after_json")));
+                    int versionNo = ((Number) vrow.get("version")).intValue();
+                    if (action.approve()) {
+                        SaveCommand command = commandOf(after);
+                        requireReferences(command);
+                        applyToRow(ruleId, versionNo, command, proposer);
+                        platform.update(
+                                "UPDATE plt_view_rule_version SET status = 'APPLIED',"
+                                        + " reviewed_by = ?, reviewed_by_name = ?, reviewed_at = ?,"
+                                        + " review_comment = ?, applied_at = ? WHERE id = ?",
+                                reviewer.userId(),
+                                reviewer.username(),
+                                LocalDateTime.now(ZONE),
+                                comment,
+                                LocalDateTime.now(ZONE),
+                                versionId);
+                        audit.append(
+                                reviewAudit(
+                                                tenantIdOfRule(ruleId),
+                                                code,
+                                                "VIEW_RULE_APPROVE",
+                                                reviewer,
+                                                proposerName(vrow))
+                                        .description(
+                                                "同意高敏变更：视角规则 "
+                                                        + code
+                                                        + " v"
+                                                        + versionNo
+                                                        + " 生效（"
+                                                        + describe(command)
+                                                        + "）")
+                                        .success()
+                                        .build());
+                    } else {
+                        // 新建即待复核的规则行：驳回后置停用（提案从未生效）；维护类提案规则行保持原状
+                        platform.update(
+                                "UPDATE plt_view_rule SET status = '"
+                                        + ViewRuleCatalog.STATUS_DISABLED
+                                        + "' WHERE id = ? AND status = '"
+                                        + ViewRuleCatalog.STATUS_PENDING_REVIEW
+                                        + "'",
+                                ruleId);
+                        platform.update(
+                                "UPDATE plt_view_rule_version SET status = 'REJECTED',"
+                                        + " reviewed_by = ?, reviewed_by_name = ?, reviewed_at = ?,"
+                                        + " review_comment = ? WHERE id = ?",
+                                reviewer.userId(),
+                                reviewer.username(),
+                                LocalDateTime.now(ZONE),
+                                comment,
+                                versionId);
+                        audit.append(
+                                reviewAudit(
+                                                tenantIdOfRule(ruleId),
+                                                code,
+                                                "VIEW_RULE_REJECT",
+                                                reviewer,
+                                                proposerName(vrow))
+                                        .description(
+                                                "驳回高敏变更：视角规则 "
+                                                        + code
+                                                        + " v"
+                                                        + versionNo
+                                                        + " 不生效，规则保持原状")
+                                        .success()
+                                        .build());
+                    }
+                    return viewOf(ruleId);
+                });
+    }
+
+    /**
+     * 回滚（PLT-VIEW-015「可回滚」）：以版本链上已生效过（APPLIED）的历史版本内容发起一次新变更——
+     * 普通变更即时生效；若回滚本身是放宽（如从脱敏回滚到明文），同样进入待复核。 版本行 change_type=ROLLBACK，前后值齐全。
+     */
+    public SaveOutcome rollback(long id, RollbackRequest request) {
+        if (request == null || request.toVersion() == null || request.toVersion() < 1) {
+            throw new ApiException(400, 40001, "请选择要回滚到的版本");
+        }
+        SessionPrincipal caller = CurrentSession.requirePlatform();
+        return TenantContext.callAsPlatform(
+                () -> {
+                    Map<String, Object> row = existingRow(id);
+                    String code = str(row.get("code"));
+                    List<Map<String, Object>> source =
+                            platform.queryForList(
+                                    "SELECT * FROM plt_view_rule_version WHERE rule_id = ?"
+                                            + " AND version = ? AND status = 'APPLIED'",
+                                    id,
+                                    request.toVersion());
+                    if (source.isEmpty()) {
+                        throw new ApiException(404, 40400, "回滚目标版本不存在或未曾生效");
+                    }
+                    ContentJson target = fromJson(str(source.get(0).get("after_json")));
+                    SaveCommand command = commandOf(target);
+                    requireReferences(command);
+                    Set<Long> currentRoles = roleIdsOf(id);
+                    ContentJson beforeSnapshot =
+                            snapshotOf(row, currentRoles, roleCodeList(currentRoles));
+                    boolean beforeEnforced =
+                            ViewRuleCatalog.STATUS_ACTIVE.equals(str(row.get("status")));
+                    boolean sensitive =
+                            ViewRuleReviewPolicy.sensitive(
+                                    beforeEnforced ? toContent(beforeSnapshot) : null,
+                                    effectiveContent(command));
+                    ensureNoPendingVersion(id);
+                    int nextVersion = nextVersion(id);
+                    long versionId =
+                            insertVersion(
+                                    id,
+                                    code,
+                                    nextVersion,
+                                    "ROLLBACK",
+                                    sensitive,
+                                    beforeEnforced ? toJson(beforeSnapshot) : null,
+                                    snapshot(command),
+                                    caller);
+                    if (!sensitive) {
+                        applyToRow(id, nextVersion, command, caller.userId());
+                    }
+                    audit.append(
+                            ruleAudit(command, "VIEW_RULE_ROLLBACK", caller)
+                                    .objectId(code)
+                                    .description(
+                                            "回滚视角规则 "
+                                                    + code
+                                                    + " 至 v"
+                                                    + request.toVersion()
+                                                    + "（"
+                                                    + describe(command)
+                                                    + "；"
+                                                    + (sensitive ? "回滚为高敏变更，待另一名平台管理员复核" : "已生效")
+                                                    + "，新版本 v"
+                                                    + nextVersion
+                                                    + "）")
+                                    .success()
+                                    .build());
+                    return new SaveOutcome(viewOf(id), sensitive, sensitive ? versionId : 0);
                 });
     }
 
@@ -646,6 +957,12 @@ public class ViewRuleService {
         Map<Long, Set<String>> roleCodes = roleCodesByRule();
         Map<Long, String[]> tenants = tenantNames();
         Map<String, String> moduleNames = moduleNames();
+        Set<Long> pendingRules =
+                new HashSet<>(
+                        platform.queryForList(
+                                "SELECT DISTINCT rule_id FROM plt_view_rule_version"
+                                        + " WHERE status = 'PENDING_REVIEW'",
+                                Long.class));
         List<RuleView> views = new ArrayList<>();
         for (Map<String, Object> row : raw) {
             long id = ((Number) row.get("id")).longValue();
@@ -690,6 +1007,7 @@ public class ViewRuleService {
                             ((Number) row.get("allow_export")).intValue() == 1,
                             str(row.get("status")),
                             ((Number) row.get("version")).intValue(),
+                            pendingRules.contains(id),
                             offset((java.time.LocalDateTime) row.get("updated_at"))));
         }
         return views;
@@ -814,29 +1132,327 @@ public class ViewRuleService {
         return rows.get(0);
     }
 
-    private String existing(long id) {
-        List<Map<String, Object>> rows =
+    // ---------------------------------------------------------------- 版本链与复核内部（E20-T05）
+
+    /** 规则行租户（复核审计定位用；空 = 全部租户规则）。 */
+    private Long tenantIdOfRule(long ruleId) {
+        List<Long> ids =
                 platform.queryForList(
-                        "SELECT code, name, layer, tenant_id, module_code, resource, field,"
-                                + " visibility, mask_rule, operation, allow_export, status"
-                                + " FROM plt_view_rule WHERE id = ?",
-                        id);
+                        "SELECT tenant_id FROM plt_view_rule WHERE id = ?", Long.class, ruleId);
+        return ids.isEmpty() || ids.get(0) == null ? null : ids.get(0);
+    }
+
+    /** 现有规则整行（含状态与版本；未知 40400）。 */
+    private Map<String, Object> existingRow(long id) {
+        List<Map<String, Object>> rows =
+                platform.queryForList("SELECT * FROM plt_view_rule WHERE id = ?", id);
         if (rows.isEmpty()) {
             throw new ApiException(404, 40400, "视角规则不存在或已删除");
         }
-        Map<String, Object> row = rows.get(0);
-        return "层级 %s，可见性 %s，操作 %s，允许导出 %s，状态 %s"
+        return rows.get(0);
+    }
+
+    private void requireRuleExists(long id) {
+        if (platform.queryForObject(
+                        "SELECT COUNT(*) FROM plt_view_rule WHERE id = ?", Integer.class, id)
+                == 0) {
+            throw new ApiException(404, 40400, "视角规则不存在或已删除");
+        }
+    }
+
+    /** 同一规则同时只允许一条待复核变更（PLT-VIEW-014；先处理在途提案再发起新变更）。 */
+    private void ensureNoPendingVersion(long ruleId) {
+        if (platform.queryForObject(
+                        "SELECT COUNT(*) FROM plt_view_rule_version WHERE rule_id = ?"
+                                + " AND status = 'PENDING_REVIEW'",
+                        Integer.class,
+                        ruleId)
+                > 0) {
+            throw new ApiException(409, 40901, "该规则已有待复核的变更，请先完成复核再发起新变更");
+        }
+    }
+
+    /** 下一版本号：按版本链 MAX+1 分配（驳回的版本号不复用，链上唯一）。 */
+    private int nextVersion(long ruleId) {
+        Integer max =
+                platform.queryForObject(
+                        "SELECT MAX(version) FROM plt_view_rule_version WHERE rule_id = ?",
+                        Integer.class,
+                        ruleId);
+        return (max == null ? 0 : max) + 1;
+    }
+
+    /** 落一条版本行（普通变更提交即 APPLIED，高敏变更 PENDING_REVIEW），返回版本行 id。 */
+    private long insertVersion(
+            long ruleId,
+            String code,
+            int version,
+            String changeType,
+            boolean sensitive,
+            String beforeJson,
+            ContentJson after,
+            SessionPrincipal caller) {
+        var keyHolder = new org.springframework.jdbc.support.GeneratedKeyHolder();
+        LocalDateTime now = LocalDateTime.now(ZONE);
+        platform.update(
+                con -> {
+                    java.sql.PreparedStatement statement =
+                            con.prepareStatement(
+                                    "INSERT INTO plt_view_rule_version (rule_id, rule_code,"
+                                            + " version, change_type, is_sensitive, status,"
+                                            + " before_json, after_json, proposed_by,"
+                                            + " proposed_by_name, applied_at)"
+                                            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                    java.sql.Statement.RETURN_GENERATED_KEYS);
+                    statement.setLong(1, ruleId);
+                    statement.setString(2, code);
+                    statement.setInt(3, version);
+                    statement.setString(4, changeType);
+                    statement.setInt(5, sensitive ? 1 : 0);
+                    statement.setString(6, sensitive ? "PENDING_REVIEW" : "APPLIED");
+                    setNullable(statement, 7, beforeJson);
+                    statement.setString(8, toJson(after));
+                    setNullable(statement, 9, caller.userId());
+                    setNullable(statement, 10, caller.username());
+                    if (sensitive) {
+                        statement.setNull(11, java.sql.Types.TIMESTAMP);
+                    } else {
+                        statement.setTimestamp(11, java.sql.Timestamp.valueOf(now));
+                    }
+                    return statement;
+                },
+                keyHolder);
+        return ((Number) keyHolder.getKeys().get("GENERATED_KEY")).longValue();
+    }
+
+    /** 把内容写入规则行（复核通过 / 普通变更即时生效）：列 + 版本号 + 适用角色整体替换。 */
+    private void applyToRow(long ruleId, int version, SaveCommand command, Long changedBy) {
+        platform.update(
+                "UPDATE plt_view_rule SET name = ?, layer = ?, tenant_id = ?, module_code = ?,"
+                        + " resource = ?, field = ?, visibility = ?, mask_rule = ?,"
+                        + " operation = ?, allow_export = ?, status = ?, version = ?,"
+                        + " updated_by = ? WHERE id = ?",
+                command.name(),
+                command.layer(),
+                command.tenantId(),
+                command.moduleCode(),
+                command.resource(),
+                command.field(),
+                command.visibility(),
+                command.maskRule(),
+                command.operation(),
+                command.allowExport(),
+                command.status(),
+                version,
+                changedBy,
+                ruleId);
+        replaceRoles(ruleId, command.roleIds());
+    }
+
+    /** 版本行查询（whereSuffix 内联常量或已校验的数字，不含用户输入拼接）。 */
+    private List<VersionView> versionRows(String whereSuffix) {
+        List<Map<String, Object>> raw =
+                platform.queryForList(
+                        "SELECT v.id, v.rule_id, v.rule_code, v.version, v.change_type,"
+                                + " v.is_sensitive, v.status, v.before_json, v.after_json,"
+                                + " v.proposed_by_name, v.proposed_at, v.reviewed_by_name,"
+                                + " v.reviewed_at, v.review_comment, v.applied_at,"
+                                + " r.name AS rule_name FROM plt_view_rule_version v"
+                                + " JOIN plt_view_rule r ON r.id = v.rule_id"
+                                + whereSuffix);
+        List<VersionView> views = new ArrayList<>();
+        for (Map<String, Object> row : raw) {
+            views.add(
+                    new VersionView(
+                            ((Number) row.get("id")).longValue(),
+                            ((Number) row.get("rule_id")).longValue(),
+                            str(row.get("rule_code")),
+                            str(row.get("rule_name")),
+                            ((Number) row.get("version")).intValue(),
+                            str(row.get("change_type")),
+                            ((Number) row.get("is_sensitive")).intValue() == 1,
+                            str(row.get("status")),
+                            row.get("before_json") == null ? null : str(row.get("before_json")),
+                            str(row.get("after_json")),
+                            row.get("proposed_by_name") == null
+                                    ? null
+                                    : str(row.get("proposed_by_name")),
+                            offset((LocalDateTime) row.get("proposed_at")),
+                            row.get("reviewed_by_name") == null
+                                    ? null
+                                    : str(row.get("reviewed_by_name")),
+                            row.get("reviewed_at") == null
+                                    ? null
+                                    : offset((LocalDateTime) row.get("reviewed_at")),
+                            row.get("review_comment") == null
+                                    ? null
+                                    : str(row.get("review_comment")),
+                            row.get("applied_at") == null
+                                    ? null
+                                    : offset((LocalDateTime) row.get("applied_at"))));
+        }
+        return views;
+    }
+
+    private Map<String, Object> versionRow(long versionId) {
+        List<Map<String, Object>> rows =
+                platform.queryForList(
+                        "SELECT * FROM plt_view_rule_version WHERE id = ?", versionId);
+        if (rows.isEmpty()) {
+            throw new ApiException(404, 40400, "待复核变更不存在或已处理");
+        }
+        return rows.get(0);
+    }
+
+    /** 生效内容（高敏判定用）：状态 ACTIVE 时为命令内容，否则 null（系统初始默认口径）。 */
+    private static ViewRuleReviewPolicy.Content effectiveContent(SaveCommand command) {
+        return ViewRuleCatalog.STATUS_ACTIVE.equals(command.status()) ? toContent(command) : null;
+    }
+
+    private static ViewRuleReviewPolicy.Content toContent(SaveCommand command) {
+        return new ViewRuleReviewPolicy.Content(
+                command.layer(),
+                command.tenantId(),
+                command.moduleCode(),
+                command.resource(),
+                command.field(),
+                command.roleIds(),
+                command.visibility(),
+                command.operation(),
+                command.allowExport());
+    }
+
+    private static ViewRuleReviewPolicy.Content toContent(ContentJson snapshot) {
+        return new ViewRuleReviewPolicy.Content(
+                snapshot.layer(),
+                snapshot.tenantId(),
+                snapshot.moduleCode(),
+                snapshot.resource(),
+                snapshot.field(),
+                snapshot.roleIds() == null ? Set.of() : new LinkedHashSet<>(snapshot.roleIds()),
+                snapshot.visibility(),
+                snapshot.operation(),
+                snapshot.allowExport());
+    }
+
+    /** 命令 → 版本快照（roleCodes 解码展示；清单空 = 全部角色）。 */
+    private ContentJson snapshot(SaveCommand command) {
+        return new ContentJson(
+                command.name(),
+                command.layer(),
+                command.tenantId(),
+                command.moduleCode(),
+                command.resource(),
+                command.field(),
+                new ArrayList<>(new TreeSet<>(command.roleIds())),
+                roleCodeList(command.roleIds()),
+                command.visibility(),
+                command.maskRule(),
+                command.operation(),
+                command.allowExport(),
+                command.status());
+    }
+
+    /** 规则行 → 版本快照（维护 / 回滚的前值）。 */
+    private static ContentJson snapshotOf(
+            Map<String, Object> row, Set<Long> roleIds, List<String> roleCodes) {
+        return new ContentJson(
+                str(row.get("name")),
+                str(row.get("layer")),
+                row.get("tenant_id") == null ? null : ((Number) row.get("tenant_id")).longValue(),
+                emptyToNull(str(row.get("module_code"))),
+                emptyToNull(str(row.get("resource"))),
+                emptyToNull(str(row.get("field"))),
+                new ArrayList<>(new TreeSet<>(roleIds)),
+                roleCodes,
+                str(row.get("visibility")),
+                emptyToNull(str(row.get("mask_rule"))),
+                str(row.get("operation")),
+                ((Number) row.get("allow_export")).intValue() == 1,
+                str(row.get("status")));
+    }
+
+    /** 快照 → 命令（复核通过写回 / 回滚目标；重新过保存校验，防止历史快照绕过当前目录约束）。 */
+    private static SaveCommand commandOf(ContentJson snapshot) {
+        return validate(
+                new SaveRequest(
+                        snapshot.name(),
+                        snapshot.layer(),
+                        snapshot.tenantId(),
+                        snapshot.moduleCode(),
+                        snapshot.resource(),
+                        snapshot.field(),
+                        snapshot.roleIds(),
+                        snapshot.visibility(),
+                        snapshot.maskRule(),
+                        snapshot.operation(),
+                        snapshot.allowExport(),
+                        snapshot.status()));
+    }
+
+    private String toJson(ContentJson snapshot) {
+        try {
+            return json.writeValueAsString(snapshot);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException ex) {
+            throw new ApiException(500, 50000, "系统繁忙，请稍后再试");
+        }
+    }
+
+    private ContentJson fromJson(String raw) {
+        try {
+            return json.readValue(raw == null ? "{}" : raw, ContentJson.class);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException ex) {
+            throw new ApiException(500, 50000, "系统繁忙，请稍后再试");
+        }
+    }
+
+    /** 规则当前适用角色 id 清单。 */
+    private Set<Long> roleIdsOf(long ruleId) {
+        return new LinkedHashSet<>(
+                platform.queryForList(
+                        "SELECT role_id FROM plt_view_rule_role WHERE rule_id = ?"
+                                + " ORDER BY role_id",
+                        Long.class,
+                        ruleId));
+    }
+
+    /** 角色 id → 编码（快照展示；空清单 = 全部角色）。 */
+    private List<String> roleCodeList(Set<Long> roleIds) {
+        if (roleIds == null || roleIds.isEmpty()) {
+            return List.of();
+        }
+        String ids = String.join(",", roleIds.stream().map(String::valueOf).toList());
+        return platform.queryForList(
+                "SELECT code FROM plt_role WHERE id IN (" + ids + ") ORDER BY code", String.class);
+    }
+
+    /** 规则行文案（审计「变更前」）。 */
+    private static String describeRow(Map<String, Object> row, Set<Long> roleIds) {
+        return "层级 %s，可见性 %s，操作 %s，允许导出 %s，状态 %s，适用角色 %s"
                 .formatted(
                         str(row.get("layer")),
                         str(row.get("visibility")),
                         str(row.get("operation")),
                         ((Number) row.get("allow_export")).intValue() == 1 ? "是" : "否",
-                        str(row.get("status")));
+                        str(row.get("status")),
+                        roleIds.isEmpty() ? "全部" : roleIds.size() + " 个");
     }
 
-    private String beforeCode(long id) {
-        return platform.queryForObject(
-                "SELECT code FROM plt_view_rule WHERE id = ?", String.class, id);
+    private static String proposerName(Map<String, Object> versionRow) {
+        return versionRow.get("proposed_by_name") == null
+                ? "未知"
+                : str(versionRow.get("proposed_by_name"));
+    }
+
+    private AuditEntry.Builder reviewAudit(
+            Long tenantId, String code, String action, SessionPrincipal reviewer, String proposer) {
+        return AuditEntry.platformAccess(tenantId, "base", action)
+                .userId(reviewer.userId())
+                .username(reviewer.username())
+                .displayName(reviewer.displayName())
+                .roleCodes(reviewer.roles())
+                .objectType("plt_view_rule")
+                .objectId(code);
     }
 
     private AuditEntry.Builder ruleAudit(

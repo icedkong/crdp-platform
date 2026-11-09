@@ -1,12 +1,15 @@
 package com.crdp.server.security;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -46,7 +49,13 @@ class TenantViewGuardFilterTest {
 
     @BeforeEach
     void setUp() {
-        filter = new TenantViewGuardFilter(registry, executor, recorder, errors);
+        filter =
+                new TenantViewGuardFilter(
+                        registry,
+                        executor,
+                        recorder,
+                        errors,
+                        new com.fasterxml.jackson.databind.ObjectMapper());
         when(executor.moduleOpen(anyLong(), any())).thenReturn(true);
         SecurityContextHolder.clearContext();
     }
@@ -294,13 +303,20 @@ class TenantViewGuardFilterTest {
                 .recordDenied(any(), anyString(), anyString(), anyInt(), anyString());
         verify(recorder)
                 .recordQuery(
-                        any(), eq("POST"), eq("/api/hospital/followup/patients/search"), eq(false));
+                        any(),
+                        eq("POST"),
+                        eq("/api/hospital/followup/patients/search"),
+                        eq(false),
+                        eq("patient"),
+                        isNull());
         verify(recorder)
                 .recordQuery(
                         any(),
                         eq("GET"),
                         eq("/api/hospital/followup/patients/filter-options"),
-                        eq(false));
+                        eq(false),
+                        eq("patient"),
+                        isNull());
     }
 
     @Test
@@ -317,7 +333,9 @@ class TenantViewGuardFilterTest {
                 new MockHttpServletResponse(),
                 (req, res) -> {});
 
-        verify(recorder).recordQuery(any(), eq("GET"), eq("/api/hospital/menus"), eq(true));
+        verify(recorder)
+                .recordQuery(
+                        any(), eq("GET"), eq("/api/hospital/menus"), eq(true), isNull(), isNull());
     }
 
     @Test
@@ -362,6 +380,68 @@ class TenantViewGuardFilterTest {
         verify(errors, never()).write(any(), anyInt(), anyInt(), anyString());
         verify(recorder, never())
                 .recordDenied(any(), anyString(), anyString(), anyInt(), anyString());
+    }
+
+    @Test
+    void queryAuditCarriesObjectAndRecordCount() throws Exception {
+        login(viewSession());
+        registered(
+                "POST",
+                "/api/hospital/followup/patients/search",
+                "followup:patient:view",
+                "followup");
+
+        // 统一响应 {code, data:{items, total}}：record_count 取 total，object_type 取权限码资源段（PLT-VIEW-016）
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        filter.doFilter(
+                request("POST", "/api/hospital/followup/patients/search"),
+                response,
+                (req, res) -> {
+                    res.setContentType("application/json");
+                    try {
+                        res.getWriter()
+                                .write(
+                                        "{\"code\":0,\"message\":\"ok\",\"data\":{\"items\":[{},{},{}],"
+                                                + "\"total\":3,\"pageNo\":1,\"pageSize\":20}}");
+                    } catch (IOException ex) {
+                        throw new RuntimeException(ex);
+                    }
+                });
+        verify(recorder)
+                .recordQuery(
+                        any(),
+                        eq("POST"),
+                        eq("/api/hospital/followup/patients/search"),
+                        eq(false),
+                        eq("patient"),
+                        eq(3L));
+
+        // 响应体必须原样透传（缓存包装回写，不吞内容）
+        assertTrue(response.getContentAsString().contains("\"total\":3"), "响应体在审计包装后原样返回");
+    }
+
+    @Test
+    void recordCountExtractionShapes() throws Exception {
+        // 纯函数：分页 total / 数组 / items / 单对象 / 空数据 / 业务错误码 / 非 JSON
+        assertEquals(
+                3L, extract("{\"code\":0,\"data\":{\"items\":[],\"total\":3}}"), "分页响应取 total");
+        assertEquals(2L, extract("{\"code\":0,\"data\":[1,2]}"), "数组取长度");
+        assertEquals(2L, extract("{\"code\":0,\"data\":{\"items\":[1,2]}}"), "无 total 的 items 取长度");
+        assertEquals(1L, extract("{\"code\":0,\"data\":{\"id\":7}}"), "单对象记 1");
+        assertEquals(0L, extract("{\"code\":0,\"data\":null}"), "空数据记 0");
+        assertNull(extract("{\"code\":40300,\"data\":{\"total\":9}}"), "业务错误不计条数");
+        assertNull(extract("not-json"), "非 JSON 返回 null（不阻塞放行）");
+        assertNull(extract(""), "空响应体返回 null");
+    }
+
+    /** 经缓存包装写入响应体后提取条数（与过滤器真实路径一致）。 */
+    private Long extract(String body) throws IOException {
+        org.springframework.web.util.ContentCachingResponseWrapper wrapper =
+                new org.springframework.web.util.ContentCachingResponseWrapper(
+                        new MockHttpServletResponse());
+        wrapper.getWriter().write(body);
+        wrapper.flushBuffer();
+        return filter.extractRecordCount(wrapper);
     }
 
     // ---------------------------------------------------------------- 工具

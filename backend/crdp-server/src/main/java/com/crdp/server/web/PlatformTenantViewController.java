@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -69,5 +70,36 @@ public class PlatformTenantViewController {
     @DeleteMapping("/{sessionId}")
     public ApiResponse<TenantViewService.ExitResult> exit(@PathVariable long sessionId) {
         return ApiResponse.ok(viewService.exit(sessionId));
+    }
+
+    // ---------------------------------------------------------------- 会话台账（E20-T05 /
+    // PLT-VIEW-016，仅平台侧）
+
+    @Operation(
+            summary =
+                    "视角会话列表（PLT-VIEW-016 审计中心「视角会话」）：平台账号、租户、目的、起止时间、"
+                            + "结束方式与计数摘要；过滤参数均可空；明细（页面 / 查询 / 被拒）按会话号经审计中心"
+                            + "「租户视角记录」检索；仅平台侧可见，医院端无入口")
+    @GetMapping
+    @RequiresPermission("platform:view:session:view")
+    public ApiResponse<TenantViewService.SessionPage> sessions(
+            @RequestParam(required = false) String accountName,
+            @RequestParam(required = false) Long tenantId,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String purpose,
+            @RequestParam(required = false) Integer pageNo,
+            @RequestParam(required = false) Integer pageSize) {
+        return ApiResponse.ok(
+                viewService.sessions(
+                        new TenantViewService.SessionQuery(
+                                accountName, tenantId, status, purpose, pageNo, pageSize)));
+    }
+
+    @Operation(summary = "视角会话详情（PLT-VIEW-016）：台账整行（含生效规则版本与计数摘要）；未知 40400")
+    @GetMapping("/{sessionId}")
+    @RequiresPermission("platform:view:session:view")
+    public ApiResponse<TenantViewService.SessionSummary> sessionDetail(
+            @PathVariable long sessionId) {
+        return ApiResponse.ok(viewService.sessionDetail(sessionId));
     }
 }

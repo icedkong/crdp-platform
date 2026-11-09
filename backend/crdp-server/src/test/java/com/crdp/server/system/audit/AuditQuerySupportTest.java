@@ -110,6 +110,7 @@ class AuditQuerySupportTest {
                                 null,
                                 null,
                                 null,
+                                null,
                                 null));
         assertEquals(
                 "开始=2027-01-01T00:00:00+08:00，结束=2027-02-01T00:00:00+08:00，账号=nurse.demo，模块=system，结果=SUCCESS",
@@ -119,7 +120,7 @@ class AuditQuerySupportTest {
                 HospitalAuditService.conditionSummary(
                         new AuditViews.SearchRequest(
                                 null, null, null, null, null, null, null, null, null, null, null,
-                                null, null, null)));
+                                null, null, null, null)));
     }
 
     @Test

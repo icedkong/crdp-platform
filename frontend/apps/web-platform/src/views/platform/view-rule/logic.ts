@@ -1,6 +1,7 @@
 /**
- * 视角规则页的纯逻辑（E20-T02 / PLT-VIEW-007、008、009）：左栏层级过滤与计数、
- * 表单模型与目录校验（FIELD 层资源与字段必须在目录内）、预览请求模型校验。
+ * 视角规则页的纯逻辑（E20-T02 / PLT-VIEW-007、008、009；E20-T05 / PLT-VIEW-014、015）：
+ * 左栏层级过滤与计数、表单模型与目录校验（FIELD 层资源与字段必须在目录内）、预览请求模型校验、
+ * 高敏变更提交前提示（与后端 ViewRuleReviewPolicy 同口径）、版本行前后值摘要。
  * 文案与枚举逻辑统一在 @crdp/api（view-rule.ts），这里只做形状转换。
  */
 import type {
@@ -8,12 +9,17 @@ import type {
   ViewRuleEditModel,
   ViewRuleItem,
   ViewRuleLayer,
+  ViewRuleVersionContent,
+  ViewRuleVersionItem,
 } from '@crdp/api';
 
 import {
+  toViewRuleSaveRequest,
   validateViewRule,
   VIEW_RULE_LAYER_OPTIONS,
   viewRuleLayerText,
+  viewRuleSensitiveReasons,
+  viewRuleSensitivityText,
 } from '@crdp/api';
 
 export { viewRuleLayerText };
@@ -112,4 +118,90 @@ export function validatePreviewModel(model: {
     errors.push('请选择至少一个平台角色');
   }
   return errors;
+}
+
+// ---------------------------------------------------------------- E20-T05 / PLT-VIEW-014、015
+
+/**
+ * 高敏变更提交前提示（与后端 ViewRuleReviewPolicy 同口径，最终以后端判定为准）：
+ * 变更前生效内容 = 规则行 ACTIVE 时为行内容，否则系统初始默认；返回空串 = 普通变更即时生效。
+ * roleCodeToId 把规则行的角色码映射回 id（对话框装载角色后调用方构建）。
+ */
+export function sensitivityHint(
+  rule: null | ViewRuleItem,
+  model: ViewRuleEditModel,
+  roleCodeToId: Map<string, number>,
+): string {
+  const request = toViewRuleSaveRequest(model);
+  const after: ViewRuleVersionContent = {
+    allowExport: request.allowExport,
+    field: request.field ?? null,
+    layer: request.layer,
+    maskRule: request.maskRule ?? null,
+    moduleCode: request.moduleCode ?? null,
+    name: request.name,
+    operation: request.operation,
+    resource: request.resource ?? null,
+    roleCodes: [],
+    roleIds: request.roleIds,
+    status: request.status ?? 'ACTIVE',
+    tenantId: request.tenantId ?? null,
+    visibility: request.visibility,
+  };
+  const before =
+    rule && rule.status === 'ACTIVE'
+      ? {
+          allowExport: rule.allowExport,
+          field: rule.field,
+          layer: rule.layer,
+          moduleCode: rule.moduleCode,
+          operation: rule.operation,
+          resource: rule.resource,
+          roleIds: (rule.roleCodes ?? [])
+            .map((code) => roleCodeToId.get(code))
+            .filter((id): id is number => id !== undefined),
+          tenantId: rule.tenantId,
+          visibility: rule.visibility,
+        }
+      : null;
+  return viewRuleSensitivityText(viewRuleSensitiveReasons(before, after));
+}
+
+/** 版本快照 JSON 解析（损坏 / 为空返回 null，展示兜底「—」）。 */
+export function parseVersionContent(
+  raw: null | string,
+): null | ViewRuleVersionContent {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as ViewRuleVersionContent;
+  } catch {
+    return null;
+  }
+}
+
+/** 版本快照一行摘要（版本记录与待复核列表共用）：效果 + 角色口径。 */
+export function versionContentSummary(
+  content: null | ViewRuleVersionContent,
+): string {
+  if (!content) return '系统初始默认（可见、只读、禁止导出）';
+  const visibility =
+    content.visibility === 'MASKED' && content.maskRule
+      ? `脱敏（${content.maskRule}）`
+      : ({ PLAIN: '明文', MASKED: '脱敏', BLINDED: '设盲', HIDDEN: '隐藏' }[
+          content.visibility
+        ] ?? content.visibility);
+  const operation = content.operation === 'EDITABLE' ? '可编辑' : '只读';
+  const exportText = content.allowExport ? '允许导出' : '禁止导出';
+  const roles =
+    (content.roleCodes ?? []).length === 0
+      ? '全部角色'
+      : (content.roleCodes ?? []).join('、');
+  return `可见性 ${visibility} · ${operation} · ${exportText} · ${roles}`;
+}
+
+/** 待复核行 → 提示文案（同意前给复核人看清改动）。 */
+export function pendingChangeText(version: ViewRuleVersionItem): string {
+  const before = parseVersionContent(version.beforeJson);
+  const after = parseVersionContent(version.afterJson);
+  return `${versionContentSummary(before)} → ${versionContentSummary(after)}`;
 }

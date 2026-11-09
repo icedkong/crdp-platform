@@ -281,6 +281,12 @@ public class PlatformAuditService {
             where.append(" AND trace_id = ?");
             args.add(traceId);
         }
+        // 视角会话号（仅平台访问日志有该列，E20-T05 / PLT-VIEW-016「视角会话」钻取）
+        String viewSessionId = AuditQuerySupport.trim(request.viewSessionId());
+        if (viewSessionId != null && kind == Kind.PLATFORM_ACCESS) {
+            where.append(" AND view_session_id = ?");
+            args.add(viewSessionId);
+        }
     }
 
     private AuditRowView row(Kind kind, Map<String, Object> r) {

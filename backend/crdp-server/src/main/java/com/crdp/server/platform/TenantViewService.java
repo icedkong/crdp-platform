@@ -208,6 +208,44 @@ public class TenantViewService {
     public record ExitResult(long sessionId, String sessionNo, String endMethod) {}
 
     /**
+     * 会话台账查询（E20-T05 / PLT-VIEW-016，审计中心「视角会话」）：过滤参数均可空； accountName 精确匹配、tenantId /
+     * status(ACTIVE|ENDED) / purpose 四值枚举。
+     */
+    public record SessionQuery(
+            String accountName,
+            Long tenantId,
+            String status,
+            String purpose,
+            Integer pageNo,
+            Integer pageSize) {}
+
+    /** 会话台账行（平台账号、租户、目的、起止时间、结束方式与计数摘要，spec §8「视角会话」）。 */
+    public record SessionSummary(
+            long id,
+            String sessionNo,
+            long accountId,
+            String accountName,
+            String displayName,
+            String roleCodes,
+            long tenantId,
+            String tenantCode,
+            String tenantName,
+            String purpose,
+            String note,
+            String ruleVersion,
+            String status,
+            OffsetDateTime startedAt,
+            OffsetDateTime endsAt,
+            OffsetDateTime endAt,
+            String endMethod,
+            long pageCount,
+            long queryCount,
+            long deniedCount,
+            long proxyCount) {}
+
+    public record SessionPage(List<SessionSummary> items, long total, int pageNo, int pageSize) {}
+
+    /**
      * 进入凭据（E20-T04 / PLT-VIEW-002）：平台端为本人进行中的视角会话签发，医院端在 TTL 内凭它换视角令牌； 凭据一次性（取出即作废），只用于拼进 URL
      * 片段（#ticket=…），不进服务端日志。
      */
@@ -394,6 +432,152 @@ public class TenantViewService {
                     closeSession(row, END_LOGOUT, LocalDateTime.now(ZONE));
                     return new ExitResult(row.id(), row.sessionNo(), END_LOGOUT);
                 });
+    }
+
+    // ---------------------------------------------------------------- 会话台账（E20-T05 / PLT-VIEW-016，
+    // 仅平台侧）
+
+    /**
+     * 会话台账列表（PLT-VIEW-016 审计中心「视角会话」页签）：全部视角会话（含进行中与已结束）， 按 id 倒序分页；过滤参数均可空。只读台账，明细（页面 / 查询 /
+     * 被拒）按会话号经审计中心「租户视角记录」检索 （aud_platform_access_log.view_session_id）。
+     */
+    public SessionPage sessions(SessionQuery query) {
+        SessionQuery safe =
+                query == null ? new SessionQuery(null, null, null, null, null, null) : query;
+        int pageNo = safe.pageNo() == null || safe.pageNo() < 1 ? 1 : safe.pageNo();
+        int pageSize =
+                safe.pageSize() == null || safe.pageSize() < 1
+                        ? 20
+                        : Math.min(safe.pageSize(), 100);
+        String status = safe.status() == null ? "" : safe.status().trim();
+        String purpose = safe.purpose() == null ? "" : safe.purpose().trim();
+        String account = safe.accountName() == null ? "" : safe.accountName().trim();
+        return TenantContext.callAsPlatform(
+                () -> {
+                    StringBuilder where = new StringBuilder(" WHERE 1 = 1");
+                    List<Object> args = new ArrayList<>();
+                    if (!account.isEmpty()) {
+                        where.append(" AND account_name = ?");
+                        args.add(account);
+                    }
+                    if (safe.tenantId() != null) {
+                        where.append(" AND tenant_id = ?");
+                        args.add(safe.tenantId());
+                    }
+                    if (!status.isEmpty()) {
+                        where.append(" AND status = ?");
+                        args.add(status);
+                    }
+                    if (!purpose.isEmpty()) {
+                        where.append(" AND purpose = ?");
+                        args.add(purpose);
+                    }
+                    Long total =
+                            platform.queryForObject(
+                                    "SELECT COUNT(*) FROM plt_view_session" + where,
+                                    Long.class,
+                                    args.toArray());
+                    List<SessionSummary> items =
+                            platform.query(
+                                    "SELECT * FROM plt_view_session"
+                                            + where
+                                            + " ORDER BY id DESC LIMIT "
+                                            + pageSize
+                                            + " OFFSET "
+                                            + (pageNo - 1) * pageSize,
+                                    (rs, rowNum) -> summaryOf(rowOfFull(rs)),
+                                    args.toArray());
+                    return new SessionPage(items, total == null ? 0 : total, pageNo, pageSize);
+                });
+    }
+
+    /** 会话台账详情（未知 / 已删除 40400）。 */
+    public SessionSummary sessionDetail(long sessionId) {
+        return TenantContext.callAsPlatform(
+                () -> {
+                    List<SessionSummary> rows =
+                            platform.query(
+                                    "SELECT * FROM plt_view_session WHERE id = ?",
+                                    (rs, rowNum) -> summaryOf(rowOfFull(rs)),
+                                    sessionId);
+                    if (rows.isEmpty()) {
+                        throw new ApiException(404, 40400, "视角会话不存在");
+                    }
+                    return rows.get(0);
+                });
+    }
+
+    /** 台账整行 → 摘要视图（租户编码 / 名称按 id 补齐）。 */
+    private SessionSummary summaryOf(FullRow row) {
+        return new SessionSummary(
+                row.id(),
+                row.sessionNo(),
+                row.accountId(),
+                row.accountName(),
+                row.displayName(),
+                row.roleCodes(),
+                row.tenantId(),
+                tenantColumnOf(row.tenantId(), "code"),
+                tenantColumnOf(row.tenantId(), "name"),
+                row.purpose(),
+                row.note(),
+                row.ruleVersion(),
+                row.status(),
+                offsetDateTime(row.startedAt()),
+                offsetDateTime(row.endsAt()),
+                row.endAt() == null ? null : offsetDateTime(row.endAt()),
+                row.endMethod(),
+                row.pageCount(),
+                row.queryCount(),
+                row.deniedCount(),
+                row.proxyCount());
+    }
+
+    /** 台账整列行（会话摘要视图读取用，含收尾与计数列）。 */
+    private record FullRow(
+            long id,
+            String sessionNo,
+            long accountId,
+            String accountName,
+            String displayName,
+            String roleCodes,
+            long tenantId,
+            String purpose,
+            String note,
+            String ruleVersion,
+            String status,
+            LocalDateTime startedAt,
+            LocalDateTime endsAt,
+            LocalDateTime endAt,
+            String endMethod,
+            long pageCount,
+            long queryCount,
+            long deniedCount,
+            long proxyCount) {}
+
+    private static FullRow rowOfFull(ResultSet rs) throws SQLException {
+        return new FullRow(
+                rs.getLong("id"),
+                rs.getString("session_no"),
+                rs.getLong("account_id"),
+                rs.getString("account_name"),
+                rs.getString("display_name"),
+                rs.getString("role_codes"),
+                rs.getLong("tenant_id"),
+                rs.getString("purpose"),
+                rs.getString("note"),
+                rs.getString("rule_version"),
+                rs.getString("status"),
+                rs.getTimestamp("started_at").toLocalDateTime(),
+                rs.getTimestamp("ends_at").toLocalDateTime(),
+                rs.getTimestamp("end_at") == null
+                        ? null
+                        : rs.getTimestamp("end_at").toLocalDateTime(),
+                rs.getString("end_method"),
+                rs.getLong("page_count"),
+                rs.getLong("query_count"),
+                rs.getLong("denied_count"),
+                rs.getLong("proxy_count"));
     }
 
     // ---------------------------------------------------------------- 医院端视角外壳（E20-T04 /

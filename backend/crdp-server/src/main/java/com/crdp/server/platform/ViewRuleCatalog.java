@@ -52,11 +52,15 @@ public final class ViewRuleCatalog {
 
     public static final Set<String> OPERATIONS = Set.of(OPERATION_READONLY, OPERATION_EDITABLE);
 
-    /** 状态：待复核（PENDING_REVIEW）与复核流随 E20-T05（PLT-VIEW-014）。 */
+    /** 状态：ACTIVE 生效 / DISABLED 停用 / PENDING_REVIEW 待复核（E20-T05 / PLT-VIEW-014，系统置值）。 */
     public static final String STATUS_ACTIVE = "ACTIVE";
 
     public static final String STATUS_DISABLED = "DISABLED";
 
+    /** 待复核：新建即高敏的规则行初始状态（解析只取 ACTIVE，复核通过才生效；请求不可直接提交该值）。 */
+    public static final String STATUS_PENDING_REVIEW = "PENDING_REVIEW";
+
+    /** 请求可提交的状态（PENDING_REVIEW 由服务端在高敏判定后置值）。 */
     public static final Set<String> STATUSES = Set.of(STATUS_ACTIVE, STATUS_DISABLED);
 
     /** 脱敏规则码（沿用第 4 章 SensitiveValueMasker 的字段码 + generic）。 */

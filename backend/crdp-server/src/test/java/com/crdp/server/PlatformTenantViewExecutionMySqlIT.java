@@ -181,6 +181,18 @@ class PlatformTenantViewExecutionMySqlIT {
                         Integer.class,
                         sessionNo);
         assertTrue(queries != null && queries >= 3, "读放行写 VIEW_QUERY 审计：" + queries);
+        // E20-T05 / PLT-VIEW-016：查询明细带「对象与条数」——患者检索记 object_type=patient、
+        // record_count=total（本场景命中 1 名）；菜单请求对象为空（未绑权限码）
+        Map<String, Object> patientQuery =
+                platform.queryForMap(
+                        "SELECT object_type, record_count FROM aud_platform_access_log"
+                                + " WHERE action = 'VIEW_QUERY' AND view_session_id = ?"
+                                + " AND page = '/api/hospital/followup/patients/search'"
+                                + " ORDER BY id DESC LIMIT 1",
+                        sessionNo);
+        assertEquals("patient", patientQuery.get("object_type"), "查询明细带对象（权限码资源段）");
+        assertEquals(
+                1L, ((Number) patientQuery.get("record_count")).longValue(), "查询明细带条数（分页 total）");
         Map<String, Object> counts =
                 platform.queryForMap(
                         "SELECT query_count, page_count FROM plt_view_session WHERE session_no = ?",

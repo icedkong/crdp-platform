@@ -3,7 +3,8 @@ import type { ViewRuleCatalogField, ViewRuleItem } from '@crdp/api';
 import { newViewRuleModel } from '@crdp/api';
 /**
  * 视角规则页纯逻辑测试（E20-T02 / PLT-VIEW-007、009）：左栏层级页签与计数、
- * 按层过滤、FIELD 层目录校验（资源 / 字段 / 整体条目）、预览请求校验。
+ * 按层过滤、FIELD 层目录校验（资源 / 字段 / 整体条目）、预览请求校验；
+ * E20-T05 / PLT-VIEW-014、015：高敏变更提交前提示、版本快照解析与摘要。
  */
 import { describe, expect, it } from 'vitest';
 
@@ -13,8 +14,12 @@ import {
   catalogHasWholeResource,
   catalogResources,
   filterByLayer,
+  parseVersionContent,
+  pendingChangeText,
+  sensitivityHint,
   validateEditModel,
   validatePreviewModel,
+  versionContentSummary,
 } from './logic';
 
 function rule(
@@ -152,5 +157,135 @@ describe('validatePreviewModel', () => {
       '请选择至少一个平台角色',
     ]);
     expect(validatePreviewModel({ roleIds: [1, 2], tenantId: 3 })).toEqual([]);
+  });
+});
+
+describe('sensitivityHint（高敏提交前提示，与后端同口径）', () => {
+  const codeToId = new Map([
+    ['IMPLEMENTATION', 2],
+    ['SUPPORT', 3],
+  ]);
+
+  it('新建可编辑 / 允许导出规则提示待复核；新建脱敏规则不提示', () => {
+    const editable = newViewRuleModel();
+    editable.name = '可编辑（示例）';
+    editable.operation = 'EDITABLE';
+    expect(sensitivityHint(null, editable, codeToId)).toContain('高敏变更');
+
+    const exportable = newViewRuleModel();
+    exportable.name = '允许导出（示例）';
+    exportable.allowExport = true;
+    expect(sensitivityHint(null, exportable, codeToId)).toContain('允许导出');
+
+    const masked = newViewRuleModel();
+    masked.name = '脱敏（示例）';
+    masked.layer = 'FIELD';
+    masked.resource = 'patient';
+    masked.field = 'phone';
+    masked.visibility = 'MASKED';
+    masked.maskRule = 'phone';
+    expect(sensitivityHint(null, masked, codeToId)).toBe('');
+  });
+
+  it('维护生效中的脱敏规则：改明文提示；改名称不提示', () => {
+    const maskedRule: ViewRuleItem = {
+      allowExport: false,
+      code: 'VR-FIELD-PATIENT-NAME',
+      field: 'name',
+      fieldLabel: '患者姓名',
+      id: 9,
+      layer: 'FIELD',
+      maskRule: 'name',
+      moduleCode: 'followup',
+      moduleName: '随访',
+      name: '敏感字段脱敏：患者姓名',
+      operation: 'READONLY',
+      pendingChange: false,
+      resource: 'patient',
+      resourceLabel: '患者档案',
+      roleCodes: [],
+      status: 'ACTIVE',
+      tenantCode: null,
+      tenantId: null,
+      tenantName: null,
+      updatedAt: '2026-11-01T10:00:00+08:00',
+      version: 1,
+      visibility: 'MASKED',
+    };
+    const toPlain = newViewRuleModel();
+    toPlain.name = maskedRule.name;
+    toPlain.layer = 'FIELD';
+    toPlain.moduleCode = 'followup';
+    toPlain.resource = 'patient';
+    toPlain.field = 'name';
+    toPlain.visibility = 'PLAIN';
+    expect(sensitivityHint(maskedRule, toPlain, codeToId)).toContain(
+      '可见性放宽',
+    );
+
+    // 编辑流程按规则行预填模块（toViewRuleEditModel），仅改名不动选择器 → 普通变更即时生效
+    const rename = newViewRuleModel();
+    rename.name = '敏感字段脱敏：患者姓名（改名）';
+    rename.layer = 'FIELD';
+    rename.moduleCode = 'followup';
+    rename.resource = 'patient';
+    rename.field = 'name';
+    rename.visibility = 'MASKED';
+    rename.maskRule = 'name';
+    expect(sensitivityHint(maskedRule, rename, codeToId)).toBe('');
+  });
+});
+
+describe('版本快照解析与摘要（PLT-VIEW-015）', () => {
+  const after = {
+    allowExport: false,
+    field: 'name',
+    layer: 'FIELD',
+    maskRule: 'name',
+    moduleCode: 'followup',
+    name: '敏感字段脱敏：患者姓名',
+    operation: 'READONLY',
+    resource: 'patient',
+    roleCodes: ['IMPLEMENTATION', 'SUPPORT'],
+    roleIds: [2, 3],
+    status: 'ACTIVE',
+    tenantId: null,
+    visibility: 'MASKED',
+  };
+
+  it('解析与摘要（脱敏码 / 角色清单 / 初始默认兜底）', () => {
+    expect(parseVersionContent(JSON.stringify(after))?.maskRule).toBe('name');
+    expect(parseVersionContent(null)).toBeNull();
+    expect(parseVersionContent('not-json')).toBeNull();
+    expect(
+      versionContentSummary(parseVersionContent(JSON.stringify(after))),
+    ).toBe('可见性 脱敏（name） · 只读 · 禁止导出 · IMPLEMENTATION、SUPPORT');
+    expect(versionContentSummary(null)).toBe(
+      '系统初始默认（可见、只读、禁止导出）',
+    );
+  });
+
+  it('待复核行前 → 后文案', () => {
+    const text = pendingChangeText({
+      afterJson: JSON.stringify(after),
+      appliedAt: null,
+      beforeJson: null,
+      changeType: 'UPDATE',
+      id: 12,
+      proposedAt: '2026-11-09T10:00:00+08:00',
+      proposedByName: 'platform.admin',
+      reviewComment: null,
+      reviewedAt: null,
+      reviewedByName: null,
+      ruleCode: 'VR-FIELD-PATIENT-NAME',
+      ruleId: 9,
+      ruleName: '敏感字段脱敏：患者姓名',
+      sensitive: true,
+      status: 'PENDING_REVIEW',
+      version: 2,
+    });
+    expect(text).toBe(
+      '系统初始默认（可见、只读、禁止导出） → 可见性 脱敏（name） · 只读 · 禁止导出 · IMPLEMENTATION、SUPPORT',
+    );
   });
 });

@@ -23,6 +23,7 @@ import {
   Form,
   FormItem,
   Input,
+  message,
   Modal,
   Select,
   SelectOption,
@@ -37,14 +38,16 @@ import {
   catalogFieldsOf,
   catalogHasWholeResource,
   catalogResources,
+  sensitivityHint,
   validateEditModel,
 } from './logic';
 
 /**
- * 新建 / 维护视角规则（E20-T02 / PLT-VIEW-007 · pages.md §11 视角规则）：
+ * 新建 / 维护视角规则（E20-T02 / PLT-VIEW-007；E20-T05 / PLT-VIEW-014 · pages.md §11 视角规则）：
  * 层级（全局默认 / 租户 / 模块 / 字段）→ 选择器（租户 / 模块 / 资源对象与字段）→
  * 适用平台角色（空 = 全部）→ 可见性（明文 / 脱敏 / 设盲 / 隐藏）+ 脱敏规则、操作、允许导出。
- * 高敏变更（改明文、取消设盲 / 只读、允许导出）的第二人复核随 E20-T05，本页普通变更即时生效。
+ * 高敏变更（改明文、取消设盲 / 只读、允许导出及等效放宽）提交后进入待复核——规则保持原状，
+ * 由另一名平台管理员复核通过后生效；保存结果按 pendingReview 分别提示。
  */
 const props = defineProps<{
   catalog: null | ViewRuleCatalog;
@@ -74,6 +77,15 @@ const title = computed(() =>
     : `维护视角规则：${props.rule?.name ?? ''}（${props.rule?.code ?? ''}）`,
 );
 const okDisabled = computed(() => errors.value.length > 0);
+
+const roleCodeToId = computed(
+  () => new Map(roleRows.value.map((role) => [role.code, role.id])),
+);
+
+/** 高敏预判（与后端同口径的提示；最终以后端判定为准）。 */
+const sensitiveHint = computed(() =>
+  sensitivityHint(props.rule, form.value, roleCodeToId.value),
+);
 const fields = computed(() => props.catalog?.fields ?? []);
 const resourceOptions = computed(() =>
   catalogResources(fields.value).map((resource) => ({
@@ -127,11 +139,8 @@ watch(
     if (props.rule) {
       form.value = toViewRuleEditModel(props.rule);
       // 规则行只带角色码；提交按 id 整体替换，这里按码映射回 id 预填
-      const byCode = new Map(
-        roleRows.value.map((role) => [role.code, role.id]),
-      );
       form.value.roleIds = (props.rule.roleCodes ?? [])
-        .map((code) => byCode.get(code))
+        .map((code) => roleCodeToId.value.get(code))
         .filter((id): id is number => id !== undefined);
     } else {
       form.value = newViewRuleModel();
@@ -154,9 +163,16 @@ async function submit() {
   submitError.value = '';
   try {
     const request = toViewRuleSaveRequest(form.value);
-    await (props.rule
+    const outcome = await (props.rule
       ? updateViewRule(props.rule.id, request)
       : createViewRule(request));
+    if (outcome.pendingReview) {
+      message.info(
+        '该变更属高敏（放宽），已提交待复核：另一名平台管理员复核通过前规则保持原状',
+      );
+    } else {
+      message.success('已保存并生效');
+    }
     emit('update:open', false);
     emit('done');
   } catch (error) {
@@ -192,6 +208,14 @@ async function submit() {
       show-icon
       type="error"
       class="mb-2"
+    />
+    <Alert
+      v-if="sensitiveHint"
+      :message="sensitiveHint"
+      show-icon
+      type="warning"
+      class="mb-2"
+      data-testid="view-rule-sensitive-hint"
     />
     <Form layout="vertical" class="crdp-form">
       <FormItem v-if="!isCreate" label="编号">
@@ -242,9 +266,16 @@ async function submit() {
           @change="onFormChange"
         />
       </FormItem>
-      <FormItem v-if="form.layer === 'MODULE'" label="模块" required>
+      <FormItem
+        v-if="form.layer === 'MODULE' || form.layer === 'FIELD'"
+        :label="
+          form.layer === 'MODULE' ? '模块' : '适用模块（可选，空 = 全部模块）'
+        "
+        :required="form.layer === 'MODULE'"
+      >
         <Select
           v-model:value="form.moduleCode"
+          :allow-clear="form.layer === 'FIELD'"
           placeholder="选择模块"
           :options="moduleOptions"
           @change="onFormChange"

@@ -8,7 +8,7 @@
 ## 1. 写入（后端约定，所有模块都要遵守；E08-T01 已实现）
 
 - **只追加**：审计表只有 INSERT；无 UPDATE / DELETE 接口。数据库层由只读触发器保证（E08-T02，迁移 V17 / V26）：任何账号对六张审计表 UPDATE / DELETE 直接报错 45000（PLT-AUD-011）。唯一逃生口是连接级会话变量 `@crdp_audit_maintenance`（仅测试自清理与运维清算使用，用完即清）；在线保留清理走分区维护（E08-T03，`DROP PARTITION` 不触发行级触发器）。
-- 统一入口 `AuditLogger.append(AuditEntry)`，四类 `type`：`OPERATION | LOGIN | DATA_ACCESS | PLATFORM_ACCESS`。规格通用字段：操作者（`userId/userName/displayName/userType/roleCodes`）、`module`、`action`、`objectType/objectId`（不记患者明文）、描述、变更前后值（`before_json/after_json`，敏感值只存摘要）、`result(SUCCESS|DENIED|FAIL)`、`errorCode/reason`、`ip/userAgent`、`traceId`、`viewSessionId`；扩展字段按类型：登录（`login_method/tenant_identify_method/second_factor_result/fail_reason/session_id`）、数据访问（`access_method(VIEW_PLAIN|EXPORT|PRINT|DOWNLOAD|BATCH_QUERY)/record_count/query_digest/file_hash`）、平台访问（`page` 及数据访问扩展）。操作者与请求上下文（IP 取 X-Forwarded-For 首段、终端、traceId）缺省由写入服务自动补全。
+- 统一入口 `AuditLogger.append(AuditEntry)`，四类 `type`：`OPERATION | LOGIN | DATA_ACCESS | PLATFORM_ACCESS`。规格通用字段：操作者（`userId/userName/displayName/userType/roleCodes`）、`module`、`action`、`objectType/objectId`（不记患者明文）、描述、变更前后值（`before_json/after_json`，敏感值只存摘要）、`result(SUCCESS|DENIED|FAIL)`、`errorCode/reason`、`ip/userAgent`、`traceId`、`viewSessionId`；扩展字段按类型：登录（`login_method/tenant_identify_method/second_factor_result/fail_reason/session_id`）、数据访问（`access_method(VIEW_PLAIN|EXPORT|PRINT|DOWNLOAD|BATCH_QUERY)/record_count/query_digest/file_hash`）、平台访问（`page` 及数据访问扩展；E20-T05 起 VIEW_QUERY 带对象与条数：`object_type`=权限码资源段、`record_count`=响应条数，PLT-VIEW-016）。操作者与请求上下文（IP 取 X-Forwarded-For 首段、终端、traceId）缺省由写入服务自动补全。
 - 声明式操作审计：app 层方法标 `@AuditLog(module, action, objectType, objectId="#id")`，切面按返回 / 异常写 `SUCCESS/DENIED/FAIL`（40300/40301/40302/40303/40304/40306 记 DENIED）；登录、数据访问、平台访问走编程式 `append`。
 - 兜底：`GlobalExceptionHandler` 与 `ApiResourceGuardFilter`（40300）、`GraceReadOnlyFilter`（40306）对已登录会话的拒绝请求补写 `result=DENIED` 的操作日志（描述含方法与路径）；匿名请求与 40101 不写。
 - **防篡改（PLT-AUD-008，E08-T02 已实现）**：每条写入在独立新事务内封存 `hash = SHA-256(prev_hash + 规范化内容)`（经密码服务组件 `DigestService`，NFR-CRY-006）。链的定义：每表独立一条链，按主键升序、只计已封存行，首条封存行 `prev_hash` 为 64 个 0（GENESIS）；E08-T01 遗留的未封存行（hash NULL）是链前缀。`id` 与 `created_at` 不参与哈希（前者 INSERT 前不可知，后者由数据库时钟填充），位置完整性由「prev_hash 衔接 + 主键序」保证。并发写入由 `aud_chain_head` 链头行锁（`SELECT ... FOR UPDATE`）按表串行化，避免分叉。
@@ -40,7 +40,7 @@
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| POST | `/api/platform/audit/{type}/search` | `platform:audit:view` | `type = operation\|login\|tenant-view\|view-rule\|control-plane`；页签映射：operation → `plt_audit_log` 全量、control-plane → `plt_audit_log AND tenant_id IS NOT NULL`（租户控制面，PLT-TEN-022）、login → 平台库 `aud_login_log`、tenant-view → `aud_platform_access_log` 全量、view-rule → `aud_platform_access_log AND action LIKE 'VIEW_RULE%'`（写入侧随 E20-T01）；条件同 §2 另加 `tenantId` |
+| POST | `/api/platform/audit/{type}/search` | `platform:audit:view` | `type = operation\|login\|tenant-view\|view-rule\|control-plane`；页签映射：operation → `plt_audit_log` 全量、control-plane → `plt_audit_log AND tenant_id IS NOT NULL`（租户控制面，PLT-TEN-022）、login → 平台库 `aud_login_log`、tenant-view → `aud_platform_access_log` 全量、view-rule → `aud_platform_access_log AND action LIKE 'VIEW_RULE%'`（写入侧随 E20-T01）；条件同 §2 另加 `tenantId`、`viewSessionId`（E20-T05 / PLT-VIEW-016：按视角会话号钻取该会话的全部访问明细，仅 tenant-view / view-rule 的平台访问日志支持，医院端类型无此列忽略）。审计中心「视角会话」页签（会话台账列表 / 详情，`platform:view:session:view`）见 platform.md §6 |
 | GET | `/api/platform/audit/{type}/{id}` | `platform:audit:view` | 详情；同 traceId 关联（跨平台库三张表） |
 | GET | `/api/platform/audit/integrity?tenantId=` | `platform:audit:view` | 最近一次哈希链校验结果（`aud_chain_check` 按表取最新；`tenantId` 为空 = 平台库自身，PLT-AUD-009） |
 | POST | `/api/platform/audit/exports` | `platform:audit:export` + 二次认证（`X-Reauth-Token`，E04-T08；缺头 40304） | 平台账号导出一律 `PENDING_APPROVAL`，由**另一名**平台管理员审批（申请人自审 40901，PLT-AUD-007 已确认） |
@@ -58,7 +58,7 @@
 | `ABNORMAL_LOGIN` 异常登录 | 登录日志 `action=LOCK` | 连续失败达到阈值锁定（E04-T05，一次锁定只告警一次） |
 | `BATCH_EXPORT` 批量导出 | 数据访问 `access_method=EXPORT` | 导出即成批数据离站，一律告警；后续患者导出（E13）等自动覆盖 |
 | `PERMISSION_CHANGE` 权限变更 | 操作日志 event_type / action 前缀 `ROLE_` | 角色、菜单授权、成员、字段策略调整 |
-| `PLATFORM_ACCESS` 平台访问 | 平台访问日志 action 前缀 `VIEW_` | 进入租户视角与视角规则变更（E20-T01 起 `VIEW_ENTER` / `VIEW_EXIT`）；视角执行点访问随 E20-T03 起写入：读放行 `VIEW_QUERY`（page=请求路径，`GET /api/hospital/menus` 记页面）、被拒 `VIEW_DENIED`（result=DENIED + 原因，40303 / 40301）；查询的「对象与条数」明细随 E20-T05（PLT-VIEW-016） |
+| `PLATFORM_ACCESS` 平台访问 | 平台访问日志 action 前缀 `VIEW_` | 进入租户视角与视角规则变更（E20-T01 起 `VIEW_ENTER` / `VIEW_EXIT`）；视角执行点访问随 E20-T03 起写入：读放行 `VIEW_QUERY`（page=请求路径，`GET /api/hospital/menus` 记页面；E20-T05 起带对象 `object_type` 与条数 `record_count`，PLT-VIEW-016）、被拒 `VIEW_DENIED`（result=DENIED + 原因，40303 / 40301） |
 | `PLAINTEXT_ABUSE` 明文查看滥用 | 数据访问 `VIEW_PLAIN` 且 `result=DENIED`、`reason=RATE_LIMITED` | 患者明文接口频控拒绝（每分钟 30 次上限，patient.md §5）——「只看 SUCCESS」的唯一例外，被拒本身就是信号（E07-T05） |
 
 接收人 = 全部启用的 PLATFORM_ADMIN（按租户指定平台负责人随 PLT-VIEW-006，回落口径同 OQ-44）；唯一键 `(rule_code, alert_key=traceId, recipient_id)` 同一触发不重发。站内信收件箱与 PENDING → SENT/FAILED 投递随 E09 通知域消费本表（`NotifySender` 仍为占位实现，与 `plt_tenant_expire_notice` 同一消费契约）。告警派发失败只记 ERROR 日志不阻断业务（事实源是审计日志，可对账）；断链告警（PLT-AUD-009）复用本通道，随 E09 一并触达。

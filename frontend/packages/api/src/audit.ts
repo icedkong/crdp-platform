@@ -15,15 +15,16 @@ export type AuditLogKind =
 /** 医院端页签（audit.md §2）：不含平台访问记录（PLT-AUD-004 仅存平台侧）。 */
 export type HospitalAuditTab = 'data-access' | 'login' | 'operation';
 
-/** 平台端页签（audit.md §3）。 */
+/** 平台端页签（audit.md §3；view-session 为 E20-T05 视角会话台账，PLT-VIEW-016 仅平台侧）。 */
 export type PlatformAuditTab =
   | 'control-plane'
   | 'login'
   | 'operation'
   | 'tenant-view'
-  | 'view-rule';
+  | 'view-rule'
+  | 'view-session';
 
-/** 查询条件（PLT-AUD-005：时间、用户、类型、模块、对象、结果、IP、traceId 组合；平台端含租户）。 */
+/** 查询条件（PLT-AUD-005：时间、用户、类型、模块、对象、结果、IP、traceId 组合；平台端含租户；viewSessionId 仅平台访问日志支持，E20-T05）。 */
 export interface AuditSearchRequest {
   action?: string;
   endTime: string;
@@ -39,6 +40,7 @@ export interface AuditSearchRequest {
   traceId?: string;
   userId?: number;
   userName?: string;
+  viewSessionId?: string;
 }
 
 /** 列表行（各类型公共展示字段）。 */
@@ -161,10 +163,11 @@ export const HOSPITAL_AUDIT_TABS: { key: HospitalAuditTab; label: string }[] = [
   { key: 'data-access', label: '数据访问日志' },
 ];
 
-/** 平台端页签（pages.md §11：平台操作、平台登录、租户视角、视角规则变更、租户控制面）。 */
+/** 平台端页签（pages.md §11：平台操作、平台登录、租户视角、视角规则变更、租户控制面；「视角会话」为 E20-T05 会话台账）。 */
 export const PLATFORM_AUDIT_TABS: { key: PlatformAuditTab; label: string }[] = [
   { key: 'operation', label: '平台操作日志' },
   { key: 'login', label: '平台登录日志' },
+  { key: 'view-session', label: '视角会话' },
   { key: 'tenant-view', label: '租户视角记录' },
   { key: 'view-rule', label: '视角规则变更' },
   { key: 'control-plane', label: '租户控制面日志' },
@@ -329,6 +332,7 @@ export function buildAuditSearchCondition(
     tenantId?: number;
     traceId?: string;
     userName?: string;
+    viewSessionId?: string;
   },
   pageNo = 1,
   pageSize = 20,
@@ -349,6 +353,7 @@ export function buildAuditSearchCondition(
     tenantId: filter.tenantId,
     traceId: filter.traceId,
     userName: filter.userName,
+    viewSessionId: filter.viewSessionId,
   };
   for (const [key, value] of Object.entries(optional)) {
     if (value === undefined || value === null || value === '') continue;

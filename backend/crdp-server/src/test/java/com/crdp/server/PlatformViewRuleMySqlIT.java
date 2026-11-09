@@ -271,11 +271,15 @@ class PlatformViewRuleMySqlIT {
                                 "ACTIVE"),
                         token);
         assertEquals(0, codeOf(created), String.valueOf(created.get("message")));
-        long ruleId = ((Number) dataOf(created).get("id")).longValue();
+        // E20-T05 / PLT-VIEW-014：新建即放宽（可编辑）属高敏 → 待复核，复核通过前不生效
+        assertEquals(true, dataOf(created).get("pendingReview"), "新建即放宽属高敏变更");
+        assertEquals("PENDING_REVIEW", ruleOf(created).get("status"), "复核前规则行待复核");
+        approvePending((String) ruleOf(created).get("code"), token);
+        long ruleId = ((Number) ruleOf(created).get("id")).longValue();
         createdRuleIds.add(ruleId);
-        String code = (String) dataOf(created).get("code");
+        String code = (String) ruleOf(created).get("code");
         assertTrue(code.matches("VR-\\d{5}"), "规则编号服务端生成：" + code);
-        assertEquals(1, ((Number) dataOf(created).get("version")).intValue());
+        assertEquals(1, ((Number) ruleOf(created).get("version")).intValue());
         assertEquals(
                 1,
                 platformDirect()
@@ -307,8 +311,10 @@ class PlatformViewRuleMySqlIT {
                                 "DISABLED"),
                         token);
         assertEquals(0, codeOf(updated), String.valueOf(updated.get("message")));
-        assertEquals(2, ((Number) dataOf(updated).get("version")).intValue(), "版本每次变更 +1");
-        assertEquals("DISABLED", dataOf(updated).get("status"));
+        // 停用可编辑规则是收严（回落全局默认只读），普通变更即时生效（E20-T05 判定）
+        assertEquals(false, dataOf(updated).get("pendingReview"));
+        assertEquals(2, ((Number) ruleOf(updated).get("version")).intValue(), "版本每次变更 +1");
+        assertEquals("DISABLED", ruleOf(updated).get("status"));
         assertEquals(
                 1,
                 platformDirect()
@@ -340,7 +346,15 @@ class PlatformViewRuleMySqlIT {
                                 "ACTIVE"),
                         token);
         assertEquals(0, codeOf(enabled));
-        assertEquals(3, ((Number) dataOf(enabled).get("version")).intValue());
+        // 重新启用可编辑规则 = 放宽（取消只读），属高敏 → 待复核，批准后生效
+        assertEquals(true, dataOf(enabled).get("pendingReview"), "重新启用可编辑属高敏变更");
+        approvePending(code, token);
+        Map<?, ?> afterEnable = get("/api/platform/view-rules/" + ruleId + "/versions", token);
+        assertEquals(0, codeOf(afterEnable));
+        assertEquals(
+                3,
+                ((Number) listOf(afterEnable.get("data")).get(0).get("version")).intValue(),
+                "批准后行版本 = 版本行号");
 
         // 未知规则 40400
         assertEquals(
@@ -567,7 +581,9 @@ class PlatformViewRuleMySqlIT {
                                 "READONLY"),
                         token);
         assertEquals(0, codeOf(created));
-        createdRuleIds.add(((Number) dataOf(created).get("id")).longValue());
+        // 全局默认层的只读规则 = 与系统初始默认同效果，普通变更即时生效
+        assertEquals(false, dataOf(created).get("pendingReview"));
+        createdRuleIds.add(((Number) ruleOf(created).get("id")).longValue());
         delete("/api/platform/tenant-view/sessions/" + entered.get("sessionId"), token);
         Map<?, ?> reenterResponse =
                 post(
@@ -736,6 +752,44 @@ class PlatformViewRuleMySqlIT {
 
     private static Map<String, Object> dataOf(Map<?, ?> response) {
         return response.get("data") == null ? Map.of() : (Map<String, Object>) response.get("data");
+    }
+
+    /** 保存结果（E20-T05 SaveOutcome）内的规则行。 */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> ruleOf(Map<?, ?> response) {
+        return (Map<String, Object>) dataOf(response).get("rule");
+    }
+
+    private static String reviewerToken;
+
+    /** 第二名平台管理员（复核人，PLT-VIEW-014「发起人以外的另一名平台管理员」）。 */
+    private String secondAdminToken() {
+        if (reviewerToken == null) {
+            String admin = login();
+            createAccount(admin, "it.rule.reviewer", "复核管理员（示例）", roleIdByCode("PLATFORM_ADMIN"));
+            createdUsernames.add("it.rule.reviewer");
+            reviewerToken = loginWithForcedChange("it.rule.reviewer");
+        }
+        return reviewerToken;
+    }
+
+    /** 高敏变更复核（E20-T05 / PLT-VIEW-014）：另一名平台管理员批准在途提案后生效。 */
+    private void approvePending(String ruleCode, String token) {
+        Map<?, ?> pending = get("/api/platform/view-rules/reviews/pending", token);
+        assertEquals(0, codeOf(pending));
+        boolean found = false;
+        for (Map<String, Object> row : listOf(pending.get("data"))) {
+            if (ruleCode.equals(row.get("ruleCode"))) {
+                found = true;
+                Map<?, ?> approved =
+                        post(
+                                Map.of("comment", "IT 同意（示例）"),
+                                "/api/platform/view-rules/reviews/" + row.get("id") + "/approve",
+                                secondAdminToken());
+                assertEquals(0, codeOf(approved), String.valueOf(approved.get("message")));
+            }
+        }
+        assertTrue(found, "待复核清单包含 " + ruleCode);
     }
 
     @SuppressWarnings("unchecked")
