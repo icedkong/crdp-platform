@@ -65,6 +65,11 @@ export async function initStores(app: App, options: InitStoreOptions) {
           },
     }),
   );
+  // E22-T11 / PT-SELF-05：access store 的会话令牌已迁往 sessionStorage
+  // （ACCESS_PERSIST_OPTIONS）；这里清掉旧版本遗留在 localStorage 的
+  // `${namespace}-core-access` 键，避免升级部署后 TTL 内仍有效的旧令牌
+  // 留在盘上可被恢复复用（SecureLS 只加密值，键名不变，removeItem 即可）。
+  localStorage.removeItem(`${namespace}-core-access`);
   app.use(pinia);
   return pinia;
 }

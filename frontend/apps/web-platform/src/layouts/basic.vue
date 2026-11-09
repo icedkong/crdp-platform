@@ -169,10 +169,9 @@ function navigateTo(
   query?: Record<string, any>,
   state?: Record<string, any>,
 ) {
-  if (link.startsWith('http://') || link.startsWith('https://')) {
-    // 外部链接，在新标签页打开
-    window.open(link, '_blank');
-  } else {
+  // E22-T11 / PT-SELF-06：外部链接经 openExternalLink（http(s) 大小写不敏感
+  // 白名单 + noopener,noreferrer，防反向标签钓鱼与伪协议）；站内路径走 router
+  if (!openExternalLink(link)) {
     // 内部路由链接，支持 query 参数和 state
     router.push({
       path: link,

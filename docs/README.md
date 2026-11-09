@@ -28,6 +28,7 @@
 | `ops/tenant-restore.md` | 单院恢复 runbook：单租户库恢复到指定时间点（脚本 `scripts/restore_tenant.sh`；PITR 临时实例等真实云操作由运维执行，CI 含本地演练） | 误操作 / 逻辑损坏的单院回滚（E22-T06） |
 | `ops/pentest.md` | 渗透测试对接手册：范围与授权、靶机环境、日程（W32–W35）、报告分级、发现入缺陷库（模板 `ops/pentest-findings-template.csv` + `scripts/pentest_intake.py`；选商 / 签约 / 测试 / 报告出具由人执行） | 上线前渗透测试（E22-T09；E22-T10/T11 修复的输入） |
 | `ops/pentest-remediation.md` | 渗透修复手册（后端）：处置流程（Issue→关闭）、三选一处置口径、上线前后端安全自查发现与处置（高危 0 / 中危 2，已修复）、人工事项清单与复测闭环判据（第三方发现到达后按同一流程处置） | 渗透高危清零与中危处置（E22-T10） |
+| `ops/pentest-remediation-frontend.md` | 渗透修复手册（前端）：处置流程（Issue→关闭）、三选一处置口径、上线前前端安全自查发现与处置（高危 0 / 中危 1，已修复：令牌 sessionStorage 化、外链 noopener、登录回跳白名单、依赖扫描缓解）、人工事项清单与复测闭环判据（第三方发现到达后按同一流程处置） | 前端相关问题复测通过（E22-T11） |
 | `ops/hospital-a-sample-intake.md` | 医院 A 历史数据样本接收与脱敏对接手册：导出口径、保密红线、脱敏工具 `scripts/deidentify_sample.py`、「校验通过」判据与警告处置、迭代循环（样本交接 / 医院修正 / 复核结论由人执行） | 租户上线样本对接（E23-T05；E23-T06/T07/T11 演练与正式导入的输入） |
 | `open-questions.md` | 待确认问题 OQ-01…OQ-33 与暂行做法 | 遇到不确定时先查 |
 | `adr/` | 仓库已有架构决定（如 M0 骨架） | 改架构前 |
