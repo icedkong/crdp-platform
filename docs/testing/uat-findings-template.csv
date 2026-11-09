@@ -1,0 +1,3 @@
+finding_id,title,severity,module,page_or_api,reporter_role,description,reproduce_steps,expected_behavior,actual_behavior,evidence_ref,fix_suggestion
+UAT-W34-001,随访表单提交后未返回任务列表（示例）,严重,form,/followup/record/:recordId,随访员,提交年度随访表单后页面停留在表单页，任务状态未流转（示例发现，非真实缺陷）。,1. 用 UAT 账号（示例）登录医院端；2. 我的任务认领一条待随访任务（示例患者）；3. 进入录入，填写随访日期与生存状态；4. 点击提交。,提交成功后任务变已完成（按时），并返回任务列表。,停留原页，任务仍为进行中。,UAT 执行记录表 W34-03 / 截图 S-114（存 UAT 共享目录，不入仓库）,提交成功后返回任务列表并刷新任务状态。
+UAT-W34-002,患者列表导出按钮对随访员可见（示例）,一般,scope,/followup/patient,随访员,随访员角色未授予导出权限，患者列表仍显示导出按钮（示例发现，非真实缺陷）。,1. 以随访员 UAT 账号（示例）登录医院端；2. 打开 随访 → 患者档案。,未授予权限时按权限隐藏导出按钮（packages/rules）。,按钮可见，点击后返回 40300。,UAT 执行记录表 W34-05 / 截图 S-118（存 UAT 共享目录，不入仓库）,前端按钮显隐按 me.permissions 过滤，与后端校验保持一致。

@@ -29,6 +29,12 @@ jobs:
         run: |
           python3 scripts/pentest_intake.py --selftest
           python3 scripts/check_pentest_docs.py
+      # E23-T08：医院 A UAT 对接。入库工具自检（不联网、dry-run / 幂等 / 虚构数据护栏）
+      # + UAT 手册 / 发现清单模板 / 用例集计数与分级映射防漂移校验。
+      - name: UAT 对接校验
+        run: |
+          python3 scripts/uat_intake.py --selftest
+          python3 scripts/check_uat_docs.py
       # E23-T05：医院样本脱敏工具自检（不联网、内置虚构样本：版面核对 / 标识替换 /
       # 一致性 / 复现 / 仓库内路径护栏 / 写后自检；V38 锚点防漂移）。
       - name: 样本脱敏工具自检
