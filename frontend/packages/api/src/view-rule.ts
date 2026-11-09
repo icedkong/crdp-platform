@@ -16,8 +16,8 @@ export type ViewRuleVisibility = 'BLINDED' | 'HIDDEN' | 'MASKED' | 'PLAIN';
 /** 操作。 */
 export type ViewRuleOperation = 'EDITABLE' | 'READONLY';
 
-/** 状态（待复核 PENDING_REVIEW 随 E20-T05）。 */
-export type ViewRuleStatus = 'ACTIVE' | 'DISABLED';
+/** 状态：生效 / 停用 / 待复核（E20-T05 / PLT-VIEW-014，新建即高敏的规则行初始状态，复核通过才生效）。 */
+export type ViewRuleStatus = 'ACTIVE' | 'DISABLED' | 'PENDING_REVIEW';
 
 /** 层级选项（配置页左栏顺序：全局默认 → 租户 → 模块 → 字段）。 */
 export const VIEW_RULE_LAYER_OPTIONS: {
@@ -93,8 +93,26 @@ export function viewRuleStatusText(status: null | string): string {
     case 'DISABLED': {
       return '停用';
     }
+    case 'PENDING_REVIEW': {
+      return '待复核';
+    }
     default: {
       return status ?? '—';
+    }
+  }
+}
+
+/** 状态标签颜色（StatusTag 语义：生效绿 / 待复核橙 / 停用灰）。 */
+export function viewRuleStatusColor(status: null | string): string {
+  switch (status) {
+    case 'ACTIVE': {
+      return 'success';
+    }
+    case 'PENDING_REVIEW': {
+      return 'warning';
+    }
+    default: {
+      return 'default';
     }
   }
 }
@@ -118,7 +136,7 @@ export function viewRuleMaskText(maskRule: null | string): string {
   );
 }
 
-/** 规则行（列表与详情；roleCodes 为空 = 全部平台角色）。 */
+/** 规则行（列表与详情；roleCodes 为空 = 全部平台角色；pendingChange = 存在待复核变更）。 */
 export interface ViewRuleItem {
   allowExport: boolean;
   code: string;
@@ -131,6 +149,7 @@ export interface ViewRuleItem {
   moduleName: null | string;
   name: string;
   operation: ViewRuleOperation;
+  pendingChange: boolean;
   resource: null | string;
   resourceLabel: null | string;
   roleCodes: string[];
@@ -224,6 +243,204 @@ export interface ViewRulePreviewRequest {
   tenantId: number;
 }
 
+// ---------------------------------------------------------------- 高敏复核与版本链（E20-T05 / PLT-VIEW-014、015）
+
+/** 保存结果（新建 / 维护 / 回滚）：规则行当前视图 + 是否进入待复核（高敏变更规则保持原状）。 */
+export interface ViewRuleSaveOutcome {
+  pendingReview: boolean;
+  pendingVersionId: number;
+  rule: ViewRuleItem;
+}
+
+/** 版本内容快照（前后值；roleIds 落库回放、roleCodes 展示）。 */
+export interface ViewRuleVersionContent {
+  allowExport: boolean;
+  field: null | string;
+  layer: ViewRuleLayer;
+  maskRule: null | string;
+  moduleCode: null | string;
+  name: string;
+  operation: ViewRuleOperation;
+  resource: null | string;
+  roleCodes: string[];
+  roleIds: number[];
+  status: ViewRuleStatus;
+  tenantId: null | number;
+  visibility: ViewRuleVisibility;
+}
+
+/** 版本行（版本记录与待复核列表；PLT-VIEW-015 记录变更人、前后值与复核人）。 */
+export interface ViewRuleVersionItem {
+  afterJson: string;
+  appliedAt: null | string;
+  beforeJson: null | string;
+  changeType: 'CREATE' | 'ROLLBACK' | 'UPDATE';
+  id: number;
+  proposedAt: string;
+  proposedByName: null | string;
+  reviewComment: null | string;
+  reviewedAt: null | string;
+  reviewedByName: null | string;
+  ruleCode: string;
+  ruleId: number;
+  ruleName: string;
+  sensitive: boolean;
+  status: 'APPLIED' | 'PENDING_REVIEW' | 'REJECTED';
+  version: number;
+}
+
+/** 变更类型文案（CREATE 新建 / UPDATE 维护（含停用启用）/ ROLLBACK 回滚）。 */
+export function viewRuleChangeTypeText(changeType: null | string): string {
+  switch (changeType) {
+    case 'CREATE': {
+      return '新建';
+    }
+    case 'ROLLBACK': {
+      return '回滚';
+    }
+    case 'UPDATE': {
+      return '维护';
+    }
+    default: {
+      return changeType ?? '—';
+    }
+  }
+}
+
+/** 版本行状态文案（待复核 / 已生效 / 已驳回）。 */
+export function viewRuleVersionStatusText(status: null | string): string {
+  switch (status) {
+    case 'APPLIED': {
+      return '已生效';
+    }
+    case 'PENDING_REVIEW': {
+      return '待复核';
+    }
+    case 'REJECTED': {
+      return '已驳回';
+    }
+    default: {
+      return status ?? '—';
+    }
+  }
+}
+
+/** 版本行状态标签颜色。 */
+export function viewRuleVersionStatusColor(status: null | string): string {
+  switch (status) {
+    case 'APPLIED': {
+      return 'success';
+    }
+    case 'PENDING_REVIEW': {
+      return 'warning';
+    }
+    default: {
+      return 'error';
+    }
+  }
+}
+
+/** 高敏原因摘要（提交前提示与版本行说明同口径，OQ-99 ③）。 */
+export function viewRuleSensitivityText(reasons: string[]): string {
+  return reasons.length === 0
+    ? ''
+    : `高敏变更（${reasons.join('、')}），提交后需另一名平台管理员复核通过才生效`;
+}
+
+/**
+ * 高敏判定（前端先行提示，与后端 ViewRuleReviewPolicy 同口径）：以「行的生效内容」按严格序
+ * 比较——可见性 隐藏>设盲>脱敏>明文 下调、只读→可编辑、禁止导出→允许导出，以及把生效中的
+ * 限制性规则（可见性非明文）的选择器或适用角色收窄。before 为 null = 变更前不生效（系统初始默认）。
+ */
+export function viewRuleSensitiveReasons(
+  before: null | {
+    allowExport: boolean;
+    field: null | string;
+    layer: ViewRuleLayer;
+    maskRule?: null | string;
+    moduleCode: null | string;
+    operation: ViewRuleOperation;
+    resource?: null | string;
+    roleIds: number[];
+    tenantId: null | number;
+    visibility: ViewRuleVisibility;
+  },
+  after: null | ViewRuleVersionContent,
+): string[] {
+  const rank = (visibility: null | string): number => {
+    switch (visibility) {
+      case 'BLINDED': {
+        return 3;
+      }
+      case 'HIDDEN': {
+        return 4;
+      }
+      case 'MASKED': {
+        return 2;
+      }
+      default: {
+        return 1;
+      }
+    }
+  };
+  // null = 不生效 → 系统初始默认（明文、只读、禁止导出）
+  const from = before ?? {
+    allowExport: false,
+    field: null,
+    layer: 'GLOBAL' as ViewRuleLayer,
+    moduleCode: null,
+    operation: 'READONLY' as ViewRuleOperation,
+    roleIds: [],
+    tenantId: null,
+    visibility: 'PLAIN' as ViewRuleVisibility,
+  };
+  const to = after ?? {
+    allowExport: false,
+    field: null,
+    layer: 'GLOBAL' as ViewRuleLayer,
+    maskRule: null,
+    moduleCode: null,
+    name: '',
+    operation: 'READONLY' as ViewRuleOperation,
+    resource: null,
+    roleCodes: [],
+    roleIds: [],
+    status: 'DISABLED' as ViewRuleStatus,
+    tenantId: null,
+    visibility: 'PLAIN' as ViewRuleVisibility,
+  };
+  const reasons: string[] = [];
+  if (rank(to.visibility) < rank(from.visibility)) {
+    reasons.push('可见性放宽（改明文 / 取消设盲或隐藏）');
+  }
+  if (from.operation === 'READONLY' && to.operation === 'EDITABLE') {
+    reasons.push('取消只读');
+  }
+  if (!from.allowExport && to.allowExport) {
+    reasons.push('允许导出');
+  }
+  if (before && rank(before.visibility) > 1) {
+    const selectorsChanged =
+      before.layer !== to.layer ||
+      before.tenantId !== to.tenantId ||
+      before.moduleCode !== to.moduleCode ||
+      (before.resource ?? null) !== to.resource ||
+      before.field !== to.field;
+    const rolesNarrowed =
+      before.roleIds.length === 0
+        ? to.roleIds.length > 0
+        : to.roleIds.length > 0 &&
+          !before.roleIds.every((id) => to.roleIds.includes(id));
+    if (selectorsChanged) {
+      reasons.push('限制性规则的作用范围变化');
+    }
+    if (rolesNarrowed) {
+      reasons.push('限制性规则的适用角色收窄');
+    }
+  }
+  return reasons;
+}
+
 // ---------------------------------------------------------------- 表单模型与校验
 
 /** 编辑表单模型（对话框状态；resourceWhole 表示 FIELD 层选「整个资源对象」）。 */
@@ -281,7 +498,7 @@ export function toViewRuleEditModel(rule: ViewRuleItem): ViewRuleEditModel {
   };
 }
 
-/** 编辑模型 → 提交请求（不属当前层级的选择器一律置空，与后端形状校验同口径）。 */
+/** 编辑模型 → 提交请求（不属当前层级的选择器一律置空，与后端形状校验同口径； FIELD 层保留可选模块——种子字段规则带模块限定，编辑不得静默丢失，E20-T05）。 */
 export function toViewRuleSaveRequest(
   model: ViewRuleEditModel,
 ): ViewRuleSaveRequest {
@@ -295,7 +512,8 @@ export function toViewRuleSaveRequest(
         : null,
     layer: model.layer,
     maskRule: model.visibility === 'MASKED' ? model.maskRule : null,
-    moduleCode: isModule ? model.moduleCode : null,
+    moduleCode:
+      isModule || model.layer === 'FIELD' ? model.moduleCode || null : null,
     name: model.name.trim(),
     operation: model.operation,
     resource: model.layer === 'FIELD' ? model.resource || null : null,

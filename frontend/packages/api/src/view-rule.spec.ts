@@ -1,9 +1,10 @@
-import type { ViewRuleItem } from './view-rule';
+import type { ViewRuleItem, ViewRuleVersionContent } from './view-rule';
 
 /**
  * E20-T02 / PLT-VIEW-007、008、009 视角规则前端纯逻辑测试：保存校验（与后端
  * ViewRuleService.validate 同口径）、层级形状与脱敏码一致性、提交请求的选择器裁剪、
- * 列表范围 / 角色摘要与效果预览文案。
+ * 列表范围 / 角色摘要与效果预览文案；E20-T05 / PLT-VIEW-014、015：高敏判定
+ * （与后端 ViewRuleReviewPolicy 同口径）、状态与版本行文案。
  */
 import { describe, expect, it } from 'vitest';
 
@@ -11,13 +12,18 @@ import {
   newViewRuleModel,
   toViewRuleSaveRequest,
   validateViewRule,
+  viewRuleChangeTypeText,
   viewRuleDecidedByText,
   viewRuleEffectText,
   viewRuleLayerText,
   viewRuleOperationText,
   viewRuleRolesText,
   viewRuleScopeText,
+  viewRuleSensitiveReasons,
+  viewRuleSensitivityText,
   viewRuleStatusText,
+  viewRuleVersionStatusColor,
+  viewRuleVersionStatusText,
   viewRuleVisibilityText,
 } from './view-rule';
 
@@ -212,5 +218,104 @@ describe('文案与摘要', () => {
         { code: 'VR-00001', id: 1, layer: 'MODULE', name: '业务数据只读' },
       ]),
     ).toBe('VR-00001 业务数据只读');
+  });
+
+  // ---------------------------------------------------------------- E20-T05 / PLT-VIEW-014、015
+
+  it('状态文案含待复核（PENDING_REVIEW）', () => {
+    expect(viewRuleStatusText('PENDING_REVIEW')).toBe('待复核');
+    expect(viewRuleStatusText('ACTIVE')).toBe('生效');
+    expect(viewRuleStatusText('DISABLED')).toBe('停用');
+  });
+
+  it('高敏判定：规格四类放宽与等效放宽触发，收严与中性变更不触发（与后端同口径）', () => {
+    const masked = {
+      allowExport: false,
+      field: 'name',
+      layer: 'FIELD' as const,
+      moduleCode: 'followup',
+      operation: 'READONLY' as const,
+      resource: 'patient',
+      roleIds: [],
+      tenantId: null,
+      visibility: 'MASKED' as const,
+    };
+    const content = (
+      over: Partial<ViewRuleVersionContent>,
+    ): ViewRuleVersionContent => ({
+      allowExport: false,
+      field: 'name',
+      layer: 'FIELD',
+      maskRule: null,
+      moduleCode: 'followup',
+      name: '规则（示例）',
+      operation: 'READONLY',
+      resource: 'patient',
+      roleCodes: [],
+      roleIds: [],
+      status: 'ACTIVE',
+      tenantId: null,
+      visibility: 'MASKED',
+      ...over,
+    });
+    // 改明文 / 取消只读 / 允许导出
+    expect(
+      viewRuleSensitiveReasons(masked, content({ visibility: 'PLAIN' })).length,
+    ).toBeGreaterThan(0);
+    expect(
+      viewRuleSensitiveReasons(masked, content({ operation: 'EDITABLE' }))
+        .length,
+    ).toBeGreaterThan(0);
+    expect(
+      viewRuleSensitiveReasons(masked, content({ allowExport: true })).length,
+    ).toBeGreaterThan(0);
+    // 停用脱敏规则（后值不生效 = 初始默认）
+    expect(viewRuleSensitiveReasons(masked, null).length).toBeGreaterThan(0);
+    // 新建即允许导出
+    expect(
+      viewRuleSensitiveReasons(null, content({ allowExport: true })).length,
+    ).toBeGreaterThan(0);
+    // 收严（明文 → 脱敏）与中性（只改名称）不触发
+    expect(
+      viewRuleSensitiveReasons(
+        { ...masked, visibility: 'PLAIN' },
+        content({ visibility: 'MASKED', maskRule: 'name' }),
+      ),
+    ).toEqual([]);
+    expect(
+      viewRuleSensitiveReasons(masked, content({ name: '改名（示例）' })),
+    ).toEqual([]);
+    // 限制性规则改作用范围触发
+    expect(
+      viewRuleSensitiveReasons(
+        masked,
+        content({ resource: 'user', field: 'phone' }),
+      ).length,
+    ).toBeGreaterThan(0);
+    // 限制性规则收窄适用角色触发；加宽（→ 全部角色）不触发
+    const bound = { ...masked, roleIds: [2, 3] };
+    expect(
+      viewRuleSensitiveReasons(bound, content({ roleIds: [2] })).length,
+    ).toBeGreaterThan(0);
+    expect(viewRuleSensitiveReasons(bound, content({ roleIds: [] }))).toEqual(
+      [],
+    );
+  });
+
+  it('高敏提示文案拼接', () => {
+    expect(viewRuleSensitivityText([])).toBe('');
+    expect(viewRuleSensitivityText(['取消只读'])).toBe(
+      '高敏变更（取消只读），提交后需另一名平台管理员复核通过才生效',
+    );
+  });
+
+  it('版本行文案：变更类型与状态', () => {
+    expect(viewRuleChangeTypeText('CREATE')).toBe('新建');
+    expect(viewRuleChangeTypeText('UPDATE')).toBe('维护');
+    expect(viewRuleChangeTypeText('ROLLBACK')).toBe('回滚');
+    expect(viewRuleVersionStatusText('PENDING_REVIEW')).toBe('待复核');
+    expect(viewRuleVersionStatusText('APPLIED')).toBe('已生效');
+    expect(viewRuleVersionStatusText('REJECTED')).toBe('已驳回');
+    expect(viewRuleVersionStatusColor('PENDING_REVIEW')).toBe('warning');
   });
 });

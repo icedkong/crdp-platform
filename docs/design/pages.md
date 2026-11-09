@@ -555,9 +555,9 @@
 | 授权范围模板 | `/platform/scope-template` | `platform:scope:template` | PLT-SCOPE-003、004 | 默认可分配项与敏感项（9 项默认不可分配） |
 | 平台账号 | `/platform/account` | `platform:account:view` / `edit` / `reset` | PLT-ROLE-001；PLT-VIEW-006 | 强制绑定手机号；负责租户多选 |
 | 平台角色 | `/platform/role` | `platform:role:view` / `edit` | PLT-ROLE-002、003；PLT-VIEW-005 | 含“租户视角”页签：可进入、可见范围、租户范围、可代为配置、可代重置密码、可编辑业务数据 |
-| 视角规则 | `/platform/view-rule` | `platform:view:rule` | PLT-VIEW-007、008、009、014、015 | 左层级（全局 / 租户 / 模块 / 字段）右规则；效果预览；高敏变更待复核 |
+| 视角规则 | `/platform/view-rule` | `platform:view:rule` | PLT-VIEW-007、008、009、014、015 | 左层级（全局 / 租户 / 模块 / 字段）右规则；效果预览；高敏变更待复核（顶部「待复核的高敏变更」卡片：同意 / 驳回，权限 `platform:view:rule:review`）；每条规则「版本记录」抽屉（变更人、前后值、复核人、可回滚） |
 | 进入租户视角 | 弹窗 → 打开医院端 | `platform:view:enter` | PLT-VIEW-001…004、010…013、016…018 | 选目的（排障、配置核对、培训支持、其他）+ 说明；用视角令牌打开医院端页面；顶部 `TenantViewBanner` + 全页水印；最长 2 小时、空闲 15 分钟 |
-| 审计中心 | `/platform/audit` | `platform:audit:view` / `export` | PLT-AUD-001…012 | 页签：平台操作日志、平台登录日志、租户视角记录、视角规则变更、租户控制面日志；详情前后值对比，链接同 traceId |
+| 审计中心 | `/platform/audit` | `platform:audit:view` / `export`；「视角会话」页签另需 `platform:view:session:view` | PLT-AUD-001…012；PLT-VIEW-016 | 页签：平台操作日志、平台登录日志、视角会话（E20-T05，会话台账：平台账号、租户、目的、起止时间、结束方式与计数 → 明细含该会话访问记录）、租户视角记录、视角规则变更、租户控制面日志；详情前后值对比，链接同 traceId；租户视角记录支持按视角会话号钻取 |
 | 系统配置 | `/platform/dict`、`/platform/param`、`/platform/notice`、`/platform/webhook` | `platform:dict:edit`、`platform:param:edit`、`platform:notice:edit`、`platform:webhook:edit` | PLT-CFG-001、003、005、006、007、009、010、011 | Webhook 投递记录可手动重投 |
 | 安全策略 | `/platform/security` | `platform:security:edit` | PLT-AUTH-006、007、008、012 | 平台下限 |
 

@@ -235,6 +235,8 @@ export const statusTone: Record<string, StatusTone> = {
   死亡: 'default',
   已禁用: 'default',
   已停用: 'default',
+  生效: 'success', // 视角规则状态（E20-T05）：生效 / 停用 / 待复核
+  待复核: 'warning', // 高敏变更复核流（PLT-VIEW-014）
   已移除: 'default', // 计划患者列表（A-FU-022）
   无需录入: 'default',
   草稿: 'default',

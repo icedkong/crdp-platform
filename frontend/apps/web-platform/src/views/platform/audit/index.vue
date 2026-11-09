@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import type { PlatformAuditTab } from '@crdp/api';
+import type { PlatformAuditTab, TenantViewSessionRecord } from '@crdp/api';
 
 import type { AuditColumnDef } from './logic';
 
@@ -14,6 +14,9 @@ import {
   jobExportStatusColor,
   jobExportStatusText,
   PLATFORM_AUDIT_TABS,
+  tenantViewEndMethodText,
+  tenantViewPurposeText,
+  tenantViewSessionStatusText,
   validateAuditTimeRange,
 } from '@crdp/api';
 import {
@@ -52,6 +55,10 @@ import {
   searchPlatformAuditLogs,
   submitPlatformAuditExport,
 } from '#/api/core/audit';
+import {
+  getTenantViewSession,
+  listTenantViewSessions,
+} from '#/api/core/tenant-view';
 import ReauthModal from '#/components/reauth-modal.vue';
 import { usePermission } from '#/reference/use-permission';
 
@@ -75,6 +82,15 @@ const canExport = computed(() => hasPermission('platform:audit:export'));
 const canApprove = computed(() =>
   hasPermission('platform:audit:export:approve'),
 );
+// 视角会话台账（E20-T05 / PLT-VIEW-016）：仅平台侧可见，权限 platform:view:session:view
+const canViewSessions = computed(() =>
+  hasPermission('platform:view:session:view'),
+);
+const visibleTabs = computed(() =>
+  PLATFORM_AUDIT_TABS.filter(
+    (item) => item.key !== 'view-session' || canViewSessions.value,
+  ),
+);
 
 const PAGE_SIZE = 20;
 const loading = ref(false);
@@ -94,6 +110,97 @@ const filter = reactive({
 const columns = computed<AuditColumnDef[]>(() =>
   platformColumnsForTab(tab.value),
 );
+
+// ---------------------------------------------------------------- 视角会话台账（E20-T05 / PLT-VIEW-016）
+const sessionLoading = ref(false);
+const sessions = ref<TenantViewSessionRecord[]>([]);
+const sessionTotal = ref(0);
+const sessionPageNo = ref(1);
+const sessionFilter = reactive({
+  accountName: '',
+  tenantId: undefined as number | undefined,
+  status: undefined as string | undefined,
+});
+
+const sessionColumns = [
+  { dataIndex: 'sessionNo', title: '会话号', width: 140 },
+  { dataIndex: 'accountName', title: '平台账号', width: 130 },
+  { dataIndex: 'displayName', title: '姓名', width: 120 },
+  { dataIndex: 'tenantName', title: '租户', width: 150 },
+  { dataIndex: 'purpose', title: '目的', width: 90 },
+  { dataIndex: 'startedAt', title: '开始时间', width: 160 },
+  { dataIndex: 'endedAt', title: '结束', width: 150 },
+  { dataIndex: 'counts', title: '页面 / 查询 / 被拒 / 代为', width: 160 },
+  { dataIndex: 'status', title: '状态', width: 84 },
+  { dataIndex: 'action-link', title: '操作', width: 70 },
+];
+
+async function loadSessions() {
+  sessionLoading.value = true;
+  try {
+    const page = await listTenantViewSessions({
+      accountName: sessionFilter.accountName || undefined,
+      pageNo: sessionPageNo.value,
+      pageSize: PAGE_SIZE,
+      status: sessionFilter.status,
+      tenantId: sessionFilter.tenantId,
+    });
+    sessions.value = page.items;
+    sessionTotal.value = page.total;
+  } catch (error) {
+    message.error(
+      (error as { message?: string }).message ?? '会话台账加载失败',
+    );
+  } finally {
+    sessionLoading.value = false;
+  }
+}
+
+function searchSessions() {
+  sessionPageNo.value = 1;
+  void loadSessions();
+}
+
+// 会话明细：台账整行 + 该会话的访问记录（按会话号钻取，PLT-VIEW-016「明细」口径）
+const sessionDetailVisible = ref(false);
+const sessionDetailLoading = ref(false);
+const sessionDetail = ref<null | TenantViewSessionRecord>(null);
+const sessionAccessRows = ref<Record<string, unknown>[]>([]);
+
+async function openSessionDetail(row: Record<string, unknown>) {
+  sessionDetailVisible.value = true;
+  sessionDetailLoading.value = true;
+  sessionAccessRows.value = [];
+  try {
+    const record = await getTenantViewSession(Number(row.id));
+    sessionDetail.value = record;
+    // 访问明细窗口 = 会话起止 ± 5 分钟（跨度远小于 3 个月上限）
+    const start = new Date(new Date(record.startedAt).getTime() - 5 * 60 * 1000)
+      .toISOString()
+      .replace('Z', '+08:00');
+    const endRaw = record.endAt ?? record.endsAt ?? new Date().toISOString();
+    const end = new Date(new Date(endRaw).getTime() + 5 * 60 * 1000)
+      .toISOString()
+      .replace('Z', '+08:00');
+    const page = await searchPlatformAuditLogs('tenant-view', {
+      endTime: end,
+      pageNo: 1,
+      pageSize: 50,
+      startTime: start,
+      viewSessionId: record.sessionNo,
+    });
+    sessionAccessRows.value = page.items as unknown as Record<
+      string,
+      unknown
+    >[];
+  } catch (error) {
+    message.error(
+      (error as { message?: string }).message ?? '会话明细加载失败',
+    );
+  } finally {
+    sessionDetailLoading.value = false;
+  }
+}
 
 async function reload() {
   const start = filter.range[0];
@@ -145,6 +252,10 @@ function onTabChange() {
   pageNo.value = 1;
   rows.value = [];
   total.value = 0;
+  if (tab.value === 'view-session') {
+    sessionPageNo.value = 1;
+    void loadSessions();
+  }
 }
 
 // ---------------------------------------------------------------- 详情
@@ -345,12 +456,107 @@ const approvalColumns = [
     <Card>
       <Tabs v-model:active-key="tab.value" @change="onTabChange">
         <TabPane
-          v-for="item in PLATFORM_AUDIT_TABS"
+          v-for="item in visibleTabs"
           :key="item.key"
           :tab="item.label"
         />
       </Tabs>
-      <div class="filter-bar">
+
+      <!-- 视角会话台账（E20-T05 / PLT-VIEW-016，仅平台侧可见） -->
+      <template v-if="tab === 'view-session'">
+        <div class="filter-bar">
+          <Input
+            v-model:value="sessionFilter.accountName"
+            allow-clear
+            placeholder="平台账号"
+            style="width: 150px"
+          />
+          <InputNumber
+            v-model:value="sessionFilter.tenantId"
+            :min="1"
+            placeholder="租户ID"
+            style="width: 100px"
+          />
+          <Select
+            v-model:value="sessionFilter.status"
+            allow-clear
+            placeholder="状态"
+            style="width: 110px"
+          >
+            <SelectOption value="ACTIVE">进行中</SelectOption>
+            <SelectOption value="ENDED">已结束</SelectOption>
+          </Select>
+          <Button
+            :loading="sessionLoading"
+            type="primary"
+            @click="searchSessions"
+          >
+            查询
+          </Button>
+          <span style="flex: 1"></span>
+        </div>
+        <p class="hint">
+          视角会话台账（进入与退出、页面 / 查询 /
+          被拒计数、生效规则版本）；点击「明细」查看该会话的访问记录。仅平台侧可见，医院端无查看入口。
+        </p>
+        <Spin :spinning="sessionLoading">
+          <Table
+            :columns="sessionColumns"
+            :data-source="sessions"
+            :pagination="false"
+            row-key="id"
+            size="middle"
+          >
+            <template #bodyCell="{ column, record }">
+              <template v-if="column.dataIndex === 'purpose'">
+                {{ tenantViewPurposeText(String(record.purpose)) }}
+              </template>
+              <template v-else-if="column.dataIndex === 'startedAt'">
+                {{
+                  String(record.startedAt ?? '')
+                    .slice(0, 19)
+                    .replace('T', ' ')
+                }}
+              </template>
+              <template v-else-if="column.dataIndex === 'endedAt'">
+                <template v-if="record.endAt">
+                  {{ String(record.endAt).slice(0, 19).replace('T', ' ') }}
+                  （{{ tenantViewEndMethodText(String(record.endMethod)) }}）
+                </template>
+                <template v-else>进行中</template>
+              </template>
+              <template v-else-if="column.dataIndex === 'counts'">
+                {{ record.pageCount }} / {{ record.queryCount }} /
+                {{ record.deniedCount }} / {{ record.proxyCount }}
+              </template>
+              <template v-else-if="column.dataIndex === 'status'">
+                <Tag
+                  :color="record.status === 'ACTIVE' ? 'processing' : 'default'"
+                >
+                  {{ tenantViewSessionStatusText(String(record.status)) }}
+                </Tag>
+              </template>
+              <template v-else-if="column.dataIndex === 'action-link'">
+                <a @click="openSessionDetail(record)">明细</a>
+              </template>
+            </template>
+            <template #emptyText>
+              <Empty description="暂无视角会话" />
+            </template>
+          </Table>
+        </Spin>
+        <div class="pager">
+          <Pagination
+            v-model:current="sessionPageNo"
+            :page-size="PAGE_SIZE"
+            :total="sessionTotal"
+            show-quick-jumper
+            @change="loadSessions"
+          />
+        </div>
+      </template>
+
+      <div v-else class="filter-bar">
         <RangePicker
           v-model:value="filter.range"
           show-time
@@ -428,14 +634,18 @@ const approvalColumns = [
         >
           导出审批
         </Button>
-        <Button v-if="canExport" type="primary" @click="openExport">
+        <Button
+          v-if="canExport && tab !== 'view-session'"
+          type="primary"
+          @click="openExport"
+        >
           申请导出
         </Button>
       </div>
-      <p class="hint">
+      <p v-if="tab !== 'view-session'" class="hint">
         单次查询时间跨度不超过 3 个月；日志只读，不可修改与删除。
       </p>
-      <Spin :spinning="loading">
+      <Spin v-if="tab !== 'view-session'" :spinning="loading">
         <Table
           :columns="columns"
           :data-source="rows"
@@ -458,7 +668,7 @@ const approvalColumns = [
           </template>
         </Table>
       </Spin>
-      <div class="pager">
+      <div v-if="tab !== 'view-session'" class="pager">
         <Pagination
           v-model:current="pageNo"
           :page-size="PAGE_SIZE"
@@ -468,6 +678,82 @@ const approvalColumns = [
         />
       </div>
     </Card>
+
+    <!-- 视角会话明细（台账 + 该会话的访问记录，PLT-VIEW-016） -->
+    <Drawer
+      v-model:open="sessionDetailVisible"
+      placement="right"
+      :width="720"
+      title="视角会话明细"
+    >
+      <Spin :spinning="sessionDetailLoading">
+        <Descriptions v-if="sessionDetail" :column="1" bordered size="small">
+          <DescriptionsItem label="会话号">
+            {{ sessionDetail.sessionNo }}
+          </DescriptionsItem>
+          <DescriptionsItem label="平台账号">
+            {{ sessionDetail.displayName }}（{{ sessionDetail.accountName }}）
+          </DescriptionsItem>
+          <DescriptionsItem label="平台角色">
+            {{ sessionDetail.roleCodes }}
+          </DescriptionsItem>
+          <DescriptionsItem label="租户">
+            {{ sessionDetail.tenantName }}（{{ sessionDetail.tenantCode }}）
+          </DescriptionsItem>
+          <DescriptionsItem label="目的与说明">
+            {{ tenantViewPurposeText(sessionDetail.purpose) }} ·
+            {{ sessionDetail.note }}
+          </DescriptionsItem>
+          <DescriptionsItem label="生效规则版本">
+            {{ sessionDetail.ruleVersion }}
+          </DescriptionsItem>
+          <DescriptionsItem label="起止时间">
+            {{ String(sessionDetail.startedAt).slice(0, 19).replace('T', ' ') }}
+            ~
+            <template v-if="sessionDetail.endAt">
+              {{ String(sessionDetail.endAt).slice(0, 19).replace('T', ' ') }}
+              （{{ tenantViewEndMethodText(sessionDetail.endMethod ?? '') }}）
+            </template>
+            <template v-else>进行中</template>
+          </DescriptionsItem>
+          <DescriptionsItem label="计数摘要">
+            页面 {{ sessionDetail.pageCount }} · 查询
+            {{ sessionDetail.queryCount }} · 被拒
+            {{ sessionDetail.deniedCount }} · 代为操作
+            {{ sessionDetail.proxyCount }}
+          </DescriptionsItem>
+        </Descriptions>
+        <h4 style="margin: 16px 0 8px">访问记录（最近 50 条）</h4>
+        <Table
+          :columns="[
+            { dataIndex: 'createdAt', title: '时间', width: 160 },
+            { dataIndex: 'action', title: '操作', width: 120 },
+            { dataIndex: 'description', title: '详情' },
+            { dataIndex: 'objectType', title: '对象', width: 90 },
+            { dataIndex: 'recordCount', title: '条数', width: 70 },
+            { dataIndex: 'result', title: '结果', width: 80 },
+          ]"
+          :data-source="sessionAccessRows"
+          :pagination="false"
+          row-key="id"
+          size="small"
+        >
+          <template #bodyCell="{ column, record }">
+            <template v-if="column.dataIndex === 'result'">
+              <Tag :color="auditResultColor(String(record.result))">
+                {{ auditResultText(String(record.result)) }}
+              </Tag>
+            </template>
+            <template v-else-if="column.dataIndex === 'recordCount'">
+              {{ record.recordCount ?? '—' }}
+            </template>
+          </template>
+          <template #emptyText>
+            <Empty description="该会话暂无访问记录" />
+          </template>
+        </Table>
+      </Spin>
+    </Drawer>
 
     <!-- 详情 -->
     <Drawer

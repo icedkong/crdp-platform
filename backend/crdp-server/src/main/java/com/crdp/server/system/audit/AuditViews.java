@@ -10,7 +10,11 @@ public final class AuditViews {
 
     private AuditViews() {}
 
-    /** 查询条件（PLT-AUD-005：时间、用户、类型、模块、对象、结果、IP、traceId 组合；平台端多一个租户）。 */
+    /**
+     * 查询条件（PLT-AUD-005：时间、用户、类型、模块、对象、结果、IP、traceId 组合；平台端多一个租户）。 {@code viewSessionId}
+     * 仅平台访问日志（tenant-view / view-rule 页签）支持——按视角会话号检索该会话的全部访问明细 （E20-T05 / PLT-VIEW-016
+     * 审计中心「视角会话」钻取口径）；医院端类型无此列，忽略该条件。
+     */
     public record SearchRequest(
             String startTime,
             String endTime,
@@ -24,6 +28,7 @@ public final class AuditViews {
             String ip,
             String traceId,
             Long tenantId,
+            String viewSessionId,
             Integer pageNo,
             Integer pageSize) {}
 

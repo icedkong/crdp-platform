@@ -103,6 +103,56 @@ export interface TenantViewExitResult {
   sessionNo: string;
 }
 
+// ---------------------------------------------------------------- E20-T05 / PLT-VIEW-016：会话台账（仅平台侧）
+
+/** 视角会话台账行（审计中心「视角会话」：平台账号、租户、目的、起止时间、结束方式与计数摘要）。 */
+export interface TenantViewSessionRecord {
+  accountId: number;
+  accountName: string;
+  deniedCount: number;
+  displayName: string;
+  endAt: null | string;
+  endMethod: null | TenantViewEndMethod;
+  endsAt: string;
+  id: number;
+  note: string;
+  pageCount: number;
+  proxyCount: number;
+  purpose: TenantViewPurpose;
+  queryCount: number;
+  roleCodes: string;
+  ruleVersion: string;
+  sessionNo: string;
+  startedAt: string;
+  status: 'ACTIVE' | 'ENDED';
+  tenantCode: string;
+  tenantId: number;
+  tenantName: string;
+}
+
+/** 会话台账分页。 */
+export interface TenantViewSessionPage {
+  items: TenantViewSessionRecord[];
+  pageNo: number;
+  pageSize: number;
+  total: number;
+}
+
+/** 会话状态文案。 */
+export function tenantViewSessionStatusText(status: null | string): string {
+  switch (status) {
+    case 'ACTIVE': {
+      return '进行中';
+    }
+    case 'ENDED': {
+      return '已结束';
+    }
+    default: {
+      return status ?? '—';
+    }
+  }
+}
+
 /** 账号负责租户（PLT-VIEW-006）。 */
 export interface PlatformResponsibleTenant {
   tenantCode: string;
