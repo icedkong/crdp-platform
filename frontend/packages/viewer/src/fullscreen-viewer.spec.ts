@@ -285,3 +285,41 @@ describe('e16-t06 FullscreenViewer（全屏查看器）', () => {
     expect(stageStyle()).toContain('scale(3)');
   });
 });
+
+// ------------------- E24-T07 真机兼容：iOS Safari 页面级双指缩放不干扰查看器
+// iOS Safari 自 10 起忽略 user-scalable=no（无障碍），双指捏合仍会缩放整页；
+// 查看器双指缩放图片时页面也被缩放（遮罩、水印错位）属真机阻断。WebKit 专属的
+// gesturestart/gesturechange 在 document 上 preventDefault（passive:false）是
+// 标准做法；其它内核不派发这两个事件，等同无操作。
+describe('e24-T07 iOS Safari gesture 事件：打开图片查看器时页面级捏合被阻止', () => {
+  function gestureEvent(type: 'gesturechange' | 'gesturestart') {
+    return new Event(type, { bubbles: true, cancelable: true });
+  }
+
+  it('图片模式打开时 gesturestart / gesturechange 均被 preventDefault', async () => {
+    mountViewer();
+    await Promise.resolve();
+    for (const type of ['gesturestart', 'gesturechange'] as const) {
+      const event = gestureEvent(type);
+      document.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+    }
+  });
+
+  it('音频（非图片）不启用：gesture 事件不拦截，保留页面自身行为', async () => {
+    mountViewer({ file: AUDIO });
+    await Promise.resolve();
+    const event = gestureEvent('gesturestart');
+    document.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it('关闭查看器后摘除监听：gesture 事件不再被拦截', async () => {
+    const wrapper = mountViewer();
+    await Promise.resolve();
+    wrapper.unmount();
+    const event = gestureEvent('gesturestart');
+    document.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+  });
+});

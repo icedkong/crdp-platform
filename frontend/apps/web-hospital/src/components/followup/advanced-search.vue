@@ -15,6 +15,7 @@ import { computed, ref, toRaw, watch } from 'vue';
 
 import {
   conditionPreview,
+  deepCloneJson,
   emptyConditionGroup,
   isConditionGroupComplete,
   pruneConditionGroup,
@@ -67,10 +68,11 @@ watch(
   () => props.open,
   (open) => {
     if (open) {
-      // 条件树是纯 JSON；props.value 可能是 reactive 代理（structuredClone 对代理抛 DataCloneError），
-      // 先 toRaw 取原始对象再深拷贝（续编不回写父状态）
+      // 条件树是纯 JSON；props.value 可能是 reactive 代理，先 toRaw 取原始对象再
+      // 深拷贝（续编不回写父状态）。E24-T07：deepCloneJson 替代 structuredClone——
+      // 微信 XWeb 等旧内核（Chromium < 98）没有该 API，真机上打开即 TypeError
       const cloned = props.value
-        ? (structuredClone(toRaw(props.value)) as ConditionGroup)
+        ? (deepCloneJson(toRaw(props.value)) as ConditionGroup)
         : null;
       draft.value = cloned ?? emptyConditionGroup();
       if (draft.value.items.length === 0 && fields.value.length > 0) {

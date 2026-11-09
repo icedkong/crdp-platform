@@ -300,7 +300,10 @@ onUnmounted(() => window.removeEventListener('resize', read));
                   >
                     {{ line }}
                   </span>
-                  <span class="version-date">{{ logLines(log).at(-1) }}</span>
+                  <!-- E24-T07：下标替代 .at(-1)（旧安卓厂商浏览器内核无 Array.prototype.at） -->
+                  <span class="version-date">{{
+                    logLines(log)[logLines(log).length - 1]
+                  }}</span>
                 </li>
               </ul>
             </div>

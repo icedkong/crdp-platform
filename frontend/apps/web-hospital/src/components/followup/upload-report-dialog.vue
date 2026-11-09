@@ -16,6 +16,7 @@ import { computed, reactive, ref, watch } from 'vue';
 import { reportIndicatorFlag } from '@crdp/api';
 // E16-T10 / OQ-116⑤：压缩链路上提共享包（手机 H5 同一实现）
 import { compressImageFile, isHeicFile } from '@crdp/photo';
+import { viewportHeightUnit } from '@crdp/responsive';
 import {
   Button,
   DatePicker,
@@ -146,6 +147,16 @@ const previewIndex = ref(0);
 const { isMobile } = useBreakpoint();
 /** 弹窗宽度：桌面 880（pages.md §6.1），手机全宽（报告单上传是 5 个响应式页面之一）。 */
 const dialogWidth = computed(() => (isMobile.value ? '100%' : 880));
+
+/**
+ * 内容区 maxHeight：iOS Safari 的 100vh 是「大视口」（工具栏可见时比可视区域高），
+ * 底部会被工具栏盖住——E24-T07：支持 dvh 的内核（Safari 15.4+ / Chromium 108+）
+ * 用 100dvh 跟随可视区域，旧内核（微信 XWeb）回退 100vh 不劣化。
+ */
+const dialogBodyStyle = computed(() => ({
+  maxHeight: `calc(100${viewportHeightUnit()} - 200px)`,
+  overflowY: 'auto',
+}));
 
 /** 拍照 / 相册的上传队列（每页一条：压缩中 → 上传中 → 完成 / 失败可重试）。 */
 const photoQueue = ref<PhotoUploadItem[]>([]);
@@ -564,7 +575,7 @@ defineExpose({
 
 <template>
   <Modal
-    :body-style="{ maxHeight: 'calc(100vh - 200px)', overflowY: 'auto' }"
+    :body-style="dialogBodyStyle"
     :confirm-loading="submitting"
     :footer="null"
     :open="open"

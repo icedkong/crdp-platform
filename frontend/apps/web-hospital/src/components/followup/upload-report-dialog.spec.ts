@@ -868,3 +868,37 @@ describe('e24-t06 UploadReportDialog（拍照多页上传：压缩 / 进度 / �
     expect(modal?.style.width).toBe('880px');
   });
 });
+
+// E24-T07 真机兼容（iOS Safari）：100vh 是「大视口」高度，Safari 工具栏可见时
+// 比可视区域高，弹窗内容 maxHeight 用 100vh 底部会被工具栏盖住；支持 dvh 的内核
+// 改用 100dvh 跟随可视区域，旧内核（微信 XWeb）回退 100vh 不劣化。
+describe('e24-t07 UploadReportDialog（弹窗高度：dvh 可用则跟随可视区域）', () => {
+  it('内核支持 dvh：内容区 maxHeight 用 calc(100dvh - 200px)', async () => {
+    vi.stubGlobal('CSS', {
+      supports: (feature: string, value?: string) =>
+        feature === 'max-height' && value === '100dvh',
+    });
+    try {
+      await mountDialog();
+      const body = document.body.querySelector(
+        '.ant-modal .ant-modal-body',
+      ) as HTMLElement;
+      expect(body.style.maxHeight).toBe('calc(100dvh - 200px)');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('旧内核不支持 dvh（微信 XWeb）：回退 calc(100vh - 200px)', async () => {
+    vi.stubGlobal('CSS', { supports: () => false });
+    try {
+      await mountDialog();
+      const body = document.body.querySelector(
+        '.ant-modal .ant-modal-body',
+      ) as HTMLElement;
+      expect(body.style.maxHeight).toBe('calc(100vh - 200px)');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});

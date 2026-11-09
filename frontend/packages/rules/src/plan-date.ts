@@ -36,9 +36,10 @@ function parseIsoDate(value: string): {
   if (!matched) {
     throw new Error(`日期格式应为 YYYY-MM-DD：${value}`);
   }
-  const year = Number.parseInt(matched.at(1) ?? '', 10);
-  const month = Number.parseInt(matched.at(2) ?? '', 10);
-  const day = Number.parseInt(matched.at(3) ?? '', 10);
+  // E24-T07：下标取组替代 matched.at(n)（微信 XWeb 等旧内核无 Array.prototype.at）
+  const year = Number.parseInt(matched[1] ?? '', 10);
+  const month = Number.parseInt(matched[2] ?? '', 10);
+  const day = Number.parseInt(matched[3] ?? '', 10);
   if (month < 1 || month > 12 || day < 1 || day > daysInMonth(year, month)) {
     throw new Error(`日期不合法：${value}`);
   }

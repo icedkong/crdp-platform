@@ -204,3 +204,29 @@ describe('computeNodeSchedule（pages.md §8 四个共享验算例 + C 节点表
     ).toBe('2026-02-15');
   });
 });
+
+// E24-T07 真机兼容：Array.prototype.at（Chromium 92+）在微信 XWeb 等旧内核上
+// 不存在，正则匹配数组的 matched.at(n) 会直接 TypeError——计划日期计算在
+// 表单 / 计划页（响应式范围）真机上属阻断问题。删掉该原型方法模拟旧内核回归。
+describe('e24-T07 真机内核下限：Array.prototype.at 缺失时计划日期仍可计算', () => {
+  it('addDateUnit / computeNodeSchedule 在无 Array.prototype.at 环境正常工作', () => {
+    const arrayAt = Array.prototype.at;
+    // oxlint-disable-next-line no-extend-native -- 测试临时摘除原型方法模拟旧内核，finally 恢复
+    Object.defineProperty(Array.prototype, 'at', {
+      configurable: true,
+      value: undefined,
+    });
+    try {
+      expect(addDateUnit('2026-03-01', 3, 'MONTH')).toBe('2026-06-01');
+      expect(computeNodeSchedule(PLAN_A_ANNUAL, '2025-03-15').planDate).toBe(
+        '2026-03-15',
+      );
+    } finally {
+      // oxlint-disable-next-line no-extend-native -- 测试临时摘除原型方法模拟旧内核，finally 恢复
+      Object.defineProperty(Array.prototype, 'at', {
+        configurable: true,
+        value: arrayAt,
+      });
+    }
+  });
+});

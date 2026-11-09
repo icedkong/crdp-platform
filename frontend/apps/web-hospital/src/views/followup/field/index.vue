@@ -164,7 +164,8 @@ const editingOptionField = computed(() => {
 async function loadForms() {
   const list = await listForms();
   forms.value = list;
-  const first = list.at(0);
+  // E24-T07：下标替代 list.at(0)（微信 XWeb 等旧内核无 Array.prototype.at）
+  const first = list[0];
   if (!selectedForm.value && first) {
     selectedForm.value = first.code;
   }
@@ -220,7 +221,8 @@ function addOptionRow() {
   editForm.options.push({
     code: null,
     label: '',
-    sortNo: (editForm.options.at(-1)?.sortNo ?? 0) + 10,
+    // E24-T07：下标替代 options.at(-1)（微信 XWeb 等旧内核无 Array.prototype.at）
+    sortNo: (editForm.options[editForm.options.length - 1]?.sortNo ?? 0) + 10,
     status: 'ENABLED',
   });
 }
