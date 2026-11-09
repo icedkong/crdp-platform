@@ -1,13 +1,18 @@
 /**
- * E20-T01 / PLT-VIEW-001、004、006 + E20-T04 / PLT-VIEW-002、003：租户视角会话与账号负责租户的
- * 前端类型与纯逻辑，与后端 `com.crdp.server.platform.TenantViewService` / `PlatformAccountService`
- * 视图同构（docs/api/platform.md §6）。
+ * E20-T01 / PLT-VIEW-001、004、006 + E20-T04 / PLT-VIEW-002、003 + E20-T06 / PLT-VIEW-013、017、018：
+ * 租户视角会话、账号负责租户与代为操作的前端类型与纯逻辑，与后端
+ * `com.crdp.server.platform.TenantViewService` / `TenantViewProxyService` 视图同构
+ * （docs/api/platform.md §6）。
  *
  * 会话时长（PLT-VIEW-004）：单次最长 2 小时（expiresAt = 开始 + 2 小时）、空闲 15 分钟
  * 自动退出（服务端 Redis TTL 执行，前端按 remainingSeconds 倒计时展示）。
  *
  * 医院端视角外壳（E20-T04）：进入凭据一次性（60 秒）换视角令牌、横幅（租户名称 / 会话号 /
  * 剩余时长 / 一键退出）与全页水印（平台账号 + 会话号）的纯逻辑也在这里，平台端与医院端共用。
+ *
+ * 代为操作（E20-T06，验收「默认关闭，开启需授权并记审计」）：会话携带 capabilities
+ * （账号启用角色并集）；视角模式下写按钮按 `tenantViewWritePermission` 合成显隐、写请求带
+ * `X-View-Reason`（encodeURIComponent 百分号编码，后端解码）。
  */
 
 /** 查看目的（PLT-VIEW-001，进入弹窗单选）。 */
@@ -315,4 +320,123 @@ export function tenantViewRemainingText(remainingSeconds: number): string {
   const seconds = remainingSeconds % 60;
   if (minutes <= 0) return `${seconds} 秒`;
   return `${minutes} 分 ${seconds} 秒`;
+}
+
+// ---------------------------------------------------------------- E20-T06 / PLT-VIEW-013、017、018：代为操作
+
+/** 代为操作原因请求头（HTTP 头不承载非 ASCII，取值按 encodeURIComponent 百分号编码）。 */
+export const TENANT_VIEW_REASON_HEADER = 'X-View-Reason';
+
+/** 原因长度口径（与后端 requireReason 同口径）：≥2 字、≤500 字。 */
+export const TENANT_VIEW_REASON_MIN = 2;
+
+export const TENANT_VIEW_REASON_MAX = 500;
+
+/** 头值编码（中文原因无损传输；后端 URLDecoder 解码）。 */
+export function encodeTenantViewReason(reason: string): string {
+  return encodeURIComponent(reason);
+}
+
+/**
+ * 代为操作原因校验（前端先行，与后端 requireReason 同口径）：二次确认弹窗必填 2–500 字。
+ * 返回错误信息（空数组 = 通过）。
+ */
+export function validateTenantViewProxyReason(reason: string): string[] {
+  const value = reason.trim();
+  if (value.length < TENANT_VIEW_REASON_MIN) {
+    return [
+      `请填写操作原因（${TENANT_VIEW_REASON_MIN}–${TENANT_VIEW_REASON_MAX} 字）`,
+    ];
+  }
+  if (value.length > TENANT_VIEW_REASON_MAX) {
+    return [`操作原因过长（最多 ${TENANT_VIEW_REASON_MAX} 个字符）`];
+  }
+  return [];
+}
+
+/** 对视角永不放行的动作段（与后端 TenantViewProxyService.NEVER_ACTIONS + 导出类动作同口径）。 */
+const NEVER_ACTIONS = new Set([
+  'approve',
+  'download',
+  'export',
+  'plain',
+  'reset',
+  'view',
+]);
+
+/** 需医院端二次认证的写接口（@RequireReauth 40304 收口，视角模式不显示按钮）。 */
+const REAUTH_CODES = new Set(['followup:patient:delete']);
+
+/** 权限码动作段（{模块}:{资源}:{动作} 的最后一段）。 */
+function actionOf(code: string): string {
+  const at = code.lastIndexOf(':');
+  return at === -1 ? code : code.slice(at + 1);
+}
+
+/** 权限码资源段（第二段；目录外资源返回 null）。 */
+function resourceOf(code: string): null | string {
+  const first = code.indexOf(':');
+  const last = code.lastIndexOf(':');
+  if (first <= 0 || last <= first) return null;
+  return code.slice(first + 1, last);
+}
+
+/** 权限码模块段（第一段）。 */
+function moduleOf(code: string): null | string {
+  const at = code.indexOf(':');
+  return at <= 0 ? null : code.slice(0, at);
+}
+
+/**
+ * 视角模式下写接口的分类（与后端 `TenantViewProxyService.classify` 同口径）：
+ * 'CONFIG' 代为配置（PLT-VIEW-013）/ 'BUSINESS' 编辑业务数据（PLT-VIEW-018）/ null 不放行
+ * （明文、导出、医院侧重置口、审批等）。纯函数。
+ */
+export function tenantViewWriteClass(
+  code: string,
+): 'BUSINESS' | 'CONFIG' | null {
+  if (!code) return null;
+  const action = actionOf(code);
+  if (NEVER_ACTIONS.has(action)) return null;
+  const resource = resourceOf(code);
+  const module = moduleOf(code);
+  if (module === 'followup') {
+    // followup 内的配置页：action=config（异常规则 / 通知 / 卡片 / 报告单配置）与字段字典
+    return action === 'config' || resource === 'field' ? 'CONFIG' : 'BUSINESS';
+  }
+  // 后端接口登记里 tenant:*（系统配置类）落 base 模块——配置类；后续模块（如 rct）按业务数据
+  // （platform-spec §8「后续模块数据按同一规则」，默认只读规则 fail closed）
+  return module === 'base' || module === 'tenant' ? 'CONFIG' : 'BUSINESS';
+}
+
+/**
+ * 视角模式下权限码判定（E20-T06）：读动作不合成（视角菜单驱动，E20-T04 口径）；写动作按
+ * 「配置类 = 可代为配置 ∧ 资源在范围」「业务数据 = 可编辑业务数据 ∧ 可编辑规则命中」合成显隐
+ * （PLT-VIEW-018 任一不满足即只读）。前端显隐只是体验，后端执行点逐请求校验。
+ */
+export function tenantViewWritePermission(
+  capabilities: null | TenantViewProxyCapabilities | undefined,
+  code: string,
+): boolean {
+  if (!capabilities || REAUTH_CODES.has(code)) return false;
+  const writeClass = tenantViewWriteClass(code);
+  if (writeClass === 'CONFIG') {
+    return (
+      capabilities.canConfigure &&
+      (capabilities.configResources === null ||
+        capabilities.configResources.includes(resourceOf(code) ?? ''))
+    );
+  }
+  if (writeClass === 'BUSINESS') {
+    return capabilities.canEditBusiness && capabilities.businessEditable;
+  }
+  return false;
+}
+
+/** 代为重置结果（PLT-VIEW-017）：只回账号与脱敏手机号（证明短信去向），绝不回新密码。 */
+export interface TenantViewProxyResetResult {
+  displayName: string;
+  sentTo: string;
+  userId: number;
+  username: string;
 }

@@ -85,6 +85,90 @@ class JdbcAuditLoggerTest {
         return argRows.get(argRows.size() - 1);
     }
 
+    // ---------------------------------------------------------------- 视角会话匿名（E20-T06）
+
+    /** 视角会话写医院侧操作日志：操作者匿名「平台支持人员 会话号」，不落平台账号与姓名（platform-spec §8 已确认）。 */
+    @Test
+    void viewSessionOperationAnonymizesOperator() {
+        SessionPrincipal view =
+                new SessionPrincipal(
+                        "view-token-anon",
+                        "TENANT_VIEW",
+                        7L,
+                        "demoa",
+                        "示例医院",
+                        5L,
+                        "platform.admin",
+                        "平台管理员（示例）",
+                        List.of("PLATFORM_ADMIN"),
+                        List.of(),
+                        List.of(),
+                        List.of(),
+                        1L,
+                        ScopeSnapshot.allowAll(),
+                        false,
+                        null,
+                        "127.0.0.1",
+                        0L,
+                        0L,
+                        900L,
+                        7200L,
+                        com.crdp.framework.fieldpolicy.FieldPolicySnapshot.defaults());
+        SecurityContextHolder.getContext()
+                .setAuthentication(new UsernamePasswordAuthenticationToken(view, null, List.of()));
+        TenantContext.useTenant(7L, "demoa");
+        String sessionNo = SessionPrincipal.sessionIdOf("view-token-anon");
+
+        logger.append(AuditEntry.operation("base", "USER_UPDATE").description("代为修改用户").build());
+
+        assertThat(sqls.get(0)).contains("INSERT INTO aud_log");
+        assertThat(lastArgs())
+                .contains("platform_view", "平台支持人员 " + sessionNo)
+                .doesNotContain("platform.admin", "平台管理员（示例）");
+        assertThat(lastArgs()).contains(sessionNo);
+    }
+
+    /** 平台访问日志（VIEW_*）在视角会话里保留真实平台账号身份（平台侧记录，医院不可见）。 */
+    @Test
+    void viewSessionPlatformAccessKeepsRealIdentity() {
+        SessionPrincipal view =
+                new SessionPrincipal(
+                        "view-token-keep",
+                        "TENANT_VIEW",
+                        7L,
+                        "demoa",
+                        "示例医院",
+                        5L,
+                        "platform.admin",
+                        "平台管理员（示例）",
+                        List.of("PLATFORM_ADMIN"),
+                        List.of(),
+                        List.of(),
+                        List.of(),
+                        1L,
+                        ScopeSnapshot.allowAll(),
+                        false,
+                        null,
+                        "127.0.0.1",
+                        0L,
+                        0L,
+                        900L,
+                        7200L,
+                        com.crdp.framework.fieldpolicy.FieldPolicySnapshot.defaults());
+        SecurityContextHolder.getContext()
+                .setAuthentication(new UsernamePasswordAuthenticationToken(view, null, List.of()));
+        TenantContext.useTenant(7L, "demoa");
+
+        logger.append(
+                AuditEntry.platformAccess(7L, "base", "VIEW_PROXY_CONFIG")
+                        .username("platform.admin")
+                        .description("代为操作")
+                        .build());
+
+        assertThat(sqls.get(0)).contains("aud_platform_access_log");
+        assertThat(lastArgs()).contains("platform.admin", "平台管理员（示例）");
+    }
+
     // ---------------------------------------------------------------- 操作日志（PLT-AUD-001）
 
     @Test

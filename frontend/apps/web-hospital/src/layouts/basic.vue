@@ -12,6 +12,7 @@ import { tenantViewWatermarkText } from '@crdp/api';
 import { useResponsiveShell } from '@crdp/responsive';
 
 import NoticeBell from '#/components/notify/notice-bell.vue';
+import ProxyReasonDialog from '#/components/view/proxy-reason-dialog.vue';
 import TenantViewBanner from '#/components/view/tenant-view-banner.vue';
 import { useAuthStore, useTenantViewStore } from '#/store';
 import LoginForm from '#/views/_core/authentication/login.vue';
@@ -99,6 +100,8 @@ const userMenus = [
       :session="tenantViewStore.session"
       @exit="tenantViewStore.exit('LOGOUT')"
     />
+    <!-- E20-T06 / PLT-VIEW-013：视角模式下写请求的原因二次确认弹窗（请求拦截器触发） -->
+    <ProxyReasonDialog v-if="tenantViewStore.active" />
     <BasicLayout
       class="hospital-shell__layout"
       @clear-preferences-and-logout="handleLogout"

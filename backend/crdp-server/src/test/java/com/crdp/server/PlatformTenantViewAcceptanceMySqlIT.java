@@ -55,6 +55,12 @@ class PlatformTenantViewAcceptanceMySqlIT {
     private static final String HOSPITAL_PASSWORD = "Demo@2026";
     private static final String LEGACY = "IT-E20T07";
     private static final String NAME = "王测视（示例）";
+    private static final String NEW_PASSWORD = "View#2026xC";
+
+    /** 本 IT 创建的平台账号 / 角色 → 清理用。 */
+    private static final java.util.List<String> itAccounts = new java.util.ArrayList<>();
+
+    private static final java.util.List<Long> itRoles = new java.util.ArrayList<>();
 
     /** 病案号带随机尾（场景间不重复；检索词按病案号精确命中唯一患者）。 */
     private String mrn() {
@@ -74,6 +80,7 @@ class PlatformTenantViewAcceptanceMySqlIT {
     void cleanState() {
         deleteKeys("crdp:sess:*");
         deleteKeys("crdp:login:fail:*");
+        deleteKeys("crdp:view-enter:*");
         JdbcTemplate platform = platformDirect();
         // 前一场景断言失败时可能未走到退出：收掉残留的 ACTIVE 会话行，避免 40901 级联（自建自清）
         platform.update(
@@ -94,7 +101,11 @@ class PlatformTenantViewAcceptanceMySqlIT {
     @Test
     @Order(1)
     void readonlyMatrixRejectsConfigWriteBatchOriginalAndExport() {
-        enterView(demoaId);
+        // E20-T06 起 platform.admin 持代为操作权限（配置 / 业务写受控放行）——只读矩阵按无代为权限的角色验收
+        String admin = platformToken();
+        long roleId = createRole(admin, "视角只读角色（示例）");
+        createAccount(admin, "it.view.noproxy", "视角只读账号（示例）", roleId);
+        enterViewAs("it.view.noproxy", NEW_PASSWORD, demoaId);
 
         assertEquals(
                 40303,
@@ -413,7 +424,12 @@ class PlatformTenantViewAcceptanceMySqlIT {
 
     /** 进入指定租户的视角并换取视角令牌（E20-T01 / E20-T04 链路）。 */
     private void enterView(long tenantId) {
-        String platform = platformToken();
+        enterViewAs("platform.admin", PLATFORM_PASSWORD, tenantId);
+    }
+
+    /** 以指定平台账号进入视角（场景一的「无代为权限」角色用）。 */
+    private void enterViewAs(String username, String password, long tenantId) {
+        String platform = loginToken(username, password);
         Map<?, ?> entered =
                 post(
                         "/api/platform/tenant-view/sessions",
@@ -448,13 +464,74 @@ class PlatformTenantViewAcceptanceMySqlIT {
     }
 
     private String platformToken() {
+        return loginToken("platform.admin", PLATFORM_PASSWORD);
+    }
+
+    private String loginToken(String username, String password) {
         Map<?, ?> login =
                 post(
                         "/api/platform/auth/login",
                         null,
-                        Map.of("username", "platform.admin", "password", PLATFORM_PASSWORD));
+                        Map.of("username", username, "password", password));
         assertEquals(0, codeOf(login), "平台登录：" + login.get("message"));
         return (String) data(login).get("token");
+    }
+
+    /** 建 IT 角色（只带进入视角权限，三个代为开关全关 → 默认关闭口径）。 */
+    private long createRole(String adminToken, String name) {
+        Map<?, ?> response =
+                post(
+                        "/api/platform/roles",
+                        adminToken,
+                        Map.of(
+                                "name",
+                                name,
+                                "menuIds",
+                                List.of(
+                                        platformDirect()
+                                                .queryForObject(
+                                                        "SELECT id FROM plt_menu WHERE"
+                                                                + " perm_code = 'platform:view:enter'",
+                                                        Long.class)),
+                                "viewCanEnter",
+                                true,
+                                "viewVisibleScope",
+                                "CONFIG_AND_BUSINESS",
+                                "viewTenantScope",
+                                "ALL"));
+        assertEquals(0, codeOf(response), "建 IT 角色：" + response.get("message"));
+        long id = ((Number) data(response).get("id")).longValue();
+        itRoles.add(id);
+        return id;
+    }
+
+    /** 建 IT 平台账号并完成首次改密（后续登录直接可用）。 */
+    private void createAccount(
+            String adminToken, String username, String displayName, long roleId) {
+        Map<?, ?> response =
+                post(
+                        "/api/platform/accounts",
+                        adminToken,
+                        Map.of(
+                                "username",
+                                username,
+                                "displayName",
+                                displayName,
+                                "phone",
+                                "139000099" + (10 + itAccounts.size() % 80),
+                                "password",
+                                NEW_PASSWORD + "A",
+                                "roleIds",
+                                List.of(roleId)));
+        assertEquals(0, codeOf(response), "建 IT 账号：" + response.get("message"));
+        itAccounts.add(username);
+        String first = loginToken(username, NEW_PASSWORD + "A");
+        Map<?, ?> changed =
+                post(
+                        "/api/platform/auth/password",
+                        first,
+                        Map.of("oldPassword", NEW_PASSWORD + "A", "newPassword", NEW_PASSWORD));
+        assertEquals(0, codeOf(changed), "IT 账号改密：" + changed.get("message"));
     }
 
     private String hospitalToken(String tenantCode, String username) {
@@ -511,6 +588,23 @@ class PlatformTenantViewAcceptanceMySqlIT {
                         + " (SELECT session_no FROM plt_view_session WHERE account_name ="
                         + " 'platform.admin')");
         platform.update("DELETE FROM plt_view_session WHERE account_name = 'platform.admin'");
+        AuditTableMaintenance.delete(
+                platform,
+                "DELETE FROM aud_platform_access_log WHERE view_session_id IN"
+                        + " (SELECT session_no FROM plt_view_session WHERE account_name ="
+                        + " 'it.view.noproxy')");
+        platform.update("DELETE FROM plt_view_session WHERE account_name = 'it.view.noproxy'");
+        for (Long roleId : itRoles) {
+            platform.update("DELETE FROM plt_role_menu WHERE role_id = ?", roleId);
+            platform.update("DELETE FROM plt_role WHERE id = ?", roleId);
+        }
+        for (String username : itAccounts) {
+            platform.update(
+                    "DELETE FROM plt_account_role WHERE account_id IN"
+                            + " (SELECT id FROM plt_account WHERE username = ?)",
+                    username);
+            platform.update("DELETE FROM plt_account WHERE username = ?", username);
+        }
 
         for (String tenant : List.of("t_demoa", "t_demob")) {
             JdbcTemplate jdbc =

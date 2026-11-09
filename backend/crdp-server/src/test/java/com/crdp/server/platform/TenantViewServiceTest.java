@@ -57,7 +57,9 @@ class TenantViewServiceTest {
                 "http://127.0.0.1:14173",
                 // 视角规则（E20-T02）：单测只测纯函数，不触库；进入时的规则版本戳由 IT 覆盖
                 new ViewRuleService(
-                        null, noopAudit, new com.fasterxml.jackson.databind.ObjectMapper()));
+                        null, noopAudit, new com.fasterxml.jackson.databind.ObjectMapper()),
+                // 代为操作能力（E20-T06）：单测只测纯函数，不触库
+                new TenantViewProxyService(null, null, null, null, null, noopAudit));
     }
 
     // ---------------------------------------------------------------- 校验（PLT-VIEW-001）

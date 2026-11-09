@@ -318,7 +318,7 @@ public class FieldHistoryService {
                         fieldKey,
                         writeJson(oldValue),
                         writeJson(newValue),
-                        source.name(),
+                        effectiveSource(source).name(),
                         triggerFields,
                         reason,
                         operator.id(),
@@ -345,16 +345,23 @@ public class FieldHistoryService {
         }
     }
 
-    /** 操作人解析（见类注释：医院会话 / 平台支持 / 无会话系统重算三分支）。 */
+    /**
+     * 操作人解析（见类注释：医院会话 / 平台支持 / 无会话系统重算三分支）。 视角会话（E20-T06 / PLT-VIEW-018）一律按平台支持留痕： 修改人显示「平台支持人员 +
+     * 会话号」，不落平台账号与姓名（platform-spec §8 已确认）；操作人 id 置空（平台账号 id 不进租户库）。
+     */
     private static Operator resolveOperator(ChangeSource source) {
-        return switch (source) {
+        return switch (effectiveSource(source)) {
             case USER, IMPORT, REPORT -> {
                 SessionPrincipal principal = CurrentSession.requireHospital();
                 yield new Operator(principal.userId(), principal.displayName());
             }
             case PLATFORM_SUPPORT -> {
-                SessionPrincipal principal = CurrentSession.require();
-                yield new Operator(principal.userId(), principal.displayName() + "（平台支持）");
+                SessionPrincipal principal = CurrentSession.current().orElse(null);
+                if (principal != null && principal.tenantView()) {
+                    yield new Operator(null, "平台支持人员 " + principal.sessionId());
+                }
+                SessionPrincipal support = CurrentSession.require();
+                yield new Operator(support.userId(), support.displayName() + "（平台支持）");
             }
             case SYSTEM_RECALC ->
                     CurrentSession.current()
@@ -364,6 +371,18 @@ public class FieldHistoryService {
                                                     principal.userId(), principal.displayName()))
                             .orElseGet(() -> new Operator(null, "系统重算"));
         };
+    }
+
+    /**
+     * 视角会话的来源归一（E20-T06）：租户视角令牌（TENANT_VIEW）下的写入全部按 PLATFORM_SUPPORT 留痕 ——业务模块稽查轨迹的修改人只显示「平台支持人员 +
+     * 会话号」（platform-spec §8 已确认）；系统重算保持无会话语义。
+     */
+    private static ChangeSource effectiveSource(ChangeSource source) {
+        SessionPrincipal principal = CurrentSession.current().orElse(null);
+        if (principal != null && principal.tenantView() && source != ChangeSource.SYSTEM_RECALC) {
+            return ChangeSource.PLATFORM_SUPPORT;
+        }
+        return source;
     }
 
     private record Operator(Long id, String name) {}

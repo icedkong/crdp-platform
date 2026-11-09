@@ -81,6 +81,7 @@ class PlatformTenantViewMySqlIT {
     void cleanState() {
         deleteKeys("crdp:sess:*");
         deleteKeys("crdp:login:fail:*");
+        deleteKeys("crdp:view-enter:*");
         demoaId =
                 platformDirect()
                         .queryForObject(

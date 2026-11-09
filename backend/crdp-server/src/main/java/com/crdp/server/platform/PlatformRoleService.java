@@ -54,6 +54,31 @@ public class PlatformRoleService {
     private static final Set<String> TENANT_SCOPES =
             Set.of(TENANT_SCOPE_ALL, TENANT_SCOPE_RESPONSIBLE, TENANT_SCOPE_SPECIFIED);
 
+    /**
+     * 代为配置资源目录（E20-T06 / PLT-VIEW-013「代为配置资源范围」多选项）：取医院端配置类写接口的 权限码资源段（{@code {模块}:{资源}:{动作}}
+     * 第二段）；未配置（清单为空）时默认全部配置类资源（已确认）。 新增配置类资源时在此登记（配置变更，不是硬编码绕过）。
+     */
+    public record ConfigResource(String code, String label) {}
+
+    public static final List<ConfigResource> CONFIG_RESOURCES =
+            List.of(
+                    new ConfigResource("user", "用户账号"),
+                    new ConfigResource("role", "角色与权限"),
+                    new ConfigResource("org", "组织架构"),
+                    new ConfigResource("dict", "数据字典"),
+                    new ConfigResource("param", "系统参数"),
+                    new ConfigResource("brand", "个性化"),
+                    new ConfigResource("webhook", "Webhook"),
+                    new ConfigResource("session", "在线会话"),
+                    new ConfigResource("field", "表单字段字典"),
+                    new ConfigResource("notice", "通知模板"),
+                    new ConfigResource("abnormal", "随访异常规则"),
+                    new ConfigResource("dashboard", "工作台卡片"),
+                    new ConfigResource("scan", "报告单与电子化资料配置"));
+
+    /** 清单上限（角色表列宽 512：13 资源 × 编码长度远小于，取 32 防御）。 */
+    private static final int CONFIG_RESOURCES_MAX = 32;
+
     private static final int NAME_MAX = 64;
 
     private static final int DESCRIPTION_MAX = 255;
@@ -78,12 +103,13 @@ public class PlatformRoleService {
 
     // ---------------------------------------------------------------- DTO
 
-    /** 角色上的租户视角权限（平台规格 §8「关键字段 · 平台角色视角权限」，docs/api §5 六字段）。 */
+    /** 角色上的租户视角权限（平台规格 §8「关键字段 · 平台角色视角权限」，docs/api §5 六字段 + 资源范围）。 */
     public record ViewFields(
             boolean canEnter,
             String visibleScope,
             String tenantScope,
             boolean canConfigure,
+            List<String> configResources,
             boolean canResetPassword,
             boolean canEditBusiness) {}
 
@@ -116,6 +142,7 @@ public class PlatformRoleService {
             String viewTenantScope,
             List<Long> viewSpecifiedTenantIds,
             Boolean viewCanConfigure,
+            List<String> viewConfigResources,
             Boolean viewCanResetPassword,
             Boolean viewCanEditBusiness) {}
 
@@ -139,7 +166,8 @@ public class PlatformRoleService {
                 platform.queryForList(
                         "SELECT id, code, name, description, built_in, status, view_can_enter,"
                                 + " view_visible_scope, view_tenant_scope, view_can_configure,"
-                                + " view_can_reset_password, view_can_edit_business, created_at, updated_at"
+                                + " view_config_resources, view_can_reset_password,"
+                                + " view_can_edit_business, created_at, updated_at"
                                 + " FROM plt_role ORDER BY id ASC");
         Map<Long, Long> holders = holderCounts();
         List<RoleView> result = new ArrayList<>();
@@ -222,8 +250,9 @@ public class PlatformRoleService {
                     platform.update(
                             "INSERT INTO plt_role (code, name, description, built_in, status,"
                                     + " view_can_enter, view_visible_scope, view_tenant_scope,"
-                                    + " view_can_configure, view_can_reset_password, view_can_edit_business)"
-                                    + " VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)",
+                                    + " view_can_configure, view_config_resources,"
+                                    + " view_can_reset_password, view_can_edit_business)"
+                                    + " VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)",
                             code,
                             request.name().trim(),
                             blankToNull(request.description()),
@@ -232,6 +261,7 @@ public class PlatformRoleService {
                             view.visibleScope(),
                             view.tenantScope(),
                             view.canConfigure() ? 1 : 0,
+                            configResourcesCsv(view),
                             view.canResetPassword() ? 1 : 0,
                             view.canEditBusiness() ? 1 : 0);
                     long roleId =
@@ -291,8 +321,9 @@ public class PlatformRoleService {
                     platform.update(
                             "UPDATE plt_role SET name = ?, description = ?, status = ?,"
                                     + " view_can_enter = ?, view_visible_scope = ?, view_tenant_scope = ?,"
-                                    + " view_can_configure = ?, view_can_reset_password = ?,"
-                                    + " view_can_edit_business = ?, updated_at = ?"
+                                    + " view_can_configure = ?, view_config_resources = ?,"
+                                    + " view_can_reset_password = ?, view_can_edit_business = ?,"
+                                    + " updated_at = ?"
                                     + " WHERE id = ?",
                             request.name().trim(),
                             blankToNull(request.description()),
@@ -301,6 +332,7 @@ public class PlatformRoleService {
                             view.visibleScope(),
                             view.tenantScope(),
                             view.canConfigure() ? 1 : 0,
+                            configResourcesCsv(view),
                             view.canResetPassword() ? 1 : 0,
                             view.canEditBusiness() ? 1 : 0,
                             LocalDateTime.now(),
@@ -401,8 +433,53 @@ public class PlatformRoleService {
                 visibleScope,
                 tenantScope,
                 Boolean.TRUE.equals(request.viewCanConfigure()),
+                validateConfigResources(request.viewConfigResources()),
                 Boolean.TRUE.equals(request.viewCanResetPassword()),
                 Boolean.TRUE.equals(request.viewCanEditBusiness()));
+    }
+
+    /**
+     * 代为配置资源范围校验（PLT-VIEW-013）：空清单 = 全部配置类资源（已确认，落 NULL）； 非空时逐项须在目录内（未知编码 40001），去重保序、最多 {@value
+     * #CONFIG_RESOURCES_MAX} 项。可代为配置关闭时清单不参与计算、原值保留不动。
+     */
+    static List<String> validateConfigResources(List<String> raw) {
+        if (raw == null || raw.isEmpty()) {
+            return null;
+        }
+        if (raw.size() > CONFIG_RESOURCES_MAX) {
+            throw bad("代为配置资源范围最多 " + CONFIG_RESOURCES_MAX + " 项");
+        }
+        Set<String> known =
+                CONFIG_RESOURCES.stream()
+                        .map(ConfigResource::code)
+                        .collect(java.util.stream.Collectors.toSet());
+        LinkedHashSet<String> accepted = new LinkedHashSet<>();
+        for (String item : raw) {
+            String code = item == null ? "" : item.trim();
+            if (!known.contains(code)) {
+                throw bad("代为配置资源 " + code + " 不在可选目录内");
+            }
+            accepted.add(code);
+        }
+        return List.copyOf(accepted);
+    }
+
+    /** 清单落库值（CSV；空 = NULL = 全部配置类资源）。 */
+    static String configResourcesCsv(ViewFields view) {
+        return view.configResources() == null || view.configResources().isEmpty()
+                ? null
+                : String.join(",", view.configResources());
+    }
+
+    /** CSV 列读回清单（空 = NULL = 全部配置类资源）。 */
+    static List<String> parseConfigResources(String csv) {
+        if (csv == null || csv.isBlank()) {
+            return null;
+        }
+        return java.util.Arrays.stream(csv.split(","))
+                .map(String::trim)
+                .filter(c -> !c.isEmpty())
+                .toList();
     }
 
     /** 指定租户清单查库校验：SPECIFIED 时全部租户须存在（任何状态均可选，进入时再按租户状态闸门）。 */
@@ -431,6 +508,9 @@ public class PlatformRoleService {
                 || !str(before.get("view_tenant_scope")).equals(view.tenantScope())
                 || (((Number) before.get("view_can_configure")).intValue() == 1)
                         != view.canConfigure()
+                || !java.util.Objects.equals(
+                        parseConfigResources(strOrNull(before.get("view_config_resources"))),
+                        view.configResources())
                 || (((Number) before.get("view_can_reset_password")).intValue() == 1)
                         != view.canResetPassword()
                 || (((Number) before.get("view_can_edit_business")).intValue() == 1)
@@ -499,6 +579,7 @@ public class PlatformRoleService {
                         str(row.get("view_visible_scope")),
                         str(row.get("view_tenant_scope")),
                         ((Number) row.get("view_can_configure")).intValue() == 1,
+                        parseConfigResources(strOrNull(row.get("view_config_resources"))),
                         ((Number) row.get("view_can_reset_password")).intValue() == 1,
                         ((Number) row.get("view_can_edit_business")).intValue() == 1),
                 menuIds,
@@ -526,7 +607,8 @@ public class PlatformRoleService {
                 platform.queryForList(
                         "SELECT id, code, name, description, built_in, status, view_can_enter,"
                                 + " view_visible_scope, view_tenant_scope, view_can_configure,"
-                                + " view_can_reset_password, view_can_edit_business, created_at, updated_at"
+                                + " view_config_resources, view_can_reset_password,"
+                                + " view_can_edit_business, created_at, updated_at"
                                 + " FROM plt_role WHERE id = ?",
                         roleId);
         if (rows.isEmpty()) {
@@ -625,7 +707,11 @@ public class PlatformRoleService {
                 + view.visibleScope()
                 + "，"
                 + view.tenantScope()
-                + (view.canConfigure() ? "，可代为配置" : "")
+                + (view.canConfigure()
+                        ? view.configResources() == null
+                                ? "，可代为配置（全部资源）"
+                                : "，可代为配置（" + view.configResources().size() + " 类资源）"
+                        : "")
                 + (view.canResetPassword() ? "，可代重置密码" : "")
                 + (view.canEditBusiness() ? "，可编辑业务数据" : "")
                 + "]";

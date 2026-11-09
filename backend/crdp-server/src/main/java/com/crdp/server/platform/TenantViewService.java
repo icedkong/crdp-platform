@@ -111,6 +111,9 @@ public class TenantViewService {
     /** 视角规则（E20-T02）：进入时盖「生效规则版本」戳（ACTIVE 规则集内容哈希）。 */
     private final ViewRuleService viewRules;
 
+    /** 代为操作能力（E20-T06）：横幅会话信息随行下发（按钮显隐依据）。 */
+    private final TenantViewProxyService proxy;
+
     public TenantViewService(
             JdbcTemplate platform,
             SessionStore sessionStore,
@@ -121,7 +124,8 @@ public class TenantViewService {
             ObjectMapper json,
             @Value("${crdp.tenant-view.hospital-base-url:http://127.0.0.1:14173}")
                     String hospitalBaseUrl,
-            ViewRuleService viewRules) {
+            ViewRuleService viewRules,
+            TenantViewProxyService proxy) {
         this.platform = platform;
         this.sessionStore = sessionStore;
         this.tokens = tokens;
@@ -131,6 +135,7 @@ public class TenantViewService {
         this.json = json;
         this.hospitalBaseUrl = hospitalBaseUrl;
         this.viewRules = viewRules;
+        this.proxy = proxy;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -251,7 +256,10 @@ public class TenantViewService {
      */
     public record EntryTicket(String ticket, String hospitalUrl, long expiresInSeconds) {}
 
-    /** 医院端视角会话信息（E20-T04 / PLT-VIEW-003 横幅与水印口径）：会话号、租户、剩余时长与平台账号。 */
+    /**
+     * 医院端视角会话信息（E20-T04 / PLT-VIEW-003 横幅与水印口径）：会话号、租户、剩余时长与平台账号； E20-T06 起带 {@code
+     * capabilities}（代为操作能力，PLT-VIEW-013、017、018 按钮显隐依据；实时按账号启用角色并集计算）。
+     */
     public record ViewShellSession(
             long sessionId,
             String sessionNo,
@@ -263,7 +271,8 @@ public class TenantViewService {
             String accountDisplayName,
             OffsetDateTime startedAt,
             OffsetDateTime expiresAt,
-            long remainingSeconds) {}
+            long remainingSeconds,
+            TenantViewProxyService.ViewCapabilities capabilities) {}
 
     /** 凭据换取结果（E20-T04）：视角令牌只在本次响应出现一次（与双因素第二步同口径）， 前端放进内存会话后不再回显。 */
     public record ExchangeResult(
@@ -778,7 +787,8 @@ public class TenantViewService {
                 row.displayName(),
                 offsetDateTime(row.startedAt()),
                 offsetDateTime(row.endsAt()),
-                sessionStore.effectiveTtl(alive).toSeconds());
+                sessionStore.effectiveTtl(alive).toSeconds(),
+                proxy.capabilitiesOf(row.accountId(), row.tenantId()));
     }
 
     private void writeTicket(String ticket, TicketPayload payload) {

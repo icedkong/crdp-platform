@@ -117,6 +117,13 @@ public class SecurityConfig {
                                                 HttpMethod.DELETE, "/api/hospital/view/session")
                                         .hasAnyAuthority(
                                                 TokenAuthenticationFilter.SESSION_VIEW_AUTHORITY)
+                                        // E20-T06 / PLT-VIEW-017：代重置医院用户密码的专用代理口（只接受
+                                        // 视角令牌；角色能力校验与 VIEW_PROXY_RESET 审计在服务内）
+                                        .requestMatchers(
+                                                HttpMethod.POST,
+                                                "/api/hospital/view/users/*/reset-password")
+                                        .hasAnyAuthority(
+                                                TokenAuthenticationFilter.SESSION_VIEW_AUTHORITY)
                                         // E10-T04 / tech-plan §10「预览」：预览内容经应用代理按流返回。pdf.js、
                                         // docx-preview 与原生 <audio> 是浏览器子资源请求，带不了登录令牌，取流凭
                                         // preview-url 签发的 ≤ 5 分钟随机令牌（公开口按 IP 每小时限流，
