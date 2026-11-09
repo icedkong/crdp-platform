@@ -93,6 +93,16 @@ crdp:
       online-retention-months: 12
       worm-retention-years: 15
       partitions-ahead: 3 # 预建未来月分区，保证新月份写入即有分区
+      # E22-T08：审计归档桶接入。none（默认，本机 / CI）只做分区维护；生产 type=obs（单次 PUT +
+      # 对象级 COMPLIANCE 保留），必须先由运维开启桶级 WORM（docs/ops/audit-worm-archive.md），
+      # AK/SK 只经环境变量 CRDP_OBS_ARCHIVE_* 注入，type=obs 必填项缺失启动即失败。
+      storage:
+        type: none
+        obs:
+          endpoint: ${CRDP_OBS_ARCHIVE_ENDPOINT:}
+          access-key: ${CRDP_OBS_ARCHIVE_AK:}
+          secret-key: ${CRDP_OBS_ARCHIVE_SK:}
+          bucket: ${CRDP_OBS_ARCHIVE_BUCKET:}
   sms:
     # E09-T03 / PLT-CFG-005：腾讯云短信通道（平台统一账号、签名与模板）。
     # enabled=false（默认）时发送明确失败（CHANNEL_DISABLED），不假装发送成功；生产经环境变量 / 凭据管理注入密钥

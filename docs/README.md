@@ -24,6 +24,7 @@
 | `testing/uat-hospital-a.md` | 医院 A UAT 组织、脚本与问题跟踪手册：组织与日程（W33–W35）、UAT 脚本 47 条（P0/P1/P2）、发现入缺陷库（模板 `testing/uat-findings-template.csv` + `scripts/uat_intake.py`）、签字判据与签字单（现场执行与签字由人完成，E23-T08） | A 租户 UAT、上线放行（E23；C 的 UAT E23-T23 复用框架） |
 | `ops/rds-prod.md` | RDS 8.0 生产实例运维手册：参数基线、主备切换验证、跨区域备份开启（IaC 在 `iac/rds-prod/`；真实云操作由运维执行） | 数据库运维、备份恢复演练（E22） |
 | `ops/cce-prod.md` | CCE 生产环境三级基线运维手册：集群 / ELB / WAF / 通配符证书 / HSS 对照清单与验证（IaC 在 `iac/cce-prod/`；真实云操作由运维执行） | 生产入口、主机防护、渗透测试对接（E22） |
+| `ops/audit-worm-archive.md` | 审计归档 OBS WORM 桶 runbook：桶级 WORM（合规 15 年）开通顺序、生产验证清单（删除 / 覆盖尝试必须失败）、归档演练与留痕模板（IaC 在 `iac/obs-archive/`；真实云操作由运维执行，CI 含本地不可删改演练） | 审计长期留存、防篡改验证（E22-T08 / PLT-AUD-010） |
 | `ops/tenant-restore.md` | 单院恢复 runbook：单租户库恢复到指定时间点（脚本 `scripts/restore_tenant.sh`；PITR 临时实例等真实云操作由运维执行，CI 含本地演练） | 误操作 / 逻辑损坏的单院回滚（E22-T06） |
 | `ops/pentest.md` | 渗透测试对接手册：范围与授权、靶机环境、日程（W32–W35）、报告分级、发现入缺陷库（模板 `ops/pentest-findings-template.csv` + `scripts/pentest_intake.py`；选商 / 签约 / 测试 / 报告出具由人执行） | 上线前渗透测试（E22-T09；E22-T10/T11 修复的输入） |
 | `ops/hospital-a-sample-intake.md` | 医院 A 历史数据样本接收与脱敏对接手册：导出口径、保密红线、脱敏工具 `scripts/deidentify_sample.py`、「校验通过」判据与警告处置、迭代循环（样本交接 / 医院修正 / 复核结论由人执行） | 租户上线样本对接（E23-T05；E23-T06/T07/T11 演练与正式导入的输入） |

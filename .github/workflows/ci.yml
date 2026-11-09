@@ -23,6 +23,10 @@ jobs:
       # （集群跨可用区、ELB TLS 套件与跳转、WAF 阻断、HSS 版本、安全组最小开放、工作负载基线）
       - name: CCE 生产基线校验
         run: python3 scripts/check_cce_baseline.py
+      # E22-T08：审计归档 OBS WORM 桶基线（iac/obs-archive/worm-baseline.json）与 IaC /
+      # 应用配置 / runbook 不漂移（单可用区、桶级 WORM 合规 15 年、30 天转归档、无自动删除、无异地副本）
+      - name: 审计归档 WORM 基线校验
+        run: python3 scripts/check_worm_baseline.py
       # E22-T09：渗透测试对接。入库工具自检（不联网，dry-run / 幂等 / 虚构数据护栏）
       # + 对接手册 / 发现清单模板 / 分级映射防漂移校验。
       - name: 渗透测试对接校验

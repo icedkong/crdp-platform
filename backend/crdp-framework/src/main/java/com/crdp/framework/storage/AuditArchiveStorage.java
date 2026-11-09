@@ -10,6 +10,9 @@ import java.time.LocalDate;
  *
  * <p>实现约束（来自 OBS WORM 语义，tech-plan §2 核实记录）： ① 必须单次 PUT——分段上传在合并完成前不受 WORM 保护； ②
  * 受保护对象不可覆盖、不可删（保留期只能延长）；因此端口不提供删除 / 覆盖语义，键名由调用方保证确定性（同分区重跑同 key）。
+ *
+ * <p>实现：{@link ObsAuditArchiveStorage}（E22-T08，{@code storage.type=obs}，桶级 WORM 开启与生产演练见
+ * docs/ops/audit-worm-archive.md）；默认 {@code none} 时为 {@link UnsupportedAuditArchiveStorage}。
  */
 public interface AuditArchiveStorage {
 

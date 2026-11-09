@@ -1,0 +1,46 @@
+{
+  "task": "E22-T08",
+  "requirement": "PLT-AUD-010",
+  "comment": "审计归档 OBS WORM 桶基线（唯一事实源）：iac/obs-archive/main.tf 从本 JSON 取值，scripts/check_worm_baseline.py 在 CI 校验不漂移。桶级 WORM 与 180 天转深度归档两步 provider 暂不支持，由运维按 docs/ops/audit-worm-archive.md 落实并留痕。",
+  "region": "cn-north-4",
+  "bucket": {
+    "storage_class": "STANDARD",
+    "acl": "private",
+    "multi_az": false,
+    "multi_az_reason": "单可用区（tech-plan §14 归档桶与保留；归档/深度归档存储类别本身仅支持单 AZ）",
+    "versioning": true,
+    "versioning_reason": "开启 WORM 自动启用版本控制且不可停用（OBS 对象锁定语义）；IaC 显式声明与最终态一致"
+  },
+  "worm": {
+    "mode": "COMPLIANCE",
+    "default_retention_years": 15,
+    "enabled_by": "console-or-sdk",
+    "enabled_by_reason": "terraform-provider-huaweicloud 无 OBS WORM / 对象锁定资源（2026-11 核实）；桶级默认保留由运维在控制台或经 SDK（esdk-obs-java setObjectLockConfiguration）开启，开启后不可关闭",
+    "object_retention_years": 15,
+    "object_retention_source": "应用侧每次写入同时设对象级保留 = 归档日 + 15 年（AuditArchiver / ObsAuditArchiveStorage）",
+    "online_retention_months": 12,
+    "online_retention_source": "在线保留 1 年（E08-T03，application.yml crdp.audit.archive.online-retention-months=12）",
+    "retention_extend_only": true,
+    "retention_extend_only_reason": "保留期只能延长、不能缩短；到期后默认不自动删除（tech-plan §14）"
+  },
+  "lifecycle": [
+    {
+      "days": 30,
+      "storage_class": "COLD",
+      "storage_class_note": "30 天后转归档存储（tech-plan §14）",
+      "managed_by": "terraform"
+    },
+    {
+      "days": 180,
+      "storage_class": "DEEP_ARCHIVE",
+      "storage_class_note": "180 天后转深度归档（tech-plan §14）；terraform provider transition 仅支持 WARM/COLD，此步由运维经控制台 / OBS API（PutBucketLifecycle）配置",
+      "managed_by": "console-or-api"
+    }
+  ],
+  "no_expiration": true,
+  "no_expiration_reason": "不配置任何 expiration / 自动删除规则：审计归档到期后默认不自动删除（tech-plan §14）",
+  "no_replication": true,
+  "no_replication_reason": "只写北京四一份，不做异地 / 跨区域副本（tech-plan §14 已确认；WORM 桶也不支持作为跨区域复制源）",
+  "object_key_prefix": "audit/",
+  "object_key_prefix_source": "AuditArchiveService 对象键前缀：租户 audit/tenant/{编码}、平台 audit/platform"
+}
