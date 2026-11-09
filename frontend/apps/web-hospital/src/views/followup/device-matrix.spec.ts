@@ -79,6 +79,11 @@ function buildMatrixRouter() {
   const keyRoutes = [
     { name: 'FollowupPatient', path: '/followup/patient' },
     { name: 'FollowupPatientDetail', path: '/followup/patient/:id' },
+    // E24-T09 走查补登记（pages.md §0.1 基线分节编辑响应式「是」）
+    {
+      name: 'FollowupBaselineEdit',
+      path: '/followup/patient/:id/baseline/edit',
+    },
     { name: 'FollowupRecordForm', path: '/followup/record/:id' },
     { name: 'FollowupTask', path: '/followup/task' },
     { name: 'FollowupReport', path: '/followup/report' },
@@ -136,8 +141,9 @@ describe('5 个关键页面（路由级矩阵，E24-T02～T06 + 全院报告单�
     preferences.app.isMobile = false;
   });
 
-  it('responsive 名单 = 5 个关键页面的路由（design-system §12「只有 5 个页面做响应式」）', () => {
+  it('responsive 名单 = 5 个关键页面的路由（design-system §12「只有 5 个页面做响应式」）+ 基线分节编辑（pages.md §0.1 标「是」，E24-T09 走查补登记）', () => {
     expect([...responsiveRouteNames].toSorted()).toEqual([
+      'FollowupBaselineEdit',
       'FollowupPatient',
       'FollowupPatientDetail',
       'FollowupRecordForm',
@@ -154,6 +160,7 @@ describe('5 个关键页面（路由级矩阵，E24-T02～T06 + 全院报告单�
       for (const path of [
         '/followup/patient',
         '/followup/patient/301',
+        '/followup/patient/301/baseline/edit',
         '/followup/record/9001',
         '/followup/task',
         '/followup/report',

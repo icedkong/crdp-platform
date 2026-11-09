@@ -51,12 +51,14 @@ const fields = computed(() =>
     : props.fieldCatalog,
 );
 
-/** 手机底部抽屉形态（E24-T03）；主体 / 底栏标记共用，只换容器与容器属性。 */
+/** 手机底部抽屉形态（E24-T03）；主体 / 底栏标记共用，只换容器与容器属性。
+ * crdp-form 走 rootClassName（.ant-drawer 根）——ant-design-vue 4 Drawer
+ * 无 className 属性（E24-T09 走查修正，globalCss 后代选择器才能命中）。 */
 const mobileForm = computed(() => props.mobileCommonOnly === true);
 const drawerProps = {
-  className: 'crdp-form',
   height: '70vh',
   placement: 'bottom' as const,
+  rootClassName: 'crdp-form',
 };
 const modalProps = { width: sizes.modal.advancedSearch };
 

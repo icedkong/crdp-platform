@@ -164,6 +164,8 @@ describe('e24-t03 AdvancedSearch：手机底部抽屉形态（pages.md §3、des
     const drawer = document.body.querySelector('.ant-drawer');
     expect(drawer).not.toBeNull();
     expect(drawer?.className).toContain('ant-drawer-bottom');
+    // E24-T09 走查 W-1：抽屉根带 crdp-form（rootClassName），手机 36px/16px 规则可达
+    expect(drawer?.className).toContain('crdp-form');
     expect(document.body.querySelector('.ant-modal')).toBeNull();
     expect(bodyText()).toContain('病区/中心');
     expect(bodyText()).not.toContain('随访备注（不常用）');

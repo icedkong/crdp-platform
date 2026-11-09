@@ -103,7 +103,7 @@ onBeforeUnmount(() => spy.stop());
       <span class="jump-arrow">▾</span>
     </button>
     <Drawer
-      class-name="crdp-category-drawer"
+      root-class-name="crdp-category-drawer"
       :open="drawerOpen"
       placement="bottom"
       title="跳到分组"

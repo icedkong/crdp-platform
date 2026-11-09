@@ -62,9 +62,10 @@ function clickButton(text: string) {
 describe('e24-t05 TaskFilterDrawer：我的任务筛选抽屉（手机）', () => {
   it('placement=bottom 渲染为底部抽屉（状态筛选不进抽屉——顶部分段常驻）', async () => {
     await mountDrawer();
-    expect(document.body.querySelector('.ant-drawer')?.className).toContain(
-      'ant-drawer-bottom',
-    );
+    const drawer = document.body.querySelector('.ant-drawer');
+    expect(drawer?.className).toContain('ant-drawer-bottom');
+    // E24-T09 走查 W-1：抽屉根带 crdp-form（rootClassName），手机 36px/16px 规则可达
+    expect(drawer?.className).toContain('crdp-form');
     expect(bodyText()).not.toContain('状态');
     expect(
       document.body.querySelector('[data-testid="drawer-status"]'),

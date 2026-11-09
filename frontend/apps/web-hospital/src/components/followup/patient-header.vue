@@ -203,7 +203,7 @@ function runAction(event: HeaderAction) {
     <Drawer
       v-if="isMobile"
       v-model:open="actionsOpen"
-      class-name="crdp-header-actions-drawer"
+      root-class-name="crdp-header-actions-drawer"
       placement="bottom"
       title="操作"
     >
