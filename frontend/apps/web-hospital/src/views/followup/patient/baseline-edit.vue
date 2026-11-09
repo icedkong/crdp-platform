@@ -3,6 +3,8 @@ import type { FormSchema } from '@crdp/api';
 import type { AutoSaveTrigger } from '@crdp/form-engine';
 import type { CategoryProgress } from '@crdp/rules';
 
+import type { CompareReportPaneReport } from '#/components/followup/compare-report-pane.vue';
+
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
@@ -33,11 +35,20 @@ import {
   saveBaselineSectionDraft,
 } from '#/api/core/baseline';
 import { fetchFormSchema } from '#/api/core/form';
+import { fetchPatientReports } from '#/api/core/report';
 import CategoryBar from '#/components/followup/category-bar.vue';
+import {
+  COMPARE_QUERY_KEY,
+  compareReportIdOf,
+} from '#/components/followup/compare-entry-logic';
+import CompareReportPane from '#/components/followup/compare-report-pane.vue';
 import ConflictBanner from '#/components/followup/conflict-banner.vue';
+import { downloadFileById } from '#/components/followup/file-download';
 import FormStatusBar from '#/components/followup/form-status-bar.vue';
+import WatermarkPreview from '#/components/followup/watermark-preview.vue';
 import { useBreakpoint } from '#/reference/use-breakpoint';
 import { usePermission } from '#/reference/use-permission';
+import { useWatermarkViewer } from '#/reference/use-watermark-viewer';
 
 import {
   BASELINE_CONFLICT_SAVE_TEXT,
@@ -87,6 +98,68 @@ const saving = ref(false);
 const renderer = ref<InstanceType<typeof FormRenderer> | null>(null);
 
 const readonly = computed(() => !canEdit.value || locked.value);
+
+// ---------------------------------------------------------------- 对照报告单分屏（E16-T11 / A-ATT-019）
+
+/**
+ * ?compare=<报告单 id>（报告单页签「对照录入」基线位置带入，路由同时带 cat=
+ * 锚点分类）：右侧分屏显示该报告单，对照补录基线字段；平板 / 手机改为
+ * 「对照报告单」按钮全屏切换（pages.md §5.1 同款）。
+ */
+const compareReportId = computed(() => compareReportIdOf(route.query));
+const compareReport = ref<CompareReportPaneReport | null>(null);
+const compareViewerOpen = ref(false);
+const watermarkViewer = useWatermarkViewer();
+const canDownloadFile = computed(() => hasPermission('followup:scan:download'));
+const compareViewerFiles = computed(() =>
+  compareReport.value?.firstFile
+    ? [
+        {
+          fileId: compareReport.value.firstFile.fileId,
+          format: compareReport.value.firstFile.format,
+          name: compareReport.value.name ?? compareReport.value.typeName,
+        },
+      ]
+    : [],
+);
+
+async function loadCompareReport() {
+  compareReport.value = null;
+  const reportId = compareReportId.value;
+  if (!reportId) return;
+  try {
+    const page = await fetchPatientReports(patientId.value, 'baseline');
+    const row = page.items.find((item) => item.id === reportId);
+    if (!row) {
+      message.info('对照报告单不存在或已删除');
+      return;
+    }
+    compareReport.value = {
+      fileCount: row.fileCount,
+      firstFile: row.firstFile,
+      id: row.id,
+      name: row.name,
+      reportDate: row.reportDate,
+      typeName: row.typeName,
+    };
+  } catch {
+    message.error('对照报告单加载失败，请稍后重试');
+  }
+}
+
+watch(compareReportId, () => void loadCompareReport());
+
+/** 关闭对照：仅移除 compare 参数（当前分类 cat 与表单数据不受影响）。 */
+function closeCompare() {
+  const query = { ...route.query };
+  delete query[COMPARE_QUERY_KEY];
+  void router.replace({ query });
+}
+
+async function handleCompareDownload(fileId: number | string) {
+  const ok = await downloadFileById(fileId);
+  if (!ok) message.error('下载失败，请稍后重试');
+}
 
 /** 暂存差异（E25 契约：changes 只带与上次服务器版本相比有变化的键，null = 清空）。 */
 function diffOf(): Record<string, unknown> {
@@ -248,6 +321,8 @@ async function load() {
 
 onMounted(() => {
   void load();
+  // E16-T11：?compare= 报告单分屏（patientId 在路由参数，可直接取患者内清单）
+  void loadCompareReport();
   window.addEventListener('keydown', handleKeydown);
 });
 
@@ -391,6 +466,15 @@ function backToDetail() {
             按分类单独保存；未填完的分类先「暂存」保留，字段修改保存后留痕（A-PAT-005）。
           </div>
         </div>
+        <!-- 平板 / 手机：对照报告单改为全屏切换（桌面走右侧分屏，pages.md §5.1） -->
+        <Button
+          v-if="!isDesktop && compareReport"
+          data-testid="baseline-compare-open"
+          size="small"
+          @click="compareViewerOpen = true"
+        >
+          对照报告单
+        </Button>
       </div>
 
       <FormStatusBar
@@ -452,6 +536,17 @@ function backToDetail() {
               @progress="progressItems = $event"
             />
           </div>
+          <!-- E16-T11 / A-ATT-019：右侧对照报告单分屏（仅桌面；平板 / 手机用顶部
+               「对照报告单」按钮全屏切换） -->
+          <CompareReportPane
+            v-if="isDesktop && compareReport"
+            :can-download="canDownloadFile"
+            :report="compareReport"
+            :viewer="watermarkViewer"
+            @close="closeCompare"
+            @download="handleCompareDownload"
+            @fullscreen="compareViewerOpen = true"
+          />
         </div>
       </Spin>
 
@@ -498,6 +593,17 @@ function backToDetail() {
         保存
       </Button>
     </div>
+
+    <!-- E16-T11 / A-ATT-019：对照报告单全屏查看（缩放 / 旋转 / 翻转 / 水印，E16-T06） -->
+    <WatermarkPreview
+      :can-download="canDownloadFile"
+      :files="compareViewerFiles"
+      :open="compareViewerOpen"
+      :report-id="compareReport?.id"
+      :viewer="watermarkViewer"
+      @download="handleCompareDownload"
+      @update:open="compareViewerOpen = $event"
+    />
   </div>
 </template>
 

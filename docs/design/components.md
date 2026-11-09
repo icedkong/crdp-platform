@@ -689,6 +689,30 @@ interface WatermarkPreviewProps {
 - 手机 / 平板：全屏，双指缩放（图片），工具栏图标 ≥ 40px。
 - 测试：删除水印节点后被重绘；修改水印 style 后恢复；无下载权限不显示下载；XLSX 无预览。
 
+### 12.1 CompareReportPane 对照录入分屏面板（A-ATT-019 / C-FU-017，E16-T11）
+
+pages.md §5 线框的右栏「（可选）对照报告单分屏」——一侧表单、一侧报告单。挂在随访表单页与基线分节编辑页（路由带 `?compare=<报告单 id>` 时出现；关闭对照 = 移除该参数）。
+
+```ts
+interface CompareReportPaneProps {
+  report: {
+    id: string;
+    name: null | string;      // A-ATT-011 名称可空 → 回落类型名
+    typeName: string;
+    reportDate: string;
+    fileCount: number;
+    firstFile: { fileId: string; format: string } | null; // 患者内清单行
+  };
+  viewer: WatermarkViewer;     // 同 §12，来自 me
+  canDownload?: boolean;       // followup:scan:download
+}
+// emits: close, fullscreen, download(fileId)
+```
+
+- 宽 `sizes.comparePaneWidth`（420，右侧分屏令牌）；仅桌面渲染分屏，平板 / 手机由页面顶栏「对照报告单」按钮全屏切换（pages.md §5.1），缩放 / 旋转 / 翻转 / 翻页复用 §12 全屏查看器（fullscreen 事件交给父级打开）。
+- 内容为 `@crdp/viewer` FilePreview：**水印不可关闭**（防篡改）、短时链接每次签发不缓存、失败可「重试」；无附件空态「该报告单暂无可预览的附件」；多附件提示「共 n 个附件，当前显示第 1 份」（逐份清单随报告单详情接口开放）。
+- 入口（报告单页签行内「对照录入」，多处时先弹选择）与目标解析在 `compare-entry-logic`：基线位置 → 基线分节编辑（带 `cat=` 锚点）、随访位置 → `/followup/record/{recordId}`；同一表单去重（整条与分组同记录只留一项）；implant_record 随 E21-T32。
+
 ---
 
 ## 13. 其他小组件
