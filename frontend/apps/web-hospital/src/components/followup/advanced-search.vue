@@ -4,7 +4,10 @@
  * 条件行与条件组构造、底部只读「逻辑表达式预览」、保存为个人筛选（A-PAT-015）。
  * 字段只能选目录（字段字典经 search-fields 下发）中的字段；输出结构化 JSON，
  * 后端转换为参数化查询并自动追加病区条件——不允许原始 SQL（A-NFR-009）。
- * 手机只留常用条件（mobileCommonOnly；患者列表的抽屉适配随 E24-T03）。
+ *
+ * E24-T03 / design-system §5、pages.md §3：手机（mobileCommonOnly）改底部抽屉
+ * （placement="bottom"，高 70vh）且只留常用条件（common=true 的字段）；
+ * 桌面 / 平板保持 900 宽弹窗。手机输入框高 36 / 字号 16 由 .crdp-form 媒体查询承担。
  */
 import type { AdvancedSearchField, ConditionGroup } from '@crdp/api';
 
@@ -17,14 +20,14 @@ import {
   pruneConditionGroup,
 } from '@crdp/api';
 import { colors, sizes } from '@crdp/tokens';
-import { Button, Input, Modal } from 'ant-design-vue';
+import { Button, Drawer, Input, Modal } from 'ant-design-vue';
 
 import AdvancedSearchGroup from './advanced-search-group.vue';
 
 const props = defineProps<{
   /** 字段目录（GET /patients/search-fields）。 */
   fieldCatalog: AdvancedSearchField[];
-  /** 手机只留常用条件（common=true 的字段）。 */
+  /** 手机只留常用条件（common=true 的字段），并改用底部抽屉形态（E24-T03）。 */
   mobileCommonOnly?: boolean;
   open: boolean;
   /** 打开时的条件树（续编；缺省从空组开始）。 */
@@ -46,6 +49,19 @@ const fields = computed(() =>
     ? props.fieldCatalog.filter((item) => item.common)
     : props.fieldCatalog,
 );
+
+/** 手机底部抽屉形态（E24-T03）；主体 / 底栏标记共用，只换容器与容器属性。 */
+const mobileForm = computed(() => props.mobileCommonOnly === true);
+const drawerProps = {
+  className: 'crdp-form',
+  height: '70vh',
+  placement: 'bottom' as const,
+};
+const modalProps = { width: sizes.modal.advancedSearch };
+
+function close() {
+  emit('update:open', false);
+}
 
 watch(
   () => props.open,
@@ -113,11 +129,14 @@ function onSaveAs() {
 </script>
 
 <template>
-  <Modal
+  <!-- 手机 = 底部抽屉（E24-T03，design-system §5）；桌面 / 平板 = 900 宽弹窗；主体与底栏共用一份标记 -->
+  <component
+    :is="mobileForm ? Drawer : Modal"
+    v-bind="mobileForm ? drawerProps : modalProps"
     :open="open"
-    :width="sizes.modal.advancedSearch"
     title="高级检索"
-    @cancel="emit('update:open', false)"
+    @cancel="close"
+    @close="close"
   >
     <div :style="cssVars" class="body" data-testid="advanced-search-body">
       <AdvancedSearchGroup v-model:group="draft" :fields="fields" />
@@ -155,7 +174,7 @@ function onSaveAs() {
       <div class="footer">
         <Button @click="naming = !naming">保存为个人筛选</Button>
         <Button @click="onClear">清空</Button>
-        <Button @click="emit('update:open', false)">取消</Button>
+        <Button @click="close">取消</Button>
         <Button
           :disabled="!complete || fields.length === 0"
           type="primary"
@@ -165,7 +184,7 @@ function onSaveAs() {
         </Button>
       </div>
     </template>
-  </Modal>
+  </component>
 </template>
 
 <style scoped>

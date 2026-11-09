@@ -25,23 +25,21 @@ import {
   patientStatusOptions,
 } from '@crdp/api';
 import { StatusTag } from '@crdp/status-tag';
-import { sizes } from '@crdp/tokens';
+import { colors, sizes } from '@crdp/tokens';
 import {
   Button,
   Card,
   DatePicker,
-  Dropdown,
   Empty,
   Form,
   FormItem,
   Input,
-  Menu,
-  MenuItem,
   message,
-  Popconfirm,
+  Pagination,
   Progress,
   Select,
   Space,
+  Spin,
   Table,
   Tag,
 } from 'ant-design-vue';
@@ -59,6 +57,8 @@ import AdvancedSearch from '#/components/followup/advanced-search.vue';
 import BatchAssignDoctorModal from '#/components/followup/batch-assign-doctor-modal.vue';
 import DeletePatientModal from '#/components/followup/delete-patient-modal.vue';
 import PatientExportModal from '#/components/followup/patient-export-modal.vue';
+import PatientFilterDrawer from '#/components/followup/patient-filter-drawer.vue';
+import SavedFilterDropdown from '#/components/followup/saved-filter-dropdown.vue';
 import TransferWardModal from '#/components/followup/transfer-ward-modal.vue';
 import { useBreakpoint } from '#/reference/use-breakpoint';
 import { usePermission } from '#/reference/use-permission';
@@ -69,6 +69,7 @@ import {
   savedFilterPayloadOf,
 } from './advanced-logic';
 import { stashBatchSelection } from './batch-logic';
+import { drawerFilterCount } from './responsive-logic';
 
 defineOptions({ name: 'FollowupPatient' });
 
@@ -81,11 +82,17 @@ defineOptions({ name: 'FollowupPatient' });
  * E13-T06 / A-PAT-014、A-PAT-015、A-NFR-009、C-PAT-013 · 高级检索与「我的筛选」：
  * 条件树为结构化 JSON，字段只能选 search-fields 目录（字段字典生成）中的字段，
  * 后端编译为参数化查询并自动追加病区条件（不允许原始 SQL）；个人筛选仅本人可见。
- * C 的器械列随 E21 植入数据开放；手机高级检索抽屉随 E24-T03。
+ * C 的器械列随 E21 植入数据开放。
  *
  * E13-T09 / A-PAT-009、A-PAT-012 · 导出与删除：顶部「导出」提交导出作业
  * （租户管理员免审批、普通用户待审批，文件含水印与水印码、姓名/病案号脱敏）；
  * 行操作「⋮ 更多 → 删除」软删除（原因必填 + 二次认证，数据保留可恢复）。
+ *
+ * E24-T03 / NFR-RESP-001、NFR-RESP-002 · 响应式（pages.md §3）：
+ * - 平板：主列表保留姓名 / 编号 / 病区 / 下次随访 / 状态列 + 行展开，筛选收进右侧抽屉；
+ * - 手机：表格改卡片（姓名、状态、下次随访、病区）+ 简单分页；检索词常驻顶栏、
+ *   筛选进底部抽屉（design-system §5、§7）；高级检索同样进底部抽屉且只留常用条件
+ *   （AdvancedSearch mobileCommonOnly）；不提供批量操作（勾选与批量条随表格一起隐藏）。
  */
 const router = useRouter();
 // E19-T02 指标卡钻取：首页点状态指标带 status 进患者列表（未知值不筛选）
@@ -106,7 +113,7 @@ const canApproveExport = computed(() =>
 // E18-T06 / A-PAT-008、A-PAT-018：历史数据「导入」进导入向导（隐藏路由 /followup/patient/import，
 // 权限 followup:patient:import；功能开关 wide_import 关闭时后端 40301，pages.md §3 [导入] 按钮）
 const canImport = computed(() => hasPermission('followup:patient:import'));
-const { isMobile, isTablet } = useBreakpoint();
+const { isDesktop, isMobile, isTablet } = useBreakpoint();
 
 const RangePicker = DatePicker.RangePicker;
 
@@ -145,8 +152,13 @@ const fieldCatalog = ref<AdvancedSearchField[]>([]);
 /** 最近一次查询实际生效的条件树（弹窗续编用 appliedCondition，不跟草稿实时联动）。 */
 const appliedCondition = ref<ConditionGroup | null>(null);
 const savedFilters = ref<SavedFilter[]>([]);
-const renamingId = ref('');
-const renamingName = ref('');
+
+// E24-T03 · 平板 / 手机筛选抽屉（pages.md §3：平板右侧、手机底部）
+const filterOpen = ref(false);
+/** 筛选按钮角标：已生效的抽屉内条件数（检索词常驻顶栏不计，随 appliedFilters）。 */
+const appliedFilterCount = computed(() =>
+  drawerFilterCount(appliedFilters.value),
+);
 
 // E13-T08 / A-WARD-005：行操作「⋮ 更多 → 转病区」（pages.md §3；暂停随 E14-T06）
 const transferOpen = ref(false);
@@ -268,15 +280,8 @@ async function handleUpdateSavedFilter(item: SavedFilter) {
   }
 }
 
-function startRename(item: SavedFilter) {
-  renamingId.value = item.id;
-  renamingName.value = item.name;
-}
-
-async function confirmRename(item: SavedFilter) {
-  const name = renamingName.value.trim();
-  renamingId.value = '';
-  if (!name || name === item.name) return;
+/** 行内重命名（SavedFilterDropdown 上抛；空名 / 同名在组件内已拦）。 */
+async function handleRenameSavedFilter(item: SavedFilter, name: string) {
   try {
     await updateSavedFilter(item.id, { name });
     await loadSavedFilters();
@@ -372,6 +377,11 @@ function handleTableChange(nextPage: number, nextSize: number) {
   pageNo.value = nextPage;
   pageSize.value = nextSize;
   void load();
+}
+
+/** 手机卡片列表分页（简单分页不换页大小；触控可点区域 ≥ 40px 由 tokens globalCss 承担）。 */
+function handleCardPageChange(nextPage: number) {
+  handleTableChange(nextPage, pageSize.value);
 }
 
 function openDetail(row: PatientSearchRow) {
@@ -482,7 +492,8 @@ function handleEmptyAction() {
         </Space>
       </div>
 
-      <Form class="search-bar" layout="inline" @submit.prevent>
+      <!-- 桌面：行内筛选栏（pages.md §3 线框；components.md §11.1） -->
+      <Form v-if="isDesktop" class="search-bar" layout="inline" @submit.prevent>
         <FormItem label="姓名/编号">
           <Input
             v-model:value="filters.keyword"
@@ -547,78 +558,74 @@ function handleEmptyAction() {
               高级检索
             </Button>
             <!-- 我的筛选（A-PAT-015：仅本人可见；点击应用，行内更新 / 重命名 / 删除） -->
-            <Dropdown>
-              <Button data-testid="patient-saved-filters">我的筛选 ▾</Button>
-              <template #overlay>
-                <Menu data-testid="saved-filter-menu">
-                  <MenuItem v-if="savedFilters.length === 0" disabled>
-                    暂无保存的筛选，用「高级检索」保存
-                  </MenuItem>
-                  <MenuItem
-                    v-for="item in savedFilters"
-                    :key="item.id"
-                    :title="item.name"
-                  >
-                    <div class="saved-filter-row">
-                      <template v-if="renamingId === item.id">
-                        <Input
-                          v-model:value="renamingName"
-                          :maxlength="32"
-                          size="small"
-                          :style="{ width: '140px' }"
-                          @keyup.enter="confirmRename(item)"
-                        />
-                        <Button
-                          size="small"
-                          type="link"
-                          @click.stop="confirmRename(item)"
-                        >
-                          确定
-                        </Button>
-                      </template>
-                      <template v-else>
-                        <span
-                          class="saved-filter-name"
-                          @click.stop="handleApplySavedFilter(item)"
-                        >
-                          {{ item.name }}
-                        </span>
-                        <span @click.stop>
-                          <Button
-                            size="small"
-                            type="link"
-                            title="用当前检索条件覆盖该筛选"
-                            @click="handleUpdateSavedFilter(item)"
-                          >
-                            更新
-                          </Button>
-                          <Button
-                            size="small"
-                            type="link"
-                            @click="startRename(item)"
-                          >
-                            重命名
-                          </Button>
-                          <Popconfirm
-                            title="删除该筛选？"
-                            ok-text="删除"
-                            cancel-text="取消"
-                            @confirm="handleDeleteSavedFilter(item)"
-                          >
-                            <Button danger size="small" type="link">
-                              删除
-                            </Button>
-                          </Popconfirm>
-                        </span>
-                      </template>
-                    </div>
-                  </MenuItem>
-                </Menu>
-              </template>
-            </Dropdown>
+            <SavedFilterDropdown
+              :saved-filters="savedFilters"
+              @apply="handleApplySavedFilter"
+              @overwrite="handleUpdateSavedFilter"
+              @rename="handleRenameSavedFilter"
+              @remove="handleDeleteSavedFilter"
+            />
           </Space>
         </FormItem>
       </Form>
+
+      <!-- E24-T03 · 平板 / 手机：检索词常驻顶栏，其余筛选收进抽屉（pages.md §3） -->
+      <div v-else class="compact-bar crdp-form">
+        <Input
+          v-model:value="filters.keyword"
+          allow-clear
+          class="compact-keyword"
+          data-testid="patient-keyword"
+          :maxlength="KEYWORD_MAX_LENGTH"
+          placeholder="姓名或病案号精确查找"
+          @keyup.enter="handleSearch"
+        />
+        <Button
+          class="compact-btn"
+          data-testid="patient-search"
+          type="primary"
+          @click="handleSearch"
+        >
+          搜索
+        </Button>
+        <Button
+          class="compact-btn"
+          data-testid="patient-filter-open"
+          @click="filterOpen = true"
+        >
+          筛选
+          <span
+            v-if="appliedFilterCount > 0"
+            class="filter-count"
+            :style="{ background: colors.primary }"
+            data-testid="patient-filter-count"
+          >
+            {{ appliedFilterCount }}
+          </span>
+        </Button>
+      </div>
+
+      <PatientFilterDrawer
+        v-model:open="filterOpen"
+        :filters="filters"
+        :placement="isMobile ? 'bottom' : 'right'"
+        :status-options="statusOptions"
+        :ward-options="wardOptions"
+        @open-advanced="advancedOpen = true"
+        @reset="handleReset"
+        @search="handleSearch"
+        @update:filters="Object.assign(filters, $event)"
+      >
+        <template #actions>
+          <SavedFilterDropdown
+            :saved-filters="savedFilters"
+            @apply="handleApplySavedFilter"
+            @overwrite="handleUpdateSavedFilter"
+            @rename="handleRenameSavedFilter"
+            @remove="handleDeleteSavedFilter"
+          />
+        </template>
+      </PatientFilterDrawer>
 
       <!-- E19-T05 / A-DASH-010、A-DASH-011 · 完整度缺失字段钻取：显示来源与字段，
            关闭即取消钻取恢复普通检索（后端按钻取条件同一计算过滤） -->
@@ -728,38 +735,57 @@ function handleEmptyAction() {
         @success="handleDeleted"
       />
 
-      <!-- 手机：卡片列表（姓名、状态、下次随访、病区；pages.md §3） -->
+      <!-- 手机：卡片列表（姓名、状态、下次随访、病区；pages.md §3）+ 简单分页 -->
       <div v-if="isMobile" class="cards">
-        <Card
-          v-for="row in rows"
-          :key="row.id"
-          :bordered="false"
-          class="person"
-          @click="openDetail(row)"
-        >
-          <div class="person-line">
-            <span class="person-name">{{ row.name }}</span>
-            <StatusTag
-              :status="PATIENT_STATUS_TEXT[row.status] ?? row.status"
-              variant="dot"
-            />
-          </div>
-          <div>编号 {{ row.patientNo }}</div>
-          <div>下次随访 {{ row.nextVisitDate || '—' }}</div>
-          <div>病区 {{ row.wardName || '—' }}</div>
-        </Card>
-        <Empty
-          v-if="!loading && rows.length === 0"
-          :description="emptyInfo.text"
-        >
-          <Button
-            v-if="emptyInfo.actionText"
-            type="primary"
-            @click="handleEmptyAction"
+        <Spin :spinning="loading">
+          <Card
+            v-for="row in rows"
+            :key="row.id"
+            :bordered="false"
+            class="person"
+            data-testid="patient-card"
+            @click="openDetail(row)"
           >
-            {{ emptyInfo.actionText }}
-          </Button>
-        </Empty>
+            <div class="person-line">
+              <span class="person-name">{{ row.name }}</span>
+              <StatusTag
+                :status="PATIENT_STATUS_TEXT[row.status] ?? row.status"
+                variant="dot"
+              />
+            </div>
+            <div>编号 {{ row.patientNo }}</div>
+            <div>下次随访 {{ row.nextVisitDate || '—' }}</div>
+            <div>病区 {{ row.wardName || '—' }}</div>
+          </Card>
+          <Empty
+            v-if="!loading && rows.length === 0"
+            :description="emptyInfo.text"
+          >
+            <Button
+              v-if="emptyInfo.actionText"
+              type="primary"
+              @click="handleEmptyAction"
+            >
+              {{ emptyInfo.actionText }}
+            </Button>
+          </Empty>
+        </Spin>
+        <div v-if="rows.length > 0" class="card-pagination">
+          <span
+            class="total"
+            :style="{ color: colors.textSecondary, fontSize: '12px' }"
+          >
+            共 {{ total }} 条
+          </span>
+          <Pagination
+            :current="pageNo"
+            data-testid="patient-card-pagination"
+            :page-size="pageSize"
+            simple
+            :total="total"
+            @change="handleCardPageChange"
+          />
+        </div>
       </div>
 
       <Table
@@ -921,6 +947,38 @@ function handleEmptyAction() {
   margin-bottom: 8px;
 }
 
+/* E24-T03 · 平板 / 手机顶栏：检索词输入框占满剩余宽，两个按钮并排（触控 ≥ 40px 由 globalCss） */
+.compact-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.compact-keyword {
+  flex: 1;
+}
+
+.compact-btn {
+  flex: none;
+}
+
+/* 筛选按钮角标：主色圆点数字（生效条件数；底色走 tokens 内联注入） */
+.filter-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  margin-left: 4px;
+  font-size: 12px;
+  line-height: 1;
+  vertical-align: 2px;
+  color: #fff;
+  border-radius: 8px;
+}
+
 .advanced-chip {
   margin-bottom: 8px;
 }
@@ -933,22 +991,6 @@ function handleEmptyAction() {
   margin-bottom: 8px;
   background: #f5f8ff;
   border-radius: 6px;
-}
-
-.saved-filter-row {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-  justify-content: space-between;
-  min-width: 280px;
-}
-
-.saved-filter-name {
-  max-width: 150px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  cursor: pointer;
 }
 
 .person {
@@ -965,6 +1007,15 @@ function handleEmptyAction() {
 
 .person-name {
   font-weight: 600;
+}
+
+/* 手机卡片分页：总数 + 简单分页居中（pages.md §3 手机可检索并翻页进详情） */
+.card-pagination {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: center;
+  padding-top: 4px;
 }
 
 /* 行操作「删除」红色（pages.md §3） */
