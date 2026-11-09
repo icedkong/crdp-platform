@@ -11,7 +11,7 @@ import {
   PATIENT_STATUS_TEXT,
 } from '@crdp/api';
 import { StatusTag } from '@crdp/status-tag';
-import { Button } from 'ant-design-vue';
+import { Button, Drawer } from 'ant-design-vue';
 
 import { useBreakpoint } from '#/reference/use-breakpoint';
 
@@ -25,6 +25,10 @@ import MaskedField from './masked-field.vue';
  * 操作按钮按 summary.actions（后端按权限 + 状态计算）渲染：E15-T06 起接入
  * 「新建计划外随访」（unplanned，C-FU-022：患者在随访中 + followup:record:edit）；
  * 上传报告单（E16）/ 停止随访（E14 接口待页面接入）随对应任务开放。
+ *
+ * E24-T04 / NFR-RESP-002（components.md §4 手机行）：手机折叠为「姓名 + 状态 +
+ * 下次随访」+「详情 ▾」展开其余；操作按钮收进「操作」底部抽屉（design-system
+ * §7 允许的手机「操作」菜单场景），点完先关抽屉再执行。
  */
 const props = defineProps<{
   overview: PatientOverview;
@@ -46,6 +50,8 @@ const canUnplanned = computed(() =>
 
 const { isMobile } = useBreakpoint();
 const detailsOpen = ref(false);
+/** E24-T04 手机「操作」底部抽屉开关。 */
+const actionsOpen = ref(false);
 
 const ageText = computed(() =>
   props.overview.age === null || props.overview.age === undefined
@@ -74,6 +80,46 @@ const metrics = computed(() => [
   `随访资料完整度 ${completenessText(props.overview.followupCompleteness)}`,
   `最近随访 ${latestFollowupText(props.overview)}`,
 ]);
+
+/**
+ * E24-T04 手机操作抽屉按钮列表：与桌面行内按钮同一组、同一显隐口径
+ * （联系方式常显；transfer / unplanned 由 summary.actions 按权限计算）。
+ */
+type HeaderAction = 'contacts' | 'transfer' | 'unplanned';
+
+const actionButtons = computed<
+  Array<{
+    event: HeaderAction;
+    label: string;
+    primary?: boolean;
+    testid: string;
+  }>
+>(() => {
+  const list: Array<{
+    event: HeaderAction;
+    label: string;
+    primary?: boolean;
+    testid: string;
+  }> = [
+    { event: 'contacts', label: '联系方式与变更记录', testid: 'open-contacts' },
+  ];
+  if (canTransfer.value)
+    list.push({ event: 'transfer', label: '转病区', testid: 'open-transfer' });
+  if (canUnplanned.value)
+    list.push({
+      event: 'unplanned',
+      label: '新建计划外随访',
+      primary: true,
+      testid: 'open-unplanned',
+    });
+  return list;
+});
+
+/** 抽屉内点操作：先关抽屉再上抛（components.md §5「抽屉模式：点完先关抽屉再跳转」同口径）。 */
+function runAction(event: HeaderAction) {
+  actionsOpen.value = false;
+  emit(event);
+}
 </script>
 
 <template>
@@ -92,14 +138,25 @@ const metrics = computed(() => [
         variant="tag"
       />
       <span class="meta">下次随访 {{ nextVisitText(overview) }}</span>
-      <Button
-        v-if="isMobile"
-        size="small"
-        type="link"
-        @click="detailsOpen = !detailsOpen"
-      >
-        {{ detailsOpen ? '收起 ▴' : '详情 ▾' }}
-      </Button>
+      <template v-if="isMobile">
+        <!-- E24-T04 手机：折叠行尾部「详情 ▾」+「操作」（操作收进底部抽屉） -->
+        <Button
+          data-testid="header-details-toggle"
+          size="small"
+          type="link"
+          @click="detailsOpen = !detailsOpen"
+        >
+          {{ detailsOpen ? '收起 ▴' : '详情 ▾' }}
+        </Button>
+        <Button
+          data-testid="header-actions-open"
+          size="small"
+          type="link"
+          @click="actionsOpen = true"
+        >
+          操作 ▾
+        </Button>
+      </template>
     </div>
     <div v-if="!isMobile || detailsOpen" class="line">
       <span>{{ genderText(overview.gender) }} · {{ ageText }}</span>
@@ -110,7 +167,8 @@ const metrics = computed(() => [
     <div v-if="!isMobile || detailsOpen" class="line">
       <span v-for="item in metrics" :key="item">{{ item }}</span>
     </div>
-    <div class="line actions">
+    <!-- E24-T04：桌面行内操作；手机收进「操作」底部抽屉（下方 Drawer） -->
+    <div v-if="!isMobile" class="line actions">
       <!-- A-PAT-004「联系方式与变更记录从概览进入」：抽屉内容走 E13-T03 接口 -->
       <Button
         data-testid="open-contacts"
@@ -140,6 +198,28 @@ const metrics = computed(() => [
         新建计划外随访
       </Button>
     </div>
+    <!-- E24-T04 / components.md §4：手机操作收进底部抽屉（design-system §7
+         「手机“操作”菜单」允许场景）；点完先关抽屉再执行 -->
+    <Drawer
+      v-if="isMobile"
+      v-model:open="actionsOpen"
+      class-name="crdp-header-actions-drawer"
+      placement="bottom"
+      title="操作"
+    >
+      <div class="action-list">
+        <Button
+          v-for="action in actionButtons"
+          :key="action.event"
+          block
+          :data-testid="action.testid"
+          :type="action.primary ? 'primary' : 'default'"
+          @click="runAction(action.event)"
+        >
+          {{ action.label }}
+        </Button>
+      </div>
+    </Drawer>
   </header>
 </template>
 
@@ -172,5 +252,13 @@ const metrics = computed(() => [
 
 .meta {
   color: #8c8c8c;
+}
+
+/* E24-T04 手机操作抽屉：按钮纵向铺开，触控可点区域 ≥ 40px由 tokens globalCss 承担 */
+.action-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 8px;
 }
 </style>

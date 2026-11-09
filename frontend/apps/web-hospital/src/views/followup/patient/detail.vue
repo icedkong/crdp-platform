@@ -45,11 +45,14 @@ import { StatusTag } from '@crdp/status-tag';
 import {
   Alert,
   Button,
+  Card,
   Descriptions,
   DescriptionsItem,
   Drawer,
+  Empty,
   message,
   Modal,
+  Pagination,
   Result,
   Spin,
   Table,
@@ -116,6 +119,13 @@ import { useBreakpoint } from '#/reference/use-breakpoint';
 import { usePermission } from '#/reference/use-permission';
 import { useWatermarkViewer } from '#/reference/use-watermark-viewer';
 
+import {
+  contactCardLines,
+  formatDateTime,
+  pageSlice,
+  reportCardLines,
+} from './detail-responsive-logic';
+
 defineOptions({ name: 'FollowupPatientDetail' });
 
 /**
@@ -130,12 +140,18 @@ defineOptions({ name: 'FollowupPatientDetail' });
  * （出院登记实体列在上方登记信息块；分节只渲染 JSON 字段）+ 分类进度 +
  * 「编辑」（新标签页整页，锁定置灰）与「锁定 / 解锁」（解锁需
  * followup:patient:lock 并填写原因，ReasonModal；锁定 / 解锁留痕见操作日志）。
+ *
+ * E24-T04 / NFR-RESP-002（pages.md §4.10 手机行）：页签横向滚动；沟通记录、
+ * 报告单表格在手机转卡片（随访记录表格视图由 FollowupTimeline 内回落时间轴卡片；
+ * 操作日志页签随后续任务、植入记录随 C 在 M5）；联系方式抽屉手机撑满宽。
+ * 头部折叠与「操作」底部抽屉在 PatientHeader 组件内。
  */
 const route = useRoute();
 const router = useRouter();
 const { hasPermission } = usePermission();
-// E16-T14：左栏布局形态（桌面左栏 / 平板与手机收为「附件（n）」抽屉入口）
-const { isDesktop } = useBreakpoint();
+// E16-T14：左栏布局形态（桌面左栏 / 平板与手机收为「附件（n）」抽屉入口）；
+// E24-T04：isMobile 驱动手机形态（页签横向滚动、沟通 / 报告单表格转卡片）
+const { isDesktop, isMobile } = useBreakpoint();
 
 const loading = ref(true);
 const loadFailed = ref(false);
@@ -661,6 +677,15 @@ watch(reports, () => {
   }
 });
 
+// E24-T04 手机卡片分页（表格每页 20 同口径；切树 / 清单刷新回到第 1 页）
+const reportsCardPage = ref(1);
+const reportCardItems = computed(() =>
+  pageSlice(filteredReports.value, reportsCardPage.value),
+);
+watch([reportTreeKey, reports], () => {
+  reportsCardPage.value = 1;
+});
+
 const reportColumns = [
   { dataIndex: 'typeName', title: '类型', width: 110 },
   { dataIndex: 'name', title: '名称' },
@@ -774,11 +799,7 @@ const contactLogRows = computed(() =>
   })),
 );
 
-/** ISO 时间 →「YYYY-MM-DD HH:mm」（本地展示口径）。 */
-function formatDateTime(value: string): string {
-  const normalized = value.includes('T') ? value : `${value}T00:00:00`;
-  return normalized.slice(0, 16).replaceAll('T', ' ');
-}
+/** ISO → 本地展示口径的 formatDateTime 已抽到 detail-responsive-logic（E24-T04 卡片共用）。 */
 
 function openCreateContact() {
   editingRow.value = null;
@@ -1257,7 +1278,83 @@ const timelineLegendNote =
               添加报告单
             </Button>
           </div>
+          <!-- E24-T04 / pages.md §4.6：手机列表卡片（点卡片带水印全屏查看器）+ 简单分页 -->
+          <div v-if="isMobile" class="cards" data-testid="report-card-list">
+            <Spin :spinning="reportsLoading">
+              <Card
+                v-for="row in reportCardItems"
+                :key="row.id"
+                :bordered="false"
+                class="card"
+                data-testid="report-card"
+                @click="openAttachmentPreview(row.id)"
+              >
+                <div class="card-line title">
+                  <strong>{{ row.name ?? '—' }}</strong>
+                  <Tag
+                    v-if="row.contactLogId"
+                    data-testid="report-call-link-tag"
+                  >
+                    关联沟通记录
+                  </Tag>
+                </div>
+                <div
+                  v-for="line in reportCardLines(row)"
+                  :key="line.label"
+                  class="card-line"
+                >
+                  <span class="card-label">{{ line.label }}</span>
+                  <span>{{ line.value }}</span>
+                </div>
+                <div class="card-line">
+                  <span class="card-label">位置</span>
+                  <template v-if="row.locations.length === 0">
+                    <span class="unassigned">未指定位置</span>
+                  </template>
+                  <template v-else>
+                    <Tag
+                      v-for="text in locationTags(row).slice(0, 2)"
+                      :key="text"
+                    >
+                      {{ text }}
+                    </Tag>
+                    <Tooltip
+                      v-if="locationTags(row).length > 2"
+                      :title="locationTags(row).join('、')"
+                    >
+                      <Tag>+{{ locationTags(row).length - 2 }}</Tag>
+                    </Tooltip>
+                  </template>
+                </div>
+                <div v-if="canDeleteReport" class="card-line card-actions">
+                  <a
+                    class="report-delete"
+                    data-testid="report-card-delete"
+                    @click.stop="openReportDelete(row)"
+                  >
+                    删除
+                  </a>
+                </div>
+              </Card>
+              <Empty
+                v-if="!reportsLoading && filteredReports.length === 0"
+                description="暂无报告单"
+              />
+            </Spin>
+            <div v-if="filteredReports.length > 0" class="card-pagination">
+              <span class="card-total">共 {{ filteredReports.length }} 条</span>
+              <Pagination
+                :current="reportsCardPage"
+                data-testid="report-card-pagination"
+                :page-size="20"
+                simple
+                :total="filteredReports.length"
+                @change="(page: number) => (reportsCardPage = page)"
+              />
+            </div>
+          </div>
           <Table
+            v-else
             :columns="reportColumns"
             :data-source="filteredReports"
             :loading="reportsLoading"
@@ -1338,7 +1435,72 @@ const timelineLegendNote =
           记录沟通
         </Button>
       </div>
+      <!-- E24-T04 / pages.md §4.10：手机沟通记录表格改卡片（时间为标题，
+           录音与操作同口径）+ 简单分页（服务端分页 20 同步） -->
+      <div v-if="isMobile" class="cards" data-testid="contact-card-list">
+        <Spin :spinning="contactLogsLoading">
+          <Card
+            v-for="row in contactLogRows"
+            :key="row.id"
+            :bordered="false"
+            class="card"
+            data-testid="contact-card"
+          >
+            <div class="card-line title">
+              <strong>{{ row.contactTime }}</strong>
+              <StatusTag :status="row.resultText" variant="dot" />
+            </div>
+            <div
+              v-for="line in contactCardLines(row)"
+              :key="line.label"
+              class="card-line"
+            >
+              <span class="card-label">{{ line.label }}</span>
+              <span>{{ line.value }}</span>
+            </div>
+            <div class="card-line">
+              <span class="card-label">录音</span>
+              <template v-if="row.audios.length === 0">—</template>
+              <AudioPlayer
+                v-for="audio in row.audios"
+                :key="audio.fileId"
+                :audio="audio"
+                :can-download="canDownload"
+              />
+            </div>
+            <div v-if="canEditRecord" class="card-line card-actions">
+              <Button size="small" type="link" @click="openEditContact(row)">
+                修改
+              </Button>
+              <Button
+                danger
+                size="small"
+                type="link"
+                @click="handleDeleteContact(row)"
+              >
+                删除
+              </Button>
+            </div>
+          </Card>
+          <Empty
+            v-if="!contactLogsLoading && contactLogRows.length === 0"
+            description="暂无沟通记录"
+          />
+        </Spin>
+        <div v-if="contactLogsTotal > 0" class="card-pagination">
+          <span class="card-total">共 {{ contactLogsTotal }} 条</span>
+          <Pagination
+            :current="contactLogsPage"
+            data-testid="contact-card-pagination"
+            :page-size="20"
+            simple
+            :total="contactLogsTotal"
+            @change="(page: number) => loadContactLogs(page)"
+          />
+        </div>
+      </div>
       <Table
+        v-else
         :columns="contactLogColumns"
         :data-source="contactLogRows"
         :loading="contactLogsLoading"
@@ -1390,7 +1552,12 @@ const timelineLegendNote =
       </p>
     </div>
 
-    <Drawer v-model:open="contactsOpen" :width="640" title="联系方式与变更记录">
+    <!-- E24-T04：手机抽屉撑满宽（640 超出手机视口） -->
+    <Drawer
+      v-model:open="contactsOpen"
+      :width="isMobile ? '100%' : 640"
+      title="联系方式与变更记录"
+    >
       <Spin :spinning="contactsLoading">
         <h3 class="drawer-title">联系方式版本（换号保留历史）</h3>
         <Table
@@ -1608,5 +1775,91 @@ const timelineLegendNote =
 
 .drawer-title:first-of-type {
   margin-top: 0;
+}
+
+/* ---------------------------------------------------------------- E24-T04 手机形态（pages.md §4.10） */
+
+/* E24-T04 手机：页签横向滚动（触控滑动；断点 = tokens breakpoints.tablet − 1 = 767） */
+@media (max-width: 767px) {
+  .tabs :deep(.ant-tabs-nav-wrap) {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .tabs :deep(.ant-tabs-nav-wrap::-webkit-scrollbar) {
+    display: none;
+  }
+
+  /* 工具栏按钮换行铺开（编辑 / 解锁、添加报告单等在窄屏放不下一行） */
+  .toolbar {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  /* 报告单页签：双树与列表上下排，树撑满宽（限高可滚） */
+  .reports-layout {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .reports-layout :deep(.tree) {
+    width: 100%;
+    max-height: 40vh;
+  }
+}
+
+/* E24-T04 手机卡片列表（沟通记录 / 报告单；pages.md §4.6、§4.10「表格转卡片」） */
+.cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.card {
+  cursor: default;
+}
+
+.card[data-testid='report-card'] {
+  cursor: pointer;
+}
+
+.card-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+}
+
+.card-line + .card-line {
+  margin-top: 6px;
+}
+
+.card-line.title {
+  justify-content: space-between;
+}
+
+.card-label {
+  flex: none;
+  width: 88px;
+  font-size: 12px;
+  color: #8c8c8c;
+}
+
+.card-actions {
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.card-pagination {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+}
+
+.card-total {
+  font-size: 12px;
+  color: #8c8c8c;
 }
 </style>
