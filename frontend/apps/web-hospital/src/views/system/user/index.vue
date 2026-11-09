@@ -58,9 +58,12 @@ import {
   userDetail,
   wardOptions,
 } from '#/api/core/user';
+import { proxyResetUserPassword } from '#/api/core/view';
 import ReauthModal from '#/components/reauth-modal.vue';
 import { useBreakpoint } from '#/reference/use-breakpoint';
 import { usePermission } from '#/reference/use-permission';
+import { useTenantViewStore } from '#/store';
+import { useProxyReasonStore } from '#/store/proxy-reason';
 
 import PermissionPreviewDrawer from './permission-preview-drawer.vue';
 import {
@@ -310,6 +313,30 @@ async function submitEditor() {
 }
 
 // ---- 重置密码（PLT-ORG-008）：临时密码只下发一次；敏感操作需二次认证（E04-T08）----
+
+// ---- 代为重置密码（E20-T06 / PLT-VIEW-017，platform-spec §8 主要页面 2）----
+// 视角模式：有「可代重置医院用户密码」能力的会话显示专用入口；新密码只经短信发给用户本人，
+// 平台侧不显示新密码（走 /view 代理口，原因在请求体，不经过写头拦截器）。
+const tenantViewStore = useTenantViewStore();
+const proxyReason = useProxyReasonStore();
+const canProxyReset = computed(
+  () =>
+    tenantViewStore.active &&
+    (tenantViewStore.session?.capabilities?.canResetPassword ?? false),
+);
+
+async function proxyReset(row: TenantUserView) {
+  const reason = await proxyReason.requestReason();
+  if (!reason) return;
+  try {
+    const result = await proxyResetUserPassword(row.id, reason);
+    message.success(
+      `新密码已通过短信发送给 ${result.displayName}（${result.username}，${result.sentTo}），平台侧不显示新密码`,
+    );
+  } catch {
+    // 统一拦截器已提示（短信通道不可用时重置不生效）
+  }
+}
 
 const passwordResult = reactive({
   open: false,
@@ -647,6 +674,15 @@ const textSecondary = colors.textSecondary;
               @click="openReset(record as TenantUserView)"
             >
               重置密码
+            </Button>
+            <Button
+              v-if="canProxyReset"
+              size="small"
+              type="link"
+              :data-testid="`user-proxy-reset-${record.username}`"
+              @click="proxyReset(record as TenantUserView)"
+            >
+              代为重置密码
             </Button>
             <Button
               v-if="canReset"

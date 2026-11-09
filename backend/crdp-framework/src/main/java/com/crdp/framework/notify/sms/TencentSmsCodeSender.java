@@ -24,6 +24,9 @@ public class TencentSmsCodeSender implements SmsCodeSender {
     /** 换绑手机号验证码模板。 */
     public static final String TEMPLATE_BIND_CODE = "AUTH_BIND_CODE";
 
+    /** 代重置密码的临时密码模板（E20-T06 / PLT-VIEW-017，种子 V112）。 */
+    public static final String TEMPLATE_TEMP_PASSWORD = "AUTH_TEMP_PASSWORD";
+
     private final TencentSmsChannel channel;
 
     public TencentSmsCodeSender(TencentSmsChannel channel) {
@@ -61,6 +64,17 @@ public class TencentSmsCodeSender implements SmsCodeSender {
                         phone,
                         TEMPLATE_BIND_CODE,
                         List.of(code)));
+    }
+
+    @Override
+    public void sendTemporaryPassword(String phone, String password) {
+        channel.send(
+                new SmsSendCommand(
+                        SmsScene.AUTH_TEMP_PASSWORD,
+                        currentTenantCode(),
+                        phone,
+                        TEMPLATE_TEMP_PASSWORD,
+                        List.of(password)));
     }
 
     private static String currentTenantCode() {

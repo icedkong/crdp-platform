@@ -64,7 +64,10 @@ export function buildGrantTree(
   return rootLevel;
 }
 
-/** 编辑表单模型（对话框状态）。viewSpecifiedTenantIds：租户范围为「指定租户」时的清单（E20-T01）。 */
+/**
+ * 编辑表单模型（对话框状态）。viewSpecifiedTenantIds：租户范围为「指定租户」时的清单（E20-T01）；
+ * viewConfigResources：代为配置资源范围（E20-T06 / PLT-VIEW-013，空 = 全部配置类资源，已确认）。
+ */
 export interface RoleEditModel {
   description: string;
   menuIds: number[];
@@ -74,6 +77,7 @@ export interface RoleEditModel {
   viewCanEditBusiness: boolean;
   viewCanEnter: boolean;
   viewCanResetPassword: boolean;
+  viewConfigResources: string[];
   viewSpecifiedTenantIds: number[];
   viewTenantScope: 'ALL' | 'RESPONSIBLE' | 'SPECIFIED';
   viewVisibleScope: 'CONFIG_AND_BUSINESS' | 'CONFIG_ONLY';
@@ -94,6 +98,7 @@ export function toRoleEditModel(
       viewCanEditBusiness: false,
       viewCanEnter: false,
       viewCanResetPassword: false,
+      viewConfigResources: [],
       viewSpecifiedTenantIds: [],
       viewTenantScope: 'RESPONSIBLE',
       viewVisibleScope: 'CONFIG_ONLY',
@@ -108,6 +113,7 @@ export function toRoleEditModel(
     viewCanEditBusiness: role.view.canEditBusiness,
     viewCanEnter: role.view.canEnter,
     viewCanResetPassword: role.view.canResetPassword,
+    viewConfigResources: role.view.configResources ?? [],
     viewSpecifiedTenantIds: specifiedTenantIds,
     viewTenantScope: role.view.tenantScope,
     viewVisibleScope: role.view.visibleScope,
@@ -127,6 +133,11 @@ export function toRoleSaveRequest(
     viewCanEditBusiness: model.viewCanEditBusiness,
     viewCanEnter: model.viewCanEnter,
     viewCanResetPassword: model.viewCanResetPassword,
+    // 空清单提交 null = 全部配置类资源（PLT-VIEW-013 已确认）
+    viewConfigResources:
+      model.viewCanConfigure && model.viewConfigResources.length > 0
+        ? model.viewConfigResources
+        : null,
     viewSpecifiedTenantIds:
       model.viewTenantScope === 'SPECIFIED' ? model.viewSpecifiedTenantIds : [],
     viewTenantScope: model.viewTenantScope,

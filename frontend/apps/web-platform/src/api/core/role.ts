@@ -3,6 +3,7 @@ import type {
   PlatformRoleHolder,
   PlatformRoleSaveRequest,
   PlatformRoleView,
+  PlatformViewConfigResource,
 } from '@crdp/api';
 
 import { apiPath, requestClient } from '#/api/request';
@@ -37,4 +38,11 @@ export function listRoleHolders(id: number) {
 /** 可授权的平台端启用菜单 / 按钮（授权树数据源，避免依赖 platform:menu:view）。 */
 export function listGrantableMenus() {
   return requestClient.get<PlatformGrantMenuNode[]>(apiPath('/roles/menus'));
+}
+
+/** 代为配置资源目录（E20-T06 / PLT-VIEW-013）：角色「代为配置资源范围」多选项；空清单 = 全部（已确认）。 */
+export function listViewConfigResources() {
+  return requestClient.get<PlatformViewConfigResource[]>(
+    apiPath('/roles/view-config-resources'),
+  );
 }

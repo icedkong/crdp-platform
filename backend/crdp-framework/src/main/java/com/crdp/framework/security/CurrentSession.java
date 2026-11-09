@@ -28,9 +28,14 @@ public final class CurrentSession {
         return principal;
     }
 
+    /**
+     * 医院端业务会话。医院会话（HOSPITAL）直接通过；租户视角会话（TENANT_VIEW，E20-T06 起）在 TenantViewGuardFilter
+     * 执行点判定（读一律放行、写须代为操作受控放行）后进入业务处理器， 本方法不再重复拦截——操作者身份按视角口径处理 （审计匿名「平台支持人员 会话号」、字段历史来源
+     * PLATFORM_SUPPORT）。 平台会话（PLATFORM）仍 40300。
+     */
     public static SessionPrincipal requireHospital() {
         SessionPrincipal principal = require();
-        if (!principal.hospital()) {
+        if (!principal.hospital() && !principal.tenantView()) {
             throw new ApiException(403, 40300, "平台账号不能访问医院端");
         }
         return principal;

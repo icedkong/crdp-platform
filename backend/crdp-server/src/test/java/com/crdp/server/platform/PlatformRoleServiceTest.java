@@ -2,6 +2,7 @@ package com.crdp.server.platform;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -38,6 +39,7 @@ class PlatformRoleServiceTest {
                 tenantScope,
                 specifiedTenantIds,
                 configure,
+                null,
                 reset,
                 edit);
     }
@@ -64,6 +66,78 @@ class PlatformRoleServiceTest {
                 configure,
                 reset,
                 edit);
+    }
+
+    // ---------------------------------------------------------------- 代为配置资源范围（E20-T06 /
+    // PLT-VIEW-013）
+
+    @Test
+    void configResourcesEmptyMeansAll() {
+        ViewFields view =
+                PlatformRoleService.validateViewFields(
+                        request(
+                                "巡检角色（示例）",
+                                null,
+                                null,
+                                true,
+                                "CONFIG_AND_BUSINESS",
+                                "ALL",
+                                null,
+                                true,
+                                false,
+                                false));
+        assertTrue(view.canConfigure());
+        assertNull(view.configResources(), "未配置范围 = 全部配置类资源（已确认）");
+        assertNull(PlatformRoleService.configResourcesCsv(view), "空清单落 NULL");
+    }
+
+    @Test
+    void configResourcesValidatedAgainstCatalog() {
+        ViewFields view =
+                PlatformRoleService.validateViewFields(
+                        new RoleSaveRequest(
+                                "巡检角色（示例）",
+                                null,
+                                null,
+                                null,
+                                true,
+                                "CONFIG_AND_BUSINESS",
+                                "ALL",
+                                null,
+                                true,
+                                List.of(" user ", "dict", "user"),
+                                false,
+                                false));
+        assertEquals(List.of("user", "dict"), view.configResources(), "去重保序 + 去空白");
+        assertEquals("user,dict", PlatformRoleService.configResourcesCsv(view));
+        assertEquals(
+                List.of("user", "dict"), PlatformRoleService.parseConfigResources("user,dict"));
+        assertNull(PlatformRoleService.parseConfigResources(null));
+        assertNull(PlatformRoleService.parseConfigResources(" "));
+    }
+
+    @Test
+    void configResourcesUnknownCodeRejected() {
+        ApiException unknown =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                PlatformRoleService.validateViewFields(
+                                        new RoleSaveRequest(
+                                                "巡检角色（示例）",
+                                                null,
+                                                null,
+                                                null,
+                                                true,
+                                                "CONFIG_AND_BUSINESS",
+                                                "ALL",
+                                                null,
+                                                true,
+                                                List.of("patient"),
+                                                false,
+                                                false)));
+        assertEquals(40001, unknown.code());
+        assertTrue(unknown.getMessage().contains("不在可选目录内"), "业务资源不能进配置范围：" + unknown.getMessage());
     }
 
     @Test

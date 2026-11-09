@@ -56,6 +56,14 @@ public class TenantViewAccessRecorder {
         bumpCounter(view, "denied_count");
     }
 
+    /**
+     * 代为操作计数（E20-T06 / PLT-VIEW-016 会话摘要「代为操作次数」）：一次已放行并完成的代为操作（代为配置 / 代重置密码 /
+     * 编辑业务数据）递增一次；审计行（VIEW_PROXY_*）由 {@code TenantViewProxyService} 写入。
+     */
+    public void bumpProxyCount(SessionPrincipal view) {
+        bumpCounter(view, "proxy_count");
+    }
+
     private void append(
             SessionPrincipal view,
             String method,

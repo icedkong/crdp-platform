@@ -79,6 +79,7 @@ describe('toRoleEditModel / toRoleSaveRequest', () => {
         canEditBusiness: true,
         canEnter: true,
         canResetPassword: true,
+        configResources: null,
         tenantScope: 'ALL',
         visibleScope: 'CONFIG_AND_BUSINESS',
       },
@@ -95,10 +96,48 @@ describe('toRoleEditModel / toRoleSaveRequest', () => {
       viewCanEditBusiness: true,
       viewCanEnter: true,
       viewCanResetPassword: true,
+      // 范围未配置（null = 全部配置类资源）→ 提交 null（E20-T06 / PLT-VIEW-013）
+      viewConfigResources: null,
       viewSpecifiedTenantIds: [],
       viewTenantScope: 'ALL',
       viewVisibleScope: 'CONFIG_AND_BUSINESS',
     });
+  });
+
+  it('代为配置资源范围往返：清单保留、空清单提交 null（= 全部，PLT-VIEW-013 已确认）', () => {
+    const scoped = {
+      builtIn: false,
+      code: 'CUSTOM_CD56EF78',
+      createdAt: null,
+      description: null,
+      id: 11,
+      menuIds: [100],
+      name: '巡检角色（示例）',
+      status: 'ENABLED',
+      updatedAt: null,
+      view: {
+        canConfigure: true,
+        canEditBusiness: false,
+        canEnter: true,
+        canResetPassword: false,
+        configResources: ['user', 'dict'],
+        tenantScope: 'ALL',
+        visibleScope: 'CONFIG_ONLY',
+      },
+    } as unknown as PlatformRoleView;
+    const model = toRoleEditModel(scoped, [100]);
+    expect(model.viewConfigResources).toEqual(['user', 'dict']);
+    expect(toRoleSaveRequest(model).viewConfigResources).toEqual([
+      'user',
+      'dict',
+    ]);
+
+    // 清空清单 = 全部配置类资源（提交 null）；关闭可代为配置同样提交 null（清单不参与计算）
+    model.viewConfigResources = [];
+    expect(toRoleSaveRequest(model).viewConfigResources).toBeNull();
+    model.viewCanConfigure = false;
+    model.viewConfigResources = ['user'];
+    expect(toRoleSaveRequest(model).viewConfigResources).toBeNull();
   });
 
   it('sPECIFIED 角色带指定租户清单往返；非 SPECIFIED 提交时清单置空', () => {

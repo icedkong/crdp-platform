@@ -29,6 +29,7 @@ import {
   createRole,
   getRole,
   listGrantableMenus,
+  listViewConfigResources,
   updateRole,
 } from '#/api/core/role';
 import { listTenants } from '#/api/core/tenant';
@@ -57,6 +58,8 @@ const emit = defineEmits<{
 
 const form = ref<RoleEditModel>(toRoleEditModel(null, []));
 const grantNodes = ref<PlatformGrantMenuNode[]>([]);
+/** 代为配置资源目录（E20-T06 / PLT-VIEW-013，后端同源）。 */
+const configResourceOptions = ref<{ label: string; value: string }[]>([]);
 /** 指定租户下拉选项（租户量级小，一页取足；进入时再按租户状态与授权闸门）。 */
 const tenantOptions = ref<{ label: string; value: number }[]>([]);
 const grantTree = computed<GrantTreeNode[]>(() =>
@@ -85,6 +88,15 @@ watch(
     } catch (error) {
       grantNodes.value = [];
       loadError.value = error instanceof Error ? error.message : String(error);
+    }
+    try {
+      const resources = await listViewConfigResources();
+      configResourceOptions.value = resources.map((item) => ({
+        label: item.label,
+        value: item.code,
+      }));
+    } catch {
+      configResourceOptions.value = [];
     }
     try {
       const page = await listTenants({ pageNo: 1, pageSize: 100 });
@@ -269,6 +281,21 @@ async function submit() {
               v-model:checked="form.viewCanConfigure"
               :disabled="!form.viewCanEnter"
             />
+          </FormItem>
+          <FormItem v-if="form.viewCanConfigure" label="代为配置资源范围">
+            <Select
+              v-model:value="form.viewConfigResources"
+              :options="configResourceOptions"
+              :disabled="!form.viewCanEnter"
+              allow-clear
+              mode="multiple"
+              placeholder="不选择 = 全部配置类资源（已确认）"
+              show-search
+              option-filter-prop="label"
+            />
+            <p class="hint">
+              不选择时默认可代为配置全部配置类资源；变更即时生效并结束持有人进行中的视角会话。
+            </p>
           </FormItem>
           <FormItem label="可代重置医院用户密码">
             <Switch

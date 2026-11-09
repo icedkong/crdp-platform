@@ -22,4 +22,10 @@ public interface SmsCodeSender {
      * 同样不得写日志、不得回显。
      */
     void sendPhoneBindCode(String phone, String code);
+
+    /**
+     * 代重置密码的临时密码下发（E20-T06 / PLT-VIEW-017，已确认）：平台账号在租户视角中代医院用户重置密码时，
+     * 新密码<b>只</b>经本口发给用户本人手机——调用方（视角代理口）绝不可把 password 放进任何 HTTP 响应、日志或审计。 发送失败抛异常，调用方在落库前中止（重置不生效）。
+     */
+    void sendTemporaryPassword(String phone, String password);
 }

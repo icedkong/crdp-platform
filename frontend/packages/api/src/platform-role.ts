@@ -14,12 +14,16 @@ export type PlatformVisibleScope = 'CONFIG_AND_BUSINESS' | 'CONFIG_ONLY';
 /** 租户范围（PLT-VIEW-005）：全部 / 负责的租户 / 指定租户（清单必填非空）。 */
 export type PlatformTenantScope = 'ALL' | 'RESPONSIBLE' | 'SPECIFIED';
 
-/** 角色上的租户视角权限（平台规格 §8「关键字段 · 平台角色视角权限」）。 */
+/**
+ * 角色上的租户视角权限（平台规格 §8「关键字段 · 平台角色视角权限」）。 configResources=null
+ * 表示全部配置类资源（E20-T06 / PLT-VIEW-013，已确认）。
+ */
 export interface PlatformRoleViewFields {
   canConfigure: boolean;
   canEditBusiness: boolean;
   canEnter: boolean;
   canResetPassword: boolean;
+  configResources: null | string[];
   tenantScope: PlatformTenantScope;
   visibleScope: PlatformVisibleScope;
 }
@@ -50,6 +54,8 @@ export interface PlatformRoleSaveRequest {
   viewCanEditBusiness?: boolean;
   viewCanEnter?: boolean;
   viewCanResetPassword?: boolean;
+  /** 代为配置资源范围（E20-T06 / PLT-VIEW-013）：空 / 缺省 = 全部配置类资源（已确认）。 */
+  viewConfigResources?: null | string[];
   viewSpecifiedTenantIds?: number[];
   viewTenantScope?: PlatformTenantScope;
   viewVisibleScope?: PlatformVisibleScope;
@@ -61,6 +67,12 @@ export interface PlatformRoleHolder {
   accountStatus: string;
   displayName: string;
   username: string;
+}
+
+/** 代为配置资源目录项（GET /api/platform/roles/view-config-resources；权限码资源段 + 文案）。 */
+export interface PlatformViewConfigResource {
+  code: string;
+  label: string;
 }
 
 /** 可授权的平台端启用菜单 / 按钮（平铺，前端组树）。 */
@@ -142,7 +154,13 @@ export function platformRoleViewSummary(view: PlatformRoleViewFields): string {
     platformVisibleScopeText(view.visibleScope),
     platformTenantScopeText(view.tenantScope),
   ];
-  if (view.canConfigure) parts.push('可代为配置');
+  if (view.canConfigure) {
+    parts.push(
+      view.configResources === null
+        ? '可代为配置（全部资源）'
+        : `可代为配置（${view.configResources.length} 类资源）`,
+    );
+  }
   if (view.canResetPassword) parts.push('可代重置密码');
   if (view.canEditBusiness) parts.push('可编辑业务数据');
   return parts.join(' · ');

@@ -551,6 +551,65 @@ public class UserAccountAdminService {
         return new ResetPasswordResult(userId, username, temporary);
     }
 
+    // ---------------------------------------------------------------- 代重置密码（E20-T06 /
+    // PLT-VIEW-017，视角代理口专用）
+
+    /**
+     * 代重置草稿：生成而<b>未落库</b>的一次性临时密码。只供租户视角代理口（ {@code TenantViewProxyService}）使用——先经短信把密码发给用户本人，发送成功才
+     * {@link #commitPasswordReset} 落库； password 绝不进任何 HTTP 响应、日志或审计（新密码只经短信下发，已确认）。
+     */
+    public record ResetDraft(
+            long userId,
+            String username,
+            String displayName,
+            String phone,
+            String phoneMasked,
+            String password,
+            String currentHash) {}
+
+    /** 生成代重置草稿（租户上下文内执行）：读目标账号行并生成临时密码；未知用户 40400，无手机号 40001。 */
+    public ResetDraft draftPasswordReset(long userId) {
+        Map<String, Object> row = userRow(userId);
+        String username = str(row.get("username"));
+        String phone = decryptOrNull(strOrNull(row.get("phone")));
+        if (phone == null || phone.isBlank()) {
+            throw bad("该用户未绑定手机号，无法经短信下发新密码");
+        }
+        String temporary =
+                generateTemporaryPassword(username, effectiveMinPasswordLength(), random);
+        return new ResetDraft(
+                userId,
+                username,
+                str(row.get("display_name")),
+                phone,
+                maskedPhone(phone),
+                temporary,
+                strOrNull(row.get("password_hash")));
+    }
+
+    /**
+     * 落库代重置（{@link #draftPasswordReset} 之后调用）：置新哈希与「首次登录强制改密」、旧哈希入历史表、
+     * 该账号全部会话失效并解除登录锁定。<b>不写租户侧审计</b>——代为操作的完整记录（账号、原因）只落平台访问审计
+     * （PLT-VIEW-016「仅平台侧」，平台账号身份不进医院可见日志）。
+     */
+    public void commitPasswordReset(ResetDraft draft) {
+        jdbc.update(
+                "UPDATE sys_user SET password_hash = ?, must_change_password = 1,"
+                        + " password_updated_at = ? WHERE id = ?",
+                passwordEncoder.encode(draft.password()),
+                LocalDateTime.now(),
+                draft.userId());
+        if (draft.currentHash() != null && !draft.currentHash().isBlank()) {
+            jdbc.update(
+                    "INSERT INTO sys_password_history (user_id, password_hash) VALUES (?, ?)",
+                    draft.userId(),
+                    draft.currentHash());
+        }
+        sessionStore.revokeAllForUser(sessionProxy(userRow(draft.userId())), null);
+        rateLimiter.unlock(
+                "H:" + currentTenantCode() + ":" + draft.username().toLowerCase(Locale.ROOT));
+    }
+
     // ---------------------------------------------------------------- 校验（纯函数，供单测）
 
     /** 账号：必填、≤64、字母数字下划线短横线与点（与演示账号 nurse.demo 同字符集），租户内唯一、创建后不可改。 */

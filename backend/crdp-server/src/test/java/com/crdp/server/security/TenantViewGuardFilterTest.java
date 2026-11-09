@@ -19,6 +19,8 @@ import com.crdp.framework.fieldpolicy.FieldPolicySnapshot;
 import com.crdp.framework.security.ScopeSnapshot;
 import com.crdp.framework.security.SessionPrincipal;
 import com.crdp.server.platform.TenantViewAccessRecorder;
+import com.crdp.server.platform.TenantViewProxyService;
+import com.crdp.server.platform.TenantViewProxyService.WriteClass;
 import com.crdp.server.platform.TenantViewRuleExecutor;
 import com.crdp.server.platform.ViewRuleResolver.Effect;
 import jakarta.servlet.ServletException;
@@ -34,16 +36,18 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.context.SecurityContextHolder;
 
 /**
- * E20-T03 / PLT-VIEW-012（验收「只读视角写接口全部拒绝」）：视角令牌访问医院端业务接口—— 写（PUT / PATCH / DELETE、 非 view 动作的
- * POST）与明文（GET + plain）一律 40303；导出 / 下载按规则 allowExport 判定（默认禁）； 原件签发口（preview-url /
- * download-url）一律拒；POST .../search 复杂查询与 GET 只读放行并记 VIEW_QUERY；
- * 医院会话与视角外壳（/api/hospital/view/**）不受本层影响； 模块未开通 40301（按该院实时状态）。
+ * E20-T03 / PLT-VIEW-012 + E20-T06 受控放行（PLT-VIEW-013、018）：视角令牌访问医院端业务接口—— 未授权的写（PUT / PATCH /
+ * DELETE、非 view 动作的 POST）与明文（GET + plain）一律 40303（默认关闭）； 代为配置 / 编辑业务数据经 TenantViewProxyService
+ * 判定（角色授权 ∧ 规则 ∧ X-View-Reason 原因）后放行并记 VIEW_PROXY_*； 导出 / 下载按规则 allowExport
+ * 判定（默认禁）；原件签发口（preview-url / download-url）一律拒； POST .../search 复杂查询与 GET 只读放行并记
+ * VIEW_QUERY；医院会话与视角外壳（/api/hospital/view/**）不受本层影响； 模块未开通 40301（按该院实时状态）。
  */
 class TenantViewGuardFilterTest {
 
     private final ApiResourceRegistry registry = mock(ApiResourceRegistry.class);
     private final TenantViewRuleExecutor executor = mock(TenantViewRuleExecutor.class);
     private final TenantViewAccessRecorder recorder = mock(TenantViewAccessRecorder.class);
+    private final TenantViewProxyService proxy = mock(TenantViewProxyService.class);
     private final ApiErrorWriter errors = mock(ApiErrorWriter.class);
     private TenantViewGuardFilter filter;
 
@@ -54,6 +58,7 @@ class TenantViewGuardFilterTest {
                         registry,
                         executor,
                         recorder,
+                        proxy,
                         errors,
                         new com.fasterxml.jackson.databind.ObjectMapper());
         when(executor.moduleOpen(anyLong(), any())).thenReturn(true);
@@ -432,6 +437,158 @@ class TenantViewGuardFilterTest {
         assertNull(extract("{\"code\":40300,\"data\":{\"total\":9}}"), "业务错误不计条数");
         assertNull(extract("not-json"), "非 JSON 返回 null（不阻塞放行）");
         assertNull(extract(""), "空响应体返回 null");
+    }
+
+    // ---------------------------------------------------------------- E20-T06
+    // 受控放行（PLT-VIEW-013、018）
+
+    @Test
+    void releasedConfigWriteReachesChainAndAuditsProxy() throws Exception {
+        login(viewSession());
+        registered("PUT", "/api/hospital/system/users/5", "tenant:user:edit", "base");
+        when(proxy.releaseAction(any(), eq(WriteClass.CONFIG), eq("base"), eq("user")))
+                .thenReturn(TenantViewProxyService.ACTION_PROXY_CONFIG);
+
+        MockHttpServletRequest request = request("PUT", "/api/hospital/system/users/5");
+        request.addHeader(TenantViewProxyService.REASON_HEADER, "配置核对后修正（示例）");
+        request.setContentType("application/json");
+        request.setContent(
+                "{\"displayName\":\"张医生（示例）\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        AtomicBoolean reached = new AtomicBoolean(false);
+        filter.doFilter(
+                request,
+                new MockHttpServletResponse(),
+                (req, res) -> {
+                    reached.set(true);
+                    // 模拟控制器读请求体（ContentCachingRequestWrapper 按读取缓存，PLT-VIEW-016 前后值）
+                    try {
+                        req.getInputStream().readAllBytes();
+                    } catch (IOException ex) {
+                        throw new RuntimeException(ex);
+                    }
+                });
+
+        assertTrue(reached.get(), "角色可代为配置 ∧ 资源在范围内 → 写放行（受控）");
+        verify(errors, never()).write(any(), anyInt(), anyInt(), anyString());
+        verify(recorder, never())
+                .recordDenied(any(), anyString(), anyString(), anyInt(), anyString());
+        // 放行标记供 PermissionAuthorizationAspect 内层防线核对（写动作只在外层判定一次）
+        assertEquals(
+                TenantViewProxyService.ACTION_PROXY_CONFIG,
+                request.getAttribute(
+                        com.crdp.framework.security.PermissionAuthorizationAspect
+                                .VIEW_PROXY_RELEASED));
+        verify(proxy)
+                .recordProxy(
+                        any(),
+                        eq("PUT"),
+                        eq("/api/hospital/system/users/5"),
+                        eq(TenantViewProxyService.ACTION_PROXY_CONFIG),
+                        eq("user"),
+                        eq("5"),
+                        eq("配置核对后修正（示例）"),
+                        isNull(),
+                        eq("{\"displayName\":\"张医生（示例）\"}"));
+    }
+
+    @Test
+    void releasedBusinessWriteAuditsProxyEdit() throws Exception {
+        login(viewSession());
+        registered("PUT", "/api/hospital/followup/patients/9", "followup:patient:edit", "followup");
+        when(proxy.releaseAction(any(), eq(WriteClass.BUSINESS), eq("followup"), eq("patient")))
+                .thenReturn(TenantViewProxyService.ACTION_PROXY_EDIT);
+
+        MockHttpServletRequest request = request("PUT", "/api/hospital/followup/patients/9");
+        request.addHeader(TenantViewProxyService.REASON_HEADER, "排障修正录入（示例）");
+        request.setContentType("application/json");
+        request.setContent("{}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        AtomicBoolean reached = new AtomicBoolean(false);
+        filter.doFilter(
+                request,
+                new MockHttpServletResponse(),
+                (req, res) -> {
+                    reached.set(true);
+                    try {
+                        req.getInputStream().readAllBytes();
+                    } catch (IOException ex) {
+                        throw new RuntimeException(ex);
+                    }
+                });
+
+        assertTrue(reached.get(), "可编辑业务数据 ∧ 命中可编辑规则 → 写放行（PLT-VIEW-018）");
+        assertEquals(
+                TenantViewProxyService.ACTION_PROXY_EDIT,
+                request.getAttribute(
+                        com.crdp.framework.security.PermissionAuthorizationAspect
+                                .VIEW_PROXY_RELEASED));
+        verify(proxy)
+                .recordProxy(
+                        any(),
+                        eq("PUT"),
+                        eq("/api/hospital/followup/patients/9"),
+                        eq(TenantViewProxyService.ACTION_PROXY_EDIT),
+                        eq("patient"),
+                        eq("9"),
+                        eq("排障修正录入（示例）"),
+                        isNull(),
+                        eq("{}"));
+    }
+
+    @Test
+    void releasedWriteWithoutReasonRejected() throws Exception {
+        login(viewSession());
+        registered("PUT", "/api/hospital/system/users/5", "tenant:user:edit", "base");
+        when(proxy.releaseAction(any(), eq(WriteClass.CONFIG), eq("base"), eq("user")))
+                .thenReturn(TenantViewProxyService.ACTION_PROXY_CONFIG);
+
+        MockHttpServletResponse response = reject("/api/hospital/system/users/5", "PUT");
+
+        verify(errors).write(eq(response), eq(400), eq(40001), anyString());
+        verify(recorder).recordDenied(any(), eq("PUT"), anyString(), eq(40001), anyString());
+        verify(proxy, never())
+                .recordProxy(
+                        any(),
+                        anyString(),
+                        anyString(),
+                        anyString(),
+                        anyString(),
+                        anyString(),
+                        anyString(),
+                        any(),
+                        any());
+    }
+
+    @Test
+    void releasedWriteWithBlankReasonRejected() throws Exception {
+        login(viewSession());
+        registered("PUT", "/api/hospital/system/users/5", "tenant:user:edit", "base");
+        when(proxy.releaseAction(any(), eq(WriteClass.CONFIG), eq("base"), eq("user")))
+                .thenReturn(TenantViewProxyService.ACTION_PROXY_CONFIG);
+
+        MockHttpServletRequest request = request("PUT", "/api/hospital/system/users/5");
+        request.addHeader(TenantViewProxyService.REASON_HEADER, " ");
+        AtomicBoolean reached = new AtomicBoolean(false);
+        filter.doFilter(request, new MockHttpServletResponse(), (req, res) -> reached.set(true));
+
+        assertFalse(reached.get(), "二次确认原因必填（PLT-VIEW-013）");
+        verify(errors).write(any(), eq(400), eq(40001), anyString());
+    }
+
+    @Test
+    void unauthorizedWriteStillRejected40303() throws Exception {
+        login(viewSession());
+        registered("PUT", "/api/hospital/system/users/5", "tenant:user:edit", "base");
+        // proxy.releaseAction 默认返回 null（默认关闭：角色未授权 / 规则只读）
+        MockHttpServletResponse response = reject("/api/hospital/system/users/5", "PUT");
+        verify(errors).write(response, 403, 40303, "租户视角只读，禁止写入");
+    }
+
+    @Test
+    void objectIdExtractionFromPath() {
+        assertEquals("9", TenantViewGuardFilter.objectIdOf("/api/hospital/followup/patients/9"));
+        assertEquals("5", TenantViewGuardFilter.objectIdOf("/api/hospital/system/users/5"));
+        assertNull(TenantViewGuardFilter.objectIdOf("/api/hospital/followup/patients"));
+        assertNull(TenantViewGuardFilter.objectIdOf("/api/hospital/system/users/import"));
     }
 
     /** 经缓存包装写入响应体后提取条数（与过滤器真实路径一致）。 */

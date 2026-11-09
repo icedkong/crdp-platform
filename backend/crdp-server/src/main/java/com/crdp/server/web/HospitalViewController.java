@@ -3,6 +3,7 @@ package com.crdp.server.web;
 import com.crdp.framework.security.CurrentSession;
 import com.crdp.framework.security.PublicApi;
 import com.crdp.framework.web.ApiResponse;
+import com.crdp.server.platform.TenantViewProxyService;
 import com.crdp.server.platform.TenantViewService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -11,6 +12,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -36,8 +38,12 @@ public class HospitalViewController {
 
     private final TenantViewService viewService;
 
-    public HospitalViewController(TenantViewService viewService) {
+    private final TenantViewProxyService proxyService;
+
+    public HospitalViewController(
+            TenantViewService viewService, TenantViewProxyService proxyService) {
         this.viewService = viewService;
+        this.proxyService = proxyService;
     }
 
     @Operation(
@@ -66,5 +72,22 @@ public class HospitalViewController {
     @DeleteMapping("/api/hospital/view/session")
     public ApiResponse<TenantViewService.ExitResult> exit() {
         return ApiResponse.ok(viewService.hospitalExit(CurrentSession.requireTenantView()));
+    }
+
+    /** 代重置密码请求（PLT-VIEW-013 / 017 同口径：二次确认后填写的操作原因，必填）。 */
+    public record ProxyResetRequest(String reason) {}
+
+    @Operation(
+            summary =
+                    "代重置医院用户密码（E20-T06 / PLT-VIEW-017，只接受视角令牌）：角色持有「可代重置医院用户密码」"
+                            + "才可执行；生成的一次性临时密码<b>只经短信发给用户本人</b>，任何响应都不含新密码；"
+                            + "发送成功才落库（强制改密、会话失效、解锁）。写平台访问审计 VIEW_PROXY_RESET（含原因），"
+                            + "医院侧重置口对视角令牌仍拒绝（专用代理口）")
+    @PublicApi
+    @PostMapping("/api/hospital/view/users/{id}/reset-password")
+    public ApiResponse<TenantViewProxyService.ProxyResetResult> resetUserPassword(
+            @PathVariable("id") long id, @RequestBody ProxyResetRequest request) {
+        return ApiResponse.ok(
+                proxyService.resetUserPassword(id, request == null ? null : request.reason()));
     }
 }

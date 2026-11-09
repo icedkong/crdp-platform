@@ -45,6 +45,14 @@ public class PlatformRoleController {
         return ApiResponse.ok(roleService.grantableMenus());
     }
 
+    @Operation(
+            summary = "代为配置资源目录（E20-T06 / PLT-VIEW-013）：角色「代为配置资源范围」多选项；" + "清单为空 = 全部配置类资源（已确认）")
+    @GetMapping("/view-config-resources")
+    @RequiresPermission("platform:role:view")
+    public ApiResponse<List<PlatformRoleService.ConfigResource>> viewConfigResources() {
+        return ApiResponse.ok(PlatformRoleService.CONFIG_RESOURCES);
+    }
+
     @Operation(summary = "角色详情（含已授权菜单 id 与租户视角权限六字段）")
     @GetMapping("/{roleId}")
     @RequiresPermission("platform:role:view")

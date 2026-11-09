@@ -449,6 +449,22 @@ public class JdbcAuditLogger implements AuditLogger {
                         builder.roleCodes(principal.roles());
                     }
                 });
+        // E20-T06 / PLT-VIEW-013、018：视角会话写医院侧可见审计（操作 / 数据访问日志）时操作者匿名——
+        // 修改人显示「平台支持人员 会话号」，不落平台账号与姓名（platform-spec §8 已确认）；
+        // 平台访问日志（VIEW_*）是平台侧记录，保留真实平台账号身份供审计对账；登录日志不发生在视角会话。
+        if (session.isPresent()
+                && session.get().tenantView()
+                && raw.type() != AuditType.PLATFORM_ACCESS
+                && raw.type() != AuditType.LOGIN) {
+            builder.userId(null)
+                    .username("platform_view")
+                    .displayName("平台支持人员 " + session.get().sessionId())
+                    .userType("PLATFORM_VIEW")
+                    .roleCodes(List.of());
+            if (raw.viewSessionId() == null) {
+                builder.viewSessionId(session.get().sessionId());
+            }
+        }
         boolean platformSide =
                 TenantContext.current().map(TenantContext.State::platform).orElse(false);
         if (raw.userType() == null) {

@@ -3,15 +3,23 @@ package com.crdp.server.security;
 import com.crdp.framework.security.SessionPrincipal;
 import com.crdp.framework.web.ApiException;
 import com.crdp.server.platform.TenantViewAccessRecorder;
+import com.crdp.server.platform.TenantViewProxyService;
+import com.crdp.server.platform.TenantViewProxyService.WriteClass;
 import com.crdp.server.platform.TenantViewRuleExecutor;
 import com.crdp.server.platform.ViewRuleResolver.Effect;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
+import jakarta.servlet.ServletOutputStream;
+import jakarta.servlet.WriteListener;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletRequestWrapper;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpServletResponseWrapper;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,15 +28,18 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.util.ContentCachingRequestWrapper;
 import org.springframework.web.util.ContentCachingResponseWrapper;
 
 /**
  * 租户视角的读写执行点（E20-T03 / PLT-VIEW-012，验收「只读视角写接口全部拒绝」）：视角令牌 （TENANT_VIEW）访问医院端业务接口时——
  *
  * <ul>
- *   <li><b>写拒绝</b>：新增、修改、删除与批量接口（PUT / PATCH / DELETE，以及非只读动作的 POST）一律 40303「租户视角只读，禁止写入」。规则 {@code
- *       operation=EDITABLE} 的受控放行（代为配置 / 代重置密码 / 编辑业务数据的二次确认与前后值记录，PLT-VIEW-013、017、018）随
- *       E20-T06——在那之前不开任何口子，fail closed；
+ *   <li><b>写受控放行（E20-T06 / PLT-VIEW-013、018）</b>：新增、修改、删除与批量接口默认仍 40303「租户视角只读，禁止写入」；
+ *       配置类资源写按「角色可代为配置 ∧ 资源在代为配置范围内」放行，业务数据写按「角色可编辑业务数据 ∧ 命中操作为可编辑的视角规则」放行（任一不满足即只读）； 放行必须带 {@code
+ *       X-View-Reason}（二次确认填写的操作原因，必填），成功后写 VIEW_PROXY_CONFIG / VIEW_PROXY_EDIT 平台访问审计（对象、原因、写前同路径
+ *       GET 快照与请求载荷的前后值）并递增台账 proxy_count；动作 plain（明文）与 reset（医院侧重置口）永远不放行——重置只走 PLT-VIEW-017
+ *       的专用代理口；
  *   <li><b>导出 / 下载单独控制</b>：动作 export / download 的接口按视角规则 {@code allowExport} 判定（V109
  *       默认全部禁止，PLT-VIEW-012「导出、打印、下载按规则单独控制」）；报告单与电子化资料的预览 / 下载<b>签发口</b>对视角一律
  *       40303（原件隐藏，PLT-VIEW-008）；
@@ -71,6 +82,8 @@ public class TenantViewGuardFilter extends OncePerRequestFilter {
 
     private final TenantViewAccessRecorder recorder;
 
+    private final TenantViewProxyService proxy;
+
     private final ApiErrorWriter errors;
 
     /** 响应条数解析（VIEW_QUERY 的 record_count，PLT-VIEW-016「对象与条数」）。 */
@@ -80,11 +93,13 @@ public class TenantViewGuardFilter extends OncePerRequestFilter {
             ApiResourceRegistry registry,
             TenantViewRuleExecutor executor,
             TenantViewAccessRecorder recorder,
+            TenantViewProxyService proxy,
             ApiErrorWriter errors,
             ObjectMapper json) {
         this.registry = registry;
         this.executor = executor;
         this.recorder = recorder;
+        this.proxy = proxy;
         this.errors = errors;
         this.json = json;
     }
@@ -147,8 +162,214 @@ public class TenantViewGuardFilter extends OncePerRequestFilter {
             return;
         }
 
-        // 其余（写、明文、重置、导入等一切动作）对视角令牌拒绝（PLT-VIEW-012）
-        deny(request, response, principal, 40303, MESSAGE_READONLY);
+        // 受控放行（E20-T06 / PLT-VIEW-013、018）：配置类写 = 角色可代为配置 ∧ 资源在范围；业务数据写 =
+        // 角色可编辑业务数据 ∧ 命中「可编辑」规则（任一不满足即只读）。放行须带二次确认原因（X-View-Reason），
+        // 成功后写 VIEW_PROXY_* 平台访问审计（对象、原因、前后值）并递增台账 proxy_count。
+        String first = firstCode(permCode);
+        WriteClass writeClass =
+                TenantViewProxyService.classify(entry == null ? null : entry.moduleCode(), first);
+        String releaseAction =
+                writeClass == WriteClass.NEVER
+                        ? null
+                        : proxy.releaseAction(
+                                principal,
+                                writeClass,
+                                entry == null ? null : entry.moduleCode(),
+                                TenantViewRuleExecutor.resourceOf(first));
+        if (releaseAction == null) {
+            deny(request, response, principal, 40303, MESSAGE_READONLY);
+            return;
+        }
+        String reason;
+        try {
+            reason =
+                    TenantViewProxyService.requireHeaderReason(
+                            request.getHeader(TenantViewProxyService.REASON_HEADER));
+        } catch (ApiException badReason) {
+            recorder.recordDenied(principal, method, uri, badReason.code(), badReason.getMessage());
+            errors.write(
+                    response, badReason.httpStatus(), badReason.code(), badReason.getMessage());
+            return;
+        }
+        // 前值快照（PLT-VIEW-016「编辑前后值」）：写前对同路径已登记的 GET 做一次内部快照（FORWARD 分发，
+        // 不过安全链）；未登记 GET 或快照失败记 null，不阻塞放行。视角会话的脱敏 / 设盲在装配点照常生效。
+        request.setAttribute(
+                com.crdp.framework.security.PermissionAuthorizationAspect.VIEW_PROXY_RELEASED,
+                releaseAction);
+        String beforeJson = snapshotBefore(request, response, uri);
+        HttpServletRequest effectiveRequest =
+                cacheableBody(request) ? new ContentCachingRequestWrapper(request) : request;
+        filterChain.doFilter(effectiveRequest, response);
+        String afterJson =
+                effectiveRequest instanceof ContentCachingRequestWrapper wrapper
+                        ? bodyOf(wrapper.getContentAsByteArray())
+                        : "(文件上传，载荷不记录)";
+        proxy.recordProxy(
+                principal,
+                method,
+                uri,
+                releaseAction,
+                objectTypeOf(permCode),
+                objectIdOf(uri),
+                reason,
+                beforeJson,
+                afterJson);
+    }
+
+    /**
+     * 写前快照（纯内部读，FORWARD 分发不经安全链与本过滤器，无递归）：同路径登记了 GET 才快照（REST 单对象 PUT/DELETE 的「前值」）；新建 / 无 GET /
+     * 读取失败为 null。快照响应限长，异常只记 DEBUG。
+     */
+    private String snapshotBefore(
+            HttpServletRequest request, HttpServletResponse response, String uri) {
+        if (!registry.find(HttpMethod.GET.name(), uri).isPresent()) {
+            return null;
+        }
+        try {
+            SnapshotResponse capture = new SnapshotResponse(response);
+            HttpServletRequest getRequest =
+                    new HttpServletRequestWrapper(request) {
+                        @Override
+                        public String getMethod() {
+                            return HttpMethod.GET.name();
+                        }
+                    };
+            request.getRequestDispatcher(uri).forward(getRequest, capture);
+            if (capture.status() < 200 || capture.status() >= 300) {
+                return null;
+            }
+            return bodyOf(capture.body());
+        } catch (Exception ex) {
+            log.debug("视角代为操作写前快照失败 uri={}", uri, ex);
+            return null;
+        }
+    }
+
+    /** 载荷是否可缓存（JSON / 表单等文本体；multipart 文件上传不缓存）。 */
+    private static boolean cacheableBody(HttpServletRequest request) {
+        String type = request.getContentType();
+        return type != null && !type.toLowerCase().startsWith("multipart/");
+    }
+
+    /** 载荷读回（UTF-8；空为 null；限长防审计行膨胀）。 */
+    private static String bodyOf(byte[] body) {
+        if (body == null || body.length == 0) {
+            return null;
+        }
+        return TenantViewProxyService.truncate(new String(body, StandardCharsets.UTF_8));
+    }
+
+    /** 路径尾段的对象 id（如 .../users/42 → 42；无数字尾段为 null，PLT-VIEW-016「对象」）。 */
+    static String objectIdOf(String uri) {
+        String[] parts = uri.split("/");
+        String last = parts.length == 0 ? "" : parts[parts.length - 1];
+        return last.matches("\\d+") ? last : null;
+    }
+
+    /**
+     * 快照响应捕获（只进内存，不触达客户端连接：输出 / 状态 / 提交全落在包装层，flush 与 sendError 不下传底层
+     * ——底层虽是真实响应，但本包装覆盖了全部写路径，快照期间客户端连接不被触碰）。
+     */
+    static final class SnapshotResponse extends HttpServletResponseWrapper {
+
+        private final ByteArrayOutputStream body = new ByteArrayOutputStream();
+
+        private int status = 200;
+
+        SnapshotResponse(HttpServletResponse underlying) {
+            super(underlying);
+        }
+
+        int status() {
+            return status;
+        }
+
+        byte[] body() {
+            return body.toByteArray();
+        }
+
+        @Override
+        public void setStatus(int status) {
+            this.status = status;
+        }
+
+        @Override
+        public void sendError(int status) {
+            this.status = status;
+        }
+
+        @Override
+        public void sendError(int status, String message) {
+            this.status = status;
+        }
+
+        @Override
+        public void setContentLength(int len) {
+            // 内容只进内存，长度无意义
+        }
+
+        @Override
+        public void setContentLengthLong(long len) {
+            // 同上
+        }
+
+        @Override
+        public void flushBuffer() {
+            // 不下传：快照不得提交底层连接
+        }
+
+        @Override
+        public boolean isCommitted() {
+            return false;
+        }
+
+        @Override
+        public void reset() {
+            body.reset();
+            status = 200;
+        }
+
+        @Override
+        public void setCharacterEncoding(String charset) {
+            // 快照按 UTF-8 读回，编码设置无副作用
+        }
+
+        @Override
+        public String getCharacterEncoding() {
+            return StandardCharsets.UTF_8.name();
+        }
+
+        @Override
+        public ServletOutputStream getOutputStream() {
+            return new ServletOutputStream() {
+                @Override
+                public boolean isReady() {
+                    return true;
+                }
+
+                @Override
+                public void setWriteListener(WriteListener listener) {
+                    // 快照一次性写入，无需异步监听
+                }
+
+                @Override
+                public void write(int b) {
+                    body.write(b);
+                }
+
+                @Override
+                public void write(byte[] bytes, int off, int len) {
+                    body.write(bytes, off, len);
+                }
+            };
+        }
+
+        @Override
+        public PrintWriter getWriter() {
+            return new PrintWriter(body, true) {
+                // JSON 渲染只 write / flush；字符集按 UTF-8 读回
+            };
+        }
     }
 
     private void allow(

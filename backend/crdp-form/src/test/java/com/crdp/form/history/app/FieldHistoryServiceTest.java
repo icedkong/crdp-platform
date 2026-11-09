@@ -327,6 +327,74 @@ class FieldHistoryServiceTest {
                                                 && "平台支持（示例）（平台支持）".equals(row.getOperatorName())));
     }
 
+    /**
+     * 租户视角代为编辑（E20-T06 / PLT-VIEW-018，platform-spec §8 已确认）：无论名义来源（USER 等）一律按 PLATFORM_SUPPORT
+     * 留痕，修改人显示「平台支持人员 会话号」，不落平台账号与姓名；操作人 id 置空。
+     */
+    @Test
+    void tenantViewSessionEditsAreRecordedAsAnonymizedPlatformSupport() {
+        SecurityContextHolder.clearContext();
+        SecurityContextHolder.getContext()
+                .setAuthentication(
+                        new UsernamePasswordAuthenticationToken(
+                                new SessionPrincipal(
+                                        "view-token-history",
+                                        "TENANT_VIEW",
+                                        1L,
+                                        "demoa",
+                                        "医院 A（示例）",
+                                        5L,
+                                        "platform.admin",
+                                        "平台管理员（示例）",
+                                        List.of("PLATFORM_ADMIN"),
+                                        List.of(),
+                                        List.of(),
+                                        List.of(),
+                                        1L,
+                                        ScopeSnapshot.allowAll(),
+                                        false,
+                                        null,
+                                        "127.0.0.1",
+                                        0L,
+                                        0L,
+                                        900L,
+                                        7200L,
+                                        com.crdp.framework.fieldpolicy.FieldPolicySnapshot
+                                                .defaults()),
+                                null,
+                                List.of()));
+        when(recordMapper.findVersionFields("A_BASELINE", 1)).thenReturn(List.of(height()));
+
+        service.logChange(
+                FieldHistoryService.FORM_RECORD,
+                101L,
+                "A_BASELINE",
+                1,
+                "f011",
+                52,
+                56,
+                ChangeSource.USER,
+                "代为修正录入（示例）",
+                List.of());
+
+        verify(historyMapper)
+                .insert(
+                        org.mockito.ArgumentMatchers.argThat(
+                                row ->
+                                        "PLATFORM_SUPPORT".equals(row.getSource())
+                                                && row.getOperatorId() == null
+                                                && "平台支持人员 "
+                                                        .equals(
+                                                                row.getOperatorName()
+                                                                        .substring(0, 7))
+                                                && row.getOperatorName()
+                                                        .equals(
+                                                                "平台支持人员 "
+                                                                        + SessionPrincipal
+                                                                                .sessionIdOf(
+                                                                                        "view-token-history"))));
+    }
+
     /** 用户来源没有医院会话 → 40100（不静默丢操作人，A-PAT-005「修改人」必填口径）。 */
     @Test
     void userSourceRequiresHospitalSession() {

@@ -9,6 +9,7 @@ import { preferences } from '@vben/preferences';
 import { errorMessageResponseInterceptor, RequestClient } from '@vben/request';
 import { useAccessStore } from '@vben/stores';
 
+import { encodeTenantViewReason, TENANT_VIEW_REASON_HEADER } from '@crdp/api';
 import { shouldRefreshPermissions } from '@crdp/rules';
 import { message } from 'ant-design-vue';
 
@@ -47,6 +48,31 @@ function createRequestClient(baseURL: string, options?: RequestClientOptions) {
       const accessStore = useAccessStore();
       config.headers.Authorization = formatToken(accessStore.accessToken);
       config.headers['Accept-Language'] = preferences.app.locale;
+      // E20-T06 / PLT-VIEW-013「二次确认并填写原因」：视角模式下的写请求（非 GET / HEAD，视角外壳
+      // /view/** 除外——代重置的原因在请求体）统一经原因弹窗收集后随 X-View-Reason 头提交
+      // （encodeURIComponent 编码，后端解码）；取消则中止本次请求。
+      const tenantViewStore = useTenantViewStore();
+      const method = String(config.method ?? '').toLowerCase();
+      const url = String(config.url ?? '');
+      const isShell = url.includes('/view/');
+      if (
+        tenantViewStore.active &&
+        method !== 'get' &&
+        method !== 'head' &&
+        !isShell &&
+        !config.headers[TENANT_VIEW_REASON_HEADER]
+      ) {
+        const { useProxyReasonStore } = await import('#/store/proxy-reason');
+        const proxyReason = useProxyReasonStore();
+        const reason = await proxyReason.requestReason();
+        if (!reason) {
+          throw Object.assign(new Error('已取消代为操作（未填写原因）'), {
+            silent: true,
+          });
+        }
+        config.headers[TENANT_VIEW_REASON_HEADER] =
+          encodeTenantViewReason(reason);
+      }
       return config;
     },
   });
@@ -95,6 +121,8 @@ function createRequestClient(baseURL: string, options?: RequestClientOptions) {
 
   client.addResponseInterceptor(
     errorMessageResponseInterceptor((msg: string, error) => {
+      // 代为操作取消（未填写原因）不弹错误提示
+      if ((error as { silent?: boolean })?.silent) return;
       const responseData = error?.response?.data ?? error?.data ?? {};
       const errorMessage = responseData?.message ?? responseData?.error ?? '';
       const traceId = responseData?.traceId
