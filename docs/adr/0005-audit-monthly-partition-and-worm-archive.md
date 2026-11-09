@@ -58,6 +58,23 @@ WORM 保留截止。空分区（到期但无数据）也登记行数 0 后删除
   PARTITION`（本机 / CI 无独立账号）；生产建议给作业使用的数据库账号收敛到只允许 DDL 分区维护的权限组，账号分离
   留给 E22-T08 演练时落实。
 
+## E22-T08 落地补充（2026-11-10）
+
+验收「归档对象在保留期内不可删改」的落地形态，本 ADR 的部署侧约定已由 E22-T08 兑现：
+
+- **适配器**：`ObsAuditArchiveStorage` 替换占位装配——`crdp.audit.archive.storage.type=obs` 时启用
+  （单次 PUT + `setObjectRetention` 对象级 COMPLIANCE 保留到归档日 + 15 年，epoch 毫秒、北京时间当日起算）；
+  默认 `none` 仍装配 `UnsupportedAuditArchiveStorage`（本 ADR §4 的失败安全口径不变：无云凭证不删在线分区）。
+  端口签名不变（仍无删除 / 覆盖语义）。
+- **桶侧**：IaC 与基线在 `iac/obs-archive/`（单可用区、版本控制、30 天转 COLD、无 expiration、无跨区域复制）。
+  桶级 WORM 与 180 天转深度归档两步 terraform provider 不支持（OQ-123），由运维按
+  `docs/ops/audit-worm-archive.md` §2 经控制台 / SDK 落实，`scripts/check_worm_baseline.py` 在 CI 锁口径。
+- **演练**：`AuditWormDrillMySqlIT`（CI，真实 MySQL + 执行 WORM 语义的本地桶替身）跑完整归档作业后断言
+  不可删改三层证据——端口 / 适配器无删除与覆盖语义、同键不同内容与缩短保留被拒 / 延长允许、桶外直改文件
+  可被登记摘要比对发现；生产侧删除 / 覆盖尝试必须失败按 runbook §4 留痕。
+- **账号分离**（上文遗留项）：OBS 归档桶专用子账号（最小权限 + `PutObjectRetention`）与数据库作业账号权限
+  收敛（DML + 分区 DDL）的口径写入 runbook §6，由运维在生产开通与每半年演练时落实并留痕。
+
 ## 后果
 
 - 审计表带 `TO_DAYS(created_at)` 分区函数：`created_at` 永远非空（NOT NULL DEFAULT），无「落不进分区」的行。

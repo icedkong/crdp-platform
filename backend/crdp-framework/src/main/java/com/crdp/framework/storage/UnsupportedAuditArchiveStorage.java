@@ -1,13 +1,11 @@
 package com.crdp.framework.storage;
 
 import java.time.LocalDate;
-import org.springframework.stereotype.Component;
 
 /**
- * 审计归档桶占位实现：本机 / CI 无云凭证，作业只做按月分区维护，不上传也不删在线分区。 OBS 适配器（华为云 SDK，桶级 WORM 由运维 E01-T08 开启）随 E10/E22
- * 接入时替换本实现（ADR 0005）。
+ * 审计归档桶占位实现（E08-T03）：本机 / CI 无云凭证，作业只做按月分区维护，不上传也不删在线分区。 OBS 适配器 {@link ObsAuditArchiveStorage} 已随
+ * E22-T08 落地（{@code storage.type=obs} 时装配），本实现保留为默认 {@code none} 的失败安全兜底（ADR 0005）。
  */
-@Component
 public class UnsupportedAuditArchiveStorage implements AuditArchiveStorage {
 
     @Override

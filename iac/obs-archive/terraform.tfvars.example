@@ -1,0 +1,3 @@
+# 复制为 terraform.tfvars 并填真实值（不入库）；AK/SK 不在此文件——
+# 桶级 WORM 开启与后续运维操作走控制台 / SDK 专用账号（见 docs/ops/audit-worm-archive.md §2 / §6）。
+bucket_name = "crdp-audit-archive-cn-north-4"
