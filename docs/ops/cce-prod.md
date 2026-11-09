@@ -101,7 +101,7 @@ JDBC 连接串指向 `iac/rds-prod` 输出的 `private_dns_names` 并带
 
 | 任务 | 依赖本任务的什么 |
 |---|---|
-| E22-T09 渗透测试 | 入口链路（WAF/ELB）与主机防护就位后的靶机环境；WAF 阻断事件作为测试旁证 |
+| E22-T09 渗透测试 | 入口链路（WAF/ELB）与主机防护就位后的靶机环境；WAF 阻断事件作为测试旁证（对接手册 `docs/ops/pentest.md`） |
 | E22-T03 监控告警 | ELB / CCE / HSS 指标与日志对象清单（`terraform output` 的资源 ID） |
 | E23-T11 / E23-T26 上线切换 | 生产入口（DNS 切换到 WAF CNAME）与应用副本就绪 |
 | E22-T07 跨区域恢复演练 | IaC 重建入口（本目录 + `iac/rds-prod` 在上海一重建） |
