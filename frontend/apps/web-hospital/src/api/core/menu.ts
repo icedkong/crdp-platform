@@ -12,6 +12,11 @@ import { apiPath, requestClient } from '#/api/request';
  * MobileBlocker「请在电脑或平板上操作」。
  */
 const responsiveRouteNames = new Set([
+  // E24-T03：患者列表（plt_menu 21，手机卡片 + 筛选 / 高级检索底部抽屉、
+  // 平板筛选右侧抽屉）与患者详情（plt_menu 215，列表卡片点进可达；
+  // 详情自身的折叠头部 / 操作抽屉 / 表格转卡片随 E24-T04）
+  'FollowupPatient',
+  'FollowupPatientDetail',
   // E24-T02：随访录入整页表单（plt_menu 223，平板 / 手机单列 + 底部固定操作栏）
   'FollowupRecordForm',
 ]);

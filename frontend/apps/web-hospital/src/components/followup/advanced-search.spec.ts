@@ -151,3 +151,39 @@ describe('advancedSearch 弹窗（components.md §11.2）', () => {
     wrapper.unmount();
   });
 });
+
+describe('e24-t03 AdvancedSearch：手机底部抽屉形态（pages.md §3、design-system §5）', () => {
+  it('mobileCommonOnly 渲染为底部抽屉（不是弹窗），只留常用条件', async () => {
+    const wrapper = await mountModal({
+      mobileCommonOnly: true,
+      value: {
+        logic: 'and',
+        items: [{ field: 'ward', op: 'EQ', value: 3 }],
+      } as ConditionGroup,
+    });
+    const drawer = document.body.querySelector('.ant-drawer');
+    expect(drawer).not.toBeNull();
+    expect(drawer?.className).toContain('ant-drawer-bottom');
+    expect(document.body.querySelector('.ant-modal')).toBeNull();
+    expect(bodyText()).toContain('病区/中心');
+    expect(bodyText()).not.toContain('随访备注（不常用）');
+    expect(bodyText()).toContain('逻辑表达式预览');
+    wrapper.unmount();
+  });
+
+  it('底部抽屉里「查询」上抛条件树并关闭', async () => {
+    const wrapper = await mountModal({
+      mobileCommonOnly: true,
+      value: {
+        logic: 'and',
+        items: [{ field: 'ward', op: 'EQ', value: 3 }],
+      } as ConditionGroup,
+    });
+    await clickButton('查询');
+    expect(wrapper.emitted('apply')).toEqual([
+      [{ logic: 'and', items: [{ field: 'ward', op: 'EQ', value: 3 }] }],
+    ]);
+    expect(wrapper.emitted('update:open')?.at(-1)).toEqual([false]);
+    wrapper.unmount();
+  });
+});
