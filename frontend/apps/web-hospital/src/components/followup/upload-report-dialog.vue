@@ -8,6 +8,7 @@ import type {
 } from '@crdp/api';
 import type { Dayjs } from 'dayjs';
 
+import type { PhotoUploadItem } from './photo-upload-queue';
 import type { CallContactOption, IndicatorRow } from './report-dialog-logic';
 
 import { computed, reactive, ref, watch } from 'vue';
@@ -21,6 +22,7 @@ import {
   Input,
   message,
   Modal,
+  Progress,
   Select,
   Table,
   Upload,
@@ -35,11 +37,24 @@ import {
   fetchCatalogReportTypes,
   fetchReportLocations,
 } from '#/api/core/report';
+import { useBreakpoint } from '#/reference/use-breakpoint';
 import { usePermission } from '#/reference/use-permission';
 import { useWatermarkViewer } from '#/reference/use-watermark-viewer';
 
 import { downloadFileById } from './file-download';
+import { compressImageFile, isHeicFile } from './image-compress';
 import LocationPicker from './location-picker.vue';
+import {
+  applyProgress,
+  createPhotoItem,
+  markCompressing,
+  markFailed,
+  markUploading,
+  photoStatusText,
+  progressPercent,
+  retryItem,
+  undecodableNoteText,
+} from './photo-upload-queue';
 import {
   attachmentCountText,
   attachmentOverLimit,
@@ -70,6 +85,13 @@ import WatermarkPreview from './watermark-preview.vue';
  * E16-T03 / A-ATT-004、C-SCAN-006：多附件——打开时取上传策略，超过每份上限（A 默认
  * 10 个）的选择直接拦截并提示（服务端同口径 40001 兜底）；附件可上移 / 下移调整顺序
  * （顺序随 sortNo 落库）、可移除。
+ *
+ * E24-T06 / NFR-RESP-003（design-system §12 拍照上传）：附件区新增「拍照」（input
+ * capture=environment，可连拍多页）与「相册选图」（多选）；图片（含「选择文件」里的
+ * 图片）上传前压缩——长边 ≤ 2560、转 JPEG（含 HEIC）、去 EXIF 定位（image-compress）；
+ * 每页显示压缩 / 上传进度，弱网失败可重试（photo-upload-queue，重试从压缩重新开始）；
+ * 上限口径 = 已上传附件 + 队列在途（attachmentOverLimit）。手机上对话框全宽
+ * （crdp-form：输入 36/16，触控 ≥ 40px 由全局样式保证）。
  */
 const props = defineProps<{
   open: boolean;
@@ -117,6 +139,123 @@ const watermarkViewer = useWatermarkViewer();
 const canDownloadFile = computed(() => hasPermission('followup:scan:download'));
 const previewOpen = ref(false);
 const previewIndex = ref(0);
+
+// ------------------------------ E24-T06 拍照多页上传（NFR-RESP-003）
+
+const { isMobile } = useBreakpoint();
+/** 弹窗宽度：桌面 880（pages.md §6.1），手机全宽（报告单上传是 5 个响应式页面之一）。 */
+const dialogWidth = computed(() => (isMobile.value ? '100%' : 880));
+
+/** 拍照 / 相册的上传队列（每页一条：压缩中 → 上传中 → 完成 / 失败可重试）。 */
+const photoQueue = ref<PhotoUploadItem[]>([]);
+/** 队列页的源文件（重试从压缩重新开始，需要原文件）。 */
+const photoSources = new Map<string, File>();
+let photoSeq = 0;
+/** 串行处理标记：多页逐张上传（页序即附件顺序），不并发。 */
+let queueRunning = false;
+/** 弹窗会话号：关闭重开（resetForm）后旧会话的完成回调不再写入新表单。 */
+let photoSession = 0;
+
+const captureInput = ref<HTMLInputElement>();
+const galleryInput = ref<HTMLInputElement>();
+
+/** 选入一页 / 多页：上限拦截（已上传 + 队列在途 + 本次将进的数量），再逐张处理。 */
+function enqueuePhotos(picked: File[]) {
+  const over = attachmentOverLimit(
+    files.value.length + photoQueue.value.length,
+    picked.length,
+    maxFilesPerReport.value,
+  );
+  if (over) {
+    message.warning(over);
+    return;
+  }
+  for (const file of picked) {
+    photoSeq += 1;
+    const id = `photo-${photoSeq}`;
+    photoSources.set(id, file);
+    photoQueue.value = [...photoQueue.value, createPhotoItem(id, file.name)];
+  }
+  void runPhotoQueue();
+}
+
+/** 逐张压缩 → 上传（串行保证页序；失败停留 failed 等待重试）。 */
+async function runPhotoQueue(): Promise<void> {
+  if (queueRunning) return;
+  queueRunning = true;
+  const session = photoSession;
+  try {
+    for (;;) {
+      if (session !== photoSession) break;
+      const next = photoQueue.value.find((item) => item.status === 'pending');
+      if (!next) break;
+      await processPhotoItem(next.id, session);
+    }
+  } finally {
+    queueRunning = false;
+  }
+}
+
+async function processPhotoItem(id: string, session: number): Promise<void> {
+  const source = photoSources.get(id);
+  if (!source) {
+    photoQueue.value = photoQueue.value.filter((item) => item.id !== id);
+    return;
+  }
+  photoQueue.value = markCompressing(photoQueue.value, id);
+  const compressed = await compressImageFile(source);
+  if (session !== photoSession) return;
+  if (compressed.note === 'undecodable') {
+    message.warning(undecodableNoteText(isHeicFile(source)));
+  }
+  photoQueue.value = markUploading(photoQueue.value, id);
+  try {
+    const uploaded = await uploadFile(compressed.file, {
+      onUploadProgress: (event) => {
+        if (session !== photoSession) return;
+        photoQueue.value = applyProgress(
+          photoQueue.value,
+          id,
+          progressPercent(event.loaded, event.total),
+        );
+      },
+    });
+    if (session !== photoSession) return;
+    files.value.push({
+      fileId: uploaded.fileId,
+      format: uploaded.format,
+      name: uploaded.originalName,
+    });
+    photoSources.delete(id);
+    photoQueue.value = photoQueue.value.filter((item) => item.id !== id);
+  } catch {
+    // 错误提示由统一拦截器弹出；这里保留该页等待「重试」
+    if (session !== photoSession) return;
+    photoQueue.value = markFailed(photoQueue.value, id);
+  }
+}
+
+/** 弱网失败重试：从压缩重新开始（源文件还在）。 */
+function retryPhoto(id: string) {
+  photoQueue.value = retryItem(photoQueue.value, id);
+  void runPhotoQueue();
+}
+
+/** 移除失败的一页（放弃该页）。 */
+function removePhoto(id: string) {
+  photoSources.delete(id);
+  photoQueue.value = photoQueue.value.filter((item) => item.id !== id);
+}
+
+/** 拍照 / 相册 change：取文件后清空 value，同名文件可连续重选（连拍多页）。 */
+function onPhotoChange(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const picked = [...(input.files ?? [])];
+  input.value = '';
+  if (picked.length > 0) {
+    enqueuePhotos(picked);
+  }
+}
 
 /** 「预览」→ 全屏查看器打开该附件（水印不可关闭；下载按 followup:scan:download）。 */
 function openFilePreview(index: number) {
@@ -209,6 +348,11 @@ function resetForm() {
   note.value = '';
   locations.value = initialLocations(props.preset);
   files.value = [];
+  // E24-T06：拍照队列与源文件随弹窗关闭一并丢弃（未完成页不残留；
+  // 会话号 +1 让在途上传的完成回调不再写入新表单）
+  photoQueue.value = [];
+  photoSources.clear();
+  photoSession += 1;
   showErrors.value = false;
   replaceRows(buildIndicatorRows(null, props.patientGender));
 }
@@ -309,9 +453,10 @@ async function customRequest(options: {
   onError: (error: Error) => void;
   onSuccess: (body: unknown) => void;
 }) {
-  // A-ATT-004 / C-SCAN-006：超过每份上限的选择直接拦截，不上传（后端同口径 40001 兜底）
+  // A-ATT-004 / C-SCAN-006：超过每份上限的选择直接拦截，不上传（后端同口径 40001 兜底；
+  // E24-T06 起已上传附件 + 拍照队列在途一并计入）
   const over = attachmentOverLimit(
-    files.value.length,
+    files.value.length + photoQueue.value.length,
     1,
     maxFilesPerReport.value,
   );
@@ -320,9 +465,14 @@ async function customRequest(options: {
     options.onError(new Error(over));
     return;
   }
+  // E24-T06 / NFR-RESP-003：图片先压缩（长边 ≤ 2560、转 JPEG 含 HEIC、去 EXIF 定位）
+  const compressed = await compressImageFile(options.file);
+  if (compressed.note === 'undecodable') {
+    message.warning(undecodableNoteText(isHeicFile(options.file)));
+  }
   uploading.value = true;
   try {
-    const uploaded = await uploadFile(options.file);
+    const uploaded = await uploadFile(compressed.file);
     files.value.push({
       fileId: uploaded.fileId,
       format: uploaded.format,
@@ -413,14 +563,16 @@ defineExpose({
 
 <template>
   <Modal
+    :body-style="{ maxHeight: 'calc(100vh - 200px)', overflowY: 'auto' }"
     :confirm-loading="submitting"
     :footer="null"
     :open="open"
     title="添加报告单"
-    :width="880"
+    :width="dialogWidth"
     @update:open="emit('update:open', $event)"
   >
-    <Form layout="vertical" @submit.prevent>
+    <!-- crdp-form：手机上输入 36/16、触控 ≥ 40px（E24-T06，globalCss 手机媒体查询入口） -->
+    <Form class="crdp-form" layout="vertical" @submit.prevent>
       <FormItem label="类型" required>
         <Select
           data-testid="report-type-select"
@@ -555,14 +707,81 @@ defineExpose({
       </FormItem>
 
       <FormItem label="附件">
-        <Upload
-          :before-upload="beforeUpload"
-          :custom-request="customRequest"
-          :file-list="[]"
-          multiple
+        <!-- E24-T06 / NFR-RESP-003：拍照（capture=environment，可连拍多页）与相册多选；
+             图片压缩后上传、显示进度、失败可重试 -->
+        <div class="pick-actions">
+          <input
+            ref="captureInput"
+            accept="image/*"
+            capture="environment"
+            data-testid="photo-capture-input"
+            hidden
+            type="file"
+            @change="onPhotoChange"
+          />
+          <input
+            ref="galleryInput"
+            accept="image/*"
+            data-testid="photo-gallery-input"
+            hidden
+            multiple
+            type="file"
+            @change="onPhotoChange"
+          />
+          <Button
+            data-testid="photo-capture-button"
+            @click="captureInput?.click()"
+          >
+            拍照
+          </Button>
+          <Button @click="galleryInput?.click()">从相册选择</Button>
+          <Upload
+            :before-upload="beforeUpload"
+            :custom-request="customRequest"
+            :file-list="[]"
+            multiple
+          >
+            <Button :loading="uploading">选择文件（可多选）</Button>
+          </Upload>
+        </div>
+        <ul
+          v-if="photoQueue.length > 0"
+          class="file-list"
+          data-testid="photo-queue"
         >
-          <Button :loading="uploading">选择文件（可多选）</Button>
-        </Upload>
+          <li
+            v-for="item in photoQueue"
+            :key="item.id"
+            data-testid="photo-queue-item"
+          >
+            {{ item.name }}
+            <span
+              :class="{ 'queue-failed': item.status === 'failed' }"
+              class="queue-status"
+            >
+              {{ photoStatusText(item) }}
+            </span>
+            <Progress
+              v-if="item.status === 'uploading'"
+              :percent="item.progress"
+              size="small"
+              status="active"
+            />
+            <template v-if="item.status === 'failed'">
+              <Button size="small" type="link" @click="retryPhoto(item.id)">
+                重试
+              </Button>
+              <Button
+                danger
+                size="small"
+                type="link"
+                @click="removePhoto(item.id)"
+              >
+                移除
+              </Button>
+            </template>
+          </li>
+        </ul>
         <ul
           v-if="files.length > 0"
           class="file-list"
@@ -601,7 +820,8 @@ defineExpose({
           </li>
         </ul>
         <p class="hint" data-testid="report-file-count">
-          {{ fileCountHint }}；格式与大小按租户配置（真实类型以后端检测为准）。
+          {{ fileCountHint }}；拍照与相册图片将压缩后上传（长边 ≤ 2560、转
+          JPEG、去除位置信息）；格式与大小按租户配置（真实类型以后端检测为准）。
         </p>
       </FormItem>
 
@@ -661,5 +881,21 @@ defineExpose({
 
 .file-list li {
   font-size: 13px;
+}
+
+/* E24-T06 拍照 / 相册 / 选择文件入口一排（手机自动换行，按钮触控 ≥ 40px 由全局样式保证） */
+.pick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.queue-status {
+  margin-left: 4px;
+  color: #8c8c8c;
+}
+
+.queue-failed {
+  color: #ff4d4f;
 }
 </style>

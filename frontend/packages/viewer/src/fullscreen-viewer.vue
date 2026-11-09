@@ -21,6 +21,7 @@ import {
   zoomOut,
   zoomPercentText,
 } from './fullscreen';
+import { pinchEnabledFor, pinchScale, touchDistance } from './pinch';
 import { previewModeOf } from './preview';
 import PreviewContent from './preview-content.vue';
 import { createWatermarkGuard, watermarkText } from './watermark';
@@ -33,7 +34,8 @@ import { createWatermarkGuard, watermarkText } from './watermark';
  *
  * 水印挂在遮罩根上、**不随内容变换**（翻转 / 旋转后水印文字始终正向可读），不可关闭。
  * 内容短时链接由父级解析后经 `url` 传入（null = 解析中）；Esc 或「关闭」抛 close，
- * 由父级收起遮罩。手机 / 平板工具栏图标 ≥ 40px（sizes.touchTarget）。
+ * 由父级收起遮罩。手机 / 平板工具栏图标 ≥ 40px（sizes.touchTarget）；图片支持
+ * **双指缩放**（E24-T06 / NFR-RESP-003，与工具栏按钮共用 50%–500% 上下限）。
  */
 const props = withDefaults(
   defineProps<{
@@ -66,6 +68,8 @@ const decision = computed(() => previewModeOf(props.file));
 const transformEnabled = computed(() =>
   transformEnabledFor(decision.value.mode),
 );
+/** E24-T06：双指缩放只对图片启用（PDF / DOCX 用工具栏按钮；音频 / 仅下载不参与）。 */
+const pinchEnabled = computed(() => pinchEnabledFor(decision.value.mode));
 const currentIndex = computed(() =>
   clampFileIndex(props.index, props.fileCount),
 );
@@ -166,6 +170,49 @@ function onZoomOut(): void {
   transform.value = zoomOut(transform.value);
 }
 
+// ------------------ E24-T06 双指缩放（手机 / 平板，NFR-RESP-003）
+
+/** 双指起手距离（< 0 = 未在捏合中）；每次起手重新取样，比例相对起手而非上一步。 */
+let pinchStartDistance = -1;
+
+function pinchTouches(
+  event: Event,
+): Array<{ clientX: number; clientY: number }> {
+  const touches = (event as TouchEvent).touches;
+  const first = touches?.[0];
+  const second = touches?.[1];
+  if (!first || !second) {
+    return [];
+  }
+  return [
+    { clientX: first.clientX, clientY: first.clientY },
+    { clientX: second.clientX, clientY: second.clientY },
+  ];
+}
+
+function onTouchStart(event: Event): void {
+  if (!pinchEnabled.value) return;
+  const [a, b] = pinchTouches(event);
+  pinchStartDistance = a && b ? touchDistance(a, b) : -1;
+}
+
+function onTouchMove(event: Event): void {
+  if (!pinchEnabled.value || pinchStartDistance <= 0) return;
+  const [a, b] = pinchTouches(event);
+  if (!a || !b) return;
+  // 双指捏合时阻止页面滚动 / 双击缩放（touch-action: none 之外的兜底）
+  event.preventDefault();
+  transform.value = pinchScale(
+    transform.value,
+    pinchStartDistance,
+    touchDistance(a, b),
+  );
+}
+
+function onTouchEnd(): void {
+  pinchStartDistance = -1;
+}
+
 function onDownload(): void {
   emit('download', props.file);
 }
@@ -251,7 +298,14 @@ function onDownload(): void {
           </Button>
         </div>
       </header>
-      <div class="viewer-stage">
+      <div
+        class="viewer-stage"
+        :style="{ touchAction: pinchEnabled ? 'none' : undefined }"
+        @touchcancel="onTouchEnd"
+        @touchend="onTouchEnd"
+        @touchmove="onTouchMove"
+        @touchstart="onTouchStart"
+      >
         <p v-if="url === null" class="viewer-loading">正在加载预览…</p>
         <div
           v-else
