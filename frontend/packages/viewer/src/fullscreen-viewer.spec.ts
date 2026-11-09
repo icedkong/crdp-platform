@@ -211,4 +211,77 @@ describe('e16-t06 FullscreenViewer（全屏查看器）', () => {
     mountViewer({ url: null });
     expect(document.body.textContent).toContain('正在加载预览');
   });
+
+  // ------------------- E24-T06 双指缩放（NFR-RESP-003，components.md §12 手机 / 平板）
+  // happy-dom 无 TouchEvent 构造器：用基础 Event 挂 touches 触点表驱动同一处理函数
+  function touchEvent(type: string, points: Array<{ x: number; y: number }>) {
+    const event = new Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'touches', {
+      value: points.map((point) => ({
+        clientX: point.x,
+        clientY: point.y,
+      })),
+    });
+    return event;
+  }
+
+  function viewerStage(): HTMLElement {
+    return document.body.querySelector(
+      '[data-testid="viewer-stage"]',
+    ) as HTMLElement;
+  }
+
+  async function pinch(from: number, to: number) {
+    const half = from / 2;
+    viewerStage().dispatchEvent(
+      touchEvent('touchstart', [
+        { x: 100 - half, y: 200 },
+        { x: 100 + half, y: 200 },
+      ]),
+    );
+    const halfTo = to / 2;
+    viewerStage().dispatchEvent(
+      touchEvent('touchmove', [
+        { x: 100 - halfTo, y: 200 },
+        { x: 100 + halfTo, y: 200 },
+      ]),
+    );
+    await Promise.resolve();
+  }
+
+  it('图片：双指捏开放大舞台（scale 随距离比例），水印层不受影响', async () => {
+    mountViewer();
+    await pinch(100, 200);
+    expect(stageStyle()).toContain('scale(2)');
+    expect(document.body.textContent).toContain('200%');
+    // 水印挂在遮罩根上、不随内容变换（E16-T06 口径在双指缩放下保持）
+    const overlay = document.body.querySelector('[data-watermark]');
+    expect(overlay).toBeTruthy();
+    expect((overlay as HTMLElement).style.pointerEvents).toBe('none');
+  });
+
+  it('图片：双指捏拢缩小，触底 50% 夹住；单指触摸不触发缩放', async () => {
+    mountViewer();
+    await pinch(200, 100);
+    expect(stageStyle()).toContain('scale(0.5)');
+    expect(document.body.textContent).toContain('50%');
+
+    viewerStage().dispatchEvent(touchEvent('touchmove', [{ x: 10, y: 10 }]));
+    await Promise.resolve();
+    expect(stageStyle()).toContain('scale(0.5)');
+  });
+
+  it('音频不参与双指缩放（只对图片启用，PDF / DOCX 用工具栏按钮）', async () => {
+    mountViewer({ file: AUDIO });
+    await pinch(100, 300);
+    expect(stageStyle()).toBe('none');
+  });
+
+  it('双指结束后再捏开：从当前 scale 继续比例缩放（非从 100% 重算）', async () => {
+    mountViewer();
+    await pinch(100, 200); // → 200%
+    await pinch(100, 150); // 起手重新取样，×1.5 → 300%
+    expect(document.body.textContent).toContain('300%');
+    expect(stageStyle()).toContain('scale(3)');
+  });
 });

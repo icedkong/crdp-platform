@@ -25,11 +25,27 @@ export interface FileUploadResult {
   size: number;
 }
 
-/** 上传单个文件（multipart 字段 file；需要 followup:scan:upload）。 */
-export function uploadFile(file: File) {
+/** 上传进度事件（axios onUploadProgress 透传；total 未知时为 undefined）。 */
+export interface UploadProgressEvent {
+  loaded: number;
+  total?: number;
+}
+
+/**
+ * 上传单个文件（multipart 字段 file；需要 followup:scan:upload）。
+ * E24-T06 / NFR-RESP-003：可传 onUploadProgress 做上传进度展示（拍照多页上传）。
+ */
+export function uploadFile(
+  file: File,
+  config?: { onUploadProgress?: (event: UploadProgressEvent) => void },
+) {
   const form = new FormData();
   form.append('file', file);
-  return requestClient.post<FileUploadResult>(apiPath('/files'), form);
+  return requestClient.post<FileUploadResult>(
+    apiPath('/files'),
+    form,
+    config ? { onUploadProgress: config.onUploadProgress } : undefined,
+  );
 }
 
 /**

@@ -25,6 +25,13 @@ export {
 } from './fullscreen';
 export type { ViewerTransformState } from './fullscreen';
 export { default as FullscreenViewer } from './fullscreen-viewer.vue';
+export {
+  clampPinchRatio,
+  pinchEnabledFor,
+  pinchScale,
+  touchDistance,
+} from './pinch';
+export type { TouchPoint } from './pinch';
 export { downloadOnlyReason, previewModeOf } from './preview';
 export type { PreviewDecision } from './preview';
 export { default as PreviewContent } from './preview-content.vue';
