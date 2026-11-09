@@ -25,6 +25,7 @@
 | `ops/cce-prod.md` | CCE 生产环境三级基线运维手册：集群 / ELB / WAF / 通配符证书 / HSS 对照清单与验证（IaC 在 `iac/cce-prod/`；真实云操作由运维执行） | 生产入口、主机防护、渗透测试对接（E22） |
 | `ops/tenant-restore.md` | 单院恢复 runbook：单租户库恢复到指定时间点（脚本 `scripts/restore_tenant.sh`；PITR 临时实例等真实云操作由运维执行，CI 含本地演练） | 误操作 / 逻辑损坏的单院回滚（E22-T06） |
 | `ops/pentest.md` | 渗透测试对接手册：范围与授权、靶机环境、日程（W32–W35）、报告分级、发现入缺陷库（模板 `ops/pentest-findings-template.csv` + `scripts/pentest_intake.py`；选商 / 签约 / 测试 / 报告出具由人执行） | 上线前渗透测试（E22-T09；E22-T10/T11 修复的输入） |
+| `ops/hospital-a-sample-intake.md` | 医院 A 历史数据样本接收与脱敏对接手册：导出口径、保密红线、脱敏工具 `scripts/deidentify_sample.py`、「校验通过」判据与警告处置、迭代循环（样本交接 / 医院修正 / 复核结论由人执行） | 租户上线样本对接（E23-T05；E23-T06/T07/T11 演练与正式导入的输入） |
 | `open-questions.md` | 待确认问题 OQ-01…OQ-33 与暂行做法 | 遇到不确定时先查 |
 | `adr/` | 仓库已有架构决定（如 M0 骨架） | 改架构前 |
 
