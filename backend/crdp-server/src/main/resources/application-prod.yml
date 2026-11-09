@@ -8,7 +8,9 @@ crdp:
       username: ${CRDP_PLATFORM_DB_USERNAME}
       password: ${CRDP_PLATFORM_DB_PASSWORD}
   cors:
-    allowed-origin-patterns: ${CRDP_CORS_ORIGINS:https://*.example.com}
+    # E22-T10 / PT-SELF-03：无默认回落——缺 CRDP_CORS_ORIGINS 启动即失败（占位符解析不出），
+    # 不落到保留域通配符（此前默认 https://*.example.com 虽无实际攻击面，但掩盖配置缺失）
+    allowed-origin-patterns: ${CRDP_CORS_ORIGINS}
   sms:
     # E09-T03：腾讯云短信密钥只经环境变量 / 凭据管理注入（技术方案第 4 章：DEW 凭据管理，
     # 子账号只授予发短信权限）；缺省 enabled=false，通道报 CHANNEL_DISABLED 不假装发送
@@ -17,6 +19,10 @@ crdp:
     secret-key: ${CRDP_SMS_SECRET_KEY:}
     sdk-app-id: ${CRDP_SMS_SDK_APP_ID:}
     sign-name: ${CRDP_SMS_SIGN_NAME:}
+    # E22-T10 / PT-SELF-02：状态回执回调 Basic Auth（与腾讯云控制台「状态回执推送」配置一致）。
+    # 都非空时公开回调强制校验（不匹配 40103）；留空 = 迁移期仅 IP 限流（通道启用时启动告警提醒配置）
+    receipt-auth-username: ${CRDP_SMS_RECEIPT_AUTH_USER:}
+    receipt-auth-password: ${CRDP_SMS_RECEIPT_AUTH_PASSWORD:}
   storage:
     # E10-T02 / C-NFR-003（ADR 0006）：生产走 OBS 业务桶，每次 PUT 强制 SSE-KMS；
     # AK/SK 只经环境变量注入（DEW 凭据管理，子账号只授予该桶读写权限），桶由运维建好
@@ -44,3 +50,12 @@ spring:
     redis:
       host: ${CRDP_REDIS_HOST}
       port: ${CRDP_REDIS_PORT:6379}
+
+# E22-T10 / PT-SELF-01（渗透修复自查·中危）：生产默认关闭 API 文档（swagger-ui / v3/api-docs
+# 全量公开 = 接口清单与参数结构泄露，降低攻击成本）。UAT / 联调需要时显式设 CRDP_API_DOCS_ENABLED=true
+# 与 CRDP_SWAGGER_ENABLED=true；本机 local / dev / test profile 不受影响（application.yml 无此关闭项）
+springdoc:
+  api-docs:
+    enabled: ${CRDP_API_DOCS_ENABLED:false}
+  swagger-ui:
+    enabled: ${CRDP_SWAGGER_ENABLED:false}
