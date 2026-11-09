@@ -84,7 +84,7 @@ function onAssigneeChange(value: unknown) {
 
 <template>
   <Drawer
-    class-name="crdp-form"
+    root-class-name="crdp-form"
     :height="placement === 'bottom' ? '70vh' : undefined"
     :open="open"
     :placement="placement"

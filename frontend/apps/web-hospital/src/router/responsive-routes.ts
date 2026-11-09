@@ -5,6 +5,10 @@
  * 的落点，锁定用例见 views/followup/device-matrix.spec.ts（E24-T08 真机矩阵）。
  */
 export const responsiveRouteNames: ReadonlySet<string> = new Set([
+  // E24-T09 走查补登记：基线分节编辑（plt_menu 227）pages.md §0.1 标响应式
+  // 「是」（布局同随访整页表单 §5），页面自身已具备手机形态（page-mobile、
+  // CategoryBar select、手机底部栏）；此前漏登记，手机被守卫拦截无法编辑基线
+  'FollowupBaselineEdit',
   // E24-T03：患者列表（plt_menu 21，手机卡片 + 筛选 / 高级检索底部抽屉、
   // 平板筛选右侧抽屉）；E24-T04：患者详情（plt_menu 215，折叠头部 / 操作
   // 底部抽屉 / 页签横向滚动 / 沟通记录与报告单表格转卡片）

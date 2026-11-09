@@ -9,7 +9,7 @@ import type { CategoryProgress, CompareHit } from '@crdp/rules';
 
 import type { CompareReportPaneReport } from '#/components/followup/compare-report-pane.vue';
 
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import { useUserStore } from '@vben/stores';
@@ -192,13 +192,16 @@ const leaveConfirm = ref<{ open: boolean; taskId: null | string }>({
 
 const filter = queueFilterOfQuery(route.query);
 const readonly = computed(() => !canEdit.value || status.value === 'SUBMITTED');
+// bannersOf(context, visitDate, today?, source?)——today 走默认时钟，别把
+// source 顶进 today 形参位（E24-T09 走查 W-0 连带修复：此前 `today is not a
+// function` 使横幅 computed 崩掉，逾期 / 窗口外横幅不显示）
 const banners = computed(() =>
   readonly.value
     ? [
         readonlyBanner(status.value),
-        ...bannersOf(context.value, visitDate(), source.value),
+        ...bannersOf(context.value, visitDate(), undefined, source.value),
       ]
-    : bannersOf(context.value, visitDate(), source.value),
+    : bannersOf(context.value, visitDate(), undefined, source.value),
 );
 const dirty = computed(() => hasChanges(savedData.value, data.value));
 
@@ -676,7 +679,14 @@ function handleJump(key: string) {
         </Button>
         <StatusTag
           v-if="context"
-          :status="taskDisplayStatus(context)"
+          :status="
+            taskDisplayStatus({
+              completeKind: context.completeKind,
+              createType: context.createType,
+              status: context.taskStatus,
+              taskType: context.taskType,
+            })
+          "
           variant="dot"
         />
       </div>

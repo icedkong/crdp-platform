@@ -20,6 +20,7 @@
 | `api/README.md` | 接口通用约定：前缀、鉴权、响应包、错误码、分页、数据范围、脱敏、审计 | 任何接口 |
 | `api/auth.md` · `platform.md` · `system.md` · `form.md` · `patient.md` · `implant.md` · `followup.md` · `report.md` · `notify.md` · `stats.md` · `import-export.md` · `audit.md` | 各模块接口契约提纲 | 对应模块 |
 | `testing/device-matrix.md` | 平板与手机真机矩阵（六档）与 5 个关键页面测试用例、CI 自动化覆盖图、真机执行记录表（档案唯一来源 `frontend/packages/responsive/src/device-matrix.ts`；物理真机执行由人按记录表完成，E24-T08） | 响应式改动前后、真机验收（E24） |
+| `testing/responsive-walkthrough.md` | 平板与手机交互走查脚本与执行记录（手机 390 / 平板 820 双档逐页）、走查问题清单与关闭状态（W-0 表单白屏 / W-1 抽屉触控尺寸 / W-2 基线编辑登记 / W-3 状态点；E24-T09） | 响应式回归、产品验收复走（E24） |
 | `ops/rds-prod.md` | RDS 8.0 生产实例运维手册：参数基线、主备切换验证、跨区域备份开启（IaC 在 `iac/rds-prod/`；真实云操作由运维执行） | 数据库运维、备份恢复演练（E22） |
 | `ops/cce-prod.md` | CCE 生产环境三级基线运维手册：集群 / ELB / WAF / 通配符证书 / HSS 对照清单与验证（IaC 在 `iac/cce-prod/`；真实云操作由运维执行） | 生产入口、主机防护、渗透测试对接（E22） |
 | `ops/tenant-restore.md` | 单院恢复 runbook：单租户库恢复到指定时间点（脚本 `scripts/restore_tenant.sh`；PITR 临时实例等真实云操作由运维执行，CI 含本地演练） | 误操作 / 逻辑损坏的单院回滚（E22-T06） |

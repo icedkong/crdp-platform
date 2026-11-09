@@ -19,7 +19,9 @@ import {
  *   「查询」才发请求——与桌面行内表单同一套「输入即回写、点查询才检索」行为；
  * - 「高级检索」收起本抽屉并上抛 open-advanced（手机形态由 AdvancedSearch
  *   mobileCommonOnly 切底部抽屉，只留常用条件）。
- * 手机输入框高 36 / 字号 16 由 tokens globalCss 的 .crdp-form 手机媒体查询承担。
+ * 手机输入框高 36 / 字号 16 由 tokens globalCss 的 .crdp-form 手机媒体查询承担
+ * （E24-T09 走查修正：ant-design-vue 4 Drawer 无 class-name 属性，须用
+ * root-class-name 落到 .ant-drawer 根，globalCss 的后代选择器才能命中抽屉内控件）。
  */
 const props = defineProps<{
   /** 页面筛选状态（改动经 update:filters 回写）。 */
@@ -71,7 +73,7 @@ function onOpenAdvanced() {
 
 <template>
   <Drawer
-    class-name="crdp-form"
+    root-class-name="crdp-form"
     :height="placement === 'bottom' ? '70vh' : undefined"
     :open="open"
     :placement="placement"

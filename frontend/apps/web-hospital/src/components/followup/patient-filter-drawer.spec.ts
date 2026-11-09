@@ -84,6 +84,18 @@ describe('e24-t03 PatientFilterDrawer：患者列表筛选抽屉', () => {
     );
   });
 
+  it('e24-t09 走查 W-1：抽屉根节点带 crdp-form（globalCss 手机 36px/16px 规则命中抽屉内控件的前提；ant-design-vue 4 Drawer 只有 rootClassName，无 class-name）', async () => {
+    const wrapper = await mountDrawer({ placement: 'bottom' });
+    const drawer = document.body.querySelector('.ant-drawer');
+    expect(drawer?.className).toContain('crdp-form');
+    // 抽屉内部控件在 crdp-form 作用域内（后代选择器可达）
+    expect(drawer?.querySelector('.ant-select-selector')).toBeTruthy();
+    expect(
+      drawer?.querySelector('.ant-select-selector')?.closest('.crdp-form'),
+    ).toBe(drawer);
+    wrapper.unmount();
+  });
+
   it('列出筛选字段（病区 / 随访状态 / 出院日期 / 下次随访），检索词常驻顶栏不在抽屉里', async () => {
     const wrapper = await mountDrawer();
     expect(bodyText()).toContain('病区');
