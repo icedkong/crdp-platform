@@ -102,6 +102,7 @@ JDBC 连接串指向 `iac/rds-prod` 输出的 `private_dns_names` 并带
 | 任务 | 依赖本任务的什么 |
 |---|---|
 | E22-T09 渗透测试 | 入口链路（WAF/ELB）与主机防护就位后的靶机环境；WAF 阻断事件作为测试旁证（对接手册 `docs/ops/pentest.md`） |
+| E22-T10 渗透修复（后端） | 安全组「仅 ELB→30080 回源」基线（回执限流键不可伪造的前提）；修复新增环境变量（`CRDP_SMS_RECEIPT_AUTH_USER/PASSWORD`、`CRDP_CORS_ORIGINS`）经 `crdp-server-env` Secret 注入（处置见 `docs/ops/pentest-remediation.md` §5） |
 | E22-T03 监控告警 | ELB / CCE / HSS 指标与日志对象清单（`terraform output` 的资源 ID） |
 | E23-T11 / E23-T26 上线切换 | 生产入口（DNS 切换到 WAF CNAME）与应用副本就绪 |
 | E22-T07 跨区域恢复演练 | IaC 重建入口（本目录 + `iac/rds-prod` 在上海一重建） |

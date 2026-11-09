@@ -41,6 +41,15 @@ public class TencentSmsProperties {
     /** 回执回调公开口按 IP 每小时允许的请求数（AGENTS.md 第 6 节：新增公开接口必须限流）。 */
     private int receiptIpHourlyLimit = 600;
 
+    /**
+     * 回执回调 Basic Auth 用户名（E22-T10 / PT-SELF-02）：与腾讯云控制台「状态回执推送」配置的凭据一致，
+     * 经环境变量注入。用户名与密码都非空时回调强制校验；留空保持仅限流（迁移期，启动告警提醒配置）。
+     */
+    private String receiptAuthUsername = "";
+
+    /** 回执回调 Basic Auth 密码（只经配置注入，不写日志）。 */
+    private String receiptAuthPassword = "";
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -119,5 +128,29 @@ public class TencentSmsProperties {
 
     public void setReceiptIpHourlyLimit(int receiptIpHourlyLimit) {
         this.receiptIpHourlyLimit = receiptIpHourlyLimit;
+    }
+
+    /** 回执凭据是否配置完整（用户名与密码都非空才算启用强制校验）。 */
+    public boolean receiptAuthConfigured() {
+        return receiptAuthUsername != null
+                && !receiptAuthUsername.isBlank()
+                && receiptAuthPassword != null
+                && !receiptAuthPassword.isBlank();
+    }
+
+    public String getReceiptAuthUsername() {
+        return receiptAuthUsername;
+    }
+
+    public void setReceiptAuthUsername(String receiptAuthUsername) {
+        this.receiptAuthUsername = receiptAuthUsername;
+    }
+
+    public String getReceiptAuthPassword() {
+        return receiptAuthPassword;
+    }
+
+    public void setReceiptAuthPassword(String receiptAuthPassword) {
+        this.receiptAuthPassword = receiptAuthPassword;
     }
 }

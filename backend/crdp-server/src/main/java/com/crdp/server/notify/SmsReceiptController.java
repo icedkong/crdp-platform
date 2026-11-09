@@ -4,9 +4,12 @@ import com.crdp.framework.notify.sms.SmsReceiptHandler;
 import com.crdp.framework.notify.sms.TencentSmsProperties;
 import com.crdp.framework.security.PublicApi;
 import com.crdp.framework.web.ApiException;
+import jakarta.annotation.PostConstruct;
 import jakarta.servlet.http.HttpServletRequest;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Duration;
+import java.util.Base64;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -23,6 +26,11 @@ import org.springframework.web.bind.annotation.RestController;
  * 第 6 节：新增公开接口必须限流）。响应体按腾讯云约定返回 {@code {"result":0,"errmsg":"OK"}}， 不走平台统一 {@code ApiResponse} 外壳。
  *
  * <p>回执只含发送流水号（sid）、状态、时间与手机号（入库脱敏）——本身不含患者信息；sid 对不上发送行也入库为 UNMATCHED_RECEIPT，不丢对账依据。
+ *
+ * <p>来源校验（E22-T10 / 渗透修复自查 PT-SELF-02）：公开口此前只有 IP 限流，任意来源可伪造回执污染对账数据。 配置了回执凭据 （{@code
+ * crdp.sms.receipt-auth-username/password}，与腾讯云控制台「状态回执推送」Basic Auth 一致，环境变量注入）后 强制校验 Authorization
+ * 头，不匹配 40103（常量时间比较，凭据不进日志）；凭据未配置时保持迁移期行为（仅限流）， 通道启用而凭据缺失在启动时告警（docs/ops/pentest-remediation.md §5
+ * 运维清单兜底）。
  */
 @RestController
 public class SmsReceiptController {
@@ -43,16 +51,56 @@ public class SmsReceiptController {
         this.properties = properties;
     }
 
+    /** 通道启用而回执凭据未配置 = 公开口只剩限流一道闸：启动告警提醒运维补控制台 + 环境变量配置。 */
+    @PostConstruct
+    void warnIfReceiptAuthMissing() {
+        if (properties.isEnabled() && !properties.receiptAuthConfigured()) {
+            log.warn(
+                    "短信通道已启用但回执回调凭据未配置（crdp.sms.receipt-auth-username/password），"
+                            + "公开回执口仅剩 IP 限流；请在腾讯云控制台配置状态回执 Basic Auth 并经"
+                            + " CRDP_SMS_RECEIPT_AUTH_USER / CRDP_SMS_RECEIPT_AUTH_PASSWORD 注入");
+        }
+    }
+
     @PublicApi
     @PostMapping(value = "/api/notify/sms/receipt", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ReceiptAck receive(@RequestBody String rawBody, HttpServletRequest request) {
         rateLimit(clientIp(request));
+        if (properties.receiptAuthConfigured()) {
+            requireReceiptAuth(request.getHeader("Authorization"));
+        }
         if (rawBody == null || rawBody.getBytes(StandardCharsets.UTF_8).length > MAX_BODY_BYTES) {
             throw new ApiException(400, 40001, "参数不合法：body");
         }
         int stored = handler.handle(rawBody);
         log.info("sms receipt received stored={}", stored);
         return new ReceiptAck(0, "OK");
+    }
+
+    /**
+     * 回执 Basic Auth 校验：凭据 Base64 后常量时间比较（用户名:密码 整串），不匹配一律 40103—— 报文不进
+     * handler、不落对账表；错误响应不带差异提示（凭据错误 / 缺头同响应，不探测配置）。
+     */
+    private void requireReceiptAuth(String authorizationHeader) {
+        boolean matches = false;
+        if (authorizationHeader != null && authorizationHeader.startsWith("Basic ")) {
+            String expected =
+                    Base64.getEncoder()
+                            .encodeToString(
+                                    (properties.getReceiptAuthUsername()
+                                                    + ":"
+                                                    + properties.getReceiptAuthPassword())
+                                            .getBytes(StandardCharsets.UTF_8));
+            byte[] provided =
+                    authorizationHeader
+                            .substring("Basic ".length())
+                            .trim()
+                            .getBytes(StandardCharsets.UTF_8);
+            matches = MessageDigest.isEqual(provided, expected.getBytes(StandardCharsets.UTF_8));
+        }
+        if (!matches) {
+            throw new ApiException(401, 40103, "回执回调未授权");
+        }
     }
 
     private void rateLimit(String clientIp) {
