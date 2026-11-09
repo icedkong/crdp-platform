@@ -13,8 +13,8 @@ import { apiPath, requestClient } from '#/api/request';
  */
 const responsiveRouteNames = new Set([
   // E24-T03：患者列表（plt_menu 21，手机卡片 + 筛选 / 高级检索底部抽屉、
-  // 平板筛选右侧抽屉）与患者详情（plt_menu 215，列表卡片点进可达；
-  // 详情自身的折叠头部 / 操作抽屉 / 表格转卡片随 E24-T04）
+  // 平板筛选右侧抽屉）；E24-T04：患者详情（plt_menu 215，折叠头部 / 操作
+  // 底部抽屉 / 页签横向滚动 / 沟通记录与报告单表格转卡片）
   'FollowupPatient',
   'FollowupPatientDetail',
   // E24-T02：随访录入整页表单（plt_menu 223，平板 / 手机单列 + 底部固定操作栏）
