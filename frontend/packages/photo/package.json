@@ -1,0 +1,13 @@
+{
+  "name": "@crdp/photo",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./image-compress": "./src/image-compress.ts"
+  },
+  "dependencies": {
+    "@crdp/tokens": "workspace:*",
+    "heic2any": "catalog:"
+  }
+}

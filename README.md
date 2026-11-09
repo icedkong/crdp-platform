@@ -21,7 +21,7 @@ backend/                 Maven 多模块，JDK 21，Spring Boot 3
 frontend/                pnpm workspace，官方 Vben Admin 5（仅 Ant Design Vue，见 ADR 0002）
   apps/web-hospital/     医院端，租户编码登录
   apps/web-platform/     平台端
-  apps/mobile-upload/    手机上传占位
+  apps/mobile-upload/    手机扫码拍照上传 H5（E16-T10，端口 14175）
   packages/api/          与后端约定的类型
   packages/tokens/       设计令牌
   packages/form-engine/  占位

@@ -90,6 +90,25 @@ export interface ReportCreatedView {
 }
 
 /**
+ * E16-T10 手机扫码上传（A-ATT-015 / C-SCAN-008，POST /followup/upload-tokens）：
+ * 一次性二维码签发结果——15 分钟有效、绑定当前用户与患者；qrUrl = H5 基地址 +
+ * /#/u/{token}（令牌只放 URL 片段，不进服务端日志）。
+ */
+export interface MobileUploadIssue {
+  expiresAtEpochSecond: number;
+  qrUrl: string;
+  token: string;
+}
+
+/** 电脑端轮询二维码状态（GET /followup/upload-tokens/{token}）。 */
+export interface MobileUploadStatus {
+  /** PENDING 等待手机操作 / SUBMITTED 已生成报告单（带 reportId）/ EXPIRED 过期 */
+  expiresAtEpochSecond: number;
+  reportId: null | string;
+  status: 'EXPIRED' | 'PENDING' | 'SUBMITTED';
+}
+
+/**
  * E16-T03 批量上传（A-ATT-014、C-SCAN-007，POST /followup/reports/batch-create）：
  * 先统一选择类型与位置（至少 1 个，可逐份调整），ONE_PER_FILE 每个文件一份、
  * MERGE 合并为一份多页资料；一次最多 50 个文件，单份上限沿用上传策略 maxFilesPerReport。

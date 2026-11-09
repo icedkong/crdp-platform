@@ -30,6 +30,7 @@ public class SecurityConfig {
             GraceReadOnlyFilter graceReadOnlyFilter,
             ApiResourceGuardFilter apiResourceGuardFilter,
             TenantViewGuardFilter tenantViewGuardFilter,
+            H5UploadTokenFilter h5UploadTokenFilter,
             ApiErrorWriter errors)
             throws Exception {
         http.csrf(AbstractHttpConfigurer::disable)
@@ -134,6 +135,21 @@ public class SecurityConfig {
                                         .requestMatchers(
                                                 HttpMethod.GET, "/api/hospital/files/download/*")
                                         .permitAll()
+                                        // E16-T10 / A-ATT-015、C-SCAN-008、C-NFR-006：手机扫码上传 H5 公开口
+                                        // （/api/h5/upload/{token}、/{token}/context|files|submit）。凭一次性
+                                        // 令牌鉴权——H5UploadTokenFilter 按令牌装载签发人实时会话（无令牌 /
+                                        // 过期 / 已用不装载，服务层统一 40101）；公开口按 IP 每小时限流
+                                        // （MobileUploadService.rateLimit）。排在 anyRequest 之前
+                                        .requestMatchers(
+                                                HttpMethod.GET,
+                                                "/api/h5/upload/*",
+                                                "/api/h5/upload/*/context")
+                                        .permitAll()
+                                        .requestMatchers(
+                                                HttpMethod.POST,
+                                                "/api/h5/upload/*/files",
+                                                "/api/h5/upload/*/submit")
+                                        .permitAll()
                                         // E04-T03 / PLT-AUTH-005：平台端与医院端接口前缀各自只接受
                                         // 对应端的会话（令牌由 TokenAuthenticationFilter 附带端别权限），
                                         // 跨端令牌一律 40300，不依赖各控制器自行调用 require* 系列
@@ -181,7 +197,12 @@ public class SecurityConfig {
                 // E20-T03 / PLT-VIEW-010..012：租户视角的执行点——放在登记闸门之后
                 // （未登记 40307 对视角同样适用），对视角会话按视角规则拦截写 / 导出 / 明文
                 // （40303）并放行读（脱敏 / 设盲在响应装配点执行）；医院 / 平台会话零开销直通
-                .addFilterAfter(tenantViewGuardFilter, ApiResourceGuardFilter.class);
+                .addFilterAfter(tenantViewGuardFilter, ApiResourceGuardFilter.class)
+                // E16-T10 / A-ATT-015、C-SCAN-008：一次性上传令牌的会话装载——放在令牌过滤
+                // 与各闸门之后（先看到手机端可能的 Bearer 登录会话，再决定是否按令牌覆盖），
+                // 只对 /api/h5/upload/{token}/** 生效；装载的 SESSION_H5 端别权限进不了
+                // /api/hospital/** 与 /api/platform/**
+                .addFilterAfter(h5UploadTokenFilter, TenantViewGuardFilter.class);
         return http.build();
     }
 

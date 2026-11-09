@@ -17,6 +17,7 @@
   "dependencies": {
     "@crdp/api": "workspace:*",
     "@crdp/form-engine": "workspace:*",
+    "@crdp/photo": "workspace:*",
     "@crdp/responsive": "workspace:*",
     "@crdp/rules": "workspace:*",
     "@crdp/status-tag": "workspace:*",
@@ -39,12 +40,13 @@
     "@vueuse/core": "catalog:",
     "ant-design-vue": "catalog:",
     "dayjs": "catalog:",
-    "heic2any": "catalog:",
     "pinia": "catalog:",
+    "qrcode": "catalog:",
     "vue": "catalog:",
     "vue-router": "catalog:"
   },
   "devDependencies": {
+    "@types/qrcode": "catalog:",
     "@vue/test-utils": "catalog:"
   }
 }

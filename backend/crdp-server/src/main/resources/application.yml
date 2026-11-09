@@ -108,9 +108,17 @@ crdp:
     type: local
     local:
       root: data/storage # 本地桶根目录（对象按 t/{租户编码}/… 落在其下）
+  # E16-T10 / A-ATT-015、C-SCAN-008、C-NFR-006：手机扫码拍照上传 H5。
+  h5-upload:
+    # 一次性二维码有效期（秒，规格固定 15 分钟，配置写大按 900 执行）
+    ttl-seconds: 900
+    # H5 应用（apps/mobile-upload）对外基地址；qrUrl = 基地址 + /#/u/{token}（令牌只放 URL 片段）
+    mobile-base-url: ${CRDP_H5_UPLOAD_MOBILE_BASE_URL:http://127.0.0.1:14175}
+    # 公开口（/api/h5/upload/**）同一 IP 每小时上限（AGENTS.md 第 6 节公开口限流）
+    ip-hourly-limit: 600
   file:
     # E10-T03 图片缩略图：上传图片后同步生成（保持原格式、不放大、小图复用原字节），
-    # 128 = 设计稿缩略图 64×64（components.md §5/§7）的 2 倍视网膜余量（OQ-61 暂行值）。
+    # 128 = 设计稿缩略图 64×64（components.md §5/7）的 2 倍视网膜余量（OQ-61 暂行值）。
     thumbnail:
       max-edge: 128
     preview:

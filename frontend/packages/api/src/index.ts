@@ -990,6 +990,8 @@ export {
 } from './report';
 
 export type {
+  MobileUploadIssue,
+  MobileUploadStatus,
   PatientReportsView,
   ReportAnchorType,
   ReportBatchCreatedView,
