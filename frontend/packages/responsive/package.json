@@ -4,6 +4,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./device-matrix": "./src/device-matrix.ts",
     "./use-breakpoint": "./src/use-breakpoint.ts",
     "./use-keyboard-safe-bottom": "./src/use-keyboard-safe-bottom.ts"
   },

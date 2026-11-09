@@ -1,5 +1,11 @@
 import './route-meta';
 
+export {
+  applyDeviceProfile,
+  DEVICE_PROFILES,
+  type DeviceEngineCapabilities,
+  type DeviceProfile,
+} from './device-matrix';
 export { default as MobileBlocker } from './mobile-blocker.vue';
 export {
   createMobileBlockedRoute,
