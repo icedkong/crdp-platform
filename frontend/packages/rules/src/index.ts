@@ -14,6 +14,7 @@ export function permissionCode(
   return `${module}:${resource}:${action}`;
 }
 
+export { isExternalHttpLink, openExternalLink } from './external-link';
 export {
   type CompareHit,
   type ComparePrevious,
@@ -67,6 +68,7 @@ export {
   type ValidationRange,
 } from './form-validation';
 export { hasPermission } from './has-permission';
+export { resolveLoginRedirect } from './login-redirect';
 export {
   PERMISSION_REFRESH_CODES,
   permissionVersionChanged,

@@ -6,6 +6,7 @@ import { useAccessStore, useUserStore } from '@vben/stores';
 import { startProgress, stopProgress } from '@vben/utils';
 
 import { setupResponsiveGuard } from '@crdp/responsive';
+import { resolveLoginRedirect } from '@crdp/rules';
 
 import { accessRoutes, coreRouteNames } from '#/router/routes';
 import { useAuthStore } from '#/store';
@@ -55,10 +56,11 @@ function setupAccessGuard(router: Router) {
     // 基本路由，这些路由不需要进入权限拦截
     if (coreRouteNames.includes(to.name as string)) {
       if (to.path === LOGIN_PATH && accessStore.accessToken) {
-        return decodeURIComponent(
-          (to.query?.redirect as string) ||
-            userStore.userInfo?.homePath ||
-            preferences.app.defaultHomePath,
+        // E22-T11 / PT-SELF-07：redirect 是 URL 查询串（未认证用户可构造），
+        // 只放行站内路径（resolveLoginRedirect 白名单），其余回落 homePath / 首页
+        return resolveLoginRedirect(
+          to.query?.redirect as null | string | undefined,
+          userStore.userInfo?.homePath || preferences.app.defaultHomePath,
         );
       }
       // E04-T05 / PLT-AUTH-010：改密页是核心路由但要先有令牌（未登录访问回登录页）；
@@ -122,13 +124,16 @@ function setupAccessGuard(router: Router) {
     accessStore.setAccessMenus(accessibleMenus);
     accessStore.setAccessRoutes(accessibleRoutes);
     accessStore.setIsAccessChecked(true);
-    const redirectPath = (from.query.redirect ??
-      (to.path === preferences.app.defaultHomePath
+    // E22-T11 / PT-SELF-07：回跳目标过白名单（站内单斜杠路径），非法值回落原目标链
+    const redirectPath = resolveLoginRedirect(
+      from.query.redirect as null | string | undefined,
+      to.path === preferences.app.defaultHomePath
         ? userInfo.homePath || preferences.app.defaultHomePath
-        : to.fullPath)) as string;
+        : to.fullPath,
+    );
 
     return {
-      ...router.resolve(decodeURIComponent(redirectPath)),
+      ...router.resolve(redirectPath),
       replace: true,
     };
   });

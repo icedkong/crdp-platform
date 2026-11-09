@@ -46,6 +46,26 @@ interface AccessState {
 }
 
 /**
+ * E22-T11 / PT-SELF-05（中危，修复）：会话令牌持久化配置。
+ *
+ * 原实现把 accessToken / refreshToken / lockScreenPassword pick 进全局持久化
+ * 载体（localStorage；SecureLS 的密钥内联在构建产物里，只算混淆不算加密）——
+ * 医院共享工位上关闭浏览器后，TTL 内仍有效的令牌留在盘上可被恢复复用；租户
+ * 视角令牌（≤2 小时）同路径落盘。修复口径：
+ * - 载体改 sessionStorage：标签页内延续（含 window.open 开出的同源新标签，
+ *   按规范继承副本）、关闭即清；同仓库 tabbar store 已有 per-store storage
+ *   覆盖先例；
+ * - lockScreenPassword（口令类，永不落盘）与 refreshToken（enableRefreshToken
+ *   全局关闭，恒为 null）移出 pick；
+ * - accessToken / accessCodes 保留：刷新不掉线、按钮显隐不闪烁。
+ * 导出为常量并让 defineStore 引用同一对象，`access-persist.test.ts` 锁定防漂移。
+ */
+export const ACCESS_PERSIST_OPTIONS = {
+  storage: sessionStorage,
+  pick: ['accessToken', 'accessCodes', 'isLockScreen'],
+} as const;
+
+/**
  * @zh_CN 访问权限相关
  */
 export const useAccessStore = defineStore('core-access', {
@@ -99,16 +119,7 @@ export const useAccessStore = defineStore('core-access', {
       this.lockScreenPassword = undefined;
     },
   },
-  persist: {
-    // 持久化
-    pick: [
-      'accessToken',
-      'refreshToken',
-      'accessCodes',
-      'isLockScreen',
-      'lockScreenPassword',
-    ],
-  },
+  persist: ACCESS_PERSIST_OPTIONS,
   state: (): AccessState => ({
     accessCodes: [],
     accessMenus: [],
