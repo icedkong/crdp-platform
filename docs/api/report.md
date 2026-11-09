@@ -78,16 +78,18 @@
 | POST | `/api/hospital/followup/report-inbox/search` | 未选患者的文件，同样按科室病区隔离（按上传人所在科室） |
 | POST | `/api/hospital/followup/report-inbox/{id}/archive` | `{ patientId, typeCode, locations[≥1], ... }` → 生成报告单 |
 
-## 5. 手机拍照上传（A-ATT-015、C-SCAN-008）
+## 5. 手机拍照上传（A-ATT-015、C-SCAN-008、C-NFR-006；**已实现（E16-T10）**）
 
 | 方法 | 路径 | 鉴权 | 说明 |
 |---|---|---|---|
-| POST | `/api/hospital/followup/upload-tokens` | `followup:scan:upload` | `{ patientId, presetLocation? }` → `{ token, qrUrl, expiresAt }`；15 分钟、一次性、绑定当前用户与患者 |
-| GET | `/api/h5/upload/{token}` | token（C 还要求手机端已登录本院账号） | 患者脱敏信息、可选类型与位置 |
-| POST | `/api/h5/upload/{token}/files` | token | 上传图片（前端已压缩、去 EXIF） |
-| POST | `/api/h5/upload/{token}/submit` | token | 提交 → 报告单进入电脑端对话框 / 直接创建；token 作废 |
+| POST | `/api/hospital/followup/upload-tokens` | `followup:scan:upload` | **已实现（E16-T10）**。`{ patientId, presetLocation? }` → `{ token, qrUrl, expiresAtEpochSecond }`；15 分钟（配置写大按 900 秒执行）、一次性、绑定当前用户与患者（患者越范围 40400）；presetLocation = 从基线分类 / 随访分组内生成时的预选位置（五元组）；qrUrl = `crdp.h5-upload.mobile-base-url` + `/#/u/{token}`（令牌只放 URL 片段）；写 RPT_UPLOAD_TOKEN_ISSUE 审计 |
+| GET | `/api/hospital/followup/upload-tokens/{token}` | `followup:scan:upload` | **已实现（E16-T10）**。电脑端弹窗轮询（每 3 秒）：`{ status: PENDING\|SUBMITTED\|EXPIRED, reportId?, expiresAtEpochSecond }`——SUBMITTED 手机已生成报告单（前端刷新患者内清单）、EXPIRED 提示重新生成 |
+| GET | `/api/h5/upload/{token}/context` | 一次性令牌（免登录） | **已实现（E16-T10）**。H5 引导信息 `{ tenantCode, tenantName, requireLogin, expiresAtEpochSecond }`（登录表单租户预填与过期前置提示；不含患者数据；C 打开 h5_upload_login 后也豁免本口） |
+| GET | `/api/h5/upload/{token}` | 一次性令牌（C 打开 `h5_upload_login` 后还须本院 Bearer 会话，未登录 40100「请先登录本院账号后再上传」） | **已实现（E16-T10）**。页面信息：患者脱敏（姓名张*明 / 病案号前 2 后 2）、`{ today, types: [{ code, name, nameRequired, names[] }], locationOptions: [{ key, label, value（五元组） }], presetKey?, requireLogin, expiresAtEpochSecond }`——位置选项 = 电脑端位置树拍平（label 祖先「 · 」拼接），presetKey = 二维码预选位置命中项（模板版本一致才预选，OQ-117⑤） |
+| POST | `/api/h5/upload/{token}/files` | 同上 | **已实现（E16-T10）**。multipart `file` 上传一张图片（前端已压缩长边 ≤ 2560、转 JPEG、去 EXIF——`@crdp/photo` 与电脑端同一链路，OQ-116⑤）；服务端格式白名单与真实类型校验同 `POST /api/hospital/files`；令牌内清单达到每份报告单附件上限后再传 40001；返回 `{ fileId, sha256, ... }` |
+| POST | `/api/h5/upload/{token}/submit` | 同上 | **已实现（E16-T10）**。`{ typeCode, nameId?, reportDate, locations[≥1] }` **直接创建报告单**（创建人 = 二维码签发人；位置 / 附件 / 模板版本校验与电脑端 POST /reports 同一套；fileIds 取令牌内手机已上传清单，不收手机端回传）；至少一张照片 40001；成功后令牌作废（一次性，OQ-117④），写 RPT_CREATE + RPT_MOBILE_SUBMIT 审计 |
 
-token 过期或已用：返回 40101，前端显示“二维码已过期，请在电脑上重新生成”（文案推断）。`/api/h5/**` 需在 SecurityConfig 单独放行并限流。
+token 过期或已用（含签发人会话已结束）：公开口一律 **40101**「二维码已过期，请在电脑上重新生成」（OQ-25 文案、OQ-117④）。`/api/h5/upload/**` 在 SecurityConfig permitAll + `@PublicApi` 启动扫描登记 + **按 IP 每小时限流**（`crdp.h5-upload.ip-hourly-limit`）；会话上下文由 `H5UploadTokenFilter` 按令牌载荷取**签发人实时会话**装载（数据范围 / 权限 / 租户现场判定，权限被收走或会话结束立即失效；装载会话带端别权限 SESSION_H5，进不了医院端 / 平台端其余接口，OQ-117②）。
 
 ## 6. 报告单设置（`/system/report-config`，`followup:scan:config`）
 
@@ -129,7 +131,7 @@ token 过期或已用：返回 40101，前端显示“二维码已过期，请�
 - 删除（E16-T09）：删整份原因缺失 / 空白 40001 且不落库；删除后患者内清单不再出现、`rpt_report` 三列（原因 / 删除人 / 删除时间）落值、附件 sys_file 全部 DELETED（预览 / 下载 40400）、`aud_log` 有 `RPT_DELETE` 且描述带原因；删单个文件 fileCount 递减、另一附件不受影响、`RPT_FILE_DELETE` 带原因；已删再删 40400；越病区（有权限）40400 + `RPT_DELETE` DENIED；跨租户 40400；FOLLOWUP_DOCTOR 无 `scan:delete` 40300、模块关闭 40301；越病区患者报告单的附件预览 / 下载 40400（OQ-62 ①），下载审计描述带「报告单：类型 · 名称（#id）」。
 - 越范围患者的报告单在全院列表不出现，按 id 访问 40400；重复文件提示不泄露范围外患者。
 - 伪造扩展名的 exe → 被拒；超大文件 → 40001。
-- H5 token：过期、重复使用、换患者均失败。
+- H5 一次性令牌（E16-T10）：签发带预选（presetKey 命中、模板版本漂移不预选）；手机端免登录全流程（引导 / 信息脱敏 / 上传 / 提交直接生成报告单，创建人 = 签发人，附件取令牌清单）；提交后令牌作废（再读 / 再提交 40101）；过期（Redis 键消失）公开口一律 40101 同句文案；签发人会话结束后同样 40101；无 `scan:upload`（FOLLOWUP_DOCTOR）签发 40300、越范围 / 跨租户患者 40400、模块关闭 40301；C 打开 `h5_upload_login` 后未登录 40100、/context 豁免、同租户会话放行（C-NFR-006）；公开口按 IP 限流 42900。
 - 批量上传（E16-T03）：MERGE 超过每份上限（demoa 10 个）→ 40001「附件数量超过上限（每份报告单最多 10 个）」且不落库；ONE_PER_FILE n 个文件 → n 份报告单、逐份调整名称 / 报告时间生效；> 50 个文件 40001；空 fileIds / 未知 mode 40001；items 引用清单外文件 40001；每份 RPT_CREATE + 一条 RPT_BATCH_CREATE；无 `scan:upload` 40300。
 - 映射写入（E16-T07）：预览 conflict 字段未进 fieldKeys → 跳过并回告 `skippedConflicts`、原值保留；确认后 `fe_field_history` 有 `source=REPORT` 行（旧值 → 新值）且 `aud_log` 有 `RPT_MAPPING_WRITE`；目标版本过期 40900、基线锁定 40901、报告时间晚于手术 / 出院日期 40001；位置中无映射目标 → mappings 空；无映射类型（检验）→ mappings 空；无 `scan:upload` 40300、跨租户 40400。
 - 全院列表（E16-T05）：**按病区隔离（验收）**——病区范围用户（A_WARD_DOCTOR + 指定病区）检索只见本病区报告单、其他病区不可见（数据范围改写），ALL 范围管理员两病区都可见；`locationScope=UNASSIGNED` 只返回无位置报告单（行 `locations` 空清单，前端橙色「未指定位置」）；keyword 按患者姓名 / 病案号精确命中（部分姓名不命中）并 LIKE 匹配名称 / 所见文字；类型 / 报告时间 / 上传人 / 电子化 / 病区筛选与分页（pageNo=0、pageSize=101、日期颠倒 40001）；行内姓名「张*明」、病案号「前 2 后 2」脱敏，`firstFile` 为首附件；批量查询写 `BATCH_QUERY` 审计（objectType=REPORT）；无 `followup:report:view`（FOLLOWUP_DOCTOR 未授菜单 23）40300、模块关闭 40301。

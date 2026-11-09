@@ -34,6 +34,10 @@ crdp:
       # 经 DEW 凭据管理 / 环境变量注入，不进镜像；此处无默认值——缺失或过短启动即失败
       # （FileDownloadSigner fail-fast），不落到开发默认密钥上
       signing-key: ${CRDP_FILE_DOWNLOAD_SIGNING_KEY:}
+  h5-upload:
+    # E16-T10 / A-ATT-015、C-SCAN-008：手机扫码上传 H5 的对外基地址（https，公网可扫）。
+    # 经环境变量 / 部署配置注入；缺省回落本机开发地址（二维码扫不通即暴露配置缺失）
+    mobile-base-url: ${CRDP_H5_UPLOAD_MOBILE_BASE_URL:http://127.0.0.1:14175}
 
 spring:
   data:

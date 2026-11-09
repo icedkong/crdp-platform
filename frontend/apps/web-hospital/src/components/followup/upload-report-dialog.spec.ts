@@ -41,8 +41,8 @@ vi.mock('#/api/core/file', () => ({
 // E24-T06 拍照压缩链路：默认按原文件通过（与 happy-dom 无解码器时的真实降级一致），
 // 需要断言压缩的用例单独 mockImplementation
 const compressImageFile = vi.fn();
-vi.mock('./image-compress', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./image-compress')>();
+vi.mock('@crdp/photo', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@crdp/photo')>();
   return {
     ...actual,
     compressImageFile: (...args: unknown[]) => compressImageFile(...args),

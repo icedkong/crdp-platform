@@ -393,7 +393,7 @@
 | 入口 | 患者详情头部「上传报告单」、报告单页签「添加报告单」、分类 / 分组末尾「上传附件」（预选位置）、随访表单「上传」 |
 | 权限 | `followup:scan:upload` |
 | 需求 | A-ATT-001、002、003、004、008、011、012、013、014、015；C-SCAN-001、002、003、004、005、006、007、008、010、017、018；NFR-RESP-003 |
-| 接口 | 类型与字段集 `GET /api/hospital/followup/report-types`；名称字典 `GET .../report-names?typeCode=`；上传文件 `POST /api/hospital/files`（multipart，返回 fileId）；创建 `POST /api/hospital/followup/reports`（含 `locations[]` 至少 1 个）；映射预览 / 确认（见 §5）；手机二维码 `POST /api/hospital/followup/upload-tokens`（15 分钟，绑定用户与患者）（均推断，待确认） |
+| 接口 | 类型与字段集 `GET /api/hospital/followup/report-types`；名称字典 `GET .../report-names?typeCode=`；上传文件 `POST /api/hospital/files`（multipart，返回 fileId）；创建 `POST /api/hospital/followup/reports`（含 `locations[]` 至少 1 个）；映射预览 / 确认（见 §5）；手机二维码 `POST /api/hospital/followup/upload-tokens`（15 分钟，绑定用户与患者；**已实现，E16-T10**） |
 
 步骤：选类型 → 按类型字段集显示：名称（名称字典，自动带出指标模板）、报告时间、医院（C）、指标表、所见与结论、**位置（`LocationPicker`，必填、可多选）**、附件（拍照 / 上传，多页）、备注；心脏超声（A）/ 程控报告单（C）保存前列出将写入的字段及原值，逐项确认。
 
@@ -405,7 +405,7 @@
 
 ### 6.2 手机上传页（`apps/mobile-upload`，H5）
 
-扫码后显示患者（脱敏）→ 选类型与位置（至少一个，下拉选择）→ 拍照或选图，可连续多张 → 提交 → 「上传成功」。令牌过期显示「二维码已过期，请在电脑上重新生成」（推断，待确认）。
+扫码后显示患者（脱敏）→ 选类型与位置（至少一个，下拉选择）→ 拍照或选图，可连续多张 → 提交 → 「上传成功」。令牌过期显示「二维码已过期，请在电脑上重新生成」（**已实现，E16-T10**；提交直接生成报告单，电脑端弹窗轮询刷新清单，OQ-117①；图片上传前压缩同 §6.1 口径〔长边 ≤ 2560、转 JPEG、去 EXIF〕）。
 
 ### 6.3 批量上传
 

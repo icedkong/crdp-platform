@@ -30,7 +30,7 @@
 |---|---|---|
 | 医院端 | `/api/hospital/...` | Bearer token；token 解析后把请求绑定到该院租户库（`TenantContext.useTenant`） |
 | 平台端 | `/api/platform/...` | Bearer token；只访问平台库（`TenantContext.usePlatform`） |
-| H5 上传 | `/api/h5/...`（推断，待确认） | 一次性上传令牌，只能调上传相关接口（见 `report.md`） |
+| H5 上传 | `/api/h5/upload/{token}/**`（E16-T10 已实现） | 一次性上传令牌（15 分钟，提交即消费），只能调上传相关接口（见 `report.md` §5）；会话上下文由 H5UploadTokenFilter 按令牌装载签发人实时会话 |
 
 - 请求头：`Authorization: Bearer <token>`。登录接口与 `/actuator/health`、`/v3/api-docs/**`、`/swagger-ui/**` 免登录（`SecurityConfig`）。
 - 响应头带 `X-Trace-Id`（CORS 已暴露）；响应体也带 `traceId`。

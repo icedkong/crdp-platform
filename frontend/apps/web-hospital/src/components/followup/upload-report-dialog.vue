@@ -14,6 +14,8 @@ import type { CallContactOption, IndicatorRow } from './report-dialog-logic';
 import { computed, reactive, ref, watch } from 'vue';
 
 import { reportIndicatorFlag } from '@crdp/api';
+// E16-T10 / OQ-116⑤：压缩链路上提共享包（手机 H5 同一实现）
+import { compressImageFile, isHeicFile } from '@crdp/photo';
 import {
   Button,
   DatePicker,
@@ -42,7 +44,6 @@ import { usePermission } from '#/reference/use-permission';
 import { useWatermarkViewer } from '#/reference/use-watermark-viewer';
 
 import { downloadFileById } from './file-download';
-import { compressImageFile, isHeicFile } from './image-compress';
 import LocationPicker from './location-picker.vue';
 import {
   applyProgress,

@@ -44,6 +44,7 @@ import {
 import CategoryBar from '#/components/followup/category-bar.vue';
 import ConflictBanner from '#/components/followup/conflict-banner.vue';
 import FormStatusBar from '#/components/followup/form-status-bar.vue';
+import MobileUploadQrModal from '#/components/followup/mobile-upload-qr.vue';
 import UploadReportDialog from '#/components/followup/upload-report-dialog.vue';
 import { useBreakpoint } from '#/reference/use-breakpoint';
 import { usePermission } from '#/reference/use-permission';
@@ -101,6 +102,8 @@ const canEdit = computed(() => hasPermission('followup:record:edit'));
 // E16-T02 / A-ATT-001：随访表单「上传」（pages.md §6.1 入口），预选本记录整条
 const canUploadReport = computed(() => hasPermission('followup:scan:upload'));
 const reportDialogOpen = ref(false);
+// E16-T10 / A-ATT-015：手机扫码上传二维码弹窗（预选本记录位置）
+const mobileUploadOpen = ref(false);
 const reportPatientId = computed(
   () => context.value?.patientId ?? patient.value?.patientId ?? null,
 );
@@ -669,6 +672,13 @@ function handleJump(key: string) {
           >
             上传报告单
           </Button>
+          <Button
+            v-if="canUploadReport && reportPatientId"
+            data-testid="record-mobile-upload"
+            @click="mobileUploadOpen = true"
+          >
+            手机拍照
+          </Button>
         </Space>
         <Space v-if="!readonly">
           <Button
@@ -702,6 +712,16 @@ function handleJump(key: string) {
       :patient-id="reportPatientId ?? ''"
       :preset="reportPreset"
       @update:open="reportDialogOpen = $event"
+    />
+
+    <!-- E16-T10 / A-ATT-015：一次性二维码（15 分钟，预选本记录位置），
+         手机提交后刷新（报告单页签在患者详情，此处仅提示） -->
+    <MobileUploadQrModal
+      :open="mobileUploadOpen"
+      :patient-id="reportPatientId ?? ''"
+      :preset="reportPreset"
+      @created="() => message.success('手机端已上传成功，请在患者详情查看')"
+      @update:open="mobileUploadOpen = $event"
     />
 
     <!-- 手机底部固定操作栏：上一条 / 下一条、暂存、提交；随 visualViewport 跟随键盘 -->

@@ -5,6 +5,8 @@
  * 类型 / 名称目录（report-types / report-names）读取见本文件，配置维护见 reportConfig.ts。
  */
 import type {
+  MobileUploadIssue,
+  MobileUploadStatus,
   PatientReportsView,
   ReportBatchCreatedView,
   ReportBatchCreateRequest,
@@ -13,6 +15,7 @@ import type {
   ReportCreatedView,
   ReportCreateRequest,
   ReportDeletedView,
+  ReportLocationInput,
   ReportLocationNode,
   ReportLocationsChangedView,
   ReportLocationsChangeRequest,
@@ -83,6 +86,32 @@ export function batchCreateReports(payload: ReportBatchCreateRequest) {
   return requestClient.post<ReportBatchCreatedView>(
     apiPath('/followup/reports/batch-create'),
     payload,
+  );
+}
+
+// ---------------------------------------------------------------- E16-T10 手机扫码上传（A-ATT-015 / C-SCAN-008）
+
+/**
+ * 签发一次性上传二维码（15 分钟、绑定本人与患者；followup:scan:upload）：presetLocation
+ * 为从基线分类 / 随访分组内生成时的预选位置（手机端下拉自动预选，A-ATT-015）。
+ */
+export function issueMobileUploadToken(
+  patientId: number | string,
+  presetLocation?: null | ReportLocationInput,
+) {
+  return requestClient.post<MobileUploadIssue>(
+    apiPath('/followup/upload-tokens'),
+    {
+      patientId,
+      presetLocation: presetLocation ?? null,
+    },
+  );
+}
+
+/** 轮询二维码状态（弹窗每 3 秒：SUBMITTED 后刷新患者内清单，EXPIRED 提示重新生成）。 */
+export function fetchMobileUploadStatus(token: string) {
+  return requestClient.get<MobileUploadStatus>(
+    apiPath(`/followup/upload-tokens/${token}`),
   );
 }
 

@@ -96,6 +96,7 @@ import ContactLogModal from '#/components/followup/contact-log-modal.vue';
 import { downloadFileById } from '#/components/followup/file-download';
 import FollowupTimeline from '#/components/followup/followup-timeline.vue';
 import InlineAttachmentStrip from '#/components/followup/inline-attachment-strip.vue';
+import MobileUploadQrModal from '#/components/followup/mobile-upload-qr.vue';
 import PatientHeader from '#/components/followup/patient-header.vue';
 import ReasonModal from '#/components/followup/reason-modal.vue';
 import {
@@ -435,6 +436,9 @@ const reportDialogOpen = ref(false);
 const batchDialogOpen = ref(false);
 /** 页内上传预选位置（基线分类 / 随访记录整条；A-ATT-001「自动预选该位置」）。 */
 const reportPreset = ref<ReportLocationInput[]>([]);
+
+/** E16-T10：手机扫码上传二维码弹窗（A-ATT-015）。 */
+const mobileUploadOpen = ref(false);
 
 async function loadReports() {
   reportsLoading.value = true;
@@ -1264,6 +1268,13 @@ const timelineLegendNote =
             </Tag>
             <Button
               v-if="canUploadReport"
+              data-testid="report-mobile-upload"
+              @click="mobileUploadOpen = true"
+            >
+              手机拍照
+            </Button>
+            <Button
+              v-if="canUploadReport"
               data-testid="report-batch-upload"
               @click="openBatchUpload()"
             >
@@ -1606,6 +1617,17 @@ const timelineLegendNote =
       :preset="reportPreset"
       @created="handleReportCreated"
       @update:open="reportDialogOpen = $event"
+    />
+
+    <!-- E16-T10 / A-ATT-015：一次性二维码（15 分钟），手机扫码拍照上传；
+         预选当前分类 / 分组位置（reportPreset），手机提交后刷新清单 -->
+    <MobileUploadQrModal
+      :open="mobileUploadOpen"
+      :patient-id="overview.id"
+      :patient-label="`${overview.name} · ${overview.patientNo}`"
+      :preset="reportPreset"
+      @created="handleReportCreated"
+      @update:open="mobileUploadOpen = $event"
     />
 
     <BatchUploadDialog
