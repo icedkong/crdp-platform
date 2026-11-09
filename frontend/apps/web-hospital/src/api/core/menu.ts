@@ -19,6 +19,9 @@ const responsiveRouteNames = new Set([
   'FollowupPatientDetail',
   // E24-T02：随访录入整页表单（plt_menu 223，平板 / 手机单列 + 底部固定操作栏）
   'FollowupRecordForm',
+  // E24-T05：我的任务（plt_menu 22，手机任务卡片 + 状态分段 + 筛选底部抽屉、
+  // 平板主要列 + 点行进表单；手机从任务进表单连续录入）
+  'FollowupTask',
 ]);
 
 /**

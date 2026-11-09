@@ -13,13 +13,14 @@ import {
   isTaskEnterable,
   isTaskReassignable,
   TASK_STATUS_OPTIONS,
+  TASK_STATUS_TEXT,
   TASK_TABS,
   taskDisplayStatus,
   taskStatusTooltip,
   taskWindowText,
 } from '@crdp/api';
 import { StatusTag } from '@crdp/status-tag';
-import { sizes } from '@crdp/tokens';
+import { colors, sizes } from '@crdp/tokens';
 import {
   Button,
   Card,
@@ -28,13 +29,15 @@ import {
   Form,
   FormItem,
   message,
-  Result,
+  Pagination,
+  Segmented,
   Select,
   Space,
   Spin,
   Table,
   TabPane,
   Tabs,
+  Tag,
 } from 'ant-design-vue';
 
 import {
@@ -44,6 +47,7 @@ import {
   startTask,
 } from '#/api/core/task';
 import TaskAssignModal from '#/components/followup/task-assign-modal.vue';
+import TaskFilterDrawer from '#/components/followup/task-filter-drawer.vue';
 import TempTaskModal from '#/components/followup/temp-task-modal.vue';
 import { useBreakpoint } from '#/reference/use-breakpoint';
 import { usePermission } from '#/reference/use-permission';
@@ -61,6 +65,14 @@ import {
   statusOfQuery,
   TASK_EMPTY_TEXT,
 } from './logic';
+import {
+  drawerFilterCount,
+  isTaskOverdue,
+  MOBILE_STATUS_SEGMENTS,
+  segmentOfStatus,
+  statusOfSegment,
+  taskCardActions,
+} from './responsive-logic';
 
 defineOptions({ name: 'FollowupTask' });
 
@@ -85,7 +97,15 @@ defineOptions({ name: 'FollowupTask' });
  * E15-T06 / A-FU-013：「+ 临时任务」打开 TempTaskModal（检索选患者 →
  * FORM / REMINDER → 计划日期 + 窗口宽度），不占用年度任务；
  * A-FU-026：站内提醒类任务无需填表——行内「完成提醒」确认即完成（不进录入）。
- * 任务卡片手机响应式随 E24-T05。
+ *
+ * E24-T05 / NFR-RESP-001、002（pages.md §7 响应式）：平板保留主要列（去掉
+ * 序号 / 最近联系）、点行进表单；手机任务卡片（患者、节点、窗口、状态、逾期
+ * 标记），点卡片进表单（链接携带当前筛选 → 随访工作台「上一条 / 下一条」顺
+ * 当前队列连续录入，表单页手机形态随 E24-T02）；状态筛选用顶部分段切换
+ * （全部 + 看板四态，单选；分段放不下的状态用条件 chip 展示与清除），病区 /
+ * 计划日期 / 负责人收进底部抽屉（design-system §5、§7）；手机无批量改派、
+ * 无看板（卡片即列表形态，OQ-115）。路由已登记响应式名单（不再被
+ * MobileBlocker 拦下）。
  */
 const route = useRoute();
 const router = useRouter();
@@ -93,7 +113,13 @@ const { hasPermission } = usePermission();
 const canEditRecord = computed(() => hasPermission('followup:record:edit'));
 const canAssign = computed(() => hasPermission('followup:task:assign'));
 const canCreatePlan = computed(() => hasPermission('followup:plan:edit'));
-const { isMobile } = useBreakpoint();
+const { isMobile, isTablet } = useBreakpoint();
+
+/** 手机卡片次操作显隐（taskCardActions 的权限入参，与桌面行内同源）。 */
+const cardPerms = computed(() => ({
+  canAssign: canAssign.value,
+  canEditRecord: canEditRecord.value,
+}));
 
 const RangePicker = DatePicker.RangePicker;
 
@@ -309,6 +335,81 @@ function onTempCreated() {
   void load();
 }
 
+// ---------------------------------------------------------------- E24-T05 · 平板点行 / 手机点卡片进表单
+
+/**
+ * 平板点行、手机点卡片进表单（pages.md §7）：主操作与行内「录入 / 查看」同源
+ * （taskCardActions），可录入且有权 → 经 start 换 recordId 新标签页打开随访
+ * 工作台；链接携带当前筛选，表单「上一条 / 下一条」顺当前队列连续录入。
+ */
+function handleOpenTask(row: TaskRow) {
+  const { primary } = taskCardActions(row, {
+    canAssign: canAssign.value,
+    canEditRecord: canEditRecord.value,
+  });
+  if (primary === 'enter') {
+    void handleEnter(row);
+    return;
+  }
+  if (primary === 'view') {
+    openReadonly(row);
+  }
+}
+
+/** 平板表格行点击（customRow）；操作列已 click.stop 拦截，不再冒泡到行。 */
+function tableCustomRow(record: TaskRow) {
+  return {
+    class: 'row-clickable',
+    onClick: () => handleOpenTask(record),
+  };
+}
+
+// ---------------------------------------------------------------- E24-T05 · 手机状态分段与筛选抽屉
+
+/** 顶部分段（pages.md §7）：全部 + 看板四态单选；改动即检索并回写路由 query。 */
+const segmentValue = computed({
+  get: () => segmentOfStatus(filters.status) ?? 'ALL',
+  set: (value: (typeof MOBILE_STATUS_SEGMENTS)[number]['value']) => {
+    filters.status = statusOfSegment(value);
+    handleSearch();
+  },
+});
+
+/** 分段放不下的状态（失访候选 / 多选钻取参数）：条件 chip 展示与清除，不丢筛选。 */
+const segmentOverflow = computed(
+  () =>
+    filters.status &&
+    filters.status.length > 0 &&
+    segmentOfStatus(filters.status) === null,
+);
+
+const segmentOverflowText = computed(() =>
+  (filters.status ?? []).map((item) => TASK_STATUS_TEXT[item]).join('、'),
+);
+
+function clearSegmentOverflow() {
+  filters.status = null;
+  handleSearch();
+}
+
+/** 筛选抽屉（病区 / 计划日期 / 负责人；状态分段常驻顶栏不进抽屉）。 */
+const filterOpen = ref(false);
+const drawerCount = computed(() =>
+  drawerFilterCount({
+    assignee: filters.assignee,
+    dueRange: filters.dueRange,
+    wardIds: filters.wardIds,
+  }),
+);
+
+function handleDrawerSearch() {
+  handleSearch();
+}
+
+function handleCardPageChange(nextPage: number) {
+  handleTableChange(nextPage, pageSize.value);
+}
+
 /** 打开改派弹窗（单个改派 = 传一条）。 */
 function openAssign(ids: Array<number | string>) {
   if (ids.length === 0) return;
@@ -335,7 +436,7 @@ const rowSelection = computed(() => ({
 
 // ---------------------------------------------------------------- 列定义（pages.md §7）
 
-const columns = computed(() => [
+const desktopColumns = computed(() => [
   { dataIndex: 'index', title: '#', width: 48 },
   { dataIndex: 'patientName', title: '患者' },
   { dataIndex: 'wardName', title: '病区', width: 120 },
@@ -347,6 +448,22 @@ const columns = computed(() => [
   { dataIndex: 'lastContact', title: '最近联系', width: 96 },
   { dataIndex: 'action', fixed: 'right' as const, title: '操作', width: 168 },
 ]);
+
+/** 平板保留主要列（pages.md §7：去掉序号 / 最近联系，信息在行展开前的主列足够定位任务）。 */
+const tabletColumns = computed(() => [
+  { dataIndex: 'patientName', title: '患者' },
+  { dataIndex: 'wardName', title: '病区', width: 110 },
+  { dataIndex: 'nodeName', title: '节点', width: 100 },
+  { dataIndex: 'planDate', title: '计划日期', width: 104 },
+  { dataIndex: 'window', title: '窗口', width: 140 },
+  { dataIndex: 'status', title: '状态', width: 140 },
+  { dataIndex: 'assigneeName', title: '负责人', width: 100 },
+  { dataIndex: 'action', fixed: 'right' as const, title: '操作', width: 150 },
+]);
+
+const columns = computed(() =>
+  isTablet.value ? tabletColumns.value : desktopColumns.value,
+);
 
 const dataSource = computed(() =>
   rows.value.map((item, index) => ({
@@ -387,14 +504,11 @@ function handleEmptyAction() {
 </script>
 
 <template>
-  <Result v-if="isMobile" status="info" title="请在电脑或平板上操作">
-    <template #extra>
-      <Button type="primary" @click="router.push('/dashboard')">
-        返回首页
-      </Button>
-    </template>
-  </Result>
-  <div v-else class="page" data-testid="task-list">
+  <div
+    class="page"
+    :class="{ 'page-mobile': isMobile }"
+    data-testid="task-list"
+  >
     <Card :bordered="false" class="crdp-card">
       <div class="title-row">
         <h1 class="crdp-page-title">我的任务</h1>
@@ -424,180 +538,126 @@ function handleEmptyAction() {
         </TabPane>
       </Tabs>
 
-      <Form class="search-bar" layout="inline" @submit.prevent>
-        <FormItem label="状态">
-          <Select
-            v-model:value="filters.status"
-            allow-clear
-            :max-tag-count="2"
-            mode="multiple"
-            :options="TASK_STATUS_OPTIONS"
-            placeholder="全部"
-            style="width: 220px"
-          />
-        </FormItem>
-        <FormItem label="病区">
-          <Select
-            v-model:value="filters.wardIds"
-            allow-clear
-            :max-tag-count="2"
-            mode="multiple"
-            :options="wardOptions"
-            placeholder="全部"
-            style="width: 200px"
-          />
-        </FormItem>
-        <FormItem label="计划日期">
-          <RangePicker
-            v-model:value="filters.dueRange"
-            value-format="YYYY-MM-DD"
-          />
-        </FormItem>
-        <FormItem label="负责人">
-          <Select
-            v-model:value="filters.assignee"
-            :options="ASSIGNEE_FILTER_OPTIONS"
-            style="width: 120px"
-          />
-        </FormItem>
-        <FormItem>
-          <Space>
-            <Button
-              data-testid="task-search"
-              type="primary"
-              @click="handleSearch"
+      <!-- E24-T05 · 手机：状态分段切换（pages.md §7）+ 筛选抽屉入口 + 任务卡片列表 -->
+      <template v-if="isMobile">
+        <Segmented
+          v-model:value="segmentValue"
+          block
+          :options="[...MOBILE_STATUS_SEGMENTS]"
+          data-testid="task-status-segment"
+        />
+        <div v-if="segmentOverflow" class="segment-chip">
+          <Tag
+            closable
+            color="blue"
+            data-testid="task-status-chip"
+            @close.prevent="clearSegmentOverflow"
+          >
+            状态：{{ segmentOverflowText }}
+          </Tag>
+        </div>
+        <div class="mobile-filter-row">
+          <Button data-testid="task-filter-open" @click="filterOpen = true">
+            筛选
+            <span
+              v-if="drawerCount > 0"
+              class="filter-count"
+              :style="{ background: colors.primary }"
+              data-testid="task-filter-count"
             >
-              查询
-            </Button>
-            <Button @click="handleReset">重置</Button>
-          </Space>
-        </FormItem>
-      </Form>
+              {{ drawerCount }}
+            </span>
+          </Button>
+        </div>
 
-      <div class="view-switch">
-        <Button
-          :type="viewMode === 'list' ? 'primary' : 'default'"
-          size="small"
-          @click="viewMode = 'list'"
-        >
-          列表
-        </Button>
-        <Button
-          :type="viewMode === 'board' ? 'primary' : 'default'"
-          size="small"
-          @click="viewMode = 'board'"
-        >
-          看板
-        </Button>
-        <Button
-          v-if="canAssign"
-          data-testid="task-batch-assign"
-          :disabled="selectedIds.length === 0"
-          size="small"
-          type="primary"
-          @click="openAssign(selectedIds)"
-        >
-          批量改派（{{ selectedIds.length }}）
-        </Button>
-      </div>
-
-      <div v-if="viewMode === 'list'" class="table-wrap">
-        <Table
-          :columns="columns"
-          :data-source="dataSource"
-          :loading="loading"
-          :pagination="{
-            current: pageNo,
-            pageSize,
-            showSizeChanger: false,
-            total,
-            onChange: handleTableChange,
-            showTotal: (count: number) => `共 ${count} 条`,
-          }"
-          :row-selection="canAssign ? rowSelection : undefined"
-          row-key="id"
-          size="middle"
-        >
-          <template #bodyCell="{ column, record }">
-            <template v-if="column.dataIndex === 'patientName'">
-              <div>{{ record.patientName }}</div>
-              <div class="sub-text">{{ record.mrn }}</div>
-            </template>
-            <template v-else-if="column.dataIndex === 'status'">
-              <StatusTag
-                :status="record.statusText"
-                :tooltip="taskStatusTooltip(record.statusText)"
-                variant="dot"
-              />
-            </template>
-            <template v-else-if="column.dataIndex === 'assigneeName'">
-              <span v-if="record.assigneeName">{{ record.assigneeName }}</span>
-              <span v-else class="pool-tag">待认领</span>
-            </template>
-            <template v-else-if="column.dataIndex === 'action'">
-              <Button
-                v-if="isTaskEnterable(record as TaskRow) && canEditRecord"
-                :data-testid="`task-enter-${record.id}`"
-                :loading="startingId === record.id"
-                size="small"
-                type="link"
-                @click="handleEnter(record as TaskRow)"
-              >
-                录入
-              </Button>
-              <Button
-                v-else-if="record.recordId"
-                size="small"
-                type="link"
-                @click="openReadonly(record as TaskRow)"
-              >
-                查看
-              </Button>
-              <Button
-                v-if="isTaskAcknowledgable(record as TaskRow) && canEditRecord"
-                :data-testid="`task-ack-${record.id}`"
-                :loading="acknowledgingId === record.id"
-                size="small"
-                type="link"
-                @click="handleAcknowledge(record as TaskRow)"
-              >
-                完成提醒
-              </Button>
-              <Button
-                v-if="isTaskClaimable(record as TaskRow)"
-                :data-testid="`task-claim-${record.id}`"
-                :loading="claimingId === record.id"
-                size="small"
-                type="link"
-                @click="handleClaim(record as TaskRow)"
-              >
-                认领
-              </Button>
-              <Button
-                v-if="isTaskReassignable(record as TaskRow) && canAssign"
-                :data-testid="`task-assign-${record.id}`"
-                size="small"
-                type="link"
-                @click="openAssign([record.id])"
-              >
-                改派
-              </Button>
-              <span
-                v-if="
-                  !isTaskEnterable(record as TaskRow) &&
-                  !record.recordId &&
-                  !isTaskAcknowledgable(record as TaskRow) &&
-                  !isTaskClaimable(record as TaskRow) &&
-                  !(isTaskReassignable(record as TaskRow) && canAssign)
-                "
-                class="sub-text"
-              >
-                —
-              </span>
-            </template>
-          </template>
-          <template #emptyText>
-            <Empty :description="emptyInfo.description">
+        <div class="cards">
+          <Spin :spinning="loading">
+            <Card
+              v-for="row in rows"
+              :key="row.id"
+              :bordered="false"
+              class="task-item"
+              :data-testid="`task-card-${row.id}`"
+              :style="
+                isTaskOverdue(row)
+                  ? { borderLeft: `3px solid ${colors.error}` }
+                  : undefined
+              "
+              @click="handleOpenTask(row)"
+            >
+              <div class="item-line">
+                <span class="item-patient">{{ row.patientName }}</span>
+                <StatusTag
+                  :status="taskDisplayStatus(row)"
+                  :tooltip="taskStatusTooltip(taskDisplayStatus(row))"
+                  variant="dot"
+                />
+              </div>
+              <div class="sub-text">{{ row.mrn }}</div>
+              <div class="sub-text">
+                {{ row.nodeName ?? '—' }} · {{ row.wardName ?? '—' }}
+              </div>
+              <div class="sub-text">
+                计划 {{ row.planDate || '—' }} · 窗口
+                {{ taskWindowText(row.windowStart, row.windowEnd) }}
+              </div>
+              <div class="item-line item-footer">
+                <span class="sub-text">
+                  {{ row.assigneeName ?? '待认领' }}
+                  <span
+                    v-if="isTaskOverdue(row)"
+                    class="overdue-flag"
+                    :style="{ color: colors.error }"
+                  >
+                    · 已逾期
+                  </span>
+                </span>
+                <span class="item-actions" @click.stop>
+                  <Button
+                    v-if="
+                      taskCardActions(row, cardPerms).secondary.includes(
+                        'acknowledge',
+                      )
+                    "
+                    :data-testid="`task-ack-${row.id}`"
+                    :loading="acknowledgingId === row.id"
+                    size="small"
+                    @click="handleAcknowledge(row)"
+                  >
+                    完成提醒
+                  </Button>
+                  <Button
+                    v-if="
+                      taskCardActions(row, cardPerms).secondary.includes(
+                        'claim',
+                      )
+                    "
+                    :data-testid="`task-claim-${row.id}`"
+                    :loading="claimingId === row.id"
+                    size="small"
+                    @click="handleClaim(row)"
+                  >
+                    认领
+                  </Button>
+                  <Button
+                    v-if="
+                      taskCardActions(row, cardPerms).secondary.includes(
+                        'assign',
+                      )
+                    "
+                    :data-testid="`task-assign-${row.id}`"
+                    size="small"
+                    @click="openAssign([row.id])"
+                  >
+                    改派
+                  </Button>
+                </span>
+              </div>
+            </Card>
+            <Empty
+              v-if="!loading && rows.length === 0"
+              :description="emptyInfo.description"
+            >
               <Button
                 v-if="hasActiveFilters"
                 data-testid="task-empty-reset"
@@ -615,47 +675,280 @@ function handleEmptyAction() {
                 去新建计划
               </Button>
             </Empty>
-          </template>
-        </Table>
-      </div>
+          </Spin>
+          <div v-if="rows.length > 0" class="card-pagination">
+            <span
+              class="total"
+              :style="{ color: colors.textSecondary, fontSize: '12px' }"
+            >
+              共 {{ total }} 条
+            </span>
+            <Pagination
+              :current="pageNo"
+              data-testid="task-card-pagination"
+              :page-size="pageSize"
+              simple
+              :total="total"
+              @change="handleCardPageChange"
+            />
+          </div>
+        </div>
+      </template>
 
-      <div v-else class="board">
-        <Spin :spinning="loading">
-          <div class="board-columns">
-            <div v-for="group in groups" :key="group.key" class="board-column">
-              <div class="board-column-title">
-                {{ group.label }}
-                <span class="sub-text">{{ group.rows.length }}</span>
-              </div>
-              <div
-                v-for="task in group.rows"
-                :key="task.id"
-                class="board-card"
-                :data-testid="`board-card-${task.id}`"
-                @click="handleEnter(task)"
+      <!-- 桌面：行内筛选 + 列表 / 看板；平板保留主要列、点行进表单（pages.md §7） -->
+      <template v-else>
+        <Form class="search-bar" layout="inline" @submit.prevent>
+          <FormItem label="状态">
+            <Select
+              v-model:value="filters.status"
+              allow-clear
+              :max-tag-count="2"
+              mode="multiple"
+              :options="TASK_STATUS_OPTIONS"
+              placeholder="全部"
+              style="width: 220px"
+            />
+          </FormItem>
+          <FormItem label="病区">
+            <Select
+              v-model:value="filters.wardIds"
+              allow-clear
+              :max-tag-count="2"
+              mode="multiple"
+              :options="wardOptions"
+              placeholder="全部"
+              style="width: 200px"
+            />
+          </FormItem>
+          <FormItem label="计划日期">
+            <RangePicker
+              v-model:value="filters.dueRange"
+              value-format="YYYY-MM-DD"
+            />
+          </FormItem>
+          <FormItem label="负责人">
+            <Select
+              v-model:value="filters.assignee"
+              :options="ASSIGNEE_FILTER_OPTIONS"
+              style="width: 120px"
+            />
+          </FormItem>
+          <FormItem>
+            <Space>
+              <Button
+                data-testid="task-search"
+                type="primary"
+                @click="handleSearch"
               >
-                <div class="board-card-patient">{{ task.patientName }}</div>
-                <div class="sub-text">{{ task.nodeName }}</div>
-                <div class="sub-text">
-                  {{ taskWindowText(task.windowStart, task.windowEnd) }}
+                查询
+              </Button>
+              <Button @click="handleReset">重置</Button>
+            </Space>
+          </FormItem>
+        </Form>
+
+        <div class="view-switch">
+          <Button
+            :type="viewMode === 'list' ? 'primary' : 'default'"
+            size="small"
+            @click="viewMode = 'list'"
+          >
+            列表
+          </Button>
+          <Button
+            :type="viewMode === 'board' ? 'primary' : 'default'"
+            size="small"
+            @click="viewMode = 'board'"
+          >
+            看板
+          </Button>
+          <Button
+            v-if="canAssign"
+            data-testid="task-batch-assign"
+            :disabled="selectedIds.length === 0"
+            size="small"
+            type="primary"
+            @click="openAssign(selectedIds)"
+          >
+            批量改派（{{ selectedIds.length }}）
+          </Button>
+        </div>
+
+        <div v-if="viewMode === 'list'" class="table-wrap">
+          <Table
+            :columns="columns"
+            :custom-row="isTablet ? tableCustomRow : undefined"
+            :data-source="dataSource"
+            :loading="loading"
+            :pagination="{
+              current: pageNo,
+              pageSize,
+              showSizeChanger: false,
+              total,
+              onChange: handleTableChange,
+              showTotal: (count: number) => `共 ${count} 条`,
+            }"
+            :row-selection="canAssign ? rowSelection : undefined"
+            row-key="id"
+            size="middle"
+          >
+            <template #bodyCell="{ column, record }">
+              <template v-if="column.dataIndex === 'patientName'">
+                <div>{{ record.patientName }}</div>
+                <div class="sub-text">{{ record.mrn }}</div>
+              </template>
+              <template v-else-if="column.dataIndex === 'status'">
+                <StatusTag
+                  :status="record.statusText"
+                  :tooltip="taskStatusTooltip(record.statusText)"
+                  variant="dot"
+                />
+              </template>
+              <template v-else-if="column.dataIndex === 'assigneeName'">
+                <span v-if="record.assigneeName">{{
+                  record.assigneeName
+                }}</span>
+                <span v-else class="pool-tag">待认领</span>
+              </template>
+              <template v-else-if="column.dataIndex === 'action'">
+                <!-- 平板点行进表单：操作列拦截冒泡，避免点按钮同时触发行点击 -->
+                <span class="action-cell" @click.stop>
+                  <Button
+                    v-if="isTaskEnterable(record as TaskRow) && canEditRecord"
+                    :data-testid="`task-enter-${record.id}`"
+                    :loading="startingId === record.id"
+                    size="small"
+                    type="link"
+                    @click="handleEnter(record as TaskRow)"
+                  >
+                    录入
+                  </Button>
+                  <Button
+                    v-else-if="record.recordId"
+                    size="small"
+                    type="link"
+                    @click="openReadonly(record as TaskRow)"
+                  >
+                    查看
+                  </Button>
+                  <Button
+                    v-if="
+                      isTaskAcknowledgable(record as TaskRow) && canEditRecord
+                    "
+                    :data-testid="`task-ack-${record.id}`"
+                    :loading="acknowledgingId === record.id"
+                    size="small"
+                    type="link"
+                    @click="handleAcknowledge(record as TaskRow)"
+                  >
+                    完成提醒
+                  </Button>
+                  <Button
+                    v-if="isTaskClaimable(record as TaskRow)"
+                    :data-testid="`task-claim-${record.id}`"
+                    :loading="claimingId === record.id"
+                    size="small"
+                    type="link"
+                    @click="handleClaim(record as TaskRow)"
+                  >
+                    认领
+                  </Button>
+                  <Button
+                    v-if="isTaskReassignable(record as TaskRow) && canAssign"
+                    :data-testid="`task-assign-${record.id}`"
+                    size="small"
+                    type="link"
+                    @click="openAssign([record.id])"
+                  >
+                    改派
+                  </Button>
+                  <span
+                    v-if="
+                      !isTaskEnterable(record as TaskRow) &&
+                      !record.recordId &&
+                      !isTaskAcknowledgable(record as TaskRow) &&
+                      !isTaskClaimable(record as TaskRow) &&
+                      !(isTaskReassignable(record as TaskRow) && canAssign)
+                    "
+                    class="sub-text"
+                  >
+                    —
+                  </span>
+                </span>
+              </template>
+            </template>
+            <template #emptyText>
+              <Empty :description="emptyInfo.description">
+                <Button
+                  v-if="hasActiveFilters"
+                  data-testid="task-empty-reset"
+                  type="primary"
+                  @click="handleEmptyAction"
+                >
+                  清除筛选
+                </Button>
+                <Button
+                  v-else-if="canCreatePlan"
+                  data-testid="task-empty-create-plan"
+                  type="primary"
+                  @click="handleEmptyAction"
+                >
+                  去新建计划
+                </Button>
+              </Empty>
+            </template>
+          </Table>
+        </div>
+
+        <div v-else class="board">
+          <Spin :spinning="loading">
+            <div class="board-columns">
+              <div
+                v-for="group in groups"
+                :key="group.key"
+                class="board-column"
+              >
+                <div class="board-column-title">
+                  {{ group.label }}
+                  <span class="sub-text">{{ group.rows.length }}</span>
                 </div>
-                <div class="board-card-footer">
-                  <StatusTag :status="taskDisplayStatus(task)" variant="dot" />
-                  <span class="sub-text">{{
-                    task.assigneeName ?? '待认领'
-                  }}</span>
+                <div
+                  v-for="task in group.rows"
+                  :key="task.id"
+                  class="board-card"
+                  :data-testid="`board-card-${task.id}`"
+                  @click="handleEnter(task)"
+                >
+                  <div class="board-card-patient">{{ task.patientName }}</div>
+                  <div class="sub-text">{{ task.nodeName }}</div>
+                  <div class="sub-text">
+                    {{ taskWindowText(task.windowStart, task.windowEnd) }}
+                  </div>
+                  <div class="board-card-footer">
+                    <StatusTag
+                      :status="taskDisplayStatus(task)"
+                      variant="dot"
+                    />
+                    <span class="sub-text">{{
+                      task.assigneeName ?? '待认领'
+                    }}</span>
+                  </div>
                 </div>
-              </div>
-              <div v-if="group.rows.length === 0" class="sub-text board-empty">
-                暂无任务
+                <div
+                  v-if="group.rows.length === 0"
+                  class="sub-text board-empty"
+                >
+                  暂无任务
+                </div>
               </div>
             </div>
-          </div>
-        </Spin>
-      </div>
+          </Spin>
+        </div>
+      </template>
     </Card>
 
-    <!-- 改派弹窗（单个与批量共用 batch-assign；改派后新负责人收站内信） -->
+    <!-- 改派弹窗（单个与批量共用 batch-assign；改派后新负责人收站内信；
+         手机无批量改派，仅卡片 / 行内单条入口） -->
     <TaskAssignModal
       v-model:open="assignOpen"
       :count="assignTargetIds.length"
@@ -664,6 +957,20 @@ function handleEmptyAction() {
     />
     <!-- 临时任务（E15-T06 / A-FU-013：不占用年度任务；FORM / REMINDER 两形态） -->
     <TempTaskModal v-model:open="tempOpen" @created="onTempCreated" />
+    <!-- E24-T05 · 手机筛选抽屉（病区 / 计划日期 / 负责人；状态分段常驻顶栏） -->
+    <TaskFilterDrawer
+      v-model:open="filterOpen"
+      :filters="{
+        assignee: filters.assignee,
+        dueRange: filters.dueRange,
+        wardIds: filters.wardIds,
+      }"
+      placement="bottom"
+      :ward-options="wardOptions"
+      @reset="handleReset"
+      @search="handleDrawerSearch"
+      @update:filters="Object.assign(filters, $event)"
+    />
   </div>
 </template>
 
@@ -671,6 +978,11 @@ function handleEmptyAction() {
 .page {
   min-height: 100%;
   padding: 16px;
+}
+
+/* 手机底栏无需让位（本页无固定底栏），仅收窄留白 */
+.page-mobile {
+  padding: 12px;
 }
 
 .title-row {
@@ -688,6 +1000,86 @@ function handleEmptyAction() {
   display: flex;
   gap: 8px;
   margin: 8px 0;
+}
+
+/* 平板点行进表单：行内可点（customRow 注入 class；:deep 穿透 antd 表格行） */
+:deep(.row-clickable) {
+  cursor: pointer;
+}
+
+/* 操作列按钮包一层 span（平板行点击时 click.stop 拦截冒泡） */
+.action-cell {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+/* E24-T05 · 手机状态分段与筛选入口 */
+.mobile-filter-row {
+  display: flex;
+  margin: 8px 0;
+}
+
+.filter-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  margin-left: 4px;
+  font-size: 12px;
+  line-height: 1;
+  vertical-align: 2px;
+  color: #fff;
+  border-radius: 8px;
+}
+
+.segment-chip {
+  margin-top: 8px;
+}
+
+/* E24-T05 · 手机任务卡片（患者、节点、窗口、状态、逾期标记；触控 ≥ 40px 由 globalCss）。
+   逾期标记 = 卡片左侧 error 色竖条（内联 style 注入 tokens colors.error）+ 状态 Tag error 色 */
+.task-item {
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+
+.item-line {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.item-patient {
+  font-weight: 600;
+}
+
+.item-footer {
+  margin-top: 4px;
+}
+
+.item-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+.overdue-flag {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* 手机卡片分页：总数 + 简单分页居中 */
+.card-pagination {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: center;
+  padding-top: 4px;
 }
 
 .sub-text {
