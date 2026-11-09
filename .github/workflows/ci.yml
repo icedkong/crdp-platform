@@ -29,6 +29,10 @@ jobs:
         run: |
           python3 scripts/pentest_intake.py --selftest
           python3 scripts/check_pentest_docs.py
+      # E23-T05：医院样本脱敏工具自检（不联网、内置虚构样本：版面核对 / 标识替换 /
+      # 一致性 / 复现 / 仓库内路径护栏 / 写后自检；V38 锚点防漂移）。
+      - name: 样本脱敏工具自检
+        run: python3 scripts/deidentify_sample.py --selftest
       # E02-T09：跨租户隔离与开通编排用例（*IT，按 CRDP_IT_MYSQL_PORT 门控）纳入 CI。
       # 与本地一致：docker compose 起 MySQL(13306)/Redis(16379)（含演示租户库初始化脚本），
       # 打包并短暂启动应用完成平台库与演示租户库的 Flyway 迁移与种子，再跑全量测试。
