@@ -472,6 +472,19 @@ class MenuSyncServiceTest {
                         "followup/dashboard/layout",
                         "followup:dashboard:config",
                         57,
+                        "ENABLED"),
+                // E19-T07 统计页（平台库 V61 同构）：随访目录（20）下，perm_code 为
+                // NULL（followup:dashboard:view 已由按钮 234 持有，uk_plt_menu_perm 全库唯一）
+                manifestRow(
+                        42L,
+                        20L,
+                        "MENU",
+                        "统计",
+                        "FollowupStats",
+                        "/followup/stats",
+                        "followup/stats/index",
+                        null,
+                        40,
                         "ENABLED"));
     }
 
