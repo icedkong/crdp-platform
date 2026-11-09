@@ -58,6 +58,19 @@ describe('e13-T04 患者列表检索 payload（A-PAT-002）', () => {
     });
     expect(payload.sort).toEqual([{ field: 'dischargeDate', order: 'desc' }]);
   });
+
+  it('e19-T07 医护负责患者数钻取：doctorId 进 filters（与统计计数同一条件树）', () => {
+    const payload = buildPatientSearchPayload(
+      emptyPatientFilters(),
+      1,
+      20,
+      undefined,
+      undefined,
+      undefined,
+      11,
+    );
+    expect(payload.filters.doctorId).toBe(11);
+  });
 });
 
 describe('e13-T04 检索词与筛选状态', () => {

@@ -15,6 +15,7 @@ import {
   buildPatientSearchPayload,
   completenessDrillOfQuery,
   conditionRowCount,
+  doctorDrillOfQuery,
   emptyPatientFilters,
   hasActiveFilters,
   isKeywordValid,
@@ -141,6 +142,16 @@ const completenessDrill = ref<null | {
 
 function clearCompletenessDrill() {
   completenessDrill.value = null;
+  pageNo.value = 1;
+  void load();
+}
+
+// E19-T07 / A-DASH-009 · 医护负责患者数钻取：统计页点数字带 doctorId / doctorName 进列表，
+// 按责任医生过滤（后端 filters.doctorId 与统计计数同一条件树）；关闭标签即取消恢复普通检索。
+const doctorDrill = ref<null | { doctorId: number; label: string }>(null);
+
+function clearDoctorDrill() {
+  doctorDrill.value = null;
   pageNo.value = 1;
   void load();
 }
@@ -313,6 +324,7 @@ async function load() {
         undefined,
         appliedCondition.value ?? undefined,
         completenessDrill.value?.drill,
+        doctorDrill.value?.doctorId,
       ),
     );
     rows.value = page.items;
@@ -351,6 +363,7 @@ onMounted(() => {
     filters.status = status;
   }
   completenessDrill.value = completenessDrillOfQuery(route.query);
+  doctorDrill.value = doctorDrillOfQuery(route.query);
   void loadOptions();
   void load();
 });
@@ -369,6 +382,7 @@ function handleReset() {
   Object.assign(filters, emptyPatientFilters());
   appliedCondition.value = null;
   completenessDrill.value = null;
+  doctorDrill.value = null;
   pageNo.value = 1;
   void load();
 }
@@ -641,6 +655,19 @@ function handleEmptyAction() {
               ? '随访资料缺失字段'
               : '基线资料缺失字段'
           }}：{{ completenessDrill.label }}
+        </Tag>
+      </div>
+
+      <!-- E19-T07 / A-DASH-009 · 医护负责患者数钻取：统计页点数字带 doctorId 进列表；
+           关闭即取消钻取恢复普通检索（页面筛选条不提供责任医生控件） -->
+      <div v-if="doctorDrill" class="drill-bar">
+        <Tag
+          closable
+          color="blue"
+          data-testid="patient-doctor-drill"
+          @close.prevent="clearDoctorDrill"
+        >
+          责任医生：{{ doctorDrill.label }}
         </Tag>
       </div>
 

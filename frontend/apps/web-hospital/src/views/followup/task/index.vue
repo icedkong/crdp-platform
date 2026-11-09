@@ -9,6 +9,7 @@ import { useRoute, useRouter } from 'vue-router';
 import {
   contactResultText,
   deepCloneJson,
+  doctorDrillOfQuery,
   isTaskAcknowledgable,
   isTaskClaimable,
   isTaskEnterable,
@@ -150,11 +151,24 @@ const loading = ref(false);
 const rows = ref<TaskRow[]>([]);
 const total = ref(0);
 const tabCounts = ref({ mine: 0, total: 0, ward: 0 });
+// E19-T07 / A-DASH-009 · 医护负责患者数钻取：统计页点数字带 doctorId 进列表（后端语义 =
+// 「任务负责人或患者责任医生」）；关闭标签即取消钻取（页面筛选条暂无对应控件）
+const doctorDrill = ref<null | { doctorId: number; label: string }>(null);
+
+function clearDoctorDrill() {
+  doctorDrill.value = null;
+  pageNo.value = 1;
+  handleSearch();
+}
 const wardOptions = ref<Array<{ label: string; value: number }>>([]);
 const viewMode = ref<'board' | 'list'>('list');
 
 const payload = computed(() =>
-  buildSearchPayload({ ...filters, scope: scope.value }),
+  buildSearchPayload({
+    ...filters,
+    doctorId: doctorDrill.value?.doctorId,
+    scope: scope.value,
+  }),
 );
 
 // ---------------------------------------------------------------- 加载
@@ -219,6 +233,7 @@ function handleReset() {
   filters.status = null;
   filters.wardIds = [];
   filters.windowRange = null;
+  doctorDrill.value = null;
   handleSearch();
 }
 
@@ -254,6 +269,8 @@ onMounted(() => {
   if (completedRange) {
     filters.completedRange = completedRange;
   }
+  // E19-T07 医护负责患者数钻取：doctorId / doctorName（随「清除筛选」一并清空）
+  doctorDrill.value = doctorDrillOfQuery(route.query);
   void load();
 });
 
@@ -750,6 +767,19 @@ function handleEmptyAction() {
           </FormItem>
         </Form>
 
+        <!-- E19-T07 / A-DASH-009 · 医护负责患者数钻取：显示责任医生，关闭即取消
+             （页面筛选条暂无责任医生控件，与窗口 / 完成时间钻取同口径） -->
+        <div v-if="doctorDrill" class="drill-bar">
+          <Tag
+            closable
+            color="blue"
+            data-testid="task-doctor-drill"
+            @close.prevent="clearDoctorDrill"
+          >
+            责任医生：{{ doctorDrill.label }}
+          </Tag>
+        </div>
+
         <div class="view-switch">
           <Button
             :type="viewMode === 'list' ? 'primary' : 'default'"
@@ -981,6 +1011,11 @@ function handleEmptyAction() {
 .page {
   min-height: 100%;
   padding: 16px;
+}
+
+/* E19-T07 医护负责患者数钻取标签条（与患者列表完整度钻取同形态） */
+.drill-bar {
+  margin-bottom: 12px;
 }
 
 /* 手机底栏无需让位（本页无固定底栏），仅收窄留白 */

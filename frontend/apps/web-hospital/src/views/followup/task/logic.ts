@@ -103,6 +103,8 @@ export type AssigneeFilter = (typeof ASSIGNEE_FILTER_OPTIONS)[number]['value'];
 export function buildSearchPayload(input: {
   assignee: AssigneeFilter;
   completedRange?: [string, string] | null;
+  /** E19-T07 医护负责患者数钻取（doctorDrillOfQuery 解析路由 query）：后端语义 =「任务负责人或患者责任医生」。 */
+  doctorId?: number;
   dueRange?: [string, string] | null;
   scope: TaskScope;
   status: null | TaskStatus[];
@@ -115,6 +117,9 @@ export function buildSearchPayload(input: {
   }
   if (input.wardIds.length > 0) {
     payload.wardIds = input.wardIds;
+  }
+  if (input.doctorId !== undefined) {
+    payload.doctorId = input.doctorId;
   }
   if (input.dueRange && input.dueRange[0] && input.dueRange[1]) {
     payload.dueFrom = input.dueRange[0];

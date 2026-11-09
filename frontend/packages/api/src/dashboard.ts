@@ -700,3 +700,86 @@ export function roleLayoutSaveOf(
     visible: card.visible,
   }));
 }
+
+// ---------------------------------------------------------------- 医护负责患者数（E19-T07 / A-DASH-009、C-DASH-010）
+
+/**
+ * 一位责任医生一行（统计页医护负责患者数，P1）：四个计数列 + 每年随访率（分母 / 分子
+ * 随行小字参考，口径 Q38——患者 × 随访年度去重，多计划并行同一年度只计一次）。
+ * 归口 = 患者责任医生（面板口径，OQ-118）；每列内联钻取目标（与首页指标卡同形态）。
+ */
+export interface DoctorWorkloadRow {
+  activeDrill?: DoctorWorkloadDrill | null;
+  activePatients: number;
+  doctorId: string;
+  doctorName: string;
+  followRatePct: number;
+  monthDue: number;
+  monthDueDrill?: DoctorWorkloadDrill | null;
+  overdue: number;
+  overdueDrill?: DoctorWorkloadDrill | null;
+  rateDueCount: number;
+  rateFollowedCount: number;
+  totalDrill?: DoctorWorkloadDrill | null;
+  totalPatients: number;
+}
+
+/** 钻取目标（query 为列表页路由 query 参数；doctorName 供列表页钻取标签展示）。 */
+export interface DoctorWorkloadDrill {
+  query?: Record<string, unknown>;
+  target: 'PATIENT_LIST' | 'TASK_LIST';
+}
+
+/** 医护负责患者数响应（asOfMonth = 「本月」口径月；asOf = 随访率数据时点，每日刷新，无数据为空）。 */
+export interface DoctorWorkloadView {
+  asOf?: null | string;
+  asOfMonth: string;
+  rows: DoctorWorkloadRow[];
+}
+
+/** 医护负责患者数请求参数（wardId 病区筛选，A-DASH-005）。 */
+export interface DoctorWorkloadParams {
+  wardId?: number;
+}
+
+/** 一列数字 → 列表页路由（患者列表 /followup/patient?doctorId=…、任务列表 /followup/task?tab=all…）。 */
+export function doctorWorkloadRoute(
+  row: DoctorWorkloadRow,
+  kind: 'active' | 'monthDue' | 'overdue' | 'total',
+): null | RouteLocationRaw {
+  const drills: Record<typeof kind, DoctorWorkloadDrill | null | undefined> = {
+    active: row.activeDrill,
+    monthDue: row.monthDueDrill,
+    overdue: row.overdueDrill,
+    total: row.totalDrill,
+  };
+  const drill = drills[kind];
+  if (!drill) return null;
+  if (drill.target === 'PATIENT_LIST') {
+    return { path: '/followup/patient', query: drill.query ?? {} };
+  }
+  return { path: '/followup/task', query: drill.query ?? {} };
+}
+
+/**
+ * 路由 query doctorId / doctorName → 责任医生钻取（doctorWorkloadRoute 的逆过程）：
+ * 统计页医护负责患者数下钻进入患者 / 任务列表时按责任医生过滤（后端检索 filters.doctorId
+ * / doctorId 同条件树）；缺 doctorId 返回 null（非钻取进入）。
+ */
+export function doctorDrillOfQuery(query: {
+  [key: string]: unknown;
+}): null | { doctorId: number; label: string } {
+  const first = Array.isArray(query.doctorId)
+    ? query.doctorId[0]
+    : query.doctorId;
+  if (typeof first !== 'string' || first.length === 0) return null;
+  const doctorId = Number.parseInt(first, 10);
+  if (!Number.isSafeInteger(doctorId) || doctorId <= 0) return null;
+  const name = Array.isArray(query.doctorName)
+    ? query.doctorName[0]
+    : query.doctorName;
+  return {
+    doctorId,
+    label: typeof name === 'string' && name.length > 0 ? name : first,
+  };
+}

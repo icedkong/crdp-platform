@@ -102,6 +102,17 @@ describe('buildSearchPayload（检索请求装配）', () => {
     });
     expect(payload.unassigned).toBe(true);
   });
+
+  it('e19-T07 医护负责患者数钻取：doctorId 透传（后端语义 = 任务负责人或患者责任医生）', () => {
+    const payload = buildSearchPayload({
+      assignee: 'ALL',
+      doctorId: 11,
+      scope: 'ALL',
+      status: null,
+      wardIds: [],
+    });
+    expect(payload.doctorId).toBe(11);
+  });
 });
 
 describe('boardGroups（看板按状态分四列）', () => {

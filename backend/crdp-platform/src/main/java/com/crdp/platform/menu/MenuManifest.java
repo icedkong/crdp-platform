@@ -81,6 +81,23 @@ public class MenuManifest {
                             "followup:report:view",
                             null,
                             30),
+                    // E19-T07 / A-DASH-009、C-DASH-010：统计页（随访目录下，平台库 V61 同构；perm_code 为
+                    // NULL——followup:dashboard:view 已由按钮 234 持有（uk_plt_menu_perm 全库唯一），接口
+                    // 按该码鉴权，菜单行只管路由可见性，V39 / V48 同做法）。页签：每年随访率 / 节点随访率
+                    // / 数据完整度 / 医护负责患者数（C 的器械分布等页签随 E21）
+                    new MenuManifestItem(
+                            "followup",
+                            "HOSPITAL",
+                            "MENU",
+                            "FollowupStats",
+                            "Followup",
+                            "统计",
+                            "FollowupStats",
+                            "/followup/stats",
+                            "followup/stats/index",
+                            null,
+                            null,
+                            40),
                     new MenuManifestItem(
                             "followup",
                             "HOSPITAL",

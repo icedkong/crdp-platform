@@ -18,6 +18,8 @@ import type {
   DashboardRoleLayoutsView,
   DashboardUserPrefSave,
   DashboardWardsView,
+  DoctorWorkloadParams,
+  DoctorWorkloadView,
   FollowupCompletenessCardView,
   KpiCardView,
   NodeRateCardView,
@@ -117,6 +119,17 @@ export function fetchFollowupCompletenessCard(params: CompletenessParams) {
 export function fetchDashboardWards() {
   return requestClient.get<DashboardWardsView>(
     apiPath('/followup/dashboard/wards'),
+  );
+}
+
+/**
+ * 医护负责患者数（E19-T07 / A-DASH-009、C-DASH-010，统计页）：按患者责任医生一行列出
+ * 负责患者数、在随访、本月应随访、逾期、每年随访率；wardId 病区筛选；每列内联钻取目标。
+ */
+export function fetchDoctorWorkload(params: DoctorWorkloadParams) {
+  return requestClient.get<DoctorWorkloadView>(
+    apiPath('/followup/stats/doctor-workload'),
+    { params },
   );
 }
 

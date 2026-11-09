@@ -1,9 +1,11 @@
-import type { DashboardRoleCard } from './dashboard';
+import type { DashboardRoleCard, DoctorWorkloadRow } from './dashboard';
 
 /**
  * E19-T02 / A-DASH-001、C-DASH-001；E19-T03 / A-DASH-003、004、008、C-DASH-003；
  * E19-T05 / A-DASH-010、A-DASH-011：完整度最常缺失字段钻取路由（患者列表
  * completenessDrill 与卡片同一计算，缺失人数 = 列表 total）。
+ * E19-T07 / A-DASH-009、C-DASH-010：医护负责患者数的行级钻取路由（患者 / 任务列表
+ * doctorId 筛选）与 doctorDrillOfQuery（列表页按路由 query 还原责任医生钻取）。
  * 首页指标卡、任务看板与任务表的类型与钻取路由（数字与列表钻取一致——
  * 钻取条件由后端随指标 / 列 / 页签下发，前端只透传 query，不自行拼业务条件）。
  */
@@ -14,6 +16,8 @@ import {
   boardColumnRoute,
   cohortYearOptions,
   DASHBOARD_DEFAULT_LAYOUT,
+  doctorDrillOfQuery,
+  doctorWorkloadRoute,
   followupYearOptions,
   formatRatePct,
   kpiMetricRoute,
@@ -412,5 +416,84 @@ describe('e19-T06 卡片目录与布局（A-DASH-013 / A-DASH-014）', () => {
       { allowUserHide: true, code: 'kpi', order: 2, visible: true },
       { allowUserHide: true, code: 'task_board', order: 3, visible: false },
     ]);
+  });
+});
+
+describe('e19-T07 医护负责患者数钻取路由（A-DASH-009 / C-DASH-010）', () => {
+  const row = {
+    activeDrill: {
+      query: { doctorId: '11', status: 'ACTIVE' },
+      target: 'PATIENT_LIST',
+    },
+    activePatients: 3,
+    doctorId: '11',
+    doctorName: '张医生（示例）',
+    followRatePct: 75,
+    monthDue: 2,
+    monthDueDrill: {
+      query: {
+        doctorId: '11',
+        dueFrom: '2026-11-01',
+        dueTo: '2026-11-30',
+        tab: 'all',
+      },
+      target: 'TASK_LIST',
+    },
+    overdue: 1,
+    overdueDrill: {
+      query: { doctorId: '11', status: 'OVERDUE', tab: 'all' },
+      target: 'TASK_LIST',
+    },
+    rateDueCount: 4,
+    rateFollowedCount: 3,
+    totalDrill: {
+      query: { doctorId: '11', doctorName: '张医生（示例）' },
+      target: 'PATIENT_LIST',
+    },
+    totalPatients: 4,
+  } satisfies DoctorWorkloadRow;
+
+  it('每列数字 → 对应列表路由（患者列表 doctorId〔/ status〕、任务列表 tab=all + 窗口 / 状态）', () => {
+    expect(doctorWorkloadRoute(row, 'total')).toEqual({
+      path: '/followup/patient',
+      query: { doctorId: '11', doctorName: '张医生（示例）' },
+    });
+    expect(doctorWorkloadRoute(row, 'active')).toEqual({
+      path: '/followup/patient',
+      query: { doctorId: '11', status: 'ACTIVE' },
+    });
+    expect(doctorWorkloadRoute(row, 'monthDue')).toEqual({
+      path: '/followup/task',
+      query: {
+        doctorId: '11',
+        dueFrom: '2026-11-01',
+        dueTo: '2026-11-30',
+        tab: 'all',
+      },
+    });
+    expect(doctorWorkloadRoute(row, 'overdue')).toEqual({
+      path: '/followup/task',
+      query: { doctorId: '11', status: 'OVERDUE', tab: 'all' },
+    });
+  });
+
+  it('无钻取目标的列返回 null（不跳转）', () => {
+    expect(
+      doctorWorkloadRoute({ ...row, totalDrill: null }, 'total'),
+    ).toBeNull();
+  });
+
+  it('doctorDrillOfQuery：doctorId / doctorName → 列表页钻取（缺 / 非法返回 null）', () => {
+    expect(
+      doctorDrillOfQuery({ doctorId: '11', doctorName: '张医生（示例）' }),
+    ).toEqual({ doctorId: 11, label: '张医生（示例）' });
+    // doctorName 缺省回落显示 id；数组形态取首个（vue-router query 规范化）
+    expect(doctorDrillOfQuery({ doctorId: ['12'] })).toEqual({
+      doctorId: 12,
+      label: '12',
+    });
+    expect(doctorDrillOfQuery({ status: 'ACTIVE' })).toBeNull();
+    expect(doctorDrillOfQuery({ doctorId: 'abc' })).toBeNull();
+    expect(doctorDrillOfQuery({ doctorId: '0' })).toBeNull();
   });
 });

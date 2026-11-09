@@ -154,6 +154,7 @@ export function buildPatientSearchPayload(
   sort?: PatientSortSpec,
   condition?: ConditionGroup,
   completenessDrill?: CompletenessDrill,
+  doctorId?: number,
 ): PatientSearchPayload {
   const payload: PatientSearchPayload = { pageNo, pageSize, filters: {} };
 
@@ -163,6 +164,11 @@ export function buildPatientSearchPayload(
   }
   if (wardSelected(state)) {
     payload.filters.wardIds = [state.wardId];
+  }
+  // E19-T07 医护负责患者数钻取（doctorDrillOfQuery 解析路由 query）：按责任医生过滤，
+  // 与统计页计数同一条件树（患者列表 filters.doctorId ↔ 后端 responsible_user_id）
+  if (doctorId !== undefined) {
+    payload.filters.doctorId = doctorId;
   }
   if (state.status) {
     payload.filters.status = [state.status];
