@@ -12,6 +12,7 @@ import type {
   ReportRow,
 } from '@crdp/api';
 
+import type { CompareTarget } from '#/components/followup/compare-entry-logic';
 import type { ReportLocation } from '#/reference/types';
 
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
@@ -53,6 +54,8 @@ import {
   message,
   Modal,
   Pagination,
+  Radio,
+  RadioGroup,
   Result,
   Spin,
   Table,
@@ -92,6 +95,7 @@ import AudioPlayer from '#/components/followup/audio-player.vue';
 import BackfillRecordModal from '#/components/followup/backfill-record-modal.vue';
 import BatchUploadDialog from '#/components/followup/batch-upload-dialog.vue';
 import CategoryBar from '#/components/followup/category-bar.vue';
+import { compareTargetsOf } from '#/components/followup/compare-entry-logic';
 import ContactLogModal from '#/components/followup/contact-log-modal.vue';
 import { downloadFileById } from '#/components/followup/file-download';
 import FollowupTimeline from '#/components/followup/followup-timeline.vue';
@@ -697,7 +701,7 @@ const reportColumns = [
   { dataIndex: 'locations', title: '位置' },
   { dataIndex: 'creatorName', title: '上传人', width: 110 },
   { dataIndex: 'createdAt', title: '上传时间', width: 150 },
-  { dataIndex: 'action', title: '操作', width: 70 },
+  { dataIndex: 'action', title: '操作', width: 140 },
 ];
 
 /** 位置列：标签「基线 · 病例基本信息」，超过 2 个折叠 +N，悬停看全部（pages.md §4.6）。 */
@@ -736,6 +740,44 @@ async function handleReportDelete(reason: string) {
   } finally {
     reportDeleteSubmitting.value = false;
   }
+}
+
+// ------------------------------ E16-T11 对照录入（A-ATT-019：打开随访表单分屏，一侧报告单一侧表单）
+
+/** 行内「对照录入」目标（无有效位置 / 无对应编辑权限 → 空清单不显示入口）。 */
+function rowCompareTargets(row: ReportRow): CompareTarget[] {
+  return compareTargetsOf(row, {
+    // 基线分节编辑 followup:patient:edit；随访记录 followup:record:edit（§4.10 只读角色不显示操作按钮）
+    canEditBaseline: hasPermission('followup:patient:edit'),
+    canEditRecord: hasPermission('followup:record:edit'),
+  });
+}
+
+/** 多目标选择弹窗（A-ATT-019「有多个位置时选择」；单目标直接新标签页打开）。 */
+const compareChooseOpen = ref(false);
+const compareChooseTargets = ref<CompareTarget[]>([]);
+const compareChooseKey = ref('');
+
+function openCompareEntry(row: ReportRow) {
+  const targets = rowCompareTargets(row);
+  const first = targets[0];
+  if (!first) return;
+  if (targets.length === 1) {
+    window.open(first.route, '_blank'); // 整页表单新标签页（pages.md §5）
+    return;
+  }
+  compareChooseKey.value = first.key;
+  compareChooseTargets.value = targets;
+  compareChooseOpen.value = true;
+}
+
+function confirmCompareEntry() {
+  const target = compareChooseTargets.value.find(
+    (item) => item.key === compareChooseKey.value,
+  );
+  compareChooseOpen.value = false;
+  compareChooseTargets.value = [];
+  if (target) window.open(target.route, '_blank');
 }
 
 // ---------------------------------------------------------------- E15-T04 沟通记录页签（pages.md §4.8）
@@ -1337,8 +1379,21 @@ const timelineLegendNote =
                     </Tooltip>
                   </template>
                 </div>
-                <div v-if="canDeleteReport" class="card-line card-actions">
+                <div
+                  v-if="canDeleteReport || rowCompareTargets(row).length > 0"
+                  class="card-line card-actions"
+                >
+                  <!-- E16-T11 / A-ATT-019：手机卡片同口径的「对照录入」入口 -->
                   <a
+                    v-if="rowCompareTargets(row).length > 0"
+                    class="report-compare"
+                    data-testid="report-card-compare"
+                    @click.stop="openCompareEntry(row)"
+                  >
+                    对照录入
+                  </a>
+                  <a
+                    v-if="canDeleteReport"
                     class="report-delete"
                     data-testid="report-card-delete"
                     @click.stop="openReportDelete(row)"
@@ -1410,6 +1465,16 @@ const timelineLegendNote =
                 {{ formatDateTime(record.createdAt) }}
               </template>
               <template v-else-if="column.dataIndex === 'action'">
+                <!-- E16-T11 / A-ATT-019：对照录入（有可达位置的表单才显示；
+                     多位置时弹选择，新标签页打开带 ?compare= 的表单分屏） -->
+                <a
+                  v-if="rowCompareTargets(record).length > 0"
+                  class="report-compare"
+                  data-testid="report-row-compare"
+                  @click.prevent="openCompareEntry(record)"
+                >
+                  对照录入
+                </a>
                 <!-- E16-T09 / A-ATT-007：删除（followup:scan:delete；无权限不显示，软删除须填原因） -->
                 <a
                   v-if="canDeleteReport"
@@ -1426,7 +1491,7 @@ const timelineLegendNote =
           <p class="hint">
             位置标签「基线 · 分类」「第N年随访 ·
             分组」；「未指定位置」的报告单在基线 /
-            随访页签左栏的「未指定位置」组补指定位置（E16-T14）；行内「删除」为软删除、须填原因（E16-T09），逐文件预览与删除需报告单文件清单接口（随后续任务）。
+            随访页签左栏的「未指定位置」组补指定位置（E16-T14）；「对照录入」在新标签页打开该位置的表单并右侧分屏显示本报告单（E16-T11，多个位置时先选择）；行内「删除」为软删除、须填原因（E16-T09），逐文件预览与删除需报告单文件清单接口（随后续任务）。
           </p>
         </div>
       </div>
@@ -1684,6 +1749,28 @@ const timelineLegendNote =
       @download="handlePreviewDownload"
       @update:open="previewOpen = $event"
     />
+
+    <!-- E16-T11 / A-ATT-019：报告单挂多个位置时选择要对照录入的表单（同一表单已去重） -->
+    <Modal
+      v-model:open="compareChooseOpen"
+      :ok-button-props="{ disabled: !compareChooseKey }"
+      ok-text="打开对照录入"
+      title="选择对照录入的位置"
+      @ok="confirmCompareEntry"
+    >
+      <RadioGroup v-model:value="compareChooseKey" class="compare-choose">
+        <Radio
+          v-for="target in compareChooseTargets"
+          :key="target.key"
+          :value="target.key"
+        >
+          {{ target.label }}
+        </Radio>
+      </RadioGroup>
+      <p class="compare-choose-note">
+        将在新标签页打开该表单，右侧分屏显示本报告单（一侧报告单、一侧表单）。
+      </p>
+    </Modal>
   </div>
 </template>
 
@@ -1729,6 +1816,25 @@ const timelineLegendNote =
 
 .unassigned {
   color: #fa8c16;
+}
+
+/* E16-T11 报告单行「对照录入」：与「删除」并排留 8px 间距 */
+.report-compare {
+  margin-right: 8px;
+}
+
+/* E16-T11 多位置选择弹窗：选项竖排 + 说明文字 */
+.compare-choose {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.compare-choose-note {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: rgb(0 0 0 / 45%);
 }
 
 /* E16-T09 报告单行「删除」：破坏性操作红色（design-system §9，与患者列表删除同色） */

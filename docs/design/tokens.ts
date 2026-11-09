@@ -61,6 +61,7 @@ export const sizes = {
   formAnchorWidth: 180, // 随访表单左侧分组锚点
   attachmentNavWidth: 240, // 详情页左栏附件导航
   reportPreviewWidth: 340, // 报告单页签右侧预览
+  comparePaneWidth: 420, // 对照录入分屏右栏（A-ATT-019：一侧表单一侧报告单）
   modal: { simple: 520, multiColMin: 800, multiColMax: 960, advancedSearch: 900 },
   drawer: { min: 480, max: 720 },
   mobileInputHeight: 36,

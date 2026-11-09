@@ -329,7 +329,7 @@
 | 路由 | `/followup/record/:recordId`（任务开启时已创建草稿记录，所以统一用 recordId）；补录 / 计划外新建经患者详情弹窗创建 DRAFT 后统一以 recordId 进本页（E15-T07 / E15-T06 已实现，原 `/record/new` 直建路由不做） |
 | 权限 | 查看 `followup:task:view`；录入 / 暂存 / 提交 `followup:record:edit`；修改已提交：A `followup:record:edit`，C `followup:record:edit-submitted` |
 | 需求 | A-FU-005、010、014、015、027、024、006、025；A-ATT-015、019；C-FU-005、008、009、010、013、014、015、016、017、018、022、024、026；NFR-SAVE-001/002/003；NFR-RESP-001/002/003 |
-| 组件 | `FormRenderer mode="edit"`、`CategoryBar`（桌面竖向锚点）、`FormStatusBar`、`ConflictBanner`、`InlineAttachmentStrip`、`LocationPicker`、`WatermarkPreview`（分屏对照）、`ReasonModal`、`useAutoSave` |
+| 组件 | `FormRenderer mode="edit"`、`CategoryBar`（桌面竖向锚点）、`FormStatusBar`、`ConflictBanner`、`InlineAttachmentStrip`、`LocationPicker`、`CompareReportPane`（分屏对照，E16-T11；components.md §12.1，平板 / 手机全屏切换复用 `WatermarkPreview`）、`ReasonModal`、`useAutoSave` |
 | 接口 | `GET /api/hospital/followup/records/{id}`（data、meta、version、status、上下文、previous、history 最近 3 次）；草稿 `PUT /api/hospital/followup/records/{id}/draft`（**规格已定**，带 `baseVersion`，冲突 409）；提交 `POST .../records/{id}/submit`；开始修改 `POST .../records/{id}/edit-session`；保存修改 `PUT .../records/{id}`（带原因）；报告单带入 `POST /api/hospital/followup/reports/{id}/mapping/preview` + `.../mapping/confirm`；上一条 / 下一条 `GET .../tasks/queue?cursor=`（除草稿外均推断，待确认） |
 
 ```text

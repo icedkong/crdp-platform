@@ -7,6 +7,8 @@ import type {
 import type { AutoSaveTrigger, PreviousRecord } from '@crdp/form-engine';
 import type { CategoryProgress, CompareHit } from '@crdp/rules';
 
+import type { CompareReportPaneReport } from '#/components/followup/compare-report-pane.vue';
+
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
@@ -34,6 +36,7 @@ import {
 } from 'ant-design-vue';
 
 import { fetchFormSchema } from '#/api/core/form';
+import { fetchPatientReports } from '#/api/core/report';
 import {
   fetchRecordDetail,
   fetchTaskQueue,
@@ -42,12 +45,20 @@ import {
   submitRecord,
 } from '#/api/core/task';
 import CategoryBar from '#/components/followup/category-bar.vue';
+import {
+  COMPARE_QUERY_KEY,
+  compareReportIdOf,
+} from '#/components/followup/compare-entry-logic';
+import CompareReportPane from '#/components/followup/compare-report-pane.vue';
 import ConflictBanner from '#/components/followup/conflict-banner.vue';
+import { downloadFileById } from '#/components/followup/file-download';
 import FormStatusBar from '#/components/followup/form-status-bar.vue';
 import MobileUploadQrModal from '#/components/followup/mobile-upload-qr.vue';
 import UploadReportDialog from '#/components/followup/upload-report-dialog.vue';
+import WatermarkPreview from '#/components/followup/watermark-preview.vue';
 import { useBreakpoint } from '#/reference/use-breakpoint';
 import { usePermission } from '#/reference/use-permission';
+import { useWatermarkViewer } from '#/reference/use-watermark-viewer';
 
 import { queueFilterOfQuery } from '../task/logic';
 import {
@@ -92,7 +103,10 @@ defineOptions({ name: 'FollowupRecordForm' });
  *   提交，随 visualViewport 跟随键盘），路由已登记响应式名单（手机不再被
  *   MobileBlocker 拦下）。
  *
- * 对照分屏与报告单带入（A-ATT-019 / C-FU-017）随 E16 / E17。
+ * - E16-T11 / A-ATT-019、C-FU-017：?compare=<报告单 id> 右侧分屏对照录入
+ *   （CompareReportPane 一侧报告单一侧表单；平板 / 手机改为「对照报告单」按钮
+ *   全屏切换，pages.md §5.1），缩放 / 旋转 / 逐份翻页复用 E16-T06 全屏查看器；
+ *   「报告单带入指标」随 E16-T07 的映射接口前端接入（后续任务）。
  */
 const route = useRoute();
 const router = useRouter();
@@ -187,6 +201,73 @@ const banners = computed(() =>
     : bannersOf(context.value, visitDate(), source.value),
 );
 const dirty = computed(() => hasChanges(savedData.value, data.value));
+
+// ---------------------------------------------------------------- 对照报告单分屏（E16-T11 / A-ATT-019、C-FU-017）
+
+/**
+ * ?compare=<报告单 id>（患者详情报告单页签「对照录入」带入）：一侧表单、一侧
+ * 报告单（pages.md §5 线框右栏）；平板 / 手机不分屏、改「对照报告单」按钮
+ * 全屏切换（§5.1）。关闭对照 = 移除该参数（上一条 / 下一条切换任务不带 compare）。
+ */
+const compareReportId = computed(() => compareReportIdOf(route.query));
+const compareReport = ref<CompareReportPaneReport | null>(null);
+/** 平板 / 手机（与桌面分屏的「全屏查看」）走 E16-T06 全屏查看器。 */
+const compareViewerOpen = ref(false);
+const watermarkViewer = useWatermarkViewer();
+const canDownloadFile = computed(() => hasPermission('followup:scan:download'));
+const compareViewerFiles = computed(() =>
+  compareReport.value?.firstFile
+    ? [
+        {
+          fileId: compareReport.value.firstFile.fileId,
+          format: compareReport.value.firstFile.format,
+          name: compareReport.value.name ?? compareReport.value.typeName,
+        },
+      ]
+    : [],
+);
+
+/** 记录加载出患者后取对照报告单元信息（清单接口行含首附件与名称 / 类型）。 */
+async function loadCompareReport() {
+  compareReport.value = null;
+  const reportId = compareReportId.value;
+  if (!reportId) return;
+  const patientId =
+    context.value?.patientId ?? patient.value?.patientId ?? null;
+  if (!patientId) return;
+  try {
+    const page = await fetchPatientReports(patientId, 'all');
+    const row = page.items.find((item) => item.id === reportId);
+    if (!row) {
+      message.info('对照报告单不存在或已删除');
+      return;
+    }
+    compareReport.value = {
+      fileCount: row.fileCount,
+      firstFile: row.firstFile,
+      id: row.id,
+      name: row.name,
+      reportDate: row.reportDate,
+      typeName: row.typeName,
+    };
+  } catch {
+    message.error('对照报告单加载失败，请稍后重试');
+  }
+}
+
+watch(compareReportId, () => void loadCompareReport());
+
+/** 关闭对照：仅移除 compare 参数（表单数据与队列筛选不受影响）。 */
+function closeCompare() {
+  const query = { ...route.query };
+  delete query[COMPARE_QUERY_KEY];
+  void router.replace({ query });
+}
+
+async function handleCompareDownload(fileId: number | string) {
+  const ok = await downloadFileById(fileId);
+  if (!ok) message.error('下载失败，请稍后重试');
+}
 
 // ---------------------------------------------------------------- 自动保存（E25-T02 / NFR-SAVE-001/002/003）
 
@@ -336,6 +417,8 @@ async function load() {
       };
     }
     await offerLocalDraftRestore();
+    // E16-T11：?compare= 报告单分屏（患者确定后才能取患者内清单）
+    await loadCompareReport();
   } catch {
     message.error('随访记录加载失败，请稍后重试');
   } finally {
@@ -582,6 +665,15 @@ function handleJump(key: string) {
             {{ headerSummary(context, recordVisitDate, source) }}
           </div>
         </div>
+        <!-- 平板 / 手机：对照报告单改为全屏切换（pages.md §5.1；桌面走右侧分屏） -->
+        <Button
+          v-if="!isDesktop && compareReport"
+          data-testid="record-compare-open"
+          size="small"
+          @click="compareViewerOpen = true"
+        >
+          对照报告单
+        </Button>
         <StatusTag
           v-if="context"
           :status="taskDisplayStatus(context)"
@@ -651,6 +743,17 @@ function handleJump(key: string) {
               {{ nextVisitText(context) }}
             </div>
           </div>
+          <!-- E16-T11 / A-ATT-019：右侧对照报告单分屏（仅桌面；平板 / 手机用顶部
+               「对照报告单」按钮全屏切换） -->
+          <CompareReportPane
+            v-if="isDesktop && compareReport"
+            :can-download="canDownloadFile"
+            :report="compareReport"
+            :viewer="watermarkViewer"
+            @close="closeCompare"
+            @download="handleCompareDownload"
+            @fullscreen="compareViewerOpen = true"
+          />
         </div>
       </Spin>
 
@@ -722,6 +825,17 @@ function handleJump(key: string) {
       :preset="reportPreset"
       @created="() => message.success('手机端已上传成功，请在患者详情查看')"
       @update:open="mobileUploadOpen = $event"
+    />
+
+    <!-- E16-T11 / A-ATT-019：对照报告单全屏查看（缩放 / 旋转 / 翻转 / 水印，E16-T06） -->
+    <WatermarkPreview
+      :can-download="canDownloadFile"
+      :files="compareViewerFiles"
+      :open="compareViewerOpen"
+      :report-id="compareReport?.id"
+      :viewer="watermarkViewer"
+      @download="handleCompareDownload"
+      @update:open="compareViewerOpen = $event"
     />
 
     <!-- 手机底部固定操作栏：上一条 / 下一条、暂存、提交；随 visualViewport 跟随键盘 -->
