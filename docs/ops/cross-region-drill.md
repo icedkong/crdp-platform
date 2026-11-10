@@ -171,7 +171,8 @@ scripts/cross_region_drill.sh --mode rds --drill-id xrg-2027h1 \
 ## 7. 半年演练与回切
 
 - 每半年（NFR-AVL-004）按本手册重演一次，与 E22-T08 归档演练同窗口；E22-T12「恢复演练测试
-  核对」按 §4 清单与最新存档报告核对恢复数据。
+  核对」按 §4 清单与最新存档报告核对恢复数据（核对清单与工具：`docs/ops/drill-recovery-checklist.md`、
+  `scripts/drill_recovery_check.py`；核对结果登记在 `docs/ops/drill-records/README.md` 核对登记表）。
 - 演练结束（真实灾难恢复或演练验证通过）后回切北京四：反向走一遍单院恢复口径不适用——整实例
   回迁用 DRS / 导出导入由运维专项评估，演练报告记录「回切方案与耗时」一行即可（本手册不展开）。
 - 演练用的上海一重建实例与集群在验证完成后**当日删除**（避免持续计费），删除动作与耗时记入报告。

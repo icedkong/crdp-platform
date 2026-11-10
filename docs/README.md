@@ -30,7 +30,8 @@
 | `ops/audit-worm-archive.md` | 审计归档 OBS WORM 桶 runbook：桶级 WORM（合规 15 年）开通顺序、生产验证清单（删除 / 覆盖尝试必须失败）、归档演练与留痕模板（IaC 在 `iac/obs-archive/`；真实云操作由运维执行，CI 含本地不可删改演练） | 审计长期留存、防篡改验证（E22-T08 / PLT-AUD-010） |
 | `ops/tenant-restore.md` | 单院恢复 runbook：单租户库恢复到指定时间点（脚本 `scripts/restore_tenant.sh`；PITR 临时实例等真实云操作由运维执行，CI 含本地演练） | 误操作 / 逻辑损坏的单院回滚（E22-T06） |
 | `ops/cross-region-drill.md` | 跨区域恢复演练 runbook：区域不可用 → 上海一从跨区域备份 IaC 重建恢复，实测区域内 / 跨区域 RPO 与 RTO、验证清单与报告存档（脚本 `scripts/cross_region_drill.sh`；PITR 与 IaC 重建等真实云操作由运维执行，CI 含本地演练） | 半年恢复演练（E22-T07；E22-T12 核对的输入） |
-| `ops/drill-records/` | 恢复演练报告存档：本地 / CI 演练报告全文与生产演练登记表（区域内 RPO ≤ 5 分钟、RTO ≤ 4 小时的达标判据） | 演练报告存档（E22-T07 验收） |
+| `ops/drill-records/` | 恢复演练报告存档：本地 / CI 演练报告全文与生产演练登记表（区域内 RPO ≤ 5 分钟、RTO ≤ 4 小时的达标判据）+ E22-T12 核对登记表 | 演练报告存档（E22-T07 验收）；E22-T12 核对的输入 |
+| `ops/drill-recovery-checklist.md` | 恢复演练核对清单（E22-T12）：runbook §4 九项逐项映射机器核对（`scripts/drill_recovery_check.py`：存档核对 / 化身按清单核对 / 自检）与生产由人核对方法，核对记录登记到 drill-records 核对登记表 | 按清单核对恢复数据（E22-T12 验收） |
 | `ops/pentest.md` | 渗透测试对接手册：范围与授权、靶机环境、日程（W32–W35）、报告分级、发现入缺陷库（模板 `ops/pentest-findings-template.csv` + `scripts/pentest_intake.py`；选商 / 签约 / 测试 / 报告出具由人执行） | 上线前渗透测试（E22-T09；E22-T10/T11 修复的输入） |
 | `ops/pentest-remediation.md` | 渗透修复手册（后端）：处置流程（Issue→关闭）、三选一处置口径、上线前后端安全自查发现与处置（高危 0 / 中危 2，已修复）、人工事项清单与复测闭环判据（第三方发现到达后按同一流程处置） | 渗透高危清零与中危处置（E22-T10） |
 | `ops/pentest-remediation-frontend.md` | 渗透修复手册（前端）：处置流程（Issue→关闭）、三选一处置口径、上线前前端安全自查发现与处置（高危 0 / 中危 1，已修复：令牌 sessionStorage 化、外链 noopener、登录回跳白名单、依赖扫描缓解）、人工事项清单与复测闭环判据（第三方发现到达后按同一流程处置） | 前端相关问题复测通过（E22-T11） |
