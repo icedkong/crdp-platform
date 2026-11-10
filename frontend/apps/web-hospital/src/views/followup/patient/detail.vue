@@ -25,22 +25,16 @@ import {
   baselineProgressText,
   baselineSectionStatusText,
   canEditBaseline,
-  completenessText,
   contactMethodText,
   contactResultText,
   contactSlotText,
   contactSourceText,
-  dischargeStatusText,
-  genderText,
-  latestFollowupText,
-  nextVisitText,
   PATIENT_STATUS_TEXT,
   reportLocationText,
   sectionDisplaySchema,
   showBaselineLock,
   showBaselineUnlock,
   statusSourceText,
-  survivalStatusText,
 } from '@crdp/api';
 import { FormRenderer } from '@crdp/form-engine';
 import { StatusTag } from '@crdp/status-tag';
@@ -48,8 +42,6 @@ import {
   Alert,
   Button,
   Card,
-  Descriptions,
-  DescriptionsItem,
   Drawer,
   Empty,
   message,
@@ -434,13 +426,6 @@ async function doSetBaselineLock(locked: boolean, reason: string) {
     lockSubmitting.value = false;
   }
 }
-
-const dischargeStatusLabel = computed(() =>
-  overview.value?.dischargeStatus === null ||
-  overview.value?.dischargeStatus === undefined
-    ? '—'
-    : dischargeStatusText(overview.value.dischargeStatus),
-);
 
 async function openContacts() {
   contactsOpen.value = true;
@@ -1175,77 +1160,9 @@ const timelineLegendNote =
             锁定
           </Button>
         </div>
-        <Descriptions
-          bordered
-          :column="{ xs: 1, sm: 1, md: 2, xl: 3 }"
-          size="middle"
-          title="基线信息（出院登记）"
-        >
-          <DescriptionsItem label="姓名（脱敏）">
-            {{ overview.name }}
-          </DescriptionsItem>
-          <DescriptionsItem label="编号（脱敏）">
-            {{ overview.patientNo }}
-          </DescriptionsItem>
-          <DescriptionsItem label="原系统编号">
-            {{ overview.legacyNo ?? '—' }}
-          </DescriptionsItem>
-          <DescriptionsItem label="随访编号">
-            {{ overview.visitNo ?? '—' }}
-          </DescriptionsItem>
-          <DescriptionsItem label="性别">
-            {{ genderText(overview.gender) }}
-          </DescriptionsItem>
-          <DescriptionsItem label="年龄（手术时）">
-            {{ overview.age ?? '—' }}
-          </DescriptionsItem>
-          <DescriptionsItem label="病区">
-            {{ overview.deptName ? `${overview.deptName} · ` : ''
-            }}{{ overview.wardName ?? '—' }}
-          </DescriptionsItem>
-          <DescriptionsItem label="负责医生">
-            {{ overview.responsibleName ?? '—' }}
-          </DescriptionsItem>
-          <DescriptionsItem label="患者类型">
-            {{ overview.patientType ?? '—' }}
-          </DescriptionsItem>
-          <DescriptionsItem label="手术日期">
-            {{ overview.surgeryDate ?? '—' }}
-          </DescriptionsItem>
-          <DescriptionsItem label="入院日期">
-            {{ overview.admissionDate ?? '—' }}
-          </DescriptionsItem>
-          <DescriptionsItem label="出院日期">
-            {{ overview.dischargeDate ?? '—' }}
-          </DescriptionsItem>
-          <DescriptionsItem label="出院状态">
-            {{ dischargeStatusLabel }}
-          </DescriptionsItem>
-          <DescriptionsItem label="基线资料完整度">
-            {{ completenessText(overview.baselineCompleteness) }}
-          </DescriptionsItem>
-          <DescriptionsItem label="随访资料完整度">
-            {{ completenessText(overview.followupCompleteness) }}
-          </DescriptionsItem>
-        </Descriptions>
-
-        <Descriptions
-          bordered
-          :column="{ xs: 1, sm: 1, md: 2, xl: 3 }"
-          size="middle"
-          title="计划与随访（随入组与随访记录写入更新）"
-        >
-          <DescriptionsItem label="下次随访">
-            {{ nextVisitText(overview) }}
-          </DescriptionsItem>
-          <DescriptionsItem label="最近随访">
-            {{ latestFollowupText(overview) }}
-          </DescriptionsItem>
-          <DescriptionsItem v-if="overview.latestFollowup" label="生存状态">
-            {{ survivalStatusText(overview.latestFollowup.survivalStatus) }}
-          </DescriptionsItem>
-        </Descriptions>
-
+        <!-- G5（M3 审查）：原「基线信息（出院登记）」「计划与随访」两块硬编码登记字段已删除——
+             右侧只保留模板只读渲染；姓名 / 病区 / 编号 / 完整度 / 下次随访 / 最近随访在页头
+             PatientHeader（OQ-21 概览并入头部）；登记固定字段是否进模板见 OQ-126 -->
         <section
           v-for="section in baselineSectionViews"
           :id="`crdp-anchor-${section.code}`"
@@ -1292,7 +1209,7 @@ const timelineLegendNote =
         </p>
         <p class="hint">
           分节字段值按模板只读展示；字段修改历史与锁定 /
-          解锁留痕可在操作日志查询（随报告单页签后的日志入口开放）。
+          解锁留痕可在「操作日志」页签查询。
         </p>
       </div>
     </div>
