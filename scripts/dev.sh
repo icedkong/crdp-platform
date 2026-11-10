@@ -59,7 +59,7 @@ fi
 
 if ! curl -sf "http://127.0.0.1:18080/actuator/health" >/dev/null 2>&1; then
   echo "打包并启动后端（demo 剖面：本地信封加密 + 模拟短信）..."
-  mvn -B -f "$ROOT/backend/pom.xml" -pl crdp-server -am -DskipTests package
+  mvn -B -f "$ROOT/backend/pom.xml" -pl crdp-server -am -DskipTests -Djacoco.skip=true package
   java -jar "$ROOT/backend/crdp-server/target/crdp-server.jar" --spring.profiles.active=demo >"$ROOT/backend/crdp-server.log" 2>&1 &
   echo $! >"$ROOT/backend/crdp-server.pid"
   ready=0
