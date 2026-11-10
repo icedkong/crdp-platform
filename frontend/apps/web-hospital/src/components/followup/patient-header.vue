@@ -36,6 +36,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   contacts: [];
+  lost: [];
   transfer: [];
   unplanned: [];
 }>();
@@ -47,6 +48,9 @@ const canTransfer = computed(() => props.overview.actions.includes('transfer'));
 const canUnplanned = computed(() =>
   props.overview.actions.includes('unplanned'),
 );
+
+/** S5 / A-FU-012：改为失访（未终止 + followup:patient:edit，后端 actions 计算）。 */
+const canMarkLost = computed(() => props.overview.actions.includes('lost'));
 
 const { isMobile } = useBreakpoint();
 const detailsOpen = ref(false);
@@ -85,7 +89,7 @@ const metrics = computed(() => [
  * E24-T04 手机操作抽屉按钮列表：与桌面行内按钮同一组、同一显隐口径
  * （联系方式常显；transfer / unplanned 由 summary.actions 按权限计算）。
  */
-type HeaderAction = 'contacts' | 'transfer' | 'unplanned';
+type HeaderAction = 'contacts' | 'lost' | 'transfer' | 'unplanned';
 
 const actionButtons = computed<
   Array<{
@@ -105,6 +109,8 @@ const actionButtons = computed<
   ];
   if (canTransfer.value)
     list.push({ event: 'transfer', label: '转病区', testid: 'open-transfer' });
+  if (canMarkLost.value)
+    list.push({ event: 'lost', label: '改为失访', testid: 'open-mark-lost' });
   if (canUnplanned.value)
     list.push({
       event: 'unplanned',
@@ -196,6 +202,15 @@ function runAction(event: HeaderAction) {
         @click="emit('unplanned')"
       >
         新建计划外随访
+      </Button>
+      <!-- S5 / A-FU-012「系统提示后由医生改为失访」：未终止 + followup:patient:edit，弹 ReasonModal 填原因 -->
+      <Button
+        v-if="canMarkLost"
+        data-testid="open-mark-lost"
+        size="small"
+        @click="emit('lost')"
+      >
+        改为失访
       </Button>
     </div>
     <!-- E24-T04 / components.md §4：手机操作收进底部抽屉（design-system §7

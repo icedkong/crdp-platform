@@ -89,7 +89,7 @@ class FilePreviewServiceTest {
                         audit,
                         properties,
                         redis,
-                        (FilePreviewService.ContactAudioScopePort) fileId -> {},
+                        (FilePreviewService.ContactAudioScopePort) fileId -> false,
                         (ReportFileScopePort) fileId -> null);
         lenient().when(redis.opsForValue()).thenReturn(valueOps);
     }
@@ -186,7 +186,7 @@ class FilePreviewServiceTest {
                         audit,
                         loose,
                         redis,
-                        (FilePreviewService.ContactAudioScopePort) fileId -> {},
+                        (FilePreviewService.ContactAudioScopePort) fileId -> false,
                         (ReportFileScopePort) fileId -> null);
         stubRow(row("t/demoa/files/202611/x.pdf", "pdf", "application/pdf", "PENDING"));
         capped.previewUrl(FILE_ID);
@@ -290,7 +290,7 @@ class FilePreviewServiceTest {
                         audit,
                         properties,
                         redis,
-                        (FilePreviewService.ContactAudioScopePort) fileId -> {},
+                        (FilePreviewService.ContactAudioScopePort) fileId -> false,
                         (ReportFileScopePort)
                                 fileId -> {
                                     throw new ApiException(404, 40400, "文件不存在或无权访问");
@@ -299,6 +299,52 @@ class FilePreviewServiceTest {
         ApiException error = assertThrows(ApiException.class, () -> withReport.previewUrl(FILE_ID));
         assertEquals(40400, error.code());
         verify(audit, never()).append(any(AuditEntry.class));
+    }
+
+    // ---------------------------------------------------------------- S1（M3 审查）：未关联文件只允许上传者本人
+
+    /** S1：未挂沟通记录 / 报告单的文件（PENDING 待关联），非上传者的本院登录用户取预览链接 40400，不写审计（不暴露存在）。 */
+    @Test
+    void unlinkedPreviewDeniedForNonUploader() {
+        stubRow(row("t/demoa/files/202611/x.pdf", "pdf", "application/pdf", "PENDING"));
+        loginAs(8L);
+
+        ApiException error = assertThrows(ApiException.class, () -> service.previewUrl(FILE_ID));
+        assertEquals(40400, error.code());
+        verify(audit, never()).append(any(AuditEntry.class));
+    }
+
+    /** S1：上传者本人取自己未关联文件的预览链接不受影响（上传后先预览、再挂报告单的原有链路）。 */
+    @Test
+    void unlinkedPreviewAllowedForUploader() {
+        stubRow(row("t/demoa/files/202611/x.pdf", "pdf", "application/pdf", "PENDING"));
+        FilePreviewService.PreviewGrant grant = service.previewUrl(FILE_ID);
+        assertTrue(grant.url().startsWith("/api/hospital/files/preview/"));
+    }
+
+    /** S1：文件挂上报告单后按患者范围校验（端口返回非 null），非上传者同样可取（已关联维持现有口径）。 */
+    @Test
+    void linkedPreviewGuardsByPatientScopeNotUploader() {
+        stubRow(row("t/demoa/files/202611/x.pdf", "pdf", "application/pdf", "ATTACHED"));
+        loginAs(8L);
+        FilePreviewProperties properties = new FilePreviewProperties();
+        properties.setTtlSeconds(300);
+        FilePreviewService withReport =
+                new FilePreviewService(
+                        files,
+                        storage,
+                        tokens,
+                        audit,
+                        properties,
+                        redis,
+                        (FilePreviewService.ContactAudioScopePort) fileId -> false,
+                        (ReportFileScopePort)
+                                fileId ->
+                                        new ReportFileScopePort.ReportFileView(
+                                                900L, "ECHO", "心脏超声", "经胸超声心动图（示例）"));
+
+        FilePreviewService.PreviewGrant grant = withReport.previewUrl(FILE_ID);
+        assertTrue(grant.url().startsWith("/api/hospital/files/preview/"));
     }
 
     // ---------------------------------------------------------------- 工具
@@ -317,6 +363,14 @@ class FilePreviewServiceTest {
         lenient().when(files.find(FILE_ID)).thenReturn(row);
     }
 
+    /** S1 用：把当前线程会话换成同院另一名用户（不清租户上下文）。 */
+    private static void loginAs(long userId) {
+        SecurityContextHolder.getContext()
+                .setAuthentication(
+                        new UsernamePasswordAuthenticationToken(
+                                principal(true, userId), null, List.of()));
+    }
+
     private static SysFileRow row(String objectKey, String format, String mime, String status) {
         SysFileRow row = new SysFileRow();
         row.setId(FILE_ID);
@@ -332,13 +386,18 @@ class FilePreviewServiceTest {
     }
 
     private static SessionPrincipal principal(boolean hospital) {
+        return principal(hospital, USER);
+    }
+
+    /** S1 用：指定用户号（8 = 同院另一名登录用户「李医生（示例）」，虚构）。 */
+    private static SessionPrincipal principal(boolean hospital, long userId) {
         return new SessionPrincipal(
                 "token",
                 hospital ? "HOSPITAL" : "PLATFORM",
                 hospital ? TENANT : null,
                 hospital ? TENANT_CODE : null,
                 hospital ? "医院 A（示例租户）" : null,
-                USER,
+                userId,
                 "doctor.demo",
                 "王医生（示例）",
                 List.of("TENANT_ADMIN"),

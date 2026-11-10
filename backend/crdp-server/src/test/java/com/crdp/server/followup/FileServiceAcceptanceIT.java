@@ -284,6 +284,30 @@ class FileServiceAcceptanceIT {
                                 "B 库本就没有这一行"));
     }
 
+    // ---------------------------------------------------------------- S1（M3 审查）：未关联文件只允许上传者本人
+
+    /**
+     * S1：PENDING 未挂沟通记录 / 报告单的文件，同院另一名登录用户（有预览权限）按自增文件号取 preview-url 40400；上传者本人不受影响。 下载口同口径的服务级用例见
+     * FileDownloadServiceTest（S1 节，下载还需敏感权限，HTTP 层不再重复搭权限）。
+     */
+    @Test
+    void unlinkedFileOnlyReachableByUploader() {
+        String uploader = hospitalToken("demoa");
+        Map<?, ?> uploaded = data(uploadRaw(uploader, PREFIX + "出院小结（示例）.mp3", mp3(64)));
+        long fileId = idOf(uploaded.get("fileId"));
+
+        String colleague = hospitalToken("demoa", "doctor.demo");
+        assertEquals(
+                40400,
+                code(get("/api/hospital/files/" + fileId + "/preview-url", colleague)),
+                "未关联文件非上传者预览 40400（S1 收紧）");
+
+        assertEquals(
+                0,
+                code(get("/api/hospital/files/" + fileId + "/preview-url", uploader)),
+                "上传者本人仍可预览自己未关联的文件");
+    }
+
     // ---------------------------------------------------------------- 合成样例（不可执行、不含真实代码）
 
     /** PE 最小样例：MZ 头 + DOS stub + PE 签名占位（与 FileUploadServiceTest 同款合成法）。 */

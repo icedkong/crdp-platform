@@ -360,6 +360,25 @@ export interface TaskAcknowledgeView {
   taskId: string;
 }
 
+// ---------------------------------------------------------------- 确认失访（S5 / A-FU-012 · E15-T05）
+
+/**
+ * 确认失访结果（POST /followup/tasks/{id}/confirm-lost）：
+ * terminatedFollowups = 同窗口关闭的未完成跟进任务数；patientLostPrompt = 连续 2 个
+ * 窗口失访——前端提示医生把患者状态改为失访（不自动改，A 规格「系统提示后由医生改为失访」）。
+ */
+export interface TaskLostConfirmView {
+  patientLostPrompt: boolean;
+  status: TaskStatus;
+  taskId: string;
+  terminatedFollowups: number;
+}
+
+/** 失访候选任务可「确认失访」（医生确认后标为失访，A-FU-012；随访员只看到候选标记）。 */
+export function isTaskLostCandidate(task: { status: TaskStatus }): boolean {
+  return task.status === 'LOST_CANDIDATE';
+}
+
 // ---------------------------------------------------------------- 认领与改派（E15-T03 / A-FU-009）
 
 /** 改派逐条结果（patientName / mrn 只含脱敏值；TASK_NOT_FOUND 行不带摘要，不暴露存在）。 */

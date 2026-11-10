@@ -1,5 +1,6 @@
 package com.crdp.server.config;
 
+import com.crdp.framework.audit.AuditArchiveProperties;
 import com.crdp.framework.crypto.CryptoProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.env.EnvironmentPostProcessor;
@@ -13,6 +14,15 @@ public class ProductionSafetyEnvironmentPostProcessor implements EnvironmentPost
             ConfigurableEnvironment environment, SpringApplication application) {
         CryptoProperties crypto = new CryptoProperties();
         crypto.setMode(environment.getProperty("crdp.crypto.mode", "local"));
-        new ProductionSafetyCheck(environment, crypto);
+        // S3：归档项同在数据源之前校验（type 从环境读，缺省 obs 与 prod yml 一致）
+        AuditArchiveProperties auditArchive = new AuditArchiveProperties();
+        auditArchive
+                .getStorage()
+                .setType(
+                        environment.getProperty(
+                                "crdp.audit.archive.storage.type",
+                                String.class,
+                                auditArchive.getStorage().getType()));
+        new ProductionSafetyCheck(environment, crypto, auditArchive);
     }
 }

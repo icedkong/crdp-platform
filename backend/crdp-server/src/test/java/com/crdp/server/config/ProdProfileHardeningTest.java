@@ -59,4 +59,35 @@ class ProdProfileHardeningTest {
                 yaml.getProperty("crdp.sms.receipt-auth-password"),
                 "生产短信回执 Basic Auth 密码经环境变量注入（缺省空 = 迁移期仅限流）");
     }
+
+    /**
+     * S3（M3 审查）/ PLT-AUD-010：生产默认 type=obs——审计归档必须开启（在线 1 年 + WORM 15 年）。
+     * 缺归档桶任一项（CRDP_OBS_ARCHIVE_*）启动即失败 （ObsAuditArchiveStorage fail
+     * fast，报错指明配置键，ObsAuditArchiveStorageTest 已锁）； 不允许写回默认 none（字面量断言防漂移）。 本机 / CI
+     * 剖面不激活本文件，application.yml 的 none 保持可用（DemoProfileYamlTest 另锁演示剖面）。
+     */
+    @Test
+    void auditArchiveStorageDefaultsToObsInProd() {
+        Properties yaml = prodYaml();
+        assertEquals(
+                "${CRDP_AUDIT_ARCHIVE_STORAGE_TYPE:obs}",
+                yaml.getProperty("crdp.audit.archive.storage.type"),
+                "生产审计归档默认 type=obs（缺归档桶配置启动失败，不静默回落 none）");
+        assertEquals(
+                "${CRDP_OBS_ARCHIVE_ENDPOINT:}",
+                yaml.getProperty("crdp.audit.archive.storage.obs.endpoint"),
+                "归档桶 endpoint 经 CRDP_OBS_ARCHIVE_ENDPOINT 注入");
+        assertEquals(
+                "${CRDP_OBS_ARCHIVE_AK:}",
+                yaml.getProperty("crdp.audit.archive.storage.obs.access-key"),
+                "归档桶 AK 经 CRDP_OBS_ARCHIVE_AK 注入");
+        assertEquals(
+                "${CRDP_OBS_ARCHIVE_SK:}",
+                yaml.getProperty("crdp.audit.archive.storage.obs.secret-key"),
+                "归档桶 SK 经 CRDP_OBS_ARCHIVE_SK 注入");
+        assertEquals(
+                "${CRDP_OBS_ARCHIVE_BUCKET:}",
+                yaml.getProperty("crdp.audit.archive.storage.obs.bucket"),
+                "归档桶名经 CRDP_OBS_ARCHIVE_BUCKET 注入");
+    }
 }

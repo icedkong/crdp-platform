@@ -17,6 +17,7 @@ import type {
   TaskAssignRequest,
   TaskAssignResult,
   TaskClaimView,
+  TaskLostConfirmView,
   TaskPage,
   TaskQueueView,
   TaskSearchRequest,
@@ -147,6 +148,18 @@ export function createTempTask(data: TempTaskCreateRequest) {
 export function acknowledgeTask(taskId: string) {
   return requestClient.post<TaskAcknowledgeView>(
     apiPath(`/followup/tasks/${taskId}/acknowledge`),
+    {},
+  );
+}
+
+/**
+ * 确认失访（S5 / A-FU-012「医生确认后标为失访」，E15-T05 已有后端）：失访候选 → 失访，
+ * 同窗口未完成跟进任务关闭；连续 2 个窗口失访返回 patientLostPrompt = true——
+ * 前端提示医生到患者详情把患者状态改为失访（不自动改）。
+ */
+export function confirmLostTask(taskId: string) {
+  return requestClient.post<TaskLostConfirmView>(
+    apiPath(`/followup/tasks/${taskId}/confirm-lost`),
     {},
   );
 }

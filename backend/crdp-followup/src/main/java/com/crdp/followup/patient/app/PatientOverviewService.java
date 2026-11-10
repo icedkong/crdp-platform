@@ -468,7 +468,8 @@ public class PatientOverviewService {
 
     /**
      * 头部可用操作（后端按权限 + 状态计算，前端仍做按钮级权限，patient.md §2）： unplanned / contact 需患者在随访中（ACTIVE）， stop
-     * 对未终止患者可用；upload 不受随访状态限制。各操作的实际入口随 E14（停止）/ E15（计划外、沟通）/ E16（上传）开放。
+     * 对未终止患者可用；upload 不受随访状态限制。lost（改为失访，S5 / A-FU-012）需未终止（随访中 / 已暂停皆可改判失访）+
+     * followup:patient:edit。 各操作的实际入口随 E14（停止）/ E15（计划外、沟通）/ E16（上传）开放。
      */
     private static List<String> actionsOf(String status, boolean terminated) {
         SessionPrincipal principal = CurrentSession.current().orElse(null);
@@ -490,6 +491,10 @@ public class PatientOverviewService {
         if (!terminated
                 && (codes.contains(PERM_PLAN_ENROLL) || codes.contains(PERM_PATIENT_EDIT))) {
             actions.add("stop");
+        }
+        // 改为失访（S5 / A-FU-012）：未终止（含已暂停）+ followup:patient:edit；已失访患者不再下发
+        if (!terminated && codes.contains(PERM_PATIENT_EDIT)) {
+            actions.add("lost");
         }
         // 转病区（E13-T08 / A-WARD-005）：管理动作，已终止患者也可调整病区归属（统计与历史回看要用）
         if (codes.contains(PERM_PATIENT_TRANSFER)) {

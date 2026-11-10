@@ -549,6 +549,7 @@ class PatientOverviewServiceTest {
         assertFalse(view.actions().contains("unplanned"), "已终止不能新建计划外随访");
         assertFalse(view.actions().contains("contact"), "已终止不能记录沟通");
         assertFalse(view.actions().contains("stop"), "已终止不能再停止");
+        assertFalse(view.actions().contains("lost"), "已终止不能再改为失访（S5）");
         assertTrue(view.actions().contains("upload"), "上传报告单不受随访状态限制");
         assertTrue(view.actions().contains("transfer"), "转病区是管理动作（A-WARD-005），已终止患者仍可调整病区归属");
     }
@@ -569,8 +570,9 @@ class PatientOverviewServiceTest {
 
         PatientOverviewService.PatientOverviewView view = service.summaryOf(PATIENT_ID);
 
-        // 停止随访：A followup:plan:enroll / C followup:patient:edit（OQ-15 暂行口径，二者其一即可）
-        assertEquals(List.of("unplanned", "upload", "contact", "stop"), view.actions());
+        // 停止随访：A followup:plan:enroll / C followup:patient:edit（OQ-15 暂行口径，二者其一即可）；
+        // 改为失访（S5 / A-FU-012）：未终止 + followup:patient:edit
+        assertEquals(List.of("unplanned", "upload", "contact", "stop", "lost"), view.actions());
     }
 
     @Test

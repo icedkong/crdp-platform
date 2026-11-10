@@ -53,6 +53,16 @@ export interface PatientOverview {
 }
 
 /**
+ * 患者改为失访结果（S5 / A-FU-012、A-PAT-011，POST /patients/{id}/status action=LOST）：
+ * terminatedTasks = 本次终止的未开始 / 未完成任务数；失访后不再创建任务。
+ */
+export interface PatientLostView {
+  patientId: string;
+  status: string;
+  terminatedTasks: number;
+}
+
+/**
  * 时间轴节点类型（A-PAT-013、A-FU-023 / C-FU-023）：DISCHARGE 出院 / STATUS 状态变更（含死亡）/
  * FOLLOWUP 每年随访（任务节点，E15-T07）/ BACKFILL 历史补录（无任务的补录记录，A-FU-014、C-FU-013）/
  * PLANNED 下次计划日期（「计划中 / 待开始」，实时计算不落库，A-FU-001）；UNPLANNED 计划外随访随

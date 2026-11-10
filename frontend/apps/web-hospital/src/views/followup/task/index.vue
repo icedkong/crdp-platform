@@ -13,6 +13,7 @@ import {
   isTaskAcknowledgable,
   isTaskClaimable,
   isTaskEnterable,
+  isTaskLostCandidate,
   isTaskReassignable,
   TASK_STATUS_OPTIONS,
   TASK_STATUS_TEXT,
@@ -31,6 +32,7 @@ import {
   Form,
   FormItem,
   message,
+  Modal,
   Pagination,
   Segmented,
   Select,
@@ -45,6 +47,7 @@ import {
 import {
   acknowledgeTask,
   claimTask,
+  confirmLostTask,
   searchTasks,
   startTask,
 } from '#/api/core/task';
@@ -344,6 +347,56 @@ async function handleAcknowledge(row: TaskRow) {
     message.error(body?.message || '完成提醒失败，请稍后重试');
   } finally {
     acknowledgingId.value = '';
+  }
+}
+
+// ---------------------------------------------------------------- 确认失访（S5 / A-FU-012 · E15-T05）
+
+/**
+ * S5 / A-FU-012「失访候选：医生可确认失访」：调用既有 confirm-lost（原因与弹窗形态
+ * 按 pages.md §7；接口不收原因，用确认弹窗写明后果）；响应 patientLostPrompt = true
+ * 时（连续 2 个窗口失访）引导医生去患者详情把患者状态改为失访（不自动改）。
+ */
+const lostConfirmingId = ref('');
+
+function openConfirmLost(row: TaskRow) {
+  Modal.confirm({
+    content:
+      '确认后该窗口随访标为失访，同窗口未完成跟进任务一并关闭；已完成随访保留（A-FU-012）。',
+    okText: '确认失访',
+    cancelText: '取消',
+    onOk: () => handleConfirmLost(row),
+    title: `确认失访？${row.patientName ?? ''}`,
+  });
+}
+
+async function handleConfirmLost(row: TaskRow) {
+  lostConfirmingId.value = row.id;
+  try {
+    const result = await confirmLostTask(row.id);
+    message.success(
+      result.terminatedFollowups > 0
+        ? `已确认失访；同窗口跟进任务关闭 ${result.terminatedFollowups} 条`
+        : '已确认失访',
+    );
+    if (result.patientLostPrompt) {
+      Modal.confirm({
+        content:
+          '该患者已连续 2 个随访窗口失访。请在患者详情「改为失访」并填写原因；改判后未开始任务全部终止、后续不再创建（A-FU-012）。',
+        okText: '去患者详情',
+        cancelText: '稍后处理',
+        onOk: () => {
+          void router.push(`/followup/patient/${row.patientId}`);
+        },
+        title: '建议把患者状态改为失访',
+      });
+    }
+    void load();
+  } catch (error) {
+    const body = error as { message?: string };
+    message.error(body?.message || '确认失访失败，请稍后重试');
+  } finally {
+    lostConfirmingId.value = '';
   }
 }
 
@@ -649,6 +702,19 @@ function handleEmptyAction() {
                   <Button
                     v-if="
                       taskCardActions(row, cardPerms).secondary.includes(
+                        'lostConfirm',
+                      )
+                    "
+                    :data-testid="`task-lost-${row.id}`"
+                    :loading="lostConfirmingId === row.id"
+                    size="small"
+                    @click="openConfirmLost(row)"
+                  >
+                    确认失访
+                  </Button>
+                  <Button
+                    v-if="
+                      taskCardActions(row, cardPerms).secondary.includes(
                         'claim',
                       )
                     "
@@ -876,6 +942,19 @@ function handleEmptyAction() {
                   >
                     完成提醒
                   </Button>
+                  <!-- S5 / A-FU-012：失访候选医生可「确认失访」（随访员只看到候选标记） -->
+                  <Button
+                    v-if="
+                      isTaskLostCandidate(record as TaskRow) && canEditRecord
+                    "
+                    :data-testid="`task-lost-${record.id}`"
+                    :loading="lostConfirmingId === record.id"
+                    size="small"
+                    type="link"
+                    @click="openConfirmLost(record as TaskRow)"
+                  >
+                    确认失访
+                  </Button>
                   <Button
                     v-if="isTaskClaimable(record as TaskRow)"
                     :data-testid="`task-claim-${record.id}`"
@@ -901,6 +980,9 @@ function handleEmptyAction() {
                       !record.recordId &&
                       !isTaskAcknowledgable(record as TaskRow) &&
                       !isTaskClaimable(record as TaskRow) &&
+                      !(
+                        isTaskLostCandidate(record as TaskRow) && canEditRecord
+                      ) &&
                       !(isTaskReassignable(record as TaskRow) && canAssign)
                     "
                     class="sub-text"

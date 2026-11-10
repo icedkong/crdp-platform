@@ -16,6 +16,7 @@ import {
   isTaskAcknowledgable,
   isTaskClaimable,
   isTaskEnterable,
+  isTaskLostCandidate,
   isTaskReassignable,
 } from '@crdp/api';
 
@@ -65,12 +66,17 @@ export function isTaskOverdue(task: { status: TaskStatus }): boolean {
   return task.status === 'OVERDUE';
 }
 
-export type TaskCardSecondaryAction = 'acknowledge' | 'assign' | 'claim';
+export type TaskCardSecondaryAction =
+  | 'acknowledge'
+  | 'assign'
+  | 'claim'
+  | 'lostConfirm';
 
 /**
  * 手机任务卡片操作：primary = 点卡片的主操作（进表单 / 只读查看，与桌面行内
- * 「录入 / 查看」同源），secondary = 卡片尾部按钮（完成提醒 / 认领 / 改派，
- * 按能力 + 权限过滤；pages.md §7 只去掉「批量」改派）。
+ * 「录入 / 查看」同源），secondary = 卡片尾部按钮（完成提醒 / 认领 / 改派 /
+ * 确认失访，按能力 + 权限过滤；pages.md §7 只去掉「批量」改派；S5 失访候选
+ * 医生可确认失访，随访员只看到候选标记）。
  */
 export function taskCardActions(
   task: TaskRow,
@@ -88,6 +94,9 @@ export function taskCardActions(
   const secondary: TaskCardSecondaryAction[] = [];
   if (perms.canEditRecord && isTaskAcknowledgable(task)) {
     secondary.push('acknowledge');
+  }
+  if (perms.canEditRecord && isTaskLostCandidate(task)) {
+    secondary.push('lostConfirm');
   }
   if (isTaskClaimable(task)) secondary.push('claim');
   if (perms.canAssign && isTaskReassignable(task)) secondary.push('assign');

@@ -75,6 +75,7 @@ import {
   fetchPatientSummary,
   fetchPatientTimeline,
   fetchPatientWardHistory,
+  markPatientLost,
 } from '#/api/core/patient';
 import { deleteReport, fetchPatientReports } from '#/api/core/report';
 import { startTask } from '#/api/core/task';
@@ -193,6 +194,30 @@ const wardHistory = ref<PatientWardHistoryItem[]>([]);
 
 // E13-T08 / A-WARD-005：转病区（详情页入口，pages.md §6 页面 4）
 const transferOpen = ref(false);
+
+// S5（M3 审查）/ A-FU-012、A-PAT-011：改为失访（患者头部入口，原因必填 ReasonModal）
+const markLostOpen = ref(false);
+const markLostSubmitting = ref(false);
+
+/** 确认改为失访：写状态历史与审计、终止未开始任务；成功后刷新概览（状态、下次随访「—（已终止）」）。 */
+async function handleMarkLost(reason: string) {
+  if (markLostSubmitting.value) return;
+  markLostSubmitting.value = true;
+  try {
+    const result = await markPatientLost(patientId.value, reason);
+    markLostOpen.value = false;
+    message.success(
+      `已改为失访；终止未开始 / 未完成任务 ${result.terminatedTasks} 条，后续不再创建随访任务`,
+    );
+    overview.value = await fetchPatientSummary(patientId.value);
+    statusHistory.value = [];
+    void reloadTimeline();
+  } catch {
+    // 失败保持弹窗打开可改原因（提示由统一拦截器弹出，如「患者已是失访状态」）
+  } finally {
+    markLostSubmitting.value = false;
+  }
+}
 
 // E15-T07 / A-FU-014：历史补录弹窗（随访记录页签入口）
 const backfillOpen = ref(false);
@@ -993,6 +1018,7 @@ const timelineLegendNote =
     <PatientHeader
       :overview="overview"
       @contacts="openContacts"
+      @lost="markLostOpen = true"
       @transfer="transferOpen = true"
       @unplanned="unplannedOpen = true"
     />
@@ -1718,6 +1744,17 @@ const timelineLegendNote =
       note="解锁原因必填，将记入操作日志（A-PAT-006）；解锁后基线恢复可编辑。"
       placeholder="必填，如：发现录入错误需要修正"
       @confirm="handleUnlock"
+    />
+
+    <!-- S5 / A-FU-012「系统提示后由医生改为失访」：原因必填（A-PAT-011），改判后
+         未开始 / 未完成任务终止、后续不再创建（components.md §13 ReasonModal 文案规范） -->
+    <ReasonModal
+      v-model:open="markLostOpen"
+      confirm-text="改为失访"
+      :label="`${overview.name} · ${overview.patientNo}`"
+      note="失访原因必填，将记入状态历史与操作日志（A-PAT-011）；改为失访后未开始 / 未完成任务全部终止，后续不再创建随访任务（A-FU-012）。"
+      placeholder="必填，如：连续两年未联系到"
+      @confirm="handleMarkLost"
     />
 
     <!-- E16-T09 / A-ATT-007、C-SCAN-016：删除报告单（软删除，原因必填；后端写 RPT_DELETE 审计） -->

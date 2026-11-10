@@ -129,7 +129,7 @@ public class FollowupTaskCreationService {
                         .orElse(logicalDate);
         int created = 0;
         for (LocalDate date = from; !date.isAfter(logicalDate); date = date.plusDays(1)) {
-            created += createForDate(date, logicalDate);
+            created += createForDate(date);
         }
         // 逾期刷新（E15-T01 / A-FU-010，tech-plan §8 步骤 W）：按本次运行目标逻辑日一次刷完（补跑逐日推进后统一按最终日判定，
         // 晚标记同样只发一次 TASK_OVERDUE 事件——状态守卫幂等）
@@ -163,16 +163,13 @@ public class FollowupTaskCreationService {
         }
     }
 
-    /**
-     * 一个逻辑日：遍历可调入组，单条失败记 WARN 继续（返回新建数）。 runDate = 本次运行的目标逻辑日（补跑时晚于逐日推进的
-     * date），停用补偿按它判定「窗口在本次运行时点已结束」（E14-T06）。
-     */
-    private int createForDate(LocalDate logicalDate, LocalDate runDate) {
+    /** 一个逻辑日：遍历可调入组，单条失败记 WARN 继续（返回新建数）。 停用补偿按本逻辑日判定「窗口在本次运行时点已结束」（E14-T06；S6 起不用整次运行的目标日）。 */
+    private int createForDate(LocalDate logicalDate) {
         int created = 0;
         for (FollowupTaskMapper.EnrollmentRow enrollment :
                 taskMapper.findSchedulableEnrollments()) {
             try {
-                created += processEnrollment(enrollment, logicalDate, runDate);
+                created += processEnrollment(enrollment, logicalDate);
             } catch (RuntimeException ex) {
                 log.warn(
                         "入组任务创建失败，跳过该入组继续 enrollment={} plan={} 原因={}",
@@ -188,8 +185,8 @@ public class FollowupTaskCreationService {
 
     /** 每日调度口径（入组前已过窗口不建，OQ-78③）；返回新建任务数（含停用补偿，E14-T06）。 */
     private int processEnrollment(
-            FollowupTaskMapper.EnrollmentRow enrollment, LocalDate logicalDate, LocalDate runDate) {
-        CreationCounts counts = initializeInternal(enrollment, logicalDate, runDate, null, false);
+            FollowupTaskMapper.EnrollmentRow enrollment, LocalDate logicalDate) {
+        CreationCounts counts = initializeInternal(enrollment, logicalDate, null, false);
         return counts.total();
     }
 
@@ -215,7 +212,6 @@ public class FollowupTaskCreationService {
                 initializeInternal(
                         new FollowupTaskMapper.EnrollmentRow(
                                 enrollmentId, patientId, planId, null, mode, today, null, null),
-                        today,
                         today,
                         null,
                         true);
@@ -243,18 +239,17 @@ public class FollowupTaskCreationService {
         FollowupTaskMapper.EnrollmentRow row =
                 new FollowupTaskMapper.EnrollmentRow(
                         enrollmentId, patientId, planId, null, mode, today, pausedFrom, today);
-        CreationCounts counts = initializeInternal(row, today, today, pausedFrom, false);
+        CreationCounts counts = initializeInternal(row, today, pausedFrom, false);
         return new ResumeInitSummary(counts.skipped(), counts.normal());
     }
 
     /**
-     * 单入组的排期与建任务（各同步入口与每日调度共用；runDate = 本次运行目标逻辑日，停用补偿判定用；atEnrollment = 入组即建口径；resumePausedFrom 非空
-     * = 恢复补偿口径）。
+     * 单入组的排期与建任务（各同步入口与每日调度共用；停用补偿按 logicalDate 判定——补跑逐日推进时即「正在补的那个逻辑日」，S6； atEnrollment =
+     * 入组即建口径；resumePausedFrom 非空 = 恢复补偿口径）。
      */
     private CreationCounts initializeInternal(
             FollowupTaskMapper.EnrollmentRow enrollment,
             LocalDate logicalDate,
-            LocalDate runDate,
             LocalDate resumePausedFrom,
             boolean atEnrollment) {
         LocalDate startDate =
@@ -301,7 +296,7 @@ public class FollowupTaskCreationService {
                             enrollment.enrolledOn(),
                             planEnd);
         }
-        return createPlannedTasks(enrollment, result, rows, logicalDate, runDate);
+        return createPlannedTasks(enrollment, result, rows, logicalDate);
     }
 
     /**
@@ -309,10 +304,11 @@ public class FollowupTaskCreationService {
      *
      * <ul>
      *   <li>幂等：已存在（重复执行 / 补跑重放）跳过；并发撞 uk 按已存在处理；
-     *   <li>停用补偿改判（E14-T06 / PLT-TEN-017）：runDate 非空时，排期为 NORMAL 但窗口在本次运行目标逻辑日前已结束的次数
+     *   <li>停用补偿改判（E14-T06 / PLT-TEN-017）：排期为 NORMAL 但窗口在<b>正在补的那个逻辑日</b>前已结束的次数
      *       ——本应在开启日创建而未创建（租户停用 / 作业未执行期间）——改建为「停用期间未执行」（DISABLED_SKIPPED +
-     *       SKIPPED_SUSPENDED）；窗口结束日落在此前暂停区间内的归「暂停期间未执行」（PAUSED_SKIPPED）。 入组即建口径（runDate
-     *       与逻辑日同为入组日）不会有窗口已结束的 NORMAL 次数，改判天然不生效；
+     *       SKIPPED_SUSPENDED）；窗口结束日落在此前暂停区间内的归「暂停期间未执行」（PAUSED_SKIPPED）。 S6（M3
+     *       审查）：改判按逐日推进的逻辑日，不用整次运行的目标日——停机跨过窗口结束日再补跑时，开启日当天的补建仍为 NORMAL， 窗口结束后由逾期刷新标
+     *       OVERDUE（患者仍应被随访），不再误标「停用 / 暂停期间未执行」；
      *   <li>只有 NORMAL 写 TaskOpened 事件（补录 / 暂停期间未执行 / 停用期间未执行不进通知，A 规格第 5 章）。
      * </ul>
      */
@@ -320,8 +316,7 @@ public class FollowupTaskCreationService {
             FollowupTaskMapper.EnrollmentRow enrollment,
             PlanResult result,
             List<PlanMapper.NodeRow> rows,
-            LocalDate logicalDate,
-            LocalDate runDate) {
+            LocalDate logicalDate) {
         FollowupTaskMapper.PatientOwnerRow owner =
                 taskMapper.findOwnerContext(enrollment.patientId());
         Map<Long, PlanMapper.NodeRow> templates =
@@ -339,7 +334,10 @@ public class FollowupTaskCreationService {
             if (template == null) {
                 continue;
             }
-            String createType = effectiveCreateType(enrollment, task, runDate);
+            // S6（M3 审查）：改判按**正在补的那个逻辑日**判定，不用整次运行的目标日——停机跨过窗口结束日再补跑时，
+            // 开启日当天的补建窗口当时未结束，仍应是 NORMAL（窗口结束后由逾期刷新标 OVERDUE）；
+            // 只有连被补逻辑日都晚于窗口结束日（作业从未记录成功 / 上次成功日晚于窗口）才改建「未执行」。
+            String createType = effectiveCreateType(enrollment, task, logicalDate);
             String status =
                     TaskCreationPlanner.CREATE_NORMAL.equals(createType)
                             ? "PENDING"
@@ -394,15 +392,18 @@ public class FollowupTaskCreationService {
     }
 
     /**
-     * 停用 / 暂停补偿的改判（E14-T06）：排期为 NORMAL 但窗口已在本次运行目标逻辑日前结束 → 「未执行」补偿任务； 窗口结束日落在此前暂停区间内归
+     * 停用 / 暂停补偿的改判（E14-T06）：排期为 NORMAL 但窗口已在 asOf 逻辑日前结束 → 「未执行」补偿任务； 窗口结束日落在此前暂停区间内归
      * PAUSED_SKIPPED（患者暂停），否则 DISABLED_SKIPPED（租户停用 / 作业未执行，PLT-TEN-017）。 排期已给出的补偿 / 补录类型不改。
+     *
+     * <p>S6（M3 审查）：asOf = **正在补的那个逻辑日**（补跑逐日推进的当日），不是整次运行的目标日—— 停机跨过窗口结束日再补跑时，开启日当天的补建窗口当时未结束，仍是
+     * NORMAL，窗口结束后由逾期刷新标 OVERDUE； 只有连被补逻辑日都晚于窗口结束日（作业从未记录成功 / 上次成功日已晚于窗口）才改判「未执行」。
      */
     private static String effectiveCreateType(
-            FollowupTaskMapper.EnrollmentRow enrollment, PlannedTask task, LocalDate runDate) {
+            FollowupTaskMapper.EnrollmentRow enrollment, PlannedTask task, LocalDate asOf) {
         if (!TaskCreationPlanner.CREATE_NORMAL.equals(task.createType())) {
             return task.createType();
         }
-        if (runDate == null || !task.windowEnd().isBefore(runDate)) {
+        if (asOf == null || !task.windowEnd().isBefore(asOf)) {
             return task.createType();
         }
         return pauseCoversWindowEnd(enrollment, task.windowEnd())

@@ -129,12 +129,12 @@ class PatientOverviewIT {
         assertNull(data.get("latestFollowup"), "最近随访关键指标随 E15 写入");
         assertNull(data.get("device"), "C 当前器械随 E21 开放");
         // 演示随访医生只有 followup:patient:edit（菜单 214）：可停止、无计划外 / 上传 / 沟通入口
-        // 演示随访医生有 followup:patient:edit（菜单 214，stop / transfer）与 followup:record:edit
-        // （菜单 222，E25-T01 授予：unplanned / contact）；无上传权限
+        // 演示随访医生有 followup:patient:edit（菜单 214，stop / lost（S5 改为失访）/ transfer）
+        // 与 followup:record:edit（菜单 222，E25-T01 授予：unplanned / contact）；无上传权限
         assertEquals(
-                List.of("unplanned", "contact", "stop", "transfer"),
+                List.of("unplanned", "contact", "stop", "lost", "transfer"),
                 data.get("actions"),
-                "actions 按权限 + 状态计算（transfer 随 E13-T08、record:edit 随 E25-T01 授予演示角色）");
+                "actions 按权限 + 状态计算（transfer 随 E13-T08、record:edit 随 E25-T01 授予演示角色；lost 随 S5）");
     }
 
     @Test

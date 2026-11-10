@@ -70,13 +70,16 @@ public class FilePreviewService {
     }
 
     /**
-     * 沟通录音的患者数据范围校验端口（E15-T04）：文件挂沟通记录时校验患者可见性， 未挂或不可见一律 40400（不暴露存在）。放在 file 子域的 app 层接口，避免 file →
+     * 沟通录音的患者数据范围校验端口（E15-T04）：文件挂沟通记录时校验患者可见性， 不可见一律 40400（不暴露存在）。放在 file 子域的 app 层接口，避免 file →
      * contact 的 反向编译依赖（依赖方向 contact → file）；实现由 contact 子域提供。
      */
     public interface ContactAudioScopePort {
 
-        /** 文件未挂沟通记录 → 直接放行；挂了 → 按患者数据范围校验，越范围 40400。 */
-        void requireAudioPlayable(long fileId);
+        /**
+         * 文件挂沟通记录 → 按患者数据范围校验（越范围 40400）并返回 {@code true}； 未挂 → 返回 {@code false}（S1：未关联文件改由调用方按
+         * 上传者本人收紧，不再「未挂即放行」）。
+         */
+        boolean requireAudioPlayable(long fileId);
     }
 
     /** 签发结果：短时链接 + 展示与播放判定所需字段（前端不缓存，用完即弃）。 */
@@ -98,11 +101,12 @@ public class FilePreviewService {
         if (row == null || "DELETED".equals(row.getStatus())) {
             throw notFound();
         }
-        // E15-T04：挂在沟通记录上的录音按患者数据范围校验（OQ-62① 的沟通录音部分提前收紧）；
-        // 未挂沟通记录的文件维持「登录 + 本院台账」口径
-        contactScope.requireAudioPlayable(fileId);
+        // E15-T04：挂在沟通记录上的录音按患者数据范围校验（OQ-62① 的沟通录音部分提前收紧）
+        boolean audioLinked = contactScope.requireAudioPlayable(fileId);
         // E16-T09：挂在报告单上的文件按患者数据范围校验（OQ-62① 的报告单部分——报告单子域已落地）
-        reportScope.requireReportFileReadable(fileId);
+        boolean reportLinked = reportScope.requireReportFileReadable(fileId) != null;
+        // S1（M3 审查）：未挂任何业务对象的文件不再「登录 + 本院台账」放行，只允许上传者本人取链接
+        requireUploaderIfUnlinked(audioLinked, reportLinked, row, principal);
         relativeKeyOf(row.getObjectKey(), principal.tenantCode());
         String token = tokens.issue(principal.tenantId(), principal.tenantCode(), fileId);
         audit.append(
@@ -165,6 +169,20 @@ public class FilePreviewService {
     }
 
     // ---------------------------------------------------------------- 私有
+
+    /**
+     * S1（M3 审查）：未挂任何沟通记录 / 报告单的文件（PENDING 待关联、手机上传未提交）只允许**上传者本人**
+     * 取预览与下载链接——文件号自增，原先「本院任意登录用户可按号取链接」属越权预览。已挂业务对象的文件维持患者范围校验（越范围已在端口内 40400）。
+     */
+    static void requireUploaderIfUnlinked(
+            boolean audioLinked, boolean reportLinked, SysFileRow row, SessionPrincipal principal) {
+        if (audioLinked || reportLinked) {
+            return;
+        }
+        if (row.getUploaderId() != principal.userId()) {
+            throw notFound();
+        }
+    }
 
     /**
      * 校验台账对象键确在令牌租户前缀下并剥出相对键（存储端口会再按当前上下文拼回前缀， 双保险）。前缀对不上说明令牌与台账不是同一租户 → 40400（E10-T02 按租户前缀隔离）。

@@ -34,6 +34,20 @@ crdp:
       secret-key: ${CRDP_OBS_SECRET_KEY:}
       bucket: ${CRDP_OBS_BUCKET:}
       kms-key-id: ${CRDP_OBS_KMS_KEY_ID:} # 留空走桶默认 KMS 密钥（加密本身不可关）
+  audit:
+    archive:
+      # S3（M3 审查）/ PLT-AUD-010、E08-T03、E22-T08：生产必须开启审计归档——
+      # 在线保留 1 年、归档对象 WORM 锁定 15 年。默认 type=obs（与业务桶 CRDP_OBS_* 同一
+      # 装配标准）：缺 CRDP_OBS_ARCHIVE_ENDPOINT/AK/SK/BUCKET 任一项启动即失败（fail fast，
+      # 报错指明缺的配置键），不静默回落 none（none 不上传也不删在线数据，审计被改时无不可变副本）。
+      # 本机 / CI（local / dev / test / demo 剖面）不激活本文件，保持 type=none 可用。
+      storage:
+        type: ${CRDP_AUDIT_ARCHIVE_STORAGE_TYPE:obs}
+        obs:
+          endpoint: ${CRDP_OBS_ARCHIVE_ENDPOINT:}
+          access-key: ${CRDP_OBS_ARCHIVE_AK:}
+          secret-key: ${CRDP_OBS_ARCHIVE_SK:}
+          bucket: ${CRDP_OBS_ARCHIVE_BUCKET:}
   file:
     download:
       # E10-T05 / tech-plan §10「下载」：下载签名链接的 HMAC 密钥（Base64，≥ 32 字节），

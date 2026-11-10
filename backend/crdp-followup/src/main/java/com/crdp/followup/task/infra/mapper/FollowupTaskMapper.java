@@ -39,7 +39,8 @@ public interface FollowupTaskMapper {
     /**
      * 状态为「已启动」的入组（A-FU-022 暂停 / 移除的不创建，恢复补偿随 E14-T06）。计划版本：PUBLISHED 正常创建； DISABLED =
      * 被新版本顶替的旧版本，在组患者不迁移、沿用原版本继续按需创建（A-FU-020 延后，OQ-76①）； PAUSED 计划「不开启新任务、不发通知」（A-FU-018）。患者死亡 /
-     * 终止随访后不再创建（A-FU-007）。
+     * 终止随访后不再创建（A-FU-007）；失访后不再创建（S5（M3 审查）/ A-FU-012：医生经 POST /patients/{id}/status
+     * 改失访后，后续年度不再按「随访中」建任务）。
      */
     @IgnoreScope(
             reason =
@@ -56,7 +57,7 @@ public interface FollowupTaskMapper {
             WHERE e.status = 'ACTIVE'
               AND p.status IN ('PUBLISHED', 'DISABLED')
               AND pt.deleted = 0
-              AND pt.followup_status NOT IN ('DEAD', 'TERMINATED')
+              AND pt.followup_status NOT IN ('DEAD', 'TERMINATED', 'LOST')
             ORDER BY e.id
             """)
     List<EnrollmentRow> findSchedulableEnrollments();
