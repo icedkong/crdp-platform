@@ -50,7 +50,8 @@ describe('e06-T07 用户表单校验（与后端 40001 口径一致）', () => {
   it('账号必填、长度与字符集（创建后不可改）', () => {
     expect(validateUsername(' nurse.demo ')).toBe(null);
     expect(validateUsername('  ')).toBe('账号必填');
-    expect(validateUsername('张三')).toBe(
+    // 中文账号（示例）同样过不了字符集
+    expect(validateUsername('张三（示例）')).toBe(
       '账号只允许字母、数字、下划线、短横线与点',
     );
     expect(validateUsername('a'.repeat(65))).toBe('账号过长（最多 64 个字符）');
@@ -70,6 +71,7 @@ describe('e06-T07 用户表单校验（与后端 40001 口径一致）', () => {
   });
 
   it('手机号：新建必填、编辑留空＝保持不变', () => {
+    // 号码为虚构测试号段（139-0000 段，AGENTS.md §5.5）
     expect(validatePhone('13900001001', true)).toBe(null);
     expect(validatePhone('', true)).toBe('手机号必填');
     expect(validatePhone('', false)).toBe(null);
@@ -87,13 +89,13 @@ describe('e06-T07 用户表单校验（与后端 40001 口径一致）', () => {
   it('表单校验汇总：创建时校验账号，编辑时跳过', () => {
     const base = toFormModel(detail({ username: 'ok.name' }));
     const createErrors = validateForm(
-      { ...base, username: '张三', phone: '' },
+      { ...base, username: '张三（示例）', phone: '' },
       { creating: true },
     );
     expect(createErrors.username).not.toBe('');
     expect(createErrors.phone).toBe('手机号必填');
     const editErrors = validateForm(
-      { ...base, username: '张三', phone: '' },
+      { ...base, username: '张三（示例）', phone: '' },
       { creating: false },
     );
     expect(editErrors.username).toBe('');

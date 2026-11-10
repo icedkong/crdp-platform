@@ -23,7 +23,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
  *
  * <p>锁定：负责人病区复核（已不负责该病区且非全院 → 不再收到，转病区成员兜底）、全院范围不受病区限制、 无负责人 →
  * 病区全部启用成员、逾期抄送病区「默认随访负责人」、显式接收人清单只留启用用户、租户主动取消 WARD_STAFF 时不兜底、任何路径都不解析患者（患者不在
- * sys_user，结构上收不到）。全部虚构数据。
+ * sys_user，结构上收不到）。全部虚构数据（手机号夹具为虚构测试号段）。
  */
 @ExtendWith(MockitoExtension.class)
 class NotifyRecipientResolverTest {

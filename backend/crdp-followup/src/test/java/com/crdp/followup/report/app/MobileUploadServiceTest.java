@@ -154,7 +154,7 @@ class MobileUploadServiceTest {
         stubPendingToken(presetLocation());
         when(mapper.findPatientBrief(PATIENT))
                 .thenReturn(new MobileUploadMapper.PatientBriefRow("张三密文", "MRN001密文", "示例二病区"));
-        when(crypto.decrypt("张三密文")).thenReturn("张小明");
+        when(crypto.decrypt("张三密文")).thenReturn("张小明（示例）");
         when(crypto.decrypt("MRN001密文")).thenReturn("MRN-0001");
         when(reports.reportLocations(PATIENT)).thenReturn(locationTree());
         when(catalog.catalogTypes())
@@ -171,8 +171,8 @@ class MobileUploadServiceTest {
 
         MobileUploadService.InfoView view = service.info("tok-1");
 
-        // 姓名「张*明」、病案号「前 2 后 2」脱敏（SensitiveValueMasker 同列表口径）
-        assertEquals("张*明", view.patientName());
+        // 姓名「张*）」（夹具带（示例）标记）、病案号「前 2 后 2」脱敏（SensitiveValueMasker 同列表口径）
+        assertEquals("张*）", view.patientName());
         assertEquals("MR****01", view.medicalRecordNo());
         assertEquals("示例二病区", view.wardName());
         assertEquals(LocalDate.now(java.time.ZoneId.of("Asia/Shanghai")), view.today());

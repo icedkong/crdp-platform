@@ -43,7 +43,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
  * E09-T05 / A-NTF-005、C-NTF-003、C-NTF-005 单元测试。验收原文：「08:30 汇总；21:00–08:00 不发」； A 规格 §7 「某医生当天有 5
- * 项待随访、2 项逾期，只收到 1 条汇总短信，内容不含任何患者信息」「21:30 触发的逾期短信推迟到次日 08:00 后发送」； notify.md §7「第 4 条并入次日」。全部虚构数据。
+ * 项待随访、2 项逾期，只收到 1 条汇总短信，内容不含任何患者信息」「21:30 触发的逾期短信推迟到次日 08:00 后发送」； notify.md §7「第 4
+ * 条并入次日」。全部虚构数据（手机号夹具为 139-0000 虚构测试号段）。
  */
 @ExtendWith(MockitoExtension.class)
 class NotifyDigestServiceTest {

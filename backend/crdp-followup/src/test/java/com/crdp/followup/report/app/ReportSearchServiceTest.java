@@ -41,8 +41,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.core.context.SecurityContextHolder;
 
 /**
- * E16-T05 单测锁定（全部虚构数据，A-ATT-016 / C-SCAN-014）：全院报告单检索——条件装配（患者盲索引 +
- * 文字关键词、位置含「未指定位置」、电子化状态、病区）、分页校验、行内患者脱敏、位置标签、缩略图首文件、 筛选候选与批量查询审计。
+ * E16-T05 单测锁定（全部虚构数据，A-ATT-016 / C-SCAN-014；AGENTS.md §5.5：患者姓名夹具带「（示例）」标记，病案号 MRN-000x
+ * 为虚构演示号）：全院报告单检索——条件装配（患者盲索引 + 文字关键词、位置含「未指定位置」、电子化状态、病区）、分页校验、行内患者脱敏、位置标签、缩略图首文件、 筛选候选与批量查询审计。
  */
 @ExtendWith(MockitoExtension.class)
 class ReportSearchServiceTest {
@@ -108,7 +108,7 @@ class ReportSearchServiceTest {
                         List.of(
                                 row(
                                         901L,
-                                        "张小明",
+                                        "张小明（示例）",
                                         "MRN-0001",
                                         "105-2026-001",
                                         "示例二病区",
@@ -164,7 +164,7 @@ class ReportSearchServiceTest {
         lenient()
                 .when(formService.schema("A_ANNUAL_FU", 4))
                 .thenReturn(schema(List.of(category("sec-echo", "超声复查"))));
-        when(crypto.decrypt("name-cipher")).thenReturn("张小明");
+        when(crypto.decrypt("name-cipher")).thenReturn("张小明（示例）");
         when(crypto.decrypt("mrn-cipher")).thenReturn("MRN-0001");
 
         ReportSearchService.ReportPage page =
@@ -176,7 +176,7 @@ class ReportSearchServiceTest {
         assertEquals(1, page.items().size());
         ReportSearchService.RowView view = page.items().get(0);
         assertEquals("901", view.id());
-        assertEquals("张*明", view.patientName(), "行内姓名脱敏（列表不提供逐行明文）");
+        assertEquals("张*）", view.patientName(), "行内姓名脱敏（列表不提供逐行明文）");
         assertEquals("MR****01", view.mrn(), "病案号脱敏（前 2 后 2）");
         assertEquals("105-2026-001", view.visitNo(), "随访编号本身不带敏感明文（C-SCAN-014）");
         assertEquals("示例二病区", view.wardName());
@@ -198,7 +198,7 @@ class ReportSearchServiceTest {
                         List.of(
                                 row(
                                         902L,
-                                        "李小红",
+                                        "李小红（示例）",
                                         "MRN-0002",
                                         null,
                                         "示例二病区",
@@ -212,7 +212,7 @@ class ReportSearchServiceTest {
         when(mapper.linksOfReports(anyList())).thenReturn(List.of());
         when(mapper.fileCountsOfReports(anyList())).thenReturn(List.of());
         when(mapper.firstFilesOfReports(anyList())).thenReturn(List.of());
-        when(crypto.decrypt("name-cipher")).thenReturn("李小红");
+        when(crypto.decrypt("name-cipher")).thenReturn("李小红（示例）");
         when(crypto.decrypt("mrn-cipher")).thenReturn("MRN-0002");
 
         ReportSearchService.ReportPage page = service.search(null);
@@ -262,7 +262,7 @@ class ReportSearchServiceTest {
                         List.of(
                                 row(
                                         901L,
-                                        "张小明",
+                                        "张小明（示例）",
                                         "MRN-0001",
                                         "105-2026-001",
                                         "示例二病区",
@@ -279,7 +279,7 @@ class ReportSearchServiceTest {
         when(mapper.firstFilesOfReports(anyList()))
                 .thenReturn(
                         List.of(new ReportSearchMapper.FileRowRaw(901L, 71L, "jpg", "t/n/th.jpg")));
-        when(crypto.decrypt("name-cipher")).thenReturn("张小明");
+        when(crypto.decrypt("name-cipher")).thenReturn("张小明（示例）");
         when(crypto.decrypt("mrn-cipher")).thenReturn("MRN-0001");
     }
 
@@ -312,7 +312,7 @@ class ReportSearchServiceTest {
 
         ReportSearchService.RowView view = service.search(null).items().get(0);
 
-        assertEquals("张*明", view.patientName(), "医院会话不经视角执行点（行为不变）");
+        assertEquals("张*）", view.patientName(), "医院会话不经视角执行点（行为不变）");
         assertEquals("71", view.firstFile().fileId(), "医院会话首附件照常返回");
     }
 
@@ -336,19 +336,19 @@ class ReportSearchServiceTest {
     void keywordBecomesBlindIndexesAndTextLike() {
         when(mapper.search(any(), anyInt(), anyInt())).thenReturn(List.of());
         when(mapper.count(any())).thenReturn(0L);
-        when(crypto.blindIndex("pt-patient-name", "张小明")).thenReturn("blind-name");
-        when(crypto.blindIndex("pt-patient-mrn", "张小明")).thenReturn("blind-mrn");
+        when(crypto.blindIndex("pt-patient-name", "张小明（示例）")).thenReturn("blind-name");
+        when(crypto.blindIndex("pt-patient-mrn", "张小明（示例）")).thenReturn("blind-mrn");
 
         service.search(
                 new ReportSearchService.SearchRequest(
-                        1, 20, "张小明", null, null, null, null, null, null, null, null, null));
+                        1, 20, "张小明（示例）", null, null, null, null, null, null, null, null, null));
 
         ArgumentCaptor<Criteria> captor = ArgumentCaptor.forClass(Criteria.class);
         verify(mapper).search(captor.capture(), anyInt(), anyInt());
         assertEquals("blind-name", captor.getValue().nameBlind());
         assertEquals("blind-mrn", captor.getValue().mrnBlind());
-        assertEquals("张小明", captor.getValue().textKeyword(), "关键词同时匹配名称 / 所见 / 结论 / 类型字段文字");
-        assertEquals("张小明", captor.getValue().keyword(), "随访编号 / 原系统编号精确匹配");
+        assertEquals("张小明（示例）", captor.getValue().textKeyword(), "关键词同时匹配名称 / 所见 / 结论 / 类型字段文字");
+        assertEquals("张小明（示例）", captor.getValue().keyword(), "随访编号 / 原系统编号精确匹配");
     }
 
     @Test

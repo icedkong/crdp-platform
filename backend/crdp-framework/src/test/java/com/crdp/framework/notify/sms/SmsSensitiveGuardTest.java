@@ -55,7 +55,7 @@ class SmsSensitiveGuardTest {
 
     @Test
     void residentIdInParamIsRejected() {
-        // 18 位证件号虽是纯数字，但 NOTIFY 白名单只放 1-6 位数字与日期
+        // 18 位证件号虽是纯数字，但 NOTIFY 白名单只放 1-6 位数字与日期；值为虚构演示号（AGENTS.md §5.5）
         assertThrows(
                 SmsChannelException.class,
                 () ->

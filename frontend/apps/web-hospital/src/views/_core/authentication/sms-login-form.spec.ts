@@ -11,6 +11,7 @@ import {
 /** E04-T04 / PLT-AUTH-002：短信登录表单规则与发送按钮状态（与后端校验一致）。 */
 describe('sms-login-form', () => {
   it('手机号、验证码、租户编码规则与后端一致', () => {
+    // 号码均为虚构测试号段（AGENTS.md §5.5）
     expect(PHONE_PATTERN.test('13900000001')).toBe(true);
     expect(PHONE_PATTERN.test('1390000000')).toBe(false);
     expect(PHONE_PATTERN.test('23900000001')).toBe(false);

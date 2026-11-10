@@ -85,13 +85,19 @@ class DataScopeMaskingIT {
             @MaskedByPolicy(resource = "patient", field = "address") String address,
             String gender) {}
 
+    /** 夹具全部虚构（AGENTS.md §5.5 / M3 审查 A2）：姓名带「（示例）」标记；证件号为校验位有效的 虚构演示号；手机号属虚构测试号段；病案号为虚构演示号。 */
     private static final SamplePatientRow SAMPLE =
             new SamplePatientRow(
-                    "张小明", "11010219900101567X", "13800005678", "MR1000001", "北京市东城区某某街道某小区", "男");
+                    "张小明（示例）",
+                    "110102199001015672", // 虚构演示证件号（校验位有效，非真实证件）
+                    "13800005678", // 虚构测试号段手机号，非真实号码
+                    "MR1000001", // 虚构演示病案号
+                    "北京市东城区某某街道某小区",
+                    "男");
 
     /** 五个敏感字段全部按目录默认 MASKED 的期望输出（SensitiveValueMasker 口径）。 */
     private static final String FULLY_MASKED_JSON =
-            "{\"name\":\"张*明\",\"idCard\":\"110102********567X\",\"phone\":\"138****5678\","
+            "{\"name\":\"张*）\",\"idCard\":\"110102********5672\",\"phone\":\"138****5678\","
                     + "\"medicalRecordNo\":\"MR*****01\",\"address\":\"北京市东城区****\",\"gender\":\"男\"}";
 
     @Autowired private TestRestTemplate rest;
@@ -340,7 +346,7 @@ class DataScopeMaskingIT {
         principal = loginPrincipal("itr.sm.visible.demo");
         assertEquals("VISIBLE", principal.fieldPolicies().decide("patient", "name"), "角色覆盖进会话");
         assertEquals(
-                "{\"name\":\"张小明\",\"idCard\":\"110102********567X\",\"phone\":\"138****5678\","
+                "{\"name\":\"张小明（示例）\",\"idCard\":\"110102********5672\",\"phone\":\"138****5678\","
                         + "\"medicalRecordNo\":\"MR*****01\",\"gender\":\"男\"}",
                 serialized(principal),
                 "姓名随策略输出明文、住址整字段隐藏，其余默认脱敏");

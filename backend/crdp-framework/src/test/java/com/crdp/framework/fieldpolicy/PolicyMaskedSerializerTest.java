@@ -19,6 +19,11 @@ import org.springframework.security.core.context.SecurityContextHolder;
  */
 class PolicyMaskedSerializerTest {
 
+    /** 夹具全部虚构（AGENTS.md §5.5）：姓名带「（示例）」标记，手机号为虚构测试号段（138-0000 段）。 */
+    private static final String NAME_PLAIN = "张小明（示例）";
+
+    private static final String PHONE = "13800005678";
+
     /** 与 E13 起的患者 DTO 同构的最小样例（字段全部虚构）。 */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     record SampleRow(
@@ -71,11 +76,10 @@ class PolicyMaskedSerializerTest {
         loginWith(FieldPolicySnapshot.defaults());
 
         String json =
-                mapper.writeValueAsString(
-                        new SampleRow("张小明", "13800005678", "北京市东城区某某街道某小区", "男"));
+                mapper.writeValueAsString(new SampleRow(NAME_PLAIN, PHONE, "北京市东城区某某街道某小区", "男"));
 
         assertEquals(
-                "{\"name\":\"张*明\",\"phone\":\"138****5678\",\"address\":\"北京市东城区****\",\"gender\":\"男\"}",
+                "{\"name\":\"张*）\",\"phone\":\"138****5678\",\"address\":\"北京市东城区****\",\"gender\":\"男\"}",
                 json);
     }
 
@@ -85,9 +89,11 @@ class PolicyMaskedSerializerTest {
                 FieldPolicySnapshot.merge(
                         List.of(new FieldPolicyOverride("patient", "name", "VISIBLE"))));
 
-        String json = mapper.writeValueAsString(new SampleRow("张小明", "13800005678", null, "男"));
+        String json = mapper.writeValueAsString(new SampleRow(NAME_PLAIN, PHONE, null, "男"));
 
-        assertEquals("{\"name\":\"张小明\",\"phone\":\"138****5678\",\"gender\":\"男\"}", json);
+        assertEquals(
+                "{\"name\":\"" + NAME_PLAIN + "\",\"phone\":\"138****5678\",\"gender\":\"男\"}",
+                json);
     }
 
     @Test
@@ -99,8 +105,7 @@ class PolicyMaskedSerializerTest {
                                 new FieldPolicyOverride("patient", "address", "HIDDEN"))));
 
         String json =
-                mapper.writeValueAsString(
-                        new SampleRow("张小明", "13800005678", "北京市东城区某某街道某小区", "男"));
+                mapper.writeValueAsString(new SampleRow(NAME_PLAIN, PHONE, "北京市东城区某某街道某小区", "男"));
 
         assertEquals(
                 "{\"phone\":\"138****5678\",\"gender\":\"男\"}",
@@ -110,10 +115,10 @@ class PolicyMaskedSerializerTest {
 
     @Test
     void withoutSessionFailsClosedToMasked() throws Exception {
-        String json = mapper.writeValueAsString(new SampleRow("张小明", "13800005678", null, "男"));
+        String json = mapper.writeValueAsString(new SampleRow(NAME_PLAIN, PHONE, null, "男"));
 
         assertEquals(
-                "{\"name\":\"张*明\",\"phone\":\"138****5678\",\"gender\":\"男\"}",
+                "{\"name\":\"张*）\",\"phone\":\"138****5678\",\"gender\":\"男\"}",
                 json,
                 "无会话（定时作业、异步旁路）一律脱敏，绝不漏明文");
     }
@@ -133,10 +138,10 @@ class PolicyMaskedSerializerTest {
 
         String json =
                 mapper.writeValueAsString(
-                        Map.of("items", List.of(new SampleRow("张小明", "13800005678", null, "男"))));
+                        Map.of("items", List.of(new SampleRow(NAME_PLAIN, PHONE, null, "男"))));
 
         assertEquals(
-                "{\"items\":[{\"name\":\"张*明\",\"phone\":\"138****5678\",\"gender\":\"男\"}]}",
+                "{\"items\":[{\"name\":\"张*）\",\"phone\":\"138****5678\",\"gender\":\"男\"}]}",
                 json);
     }
 }

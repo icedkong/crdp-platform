@@ -13,6 +13,7 @@ describe('e06-T11 个人中心表单逻辑', () => {
   const base: PhoneBindState = {
     code: '',
     countdown: 0,
+    // 手机号为虚构测试号段（AGENTS.md §5.5）
     phone: '13900000099',
     sending: false,
   };

@@ -28,7 +28,7 @@
 3. 医院 A / C 的差别只来自患者（或以后的 `me.features`）上的功能开关，例如 `features.implant`。不要写 `if (tenant === 'A')`。
 4. 列表不提供逐行明文。明文只在 `PatientHeader` 的 `MaskedField`，确认文案照抄 `components.md`，60 秒后清除。
 5. 上传弹窗用 `LocationPicker`，至少选 1 个位置。样板的「确定」不调用上传接口。
-6. 按钮显隐走 `usePermission().hasPermission(code)`。样板页另外传了 `referenceMode` / `can-upload`，因为演示账号种子没有 `followup:patient:plain` 和 `followup:scan:upload`。抄到正式页面时去掉 `referenceMode`，没有权限就不要渲染按钮。
+6. 按钮显隐走 `usePermission().hasPermission(code)`。附件导航的上传入口由样板页传 `can-upload`（演示账号种子没有 `followup:scan:upload`）。`MaskedField` 不提供任何绕过权限的演示通道（M3 审查 A1 已删除 `referenceMode`）：明文按钮一律按 `followup:patient:plain` 显示，没有权限就不渲染——演示账号想看交互就给种子角色补权限码（走迁移），不要在组件里开后门。
 7. 断点只用 `useBreakpoint()`：`≥1280` 左栏附件导航，`768–1279` 为「附件（n）」打开左侧抽屉且分类条横向滚动，`<768` 为底部抽屉且分类条改为下拉。
 
 ## 和规格的已知缺口

@@ -92,7 +92,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * </ul>
  *
  * <p>数据库交互用假 / 桩 mapper（暂存与提交 mapper 为内存假实现，患者 / 分节 / 联系方式 insert 用 Mockito 桩捕获参数并回填 id）；目录 / 加密 /
- * 跨子域服务全部 Mockito 桩。全部虚构数据。
+ * 跨子域服务全部 Mockito 桩。全部虚构数据（手机号夹具为 138-0013 虚构测试号段）。
  */
 class ImportCommitServiceTest {
 

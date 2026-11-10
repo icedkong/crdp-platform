@@ -43,7 +43,7 @@ import org.springframework.test.context.ActiveProfiles;
  * </ol>
  *
  * <p>门控 CRDP_IT_MYSQL_PORT（docker compose 的 MySQL 与 Redis），自建自清（删除本 IT 建的账号、
- * 自定义角色、审计事件，恢复运维角色的菜单授权）。
+ * 自定义角色、审计事件，恢复运维角色的菜单授权）。数据全部虚构（手机号夹具为 139-0000 虚构测试号段）。
  */
 @ActiveProfiles("local")
 @SpringBootTest(

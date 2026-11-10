@@ -62,9 +62,12 @@ class PatientPlaintextIT {
 
     private static final long PATIENT_OUT_OF_SCOPE = 990_099L;
 
+    /** 明文夹具全部虚构（AGENTS.md §5.5）：手机号为虚构测试号段，证件号为校验位有效的虚构演示号。 */
     private static final String PLAIN_NAME = "测试患者01（示例）";
+
     private static final String PLAIN_PHONE = "13800005678";
-    private static final String PLAIN_ID_CARD = "11010219900101567X";
+
+    private static final String PLAIN_ID_CARD = "110102199001015672";
 
     /** 明文来源桩（替代 E13 前的占位实现）：只虚构两名患者，其余一律 40400 口径。 */
     @TestConfiguration
@@ -80,7 +83,7 @@ class PatientPlaintextIT {
                                             "name", PLAIN_NAME,
                                             "phone", PLAIN_PHONE,
                                             "idCard", PLAIN_ID_CARD,
-                                            "medicalRecordNo", "MR1000001",
+                                            "medicalRecordNo", "MR1000001", // 虚构演示病案号
                                             "address", "北京市东城区（示例街道）"))
                             : Optional.empty();
         }
