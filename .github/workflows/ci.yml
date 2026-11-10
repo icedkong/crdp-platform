@@ -164,7 +164,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Trivy 镜像扫描（HIGH / CRITICAL 阻断）
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.33.1
         with:
           image-ref: crdp-server:ci-scan
           scan-type: image
