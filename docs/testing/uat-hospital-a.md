@@ -194,7 +194,7 @@ python3 scripts/uat_intake.py --selftest
 - 列与校验：12 列（finding_id、title、severity、module、page_or_api、reporter_role、description、reproduce_steps、expected_behavior、actual_behavior、evidence_ref、fix_suggestion）；空值、非法分级、非法模块、重复编号、疑似真实手机号 / 身份证号一律拦截；
 - 编号口径：`UAT-W{周次}-{流水}`（如 UAT-W34-001，W33/W34/W35 对应发现所在周）；
 - 分级映射（OQ-122 ②）：阻断 / 严重 / 一般 / 建议 → label `severity:high / medium / low / info`（梯子与渗透共用，OQ-112），另打 `bug`、`UAT`、`E23`；
-- 修复 / 复测路由：Issue 正文标注修复任务 E23-T09 / E23-T10（每日 16:00 triage 定责到人）与复测任务 E19-T10；复测通过后关闭并在 Issue 留复测结论；
+- 修复 / 复测路由：Issue 正文标注修复任务 E23-T09 / E23-T10（每日 16:00 triage 定责到人）与复测任务 E19-T10；复测结论回写与关闭经 `scripts/uat_retest.py`（评论含 `RETEST-ID` 幂等标记 + 按结论关闭 / 打回，`--status` 出闭环判据看板；复测流程与结论三档见 `docs/testing/uat-retest-hospital-a.md`）；
 - 时限：见 §2 分级表；阻断当日入库当日响应，修复版本进 UAT 前先过 CI + A 组冒烟（§3 版本冻结）；
 - 闭环口径：「阻断 / 严重清零」以 label `UAT` 的 Issue 全量状态为证（M3 出口与 §7 判据的数据来源）；
 - 真实数据红线：发现描述不得含真实患者标识（工具自动拦截）；证据只引记录表行号 / 截图编号；UAT 环境本身不录真实患者（§3）。
@@ -300,6 +300,16 @@ python3 scripts/uat_intake.py --selftest
 | 缺陷统计 | （回填：按级别入库 / 关闭 / 遗留，Issue 编号区间） |
 | 签字单 | （回填：编号、结论、签署日期） |
 
+### 10.5 E19-T10 复测面预演（本机，2026-11-10）
+
+（复测任务的预演留痕：证明「修复 → 复测 → 结论」链路的复测侧可执行——两本修复手册全部自查修复（UAT-SELF-01~06）按原复现口径回归复测 + §5 A 组冒烟（版本准入动作演练）；明细与口径注记见 `docs/testing/uat-retest-hospital-a.md` §6。）
+
+| 项 | 内容 |
+|---|---|
+| 环境 | colima + docker compose（MySQL 13306 / Redis，时区基线同 §10.2）；后端 `local` 剖面 18080（分支 `feat/e19-t10-uat-retest` 当日构建 jar）；`t_demoa` 全新库应用全量迁移（112 脚本，V123 预置账号矩阵）；全部虚构数据 |
+| 复测范围 | UAT-SELF-01（H-1 / J-1 / E-5 不再 40300 + 全新库授予面四对在位）、UAT-SELF-02（时区 +08:00 + M-1 当日窗口命中 7 行）、UAT-SELF-03（`PlatformTenantViewExecutionMySqlIT` 3/3）、UAT-SELF-04（通知规则 200 / 10 项）、UAT-SELF-05（登记即 DEAD + 预检 SKIP/DEAD + 对照存活入组建任务）、UAT-SELF-06（patient.md 更正行，OQ-124）；A-1 / A-2 / A-3 冒烟 |
+| 结果 | **9/9 通过**；窗口内真实发现的复测关闭按复测手册 §3–§5 执行（`uat_retest.py` 回写 Issue 并按结论关闭 / 打回） |
+
 ## 11. 与其他任务的衔接
 
 | 任务 | 关系 |
@@ -308,7 +318,7 @@ python3 scripts/uat_intake.py --selftest
 | E23-T05 | 输入：脱敏样本链路即脚本 J-1 的前置（`hospital-a-sample-intake.md`） |
 | E23-T06 / E23-T07 | 同窗联动：导入演练（W34–W35），J 组核对与其验收共用证据 |
 | E23-T09 / E23-T10 | 后续：UAT 缺陷修复（全栈 1 / 2），以入库 Issue 为工作清单；全栈 2 分担面（H/I/J/M + E-5）自查与修复手册见 `docs/testing/uat-remediation-hospital-a.md`（E23-T10）、全栈 1 分担面（A/B/C/D/E/F/G/K/L 深挖）见 `docs/testing/uat-remediation-hospital-a-fullstack1.md`（E23-T09，窗口内真实发现按其 §2 同一流程处置） |
-| E19-T10 | 后续：UAT 支持与缺陷复测（测试），Issue 关闭口径见 §6 |
+| E19-T10 | 后续：UAT 支持与缺陷复测（测试），复测流程 / 结论三档 / 工具与预演见 `docs/testing/uat-retest-hospital-a.md`，Issue 关闭口径见 §6 |
 | E23-T11 | 后续：A 正式数据导入与上线切换（W36），以 §7 判据达成为前置 |
 | E24-T08 / E24-T09 | L 组引用：真机矩阵（`device-matrix.md`）与走查脚本（`responsive-walkthrough.md` §1） |
 | E22-T09 | 同构：渗透测试同窗（W32–W35）共用 UAT 级环境口径与缺陷库梯子（OQ-112 / OQ-122） |
