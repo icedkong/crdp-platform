@@ -33,6 +33,7 @@ import org.junit.jupiter.api.Test;
  */
 class ProfileServiceTest {
 
+    // 手机号夹具为虚构测试号段（139-0000 段，AGENTS.md §5.5），非真实号码
     private static final String CURRENT_PHONE_CIPHER = "cipher:13900000002";
     private static final String CURRENT_PHONE = "13900000002";
     private static final String NEW_PHONE = "13900000099";

@@ -26,9 +26,9 @@ class SensitiveFieldSanitizerTest {
 
         Map<String, Object> sanitized = SensitiveFieldSanitizer.apply(DEFAULTS, "patient", row);
 
-        assertEquals("张*明", sanitized.get("name"));
+        assertEquals("张*）", sanitized.get("name"));
         assertEquals("138****5678", sanitized.get("phone"));
-        assertEquals("110102********567X", sanitized.get("idCard"));
+        assertEquals("110102********5672", sanitized.get("idCard"));
         assertEquals("MR*****01", sanitized.get("medicalRecordNo"));
         assertEquals("北京市东城区****", sanitized.get("address"));
         // 非敏感字段原样返回，键顺序保持
@@ -59,7 +59,7 @@ class SensitiveFieldSanitizerTest {
 
         assertFalse(sanitized.containsKey("name"), "隐藏字段不出现（不是空串）");
         assertEquals("13800005678", sanitized.get("phone"), "可见 = 明文返回");
-        assertEquals("110102********567X", sanitized.get("idCard"), "未覆盖字段回落默认脱敏");
+        assertEquals("110102********5672", sanitized.get("idCard"), "未覆盖字段回落默认脱敏");
     }
 
     @Test
@@ -67,7 +67,7 @@ class SensitiveFieldSanitizerTest {
         Map<String, Object> sanitized =
                 SensitiveFieldSanitizer.apply(null, "patient", patientRow());
 
-        assertEquals("张*明", sanitized.get("name"), "无快照（平台端 / 旁路）fail closed 脱敏");
+        assertEquals("张*）", sanitized.get("name"), "无快照（平台端 / 旁路）fail closed 脱敏");
         assertEquals("138****5678", sanitized.get("phone"));
     }
 
@@ -79,7 +79,7 @@ class SensitiveFieldSanitizerTest {
         Map<String, Object> sanitized = SensitiveFieldSanitizer.apply(DEFAULTS, "task", row);
 
         assertEquals(copy, row, "源 Map 不被修改");
-        assertEquals("张小明", sanitized.get("name"), "目录外资源不受字段级权限控制");
+        assertEquals("张小明（示例）", sanitized.get("name"), "目录外资源不受字段级权限控制");
         assertTrue(sanitized.containsValue("13800005678"));
     }
 
@@ -93,10 +93,11 @@ class SensitiveFieldSanitizerTest {
         assertEquals("12****78", sanitized.get("medicalRecordNo"), "非字符串按字符串形式脱敏");
     }
 
+    /** 夹具全部虚构（AGENTS.md §5.5）：姓名带「（示例）」标记；证件号校验位有效、手机号为测试号段、病案号 / 患者编号为虚构演示号。 */
     private static Map<String, Object> patientRow() {
         Map<String, Object> row = new LinkedHashMap<>();
-        row.put("name", "张小明");
-        row.put("idCard", "11010219900101567X");
+        row.put("name", "张小明（示例）");
+        row.put("idCard", "110102199001015672");
         row.put("phone", "13800005678");
         row.put("medicalRecordNo", "MR1000001");
         row.put("address", "北京市东城区某某街道某小区");

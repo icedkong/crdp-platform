@@ -177,7 +177,7 @@ class SensitiveConfigCheckerTest {
 
     @Test
     void idCardWithBrokenChecksumPasses() {
-        // 形似证件号但校验位错误：不按敏感值拦（降低假阳性）
+        // 形似证件号但校验位错误：不按敏感值拦（降低假阳性）。值为虚构演示号（AGENTS.md §5.5）
         ConfigPackage pkg =
                 packageOf(
                         section(

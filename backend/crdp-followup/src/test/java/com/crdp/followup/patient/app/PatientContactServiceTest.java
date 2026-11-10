@@ -43,6 +43,7 @@ class PatientContactServiceTest {
 
     private static final long PATIENT_ID = 101L;
     private static final long OPERATOR_ID = 9L;
+    // 手机号夹具为虚构测试号段（138-0000 / 139-0000 段，AGENTS.md §5.5），非真实号码
     private static final String PHONE_V1 = "13800001234";
     private static final String PHONE_V2 = "13900008888";
     private static final LocalDate TODAY = LocalDate.now();

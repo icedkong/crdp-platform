@@ -39,7 +39,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 /**
  * E06-T08 / PLT-ORG-007 单元测试（mock JDBC）：清单列拆分、文件级错误（表头 / 空数据 / 行数上限 / 非 xlsx）、逐行校验（复用手工新建口径 + 文件内重复
  * + 库内已存在 + 引用存在性 + 模板角色）、成功行落库 参数（首登强制改密、密文手机号、角色 / 负责病区 / 负责科室写入、初始密码只落哈希不回显）、单行失败不影响其他行、作业级审计。
- * 真实 MySQL 的端到端（HTTP + 权限 + 租户隔离）由 {@code UserImportIT} 覆盖。
+ * 真实 MySQL 的端到端（HTTP + 权限 + 租户隔离）由 {@code UserImportIT} 覆盖。 夹具全部虚构（手机号为 139-0000 虚构测试号段）。
  */
 class UserImportServiceTest {
 
@@ -292,7 +292,7 @@ class UserImportServiceTest {
                                                 ""),
                                         // 行 3：账号字符集非法
                                         List.of(
-                                                "张三",
+                                                "张三（示例）",
                                                 "张三（示例）",
                                                 "",
                                                 "13900000004",

@@ -50,7 +50,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
  * </ol>
  *
  * <p>门控 CRDP_IT_MYSQL_PORT（docker compose 的 MySQL 与 Redis），自建自清（IT 角色 / 账号、医院用户 it.proxyuser*、 患者
- * legacy_no 前缀 IT-E20T06-、视角会话行与 VIEW_ 审计）。全部虚构数据。
+ * legacy_no 前缀 IT-E20T06-、视角会话行与 VIEW_ 审计）。全部虚构数据（手机号夹具为 139-0000 虚构测试号段）。
  */
 @ActiveProfiles("local")
 @SpringBootTest(

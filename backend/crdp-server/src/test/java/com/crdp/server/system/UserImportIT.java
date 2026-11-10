@@ -42,7 +42,7 @@ import org.springframework.util.MultiValueMap;
  * </ol>
  *
  * <p>门控 CRDP_IT_MYSQL_PORT（CI 起 docker compose 注入端口）。自建自清（账号前缀 IT-U-IMP、科室 IT-D-IMP-U、 病区
- * W-IT-IMP）。全部虚构数据。
+ * W-IT-IMP）。全部虚构数据（手机号夹具为 139-0000 / 139-1111 虚构测试号段）。
  */
 @ActiveProfiles("local")
 @SpringBootTest(
@@ -204,7 +204,7 @@ class UserImportIT {
                                         ""),
                                 // 以下各行校验失败（每行一类原因）
                                 List.of(
-                                        "张三",
+                                        "张三（示例）",
                                         "非法账号（示例）",
                                         "",
                                         "13911110005",

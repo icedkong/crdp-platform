@@ -37,8 +37,10 @@ import org.springframework.security.core.context.SecurityContextHolder;
 class PlaintextRevealServiceTest {
 
     private static final long PATIENT_ID = 990_001L;
+    // 夹具全部虚构（AGENTS.md §5.5）：手机号为虚构测试号段，证件号为校验位有效的虚构演示号
     private static final String PLAIN_NAME = "张小明（示例）";
     private static final String PLAIN_PHONE = "13800005678";
+    private static final String PLAIN_ID_CARD = "110102199001015672";
 
     private final PatientPlaintextSource source = mock(PatientPlaintextSource.class);
     private final AuditLogger audit = mock(AuditLogger.class);
@@ -69,7 +71,7 @@ class PlaintextRevealServiceTest {
                                 Map.of(
                                         "name", PLAIN_NAME,
                                         "phone", PLAIN_PHONE,
-                                        "idCard", "11010219900101567X")));
+                                        "idCard", PLAIN_ID_CARD)));
 
         PlaintextRevealService.RevealView view =
                 service.reveal(PATIENT_ID, List.of("name", "phone"), "detail");

@@ -109,7 +109,8 @@ class UserAccountAdminServiceTest {
     @Test
     void usernameIsRequiredWellFormedAndBounded() {
         assertEquals("nurse.demo", UserAccountAdminService.normalizeUsername(" nurse.demo "));
-        for (String bad : new String[] {null, "", "   ", "张三", "有 空格", "a".repeat(65)}) {
+        // 非法账号样本全部虚构（AGENTS.md §5.5）：中文账号（示例）同样过不了字符集
+        for (String bad : new String[] {null, "", "   ", "张三（示例）", "有 空格", "a".repeat(65)}) {
             ApiException ex =
                     assertThrows(
                             ApiException.class,
