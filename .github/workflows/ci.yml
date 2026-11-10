@@ -164,11 +164,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Trivy 镜像扫描（HIGH / CRITICAL 阻断）
-        uses: aquasecurity/trivy-action@v0.33.1
-        with:
-          image-ref: crdp-server:ci-scan
-          scan-type: image
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: 1
-          format: table
+        run: |
+          docker run --rm \
+            -v /tmp/trivy-cache:/root/.cache \
+            aquasec/trivy:0.65.0 image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --format table crdp-server:ci-scan
