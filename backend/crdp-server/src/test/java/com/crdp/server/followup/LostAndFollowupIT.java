@@ -77,7 +77,7 @@ class LostAndFollowupIT {
                             "DELETE FROM aud_log WHERE (event_type IN"
                                     + " ('CONTACT_CREATE', 'TASK_PROGRESS', 'TASK_COMPLETE',"
                                     + " 'TASK_FOLLOWUP_CREATE', 'TASK_LOST_CANDIDATE_MARK',"
-                                    + " 'TASK_LOST_CONFIRM')"
+                                    + " 'TASK_LOST_CONFIRM', 'PATIENT_LOST_MARK')"
                                     + " AND (detail LIKE '%未联系到%'"
                                     + " OR detail LIKE '%失访%'"
                                     + " OR detail LIKE '%完成任务%'"
@@ -114,6 +114,11 @@ class LostAndFollowupIT {
                     jdbc.update(
                             "DELETE t FROM fu_task t JOIN pt_patient p ON p.id = t.patient_id"
                                     + " WHERE p.legacy_no LIKE ?",
+                            LEGACY + "-%");
+                    // S5：状态时间线随患者清理（无外键，只追加表也不能留孤儿行）
+                    jdbc.update(
+                            "DELETE h FROM pt_status_history h JOIN pt_patient p"
+                                    + " ON p.id = h.patient_id WHERE p.legacy_no LIKE ?",
                             LEGACY + "-%");
                     jdbc.update("DELETE FROM job_tenant_run WHERE job_code = 'fu-task-create'");
                     jdbc.update(
@@ -347,6 +352,122 @@ class LostAndFollowupIT {
 
         assertEquals("OVERDUE", statusOf(taskId), "只逾期；「拒访」断开连续段，不标失访候选（改走移出计划）");
         assertEquals(0, outboxCount(patientId, "LOST_CANDIDATE"), "不发失访候选事件");
+    }
+
+    // ---------------------------------------------------------------- S5（M3 审查）：患者改为失访写入口
+
+    /**
+     * S5 / A-FU-012、A-PAT-011：POST /patients/{id}/status（action=LOST，原因必填）——写状态历史（source=MANUAL）与
+     * PATIENT_LOST_MARK 审计， 未开始 / 未完成任务全部终止（终止原因「失访」），之后不再创建任务；重复失访 40901、原因缺失 40001、 无
+     * followup:patient:edit 40300、跨院 40400（不暴露存在）。
+     */
+    @Test
+    void patientMarkedLostWritesHistoryTerminatesTasksAndStopsFutureOnes() {
+        LocalDate today = today();
+        String token = hospitalToken("demoa", "nurse.demo");
+        long planId = createCyclePlan(token, PLAN_CODE + "-P", 2, 0);
+        long patientId = registerPatient("P1", today.minusDays(20));
+        enrollBackdated(patientId, planId, today.minusDays(40));
+        creationService.runForDate(today.minusDays(10));
+        creationService.runForDate(today);
+        long first = mainTaskId(patientId, 1);
+        long second = mainTaskId(patientId, 2);
+        // 第 1 个窗口已结束（补跑今天这轮时被每日逾期刷新标 OVERDUE），第 2 个窗口今天结束仍 PENDING
+        assertEquals("OVERDUE", statusOf(first), "失访改判前：窗口已结束的任务先被逾期刷新");
+        assertEquals("PENDING", statusOf(second), "失访改判前：本窗口任务待随访");
+
+        // 权限：A_WARD_NURSE 无 followup:patient:edit → 40300
+        String wardNurse = hospitalToken("demoa", "a.cvs1.nur01");
+        assertEquals(
+                40300,
+                codeOf(
+                        post(
+                                "/api/hospital/followup/patients/" + patientId + "/status",
+                                wardNurse,
+                                Map.of("action", "LOST", "reason", "连续两年未联系到（示例）"))),
+                "无 followup:patient:edit 40300");
+        // 跨院：B 院无此患者 → 40400（不暴露存在）
+        String tenantB = hospitalToken("demob", "nurse.demo");
+        assertEquals(
+                40400,
+                codeOf(
+                        post(
+                                "/api/hospital/followup/patients/" + patientId + "/status",
+                                tenantB,
+                                Map.of("action", "LOST", "reason", "连续两年未联系到（示例）"))));
+        // 校验：原因必填 40001；非 LOST 动作 40001（本轮只开放失访）
+        assertEquals(
+                40001,
+                codeOf(
+                        post(
+                                "/api/hospital/followup/patients/" + patientId + "/status",
+                                token,
+                                Map.of("action", "LOST"))),
+                "失访原因必填");
+        assertEquals(
+                40001,
+                codeOf(
+                        post(
+                                "/api/hospital/followup/patients/" + patientId + "/status",
+                                token,
+                                Map.of("action", "PAUSE", "reason", "走计划入组操作（示例）"))),
+                "暂停等动作走计划入组操作");
+
+        // 医生改为失访：两个未开始任务一并终止
+        Map<?, ?> marked =
+                post(
+                        "/api/hospital/followup/patients/" + patientId + "/status",
+                        token,
+                        Map.of("action", "LOST", "reason", "连续两年未联系到（示例）"));
+        assertEquals(0, codeOf(marked), "改为失访失败：" + marked);
+        assertEquals(2, ((Number) data(marked).get("terminatedTasks")).intValue());
+        assertEquals("LOST", data(marked).get("status"));
+        assertEquals(
+                "LOST",
+                query(
+                        "SELECT followup_status FROM pt_patient WHERE id = ?",
+                        String.class,
+                        patientId),
+                "患者状态改为失访");
+        assertEquals(
+                "MANUAL",
+                query(
+                        "SELECT source FROM pt_status_history WHERE patient_id = ?"
+                                + " AND status = 'LOST' ORDER BY id DESC LIMIT 1",
+                        String.class,
+                        patientId),
+                "状态历史落 source=MANUAL 一行");
+        assertEquals("TERMINATED", statusOf(first), "未开始任务终止");
+        assertEquals("TERMINATED", statusOf(second));
+        assertEquals(
+                "失访",
+                query("SELECT terminate_reason FROM fu_task WHERE id = ?", String.class, first),
+                "终止原因「失访」");
+        assertEquals(
+                1,
+                count(
+                        "SELECT COUNT(*) FROM aud_log WHERE event_type = 'PATIENT_LOST_MARK'"
+                                + " AND result = 'SUCCESS' AND target = ?",
+                        "PATIENT:" + patientId),
+                "写 PATIENT_LOST_MARK 成功审计");
+
+        // 重复失访 40901（重复操作被拒，不重复写历史）
+        assertEquals(
+                40901,
+                codeOf(
+                        post(
+                                "/api/hospital/followup/patients/" + patientId + "/status",
+                                token,
+                                Map.of("action", "LOST", "reason", "再点一次（示例）"))));
+
+        // 失访后调度不再创建：第 3 次计划日 today+10，跑该逻辑日不建任务（S5 调度过滤 LOST）
+        creationService.runForDate(today.plusDays(10));
+        assertEquals(
+                0,
+                count(
+                        "SELECT COUNT(*) FROM fu_task WHERE patient_id = ? AND occurrence = 3",
+                        patientId),
+                "失访患者不再创建后续任务（A-FU-012）");
     }
 
     // ---------------------------------------------------------------- 辅助

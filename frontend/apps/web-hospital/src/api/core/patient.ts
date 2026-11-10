@@ -37,6 +37,7 @@ import type {
   PatientSearchPage,
   PatientSearchPayload,
   PatientStatusHistoryRow,
+  PatientLostView,
   PatientTimeline,
   PatientTransferPayload,
   PatientTransferredResult,
@@ -224,5 +225,17 @@ export function fetchDoctorOptions(wardIds?: Array<number | string>) {
       : '';
   return requestClient.get<DoctorOptions>(
     apiPath(`/followup/patients/doctor-options${query}`),
+  );
+}
+
+/**
+ * 患者改为失访（S5 / A-FU-012「系统提示后由医生改为失访」、A-PAT-011）：reason 必填，
+ * 写状态历史与审计；未开始 / 未完成任务全部终止，之后不再创建任务。
+ * 只接受随访中 / 已暂停；已死亡 / 已终止 / 已失访 40901；越范围 40400。
+ */
+export function markPatientLost(patientId: number | string, reason: string) {
+  return requestClient.post<PatientLostView>(
+    apiPath(`/followup/patients/${patientId}/status`),
+    { action: 'LOST', reason },
   );
 }

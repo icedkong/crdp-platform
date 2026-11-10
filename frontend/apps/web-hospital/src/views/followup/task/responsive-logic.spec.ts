@@ -104,6 +104,18 @@ describe('taskCardActions（手机卡片操作：点卡片主操作 + 次操作�
     ).toBeNull();
   });
 
+  it('S5 / A-FU-012：失访候选医生可「确认失访」（lostConfirm）；随访员（无 record:edit）只看到候选标记', () => {
+    expect(
+      taskCardActions(row({ status: 'LOST_CANDIDATE' }), perms).secondary,
+    ).toEqual(['lostConfirm', 'assign']);
+    expect(
+      taskCardActions(row({ status: 'LOST_CANDIDATE' }), {
+        ...perms,
+        canEditRecord: false,
+      }).secondary,
+    ).toEqual(['assign']);
+  });
+
   it('次操作：完成提醒（REMINDER 未完成）/ 认领（负责人为空）/ 改派（未完成且有权限）', () => {
     expect(
       taskCardActions(row({ taskType: 'REMINDER' }), perms).secondary,

@@ -13,6 +13,7 @@ import {
   isTaskAcknowledgable,
   isTaskClaimable,
   isTaskEnterable,
+  isTaskLostCandidate,
   isTaskReassignable,
   TASK_OPEN_STATUSES,
   TASK_TABS,
@@ -86,6 +87,13 @@ describe('e15-T06 / A-FU-013、A-FU-026 临时任务与站内提醒', () => {
         taskType: 'REMINDER',
       }),
     ).toBe('待提醒（临时）');
+  });
+
+  it('isTaskLostCandidate（S5 / A-FU-012）：仅失访候选状态可「确认失访」，已失访为终态不可重复确认', () => {
+    expect(isTaskLostCandidate({ status: 'LOST_CANDIDATE' })).toBe(true);
+    expect(isTaskLostCandidate({ status: 'PENDING' })).toBe(false);
+    expect(isTaskLostCandidate({ status: 'OVERDUE' })).toBe(false);
+    expect(isTaskLostCandidate({ status: 'LOST' })).toBe(false);
   });
 
   it('isTaskAcknowledgable：站内提醒类任务且未完成可「完成提醒」（验收「站内提醒类任务无需填表」）', () => {

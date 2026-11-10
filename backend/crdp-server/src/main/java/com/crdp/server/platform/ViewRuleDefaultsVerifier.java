@@ -1,9 +1,9 @@
 package com.crdp.server.platform;
 
 import com.crdp.framework.tenant.TenantContext;
-import java.util.LinkedHashMap;
+import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
@@ -68,24 +68,15 @@ public class ViewRuleDefaultsVerifier implements ApplicationRunner {
     }
 
     private void verifyRuleRows() {
-        Map<String, Boolean> found = new LinkedHashMap<>();
-        for (String code : DEFAULT_RULE_CODES) {
-            found.put(code, false);
-        }
-        platform.query(
-                "SELECT code FROM plt_view_rule WHERE code IN ("
-                        + String.join(",", DEFAULT_RULE_CODES.stream().map(c -> "?").toList())
-                        + ")",
-                rs -> {
-                    found.put(rs.getString(1), true);
-                    return null;
-                },
-                DEFAULT_RULE_CODES.toArray());
+        String placeholders = String.join(",", DEFAULT_RULE_CODES.stream().map(c -> "?").toList());
+        List<String> present =
+                platform.queryForList(
+                        "SELECT code FROM plt_view_rule WHERE code IN (" + placeholders + ")",
+                        String.class,
+                        DEFAULT_RULE_CODES.toArray());
+        Set<String> presentCodes = new HashSet<>(present);
         List<String> missing =
-                found.entrySet().stream()
-                        .filter(e -> !e.getValue())
-                        .map(Map.Entry::getKey)
-                        .toList();
+                DEFAULT_RULE_CODES.stream().filter(code -> !presentCodes.contains(code)).toList();
         if (!missing.isEmpty()) {
             log.error(
                     "平台库缺少系统初始默认视角规则 {}：登记来源是平台库迁移 V64（本机 / 演示另有种子 V109，内容相同）。"
