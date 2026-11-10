@@ -1,6 +1,7 @@
 /**
  * E24-T04 / NFR-RESP-002 · 患者详情手机卡片纯逻辑（pages.md §4.10：
- * 沟通记录 / 报告单表格在手机转卡片；§4.6 报告单手机列表卡片）。数据全部虚构。
+ * 沟通记录 / 报告单 / 操作日志表格在手机转卡片；§4.6 报告单手机列表卡片）。
+ * 数据全部虚构。
  */
 import type { ReportRow } from '@crdp/api';
 
@@ -10,6 +11,7 @@ import {
   contactCardLines,
   formatDateTime,
   pageSlice,
+  patientLogCardLines,
   reportCardLines,
 } from './detail-responsive-logic';
 
@@ -97,5 +99,22 @@ describe('e24-t04 pageSlice（卡片分页切片，每页 20 与表格同口径�
     const items = Array.from({ length: 21 }, (_, i) => i);
     expect(pageSlice(items, 5)).toHaveLength(1); // 只有 2 页，回落第 2 页
     expect(pageSlice(items, 0)[0]).toBe(0); // 页码 < 1 回落第 1 页
+  });
+});
+
+describe('g3 patientLogCardLines（操作日志卡片字段行，pages.md §4.9 列）', () => {
+  it('时间为卡片标题，操作人 / 操作 / 详情逐行（§4.10 手机转卡片）', () => {
+    expect(
+      patientLogCardLines({
+        action: '查看明文 · 姓名',
+        detailText: '已审计（示例）',
+        operatorText: '张医生（示例）',
+        timeText: '2026-10-28 14:05',
+      }),
+    ).toEqual([
+      { label: '操作人', value: '张医生（示例）' },
+      { label: '操作', value: '查看明文 · 姓名' },
+      { label: '详情', value: '已审计（示例）' },
+    ]);
   });
 });

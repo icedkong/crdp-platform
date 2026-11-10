@@ -1,5 +1,6 @@
 <script lang="ts" setup>
 import type {
+  AuditRowView,
   ContactLogRow,
   FormSchema,
   PatientBaseline,
@@ -71,6 +72,7 @@ import { getFilePreviewUrl } from '#/api/core/file';
 import { fetchFormSchema } from '#/api/core/form';
 import {
   fetchPatientContactInfo,
+  fetchPatientLogs,
   fetchPatientStatusHistory,
   fetchPatientSummary,
   fetchPatientTimeline,
@@ -122,6 +124,7 @@ import UnplannedRecordModal from '#/components/followup/unplanned-record-modal.v
 import UploadReportDialog from '#/components/followup/upload-report-dialog.vue';
 import WatermarkPreview from '#/components/followup/watermark-preview.vue';
 import { useBreakpoint } from '#/reference/use-breakpoint';
+import { useFeature } from '#/reference/use-feature';
 import { usePermission } from '#/reference/use-permission';
 import { useWatermarkViewer } from '#/reference/use-watermark-viewer';
 
@@ -129,8 +132,13 @@ import {
   contactCardLines,
   formatDateTime,
   pageSlice,
+  patientLogCardLines,
   reportCardLines,
 } from './detail-responsive-logic';
+import {
+  initialPatientDetailTab,
+  visiblePatientDetailTabs,
+} from './detail-tabs-logic';
 
 defineOptions({ name: 'FollowupPatientDetail' });
 
@@ -143,36 +151,50 @@ defineOptions({ name: 'FollowupPatientDetail' });
  * 查看」。报告单（E16）等页签随对应任务开放。
  *
  * E13-T02 / A-PAT-003、A-PAT-006：基线资料页签 = 模板分类的只读分节视图
- * （出院登记实体列在上方登记信息块；分节只渲染 JSON 字段）+ 分类进度 +
- * 「编辑」（新标签页整页，锁定置灰）与「锁定 / 解锁」（解锁需
+ * + 分类进度 +「编辑」（新标签页整页，锁定置灰）与「锁定 / 解锁」（解锁需
  * followup:patient:lock 并填写原因，ReasonModal；锁定 / 解锁留痕见操作日志）。
+ * G5（M3 审查）：右侧只保留模板只读渲染（FormRenderer readonly）——姓名 / 病区 /
+ * 编号等概览在页头 PatientHeader，登记固定字段块已删除（是否进模板见 OQ-126）。
+ *
+ * G3（M3 审查）/ pages.md §4.1：报告单页签随功能开关 report 显隐
+ * （GET /auth/features，components.md §1.3 useFeature；后端仍按开关 40301 兜底）；
+ * 「操作日志」页签总是显示（只读，pages.md §4.9：时间 / 操作人 / 操作 / 详情，分页 20）。
  *
  * E24-T04 / NFR-RESP-002（pages.md §4.10 手机行）：页签横向滚动；沟通记录、
- * 报告单表格在手机转卡片（随访记录表格视图由 FollowupTimeline 内回落时间轴卡片；
- * 操作日志页签随后续任务、植入记录随 C 在 M5）；联系方式抽屉手机撑满宽。
+ * 报告单、操作日志表格在手机转卡片（随访记录表格视图由 FollowupTimeline 内回落
+ * 时间轴卡片；植入记录随 C 在 M5）；联系方式抽屉手机撑满宽。
  * 头部折叠与「操作」底部抽屉在 PatientHeader 组件内。
  */
 const route = useRoute();
 const router = useRouter();
 const { hasPermission } = usePermission();
+// G3：报告单页签按租户功能开关 report 显隐（E19-T04 useFeature；关闭后后端 40301）
+const { isEnabled: isFeatureEnabled } = useFeature();
+const reportTabVisible = computed(() => isFeatureEnabled('report'));
 // E16-T14：左栏布局形态（桌面左栏 / 平板与手机收为「附件（n）」抽屉入口）；
-// E24-T04：isMobile 驱动手机形态（页签横向滚动、沟通 / 报告单表格转卡片）
+// E24-T04：isMobile 驱动手机形态（页签横向滚动、沟通 / 报告单 / 操作日志表格转卡片）
 const { isDesktop, isMobile } = useBreakpoint();
 
 const loading = ref(true);
 const loadFailed = ref(false);
 const overview = ref<null | PatientOverview>(null);
 const timeline = ref<PatientTimelineEntry[]>([]);
-// 初始页签可由 ?tab= 指定（E16-T05 全院报告单列表「点击进入该患者的报告单页签」；未知值回落基线资料）
-const TAB_KEYS = ['baseline', 'contacts', 'followup', 'reports'] as const;
+// 初始页签可由 ?tab= 指定（E16-T05 全院报告单列表「点击进入该患者的报告单页签」；未知值
+// 与开关关闭的 reports 回落基线资料，G3 / detail-tabs-logic）
 const initialTab = Array.isArray(route.query.tab)
   ? route.query.tab[0]
   : route.query.tab;
-const tab = ref(
-  initialTab && (TAB_KEYS as readonly string[]).includes(initialTab)
-    ? initialTab
-    : 'baseline',
+const tab = ref(initialPatientDetailTab(initialTab, reportTabVisible.value));
+
+/** 页签清单（G3：报告单开关关闭直接隐藏，其余总是显示；测试见 detail-tabs-logic.spec.ts）。 */
+const visibleTabs = computed(() =>
+  visiblePatientDetailTabs(reportTabVisible.value),
 );
+
+// G3：开关关闭时报告单页签不渲染——?tab=reports 直链 / 关闭瞬间的当前页签回落基线资料
+watch([tab, reportTabVisible], ([current, visible]) => {
+  if (current === 'reports' && !visible) tab.value = 'baseline';
+});
 
 // ---------------------------------------------------------------- E13-T02 基线分节与锁定
 
@@ -966,6 +988,61 @@ const historyRows = computed(() =>
   })),
 );
 
+// ---------------------------------------------------------------- G3 操作日志页签（pages.md §4.9）
+
+/**
+ * G3（M3 审查）：患者「操作日志」页签（接口 GET /patients/{id}/logs 已有，audit.md §2）。
+ * 表格列：时间 / 操作人 / 操作 / 详情；只读、分页 20（pages.md §4.9）。手机转卡片
+ * （§4.10），卡片行由 patientLogCardLines 组装（detail-responsive-logic）。
+ */
+const patientLogs = ref<AuditRowView[]>([]);
+const patientLogsTotal = ref(0);
+const patientLogsPage = ref(1);
+const patientLogsLoading = ref(false);
+
+async function loadPatientLogs(page = 1) {
+  patientLogsLoading.value = true;
+  try {
+    const pageResult = await fetchPatientLogs(patientId.value, {
+      pageNo: page,
+      pageSize: 20,
+    });
+    patientLogs.value = pageResult.items;
+    patientLogsTotal.value = pageResult.total;
+    patientLogsPage.value = pageResult.pageNo;
+  } catch {
+    patientLogs.value = [];
+    patientLogsTotal.value = 0;
+  } finally {
+    patientLogsLoading.value = false;
+  }
+}
+
+// 切到页签时加载（日志属于档案附属视图，不随首屏拉取；与沟通记录同口径）
+watch([tab, loading], ([current, isLoading]) => {
+  if (current === 'logs' && !isLoading && overview.value) {
+    void loadPatientLogs(1);
+  }
+});
+
+const patientLogColumns = [
+  { dataIndex: 'timeText', title: '时间', width: 160 },
+  { dataIndex: 'operatorText', title: '操作人', width: 130 },
+  { dataIndex: 'action', title: '操作', width: 220 },
+  { dataIndex: 'detailText', title: '详情' },
+];
+
+const patientLogRows = computed(() =>
+  patientLogs.value.map((item) => ({
+    ...item,
+    action: item.action ?? '—',
+    detailText: item.description ?? '—',
+    key: item.id,
+    operatorText: item.displayName ?? item.userName ?? '—',
+    timeText: formatDateTime(item.createdAt),
+  })),
+);
+
 /** 时间轴节点打开（components.md §9 open）：有 recordId 直达表单页；未开始任务先 start。 */
 async function openTimelineNode(entry: PatientTimelineEntry) {
   if (entry.canOpen !== true) return;
@@ -1023,10 +1100,8 @@ const timelineLegendNote =
       @unplanned="unplannedOpen = true"
     />
     <Tabs v-model:active-key="tab" class="tabs">
-      <TabPane key="baseline" tab="基线资料" />
-      <TabPane key="followup" tab="随访记录" />
-      <TabPane key="reports" tab="报告单" />
-      <TabPane key="contacts" tab="沟通记录" />
+      <!-- G3：页签清单由 detail-tabs-logic 组装（报告单随功能开关 report 显隐，操作日志总是显示） -->
+      <TabPane v-for="item in visibleTabs" :key="item.key" :tab="item.label" />
     </Tabs>
 
     <div
@@ -1523,7 +1598,11 @@ const timelineLegendNote =
       </div>
     </div>
 
-    <div v-else class="main" data-testid="contacts-panel">
+    <div
+      v-else-if="tab === 'contacts'"
+      class="main"
+      data-testid="contacts-panel"
+    >
       <div class="toolbar">
         <Tooltip v-if="followupTerminated" title="患者不在随访中">
           <Button disabled>记录沟通</Button>
@@ -1651,6 +1730,66 @@ const timelineLegendNote =
       <p class="hint">
         录音同时显示为一份「通话记录」报告单（A-ATT-017，见报告单页签），两处是同一文件；
         删除任一处两处同时删除。
+      </p>
+    </div>
+
+    <!-- G3（M3 审查）/ pages.md §4.9 操作日志页签：时间 / 操作人 / 操作 / 详情，只读、分页 20 -->
+    <div v-else class="main" data-testid="logs-panel">
+      <!-- E24-T04 / §4.10 手机：操作日志表格转卡片（时间为标题，patientLogCardLines 组装） -->
+      <div v-if="isMobile">
+        <Spin :spinning="patientLogsLoading">
+          <Card
+            v-for="row in pageSlice(patientLogRows, patientLogsPage)"
+            :key="row.key"
+            class="log-card"
+          >
+            <template #title> {{ row.timeText }} · {{ row.action }} </template>
+            <div
+              v-for="line in patientLogCardLines(row)"
+              :key="line.label"
+              class="card-line"
+            >
+              <span class="card-label">{{ line.label }}</span>
+              <span>{{ line.value }}</span>
+            </div>
+          </Card>
+          <Empty
+            v-if="!patientLogsLoading && patientLogRows.length === 0"
+            description="暂无操作日志"
+          />
+        </Spin>
+        <div v-if="patientLogsTotal > 0" class="card-pagination">
+          <span class="card-total">共 {{ patientLogsTotal }} 条</span>
+          <Pagination
+            :current="patientLogsPage"
+            data-testid="log-card-pagination"
+            :page-size="20"
+            simple
+            :total="patientLogsTotal"
+            @change="(page: number) => loadPatientLogs(page)"
+          />
+        </div>
+      </div>
+      <Table
+        v-else
+        :columns="patientLogColumns"
+        :data-source="patientLogRows"
+        :loading="patientLogsLoading"
+        :pagination="{
+          current: patientLogsPage,
+          pageSize: 20,
+          showSizeChanger: false,
+          total: patientLogsTotal,
+        }"
+        size="small"
+        data-testid="patient-log-table"
+        @change="(pag) => loadPatientLogs(pag.current ?? 1)"
+      >
+        <template #emptyText> 暂无操作日志 </template>
+      </Table>
+      <p class="hint">
+        只读，不可删除；查看明文、下载、修改已提交记录等敏感操作都在这里留痕
+        （PLT-AUD-001）。
       </p>
     </div>
 

@@ -24,6 +24,7 @@
  */
 import type {
   AdvancedSearchField,
+  AuditPage,
   BatchResult,
   DoctorOptions,
   PatientContactInfo,
@@ -112,7 +113,21 @@ export function fetchPatientSummary(patientId: number | string) {
 /** 患者时间轴（A-PAT-013）：出院节点 + 状态变更事件，按时间顺序。 */
 export function fetchPatientTimeline(patientId: number | string) {
   return requestClient.get<PatientTimeline>(
-    apiPath(`/followup/patients/${patientId}/followup-timeline`),
+    apiPath(`/followup/patients/${patientId}/timeline`),
+  );
+}
+
+/**
+ * G3（M3 审查）/ pages.md §4.9 患者详情「操作日志」页签：该患者的操作与数据访问日志
+ * （GET /followup/patients/{id}/logs，audit.md §2；权限 followup:patient:view，默认每页 20）。
+ */
+export function fetchPatientLogs(
+  patientId: number | string,
+  params: { pageNo?: number; pageSize?: number },
+) {
+  return requestClient.get<AuditPage>(
+    apiPath(`/followup/patients/${patientId}/logs`),
+    { params },
   );
 }
 
