@@ -33,12 +33,13 @@
 
 自查范围 = 手册 §5 的 H（报告单与资料）/ I（统计与首页）/ J（历史数据导入核对）/ M（审计与平台视角）四组 + 交叉发现的 E-5；E23-T08 §10.1 已覆盖 A/B/E-1~E-3/G-2/K 的 P0 链路（10/10）。方法：本机起全套环境（colima + docker compose，MySQL 13306 / Redis 16379，`local` 剖面，`t_demoa` 全新库由应用全量迁移，V123 预置账号矩阵），按 §5 步骤 API 级逐条执行（角色按「角色」列：随访员 `a.cvs1.nur01`、病区医生 `a.cvs1.doc01`、科主任 `a.cvs1.dir`、数据录入员 `a.fu.clerk01`、租户管理员 `nurse.demo`、平台管理员 `platform.admin`），全部虚构数据。
 
-**发现 2 条（阻断 1 / 严重 1），均已修复；另 E-5 交叉项与 UAT-SELF-01 同根因一并修复。**
+**发现 3 条（阻断 1 / 严重 1 / 一般 1），均已修复；另 E-5 交叉项与 UAT-SELF-01 同根因一并修复。**
 
 | 编号 | 级别 | module | 发现（复现位置） | 处置结论 | 证据 / 测试 |
 |---|---|---|---|---|---|
 | UAT-SELF-01 | 阻断 | report / import / scope | V123 预置角色权限面缺口：随访员 / 病区医生未授「上传文件」（`followup:scan:upload`，plt_menu 231）——H-1 / H-2（P0）上传报告单直接 40300；数据录入员未授「导入向导」（`followup:patient:import`，plt_menu 353）——J-1（P0）下载模板 / 上传即 40300；科主任未授「批量指定责任医生」（`followup:task:assign`，plt_menu 224）——E-5 批量指定 / 改派 40300（交叉发现，E 组归全栈 1，同根因一并修复）。A 规格 §10 角色模板「主要权限」列三处明确：病区医生「报告单添加与查看」、随访员「报告单添加与查看」、数据录入员「导入」 | **修复**：租户库种子新迁移 `V133__grant_a_report_import_assign.sql`（幂等 NOT EXISTS，只新增不改旧；敏感权限 211/212/217 仍不预授，K-4 口径不破坏） | `APresetUatGrantSqlTest`（4 例：幂等只增 / 补授面恰为四对 / 并集满足 §10 矩阵且无敏感项 / 成对书写）；实测 `t_demoa` 迁移后四授予在位，H-1 上传、J-1 模板下载、E-5 改派均不再 40300 |
 | UAT-SELF-02 | 严重 | other（环境基线） | 本地 / CI 的 docker compose MySQL 未设时区（容器系统时区 UTC），与生产 RDS 参数基线 `time_zone = UTC+08:00`（`iac/rds-prod/params-baseline.json`）漂移 8 小时；审计等表 `created_at` 依赖数据库默认 `CURRENT_TIMESTAMP(3)`（`JdbcAuditLogger` 的 INSERT 不带该列），落库为 UTC 墙钟——违反「数据库 DATETIME 一律北京时间」合同（`AuditQuerySupport.ZONE`），M-1 / M-2「当日」窗口检索恒空（`parseTime` 把 ISO-8601 带时区入参折算成北京墙钟再比较，命中不了行），UAT 预演与回归结论失真 | **修复**：`docker-compose.yml` 的 mysql 增 `--default-time-zone=+08:00`（与生产 RDS 基线对齐；CI 起的是同一份 compose，本地 / CI / 生产三侧一致） | `UatEnvTimezoneBaselineIT`（2 例：`@@global.time_zone = +08:00`、`NOW()` 与北京墙钟差 ≤ 10 分钟）；实测修复前漂移 7h59m59s / `SYSTEM`，修复后当日窗口检索命中（审计行 `2026-11-10T10:15+08:00`） |
+| UAT-SELF-03 | 一般 | other（审计与视角台账） | 视角会话访问计数竞态：`TenantViewGuardFilter.allow()` 先 `copyBodyToResponse()`（缓存体已刷回客户端，HTTP 调用方可提前返回）再写 VIEW_QUERY 审计与 `plt_view_session` 的 `page_count` / `query_count`——快客户端可在 UPDATE 提交前读库，审计中心「视角会话」页签的计数摘要偶发少计（本 PR CI 首跑在慢机稳定复现 `PlatformTenantViewExecutionMySqlIT` 两例：page_count 断言失败 + 泄漏会话级联 40901） | **修复**：记录挪到响应体释放之前（条数从 wrapper 缓存读，无需先回写）——审计与计数先落库、客户端后拿到响应，顺序确定 | `PlatformTenantViewExecutionMySqlIT`（既有 3 例，修复后 CI 复跑通过；本地刻意用快机全量 1219 例不回归） |
 
 通过面（本轮自查未再发现产品缺陷，留痕供回归比对）：H-1 上传 jpg / pdf 双格式与归档展示、H-2 心脏超声映射预览 / 确认写入基线（含「报告时间晚于手术日期」时相拦截正确）、H-4 预览短链、H-5 全院检索按范围 + 脱敏；I-1 卡片目录与显示 / 隐藏（user-pref 全量覆盖生效）、I-2 / I-3 各卡接口可用（`st_node_occurrence` 随每日 00:10 作业刷新，空表属新库预期，Q38 口径已有 `E19-T08` 用例锁定）；J 组导入链路由 `ImportRehearsalVerifyIT`（E23-T06，CI 恒跑）端到端覆盖；M-1 审计中心抽验（含被拒请求 ACCESS_DENIED 留痕）、M-2 平台视角进入 / 退出与双侧审计（VIEW_ENTER / VIEW_EXIT 落 `aud_platform_access_log`）。
 
