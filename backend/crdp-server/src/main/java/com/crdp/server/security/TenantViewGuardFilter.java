@@ -387,6 +387,17 @@ public class TenantViewGuardFilter extends OncePerRequestFilter {
         try {
             filterChain.doFilter(request, wrapper);
             recordCount = extractRecordCount(wrapper);
+            // E23-T10 UAT-SELF-03：审计与台账计数必须在响应体释放（copyBodyToResponse 会把缓存体
+            // 刷回客户端）之前落库——否则快客户端可在 UPDATE 提交前读到旧计数（视角会话页签的
+            // page_count / query_count 偶发少计，CI 慢机稳定复现 PlatformTenantViewExecutionMySqlIT）。
+            // 条数从 wrapper 缓存读，无需先回写响应体。
+            recorder.recordQuery(
+                    principal,
+                    request.getMethod(),
+                    request.getRequestURI(),
+                    page,
+                    objectType,
+                    recordCount);
         } finally {
             try {
                 wrapper.copyBodyToResponse();
@@ -394,13 +405,6 @@ public class TenantViewGuardFilter extends OncePerRequestFilter {
                 log.error("视角查询响应回写出错 uri={}", request.getRequestURI(), ex);
             }
         }
-        recorder.recordQuery(
-                principal,
-                request.getMethod(),
-                request.getRequestURI(),
-                page,
-                objectType,
-                recordCount);
     }
 
     /** 被查询资源（VIEW_QUERY 的 object_type）：取接口登记权限码的资源段（如 patient、report）；未绑码为 null。 */

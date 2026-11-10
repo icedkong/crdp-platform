@@ -9,6 +9,11 @@ services:
       # binlog 开启需要 SUPER 或 log_bin_trust_function_creators=1（MySQL 1419）。
       # 本地 / CI 无复制需求，直接关闭最简；生产由 RDS 参数组处置（运维 E22）。
       - --skip-log-bin
+      # E23-T10 UAT 自查缺陷 UAT-SELF-02：与生产 RDS 参数基线对齐（iac/rds-prod/params-baseline.json
+      # 的 time_zone = UTC+08:00）。审计等表的 created_at 依赖数据库默认 CURRENT_TIMESTAMP(3)，
+      # 时区漂移会让「数据库 DATETIME 一律北京时间」的合同口径（AuditQuerySupport.ZONE）失真，
+      # UAT M-1「当日」窗口检索落空。基线由 UatEnvTimezoneBaselineIT 锁定。
+      - --default-time-zone=+08:00
     environment:
       MYSQL_ROOT_PASSWORD: "DevOnly#root2026"
       MYSQL_DATABASE: crdp_platform
