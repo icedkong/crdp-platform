@@ -11,7 +11,10 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "crdp.sms")
 public class TencentSmsProperties {
 
-    /** 通道开关：false（默认）时任何发送都抛 CHANNEL_DISABLED（本地 / 未开通环境）。 */
+    /** 通道实现：{@code tencent}（默认，未启用时明确失败）或 {@code mock}（local / demo，不外发）。 */
+    private String provider = "tencent";
+
+    /** 腾讯云通道开关：false（默认）时任何腾讯云发送都抛 CHANNEL_DISABLED。mock 通道不看此开关。 */
     private boolean enabled = false;
 
     /** 腾讯云访问密钥 ID（只授短信发送权限的子账号）。 */
@@ -49,6 +52,14 @@ public class TencentSmsProperties {
 
     /** 回执回调 Basic Auth 密码（只经配置注入，不写日志）。 */
     private String receiptAuthPassword = "";
+
+    public String getProvider() {
+        return provider;
+    }
+
+    public void setProvider(String provider) {
+        this.provider = provider;
+    }
 
     public boolean isEnabled() {
         return enabled;

@@ -12,9 +12,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
-/** 只在 local/dev 把演示账号的占位哈希换成 Argon2id。不记录明文。 */
+/** 只在 local/dev/demo 把演示账号的占位哈希换成 Argon2id。不记录明文。demo 仅用于虚构数据。 */
 @Component
-@Profile({"local", "dev"})
+@Profile({"local", "dev", "demo"})
 @Order(0)
 public class DemoPasswordInitializer implements ApplicationRunner {
 

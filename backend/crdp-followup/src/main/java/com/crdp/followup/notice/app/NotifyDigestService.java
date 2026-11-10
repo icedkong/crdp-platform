@@ -10,9 +10,9 @@ import com.crdp.followup.notice.infra.mapper.NotifySettingMapper;
 import com.crdp.followup.notice.infra.mapper.NotifySettingRow;
 import com.crdp.framework.crypto.CryptoService;
 import com.crdp.framework.notify.sms.SmsChannelException;
+import com.crdp.framework.notify.sms.SmsOutbound;
 import com.crdp.framework.notify.sms.SmsScene;
 import com.crdp.framework.notify.sms.SmsSendCommand;
-import com.crdp.framework.notify.sms.TencentSmsChannel;
 import com.crdp.framework.tenant.TenantContext;
 import java.time.Clock;
 import java.time.LocalDate;
@@ -76,7 +76,7 @@ public class NotifyDigestService {
     private final NotifySettingMapper settings;
     private final NotifyRecipientMapper recipients;
     private final NoticeInboxService inbox;
-    private final TencentSmsChannel sms;
+    private final SmsOutbound sms;
     private final CryptoService crypto;
     private final Clock clock;
 
@@ -90,7 +90,7 @@ public class NotifyDigestService {
             NotifySettingMapper settings,
             NotifyRecipientMapper recipients,
             NoticeInboxService inbox,
-            TencentSmsChannel sms,
+            SmsOutbound sms,
             CryptoService crypto) {
         this(sendLog, rules, settings, recipients, inbox, sms, crypto, Clock.system(BUSINESS_ZONE));
     }
@@ -101,7 +101,7 @@ public class NotifyDigestService {
             NotifySettingMapper settings,
             NotifyRecipientMapper recipients,
             NoticeInboxService inbox,
-            TencentSmsChannel sms,
+            SmsOutbound sms,
             CryptoService crypto,
             Clock clock) {
         this.sendLog = sendLog;

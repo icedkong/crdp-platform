@@ -13,11 +13,11 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 /**
- * 只在 local/dev：把种子里「PENDING_DEMO_PHONE:手机号」标记换成信封加密密文并回填盲索引（SQL 里算不了 HMAC）。与 {@link
- * DemoPasswordInitializer} 同一套路；演示号码均为 1390000xxxx 虚构段（E04-T04）。 不记录明文。
+ * 只在 local/dev/demo：把种子里「PENDING_DEMO_PHONE:手机号」标记换成信封加密密文并回填盲索引（SQL 里算不了 HMAC）。与 {@link
+ * DemoPasswordInitializer} 同一套路；演示号码均为 1390000xxxx 虚构段（E04-T04）。不记录明文。demo 仅用于虚构数据。
  */
 @Component
-@Profile({"local", "dev"})
+@Profile({"local", "dev", "demo"})
 @Order(1)
 public class DemoPhoneInitializer implements ApplicationRunner {
 

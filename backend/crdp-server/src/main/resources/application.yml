@@ -105,7 +105,10 @@ crdp:
           bucket: ${CRDP_OBS_ARCHIVE_BUCKET:}
   sms:
     # E09-T03 / PLT-CFG-005：腾讯云短信通道（平台统一账号、签名与模板）。
-    # enabled=false（默认）时发送明确失败（CHANNEL_DISABLED），不假装发送成功；生产经环境变量 / 凭据管理注入密钥
+    # provider=tencent（默认）且 enabled=false 时发送明确失败（CHANNEL_DISABLED），不假装发送成功。
+    # local / demo 剖面改为 provider=mock：不外发，验证码记在日志和 /dev/mock-sms。
+    # 生产经环境变量 / 凭据管理注入密钥，并把 provider 保持为 tencent。
+    provider: tencent
     enabled: false
     sdk-app-id: ""
     sign-name: ""

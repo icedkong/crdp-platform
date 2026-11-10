@@ -49,6 +49,7 @@ import org.springframework.test.context.TestPropertySource;
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {
             "server.port=0",
+            "crdp.sms.provider=tencent",
             "crdp.sms.enabled=true",
             "crdp.sms.secret-id=AKIDit0000000000000000000000000",
             "crdp.sms.secret-key=itSecretKey000000000000000000000000",
