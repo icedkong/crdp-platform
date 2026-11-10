@@ -6,6 +6,7 @@ import com.crdp.framework.security.PublicApi;
 import com.crdp.framework.security.SecurityProperties;
 import com.crdp.framework.security.SessionPrincipal;
 import com.crdp.framework.web.ApiResponse;
+import com.crdp.framework.web.ClientIpResolver;
 import com.crdp.server.auth.AuthService;
 import com.crdp.server.auth.LoginBrandService;
 import com.crdp.server.auth.MenuQuery;
@@ -51,6 +52,7 @@ public class HospitalAuthController {
     private final LoginBrandService loginBrandService;
     private final TenantViewService tenantViewService;
     private final ConfigMapper configMapper;
+    private final ClientIpResolver clientIps;
 
     public HospitalAuthController(
             AuthService authService,
@@ -64,7 +66,8 @@ public class HospitalAuthController {
             SessionAdminService sessionAdminService,
             LoginBrandService loginBrandService,
             TenantViewService tenantViewService,
-            ConfigMapper configMapper) {
+            ConfigMapper configMapper,
+            ClientIpResolver clientIps) {
         this.authService = authService;
         this.passwordChangeService = passwordChangeService;
         this.passwordResetService = passwordResetService;
@@ -77,6 +80,7 @@ public class HospitalAuthController {
         this.loginBrandService = loginBrandService;
         this.tenantViewService = tenantViewService;
         this.configMapper = configMapper;
+        this.clientIps = clientIps;
     }
 
     @Operation(
@@ -88,7 +92,7 @@ public class HospitalAuthController {
     public ApiResponse<LoginBrandService.TenantBrandView> tenantBrand(
             @RequestParam(value = "code", required = false) String code,
             HttpServletRequest httpRequest) {
-        return ApiResponse.ok(loginBrandService.brandOf(code, clientIp(httpRequest)));
+        return ApiResponse.ok(loginBrandService.brandOf(code, clientIps.resolve(httpRequest)));
     }
 
     @Operation(summary = "医院端登录。先识别租户编码，再在该院库中校验账号；连续失败 3 次后需携带图形验证码。")
@@ -105,7 +109,7 @@ public class HospitalAuthController {
                         request.username(),
                         request.password(),
                         new AuthService.CaptchaInput(request.captchaId(), request.captchaCode()),
-                        clientIp(httpRequest),
+                        clientIps.resolve(httpRequest),
                         // PLT-AUD-002：登录日志的「租户识别方式」扩展字段
                         tenantIdentifier.identifyMethod(host, request.tenantCode())));
     }
@@ -115,7 +119,7 @@ public class HospitalAuthController {
             method = "GET")
     @GetMapping("/api/hospital/auth/captcha")
     public ApiResponse<CaptchaStore.CaptchaImage> captcha(HttpServletRequest request) {
-        return ApiResponse.ok(captchaStore.issue(clientIp(request)));
+        return ApiResponse.ok(captchaStore.issue(clientIps.resolve(request)));
     }
 
     @Operation(summary = "发送医院端登录短信验证码。60 秒冷却；无论手机号是否已绑定均返回成功（防探测）。")
@@ -140,7 +144,7 @@ public class HospitalAuthController {
                         tenantCode,
                         request.phone(),
                         request.code(),
-                        clientIp(httpRequest),
+                        clientIps.resolve(httpRequest),
                         tenantIdentifier.identifyMethod(host, request.tenantCode())));
     }
 
@@ -273,12 +277,6 @@ public class HospitalAuthController {
                         properties.getPasswordExpiryRemindDays()));
     }
 
-    /** 反代后取真实 IP：优先 X-Forwarded-For 首段，兜底 remoteAddr（图形验证码按 IP 限流用）。 */
-    static String clientIp(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            return forwarded.split(",")[0].trim();
-        }
-        return request.getRemoteAddr();
-    }
+    // G9（M3 审查）：限流 IP 统一走 ClientIpResolver（默认只信 RemoteAddr，
+    // crdp.web.trust-xff=true 才取 X-Forwarded-For 首段；平台端登录同口径，OQ-42）
 }

@@ -1,7 +1,9 @@
 package com.crdp.server.config;
 
+import com.crdp.followup.report.app.MobileUploadProperties;
 import com.crdp.framework.audit.AuditArchiveProperties;
 import com.crdp.framework.crypto.CryptoProperties;
+import com.crdp.framework.notify.sms.TencentSmsProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.env.EnvironmentPostProcessor;
 import org.springframework.core.env.ConfigurableEnvironment;
@@ -23,6 +25,13 @@ public class ProductionSafetyEnvironmentPostProcessor implements EnvironmentPost
                                 "crdp.audit.archive.storage.type",
                                 String.class,
                                 auditArchive.getStorage().getType()));
-        new ProductionSafetyCheck(environment, crypto, auditArchive);
+        // G9① / G10：短信回执凭据与手机上传基地址也从环境读（此时 Bean 还没建，直接 new 属性对象）
+        TencentSmsProperties sms = new TencentSmsProperties();
+        sms.setEnabled(Boolean.parseBoolean(environment.getProperty("crdp.sms.enabled", "false")));
+        sms.setReceiptAuthUsername(environment.getProperty("crdp.sms.receipt-auth-username", ""));
+        sms.setReceiptAuthPassword(environment.getProperty("crdp.sms.receipt-auth-password", ""));
+        MobileUploadProperties mobile = new MobileUploadProperties();
+        mobile.setMobileBaseUrl(environment.getProperty("crdp.h5-upload.mobile-base-url", ""));
+        new ProductionSafetyCheck(environment, crypto, auditArchive, sms, mobile);
     }
 }

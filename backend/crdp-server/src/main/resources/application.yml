@@ -87,6 +87,12 @@ crdp:
     allowed-origin-patterns:
       - http://127.0.0.1:*
       - http://localhost:*
+  # G9（M3 审查）/ OQ-42 定论：限流取客户端 IP 默认**只信 RemoteAddr**——客户端能直连应用时
+  # 可伪造 X-Forwarded-For 刷新限流次数；部署侧确认 ELB / WAF 已覆盖该头后（上线检查单）
+  # 置 CRDP_TRUST_XFF=true 才取转发头首段。登录验证码 / 租户识别、预览、签名下载、
+  # 手机上传 H5、短信回执五处公开口统一走 ClientIpResolver。
+  web:
+    trust-xff: ${CRDP_TRUST_XFF:false}
   audit:
     archive:
       # E08-T03 / PLT-AUD-010：在线保留 1 年，归档对象 WORM 锁定 15 年（保留期只能延长）
