@@ -264,6 +264,37 @@ class FollowupTaskSchedulerIT {
         assertEquals(LocalDate.of(2026, 5, 8), date(cache.get("next_open_date")));
     }
 
+    // ---------------------------------------------------------------- S6（M3 审查）：停机超过窗口再补跑
+
+    /**
+     * S6 / A-FU-001、E14-T04：补跑改判用**正在补的那个逻辑日**，不用整次运行的目标日——作业停在开启日前、 停机跨过窗口结束日再补跑时，开启日当天的补建仍应是
+     * NORMAL（窗口当时未结束），窗口结束后由逾期刷新标 OVERDUE（患者仍应被随访）； 不得因运行目标日晚于窗口结束日而误判「停用期间未执行」。
+     */
+    @Test
+    void catchUpBeyondWindowKeepsNormalInsteadOfDisabledSkipped() {
+        String admin = hospitalToken("demoa", "nurse.demo", PASSWORD);
+        long planId = createPublishedPlan(admin, PLAN_CODE + "-W", "MONTH", 1);
+        // 出院 2026-01-15 → 第 1 次计划 2026-02-15、开启 2026-02-08、窗口 [02-08, 02-22]
+        long patientId = registerPatient("demoa", admin, "W1", "2026-01-15");
+        enroll("demoa", patientId, planId, LocalDate.of(2026, 1, 20));
+
+        // 跑到开启日前一天（02-07）；此后停机，直到窗口结束（02-22）之后的 03-01 才补跑
+        creationService.runForDate(LocalDate.of(2026, 2, 7));
+        assertEquals(0, taskCount("demoa", patientId), "开启日未到不创建");
+
+        creationService.runForDate(LocalDate.of(2026, 3, 1));
+        Map<String, Object> first = taskOf("demoa", patientId);
+        assertEquals(
+                "NORMAL",
+                first.get("create_type"),
+                "S6：按被补逻辑日 02-08 判定，窗口当时未结束 → 普通待随访");
+        assertEquals(LocalDate.of(2026, 2, 8), date(first.get("created_logical_date")));
+        assertEquals(
+                "OVERDUE",
+                first.get("status"),
+                "窗口在运行目标日前结束未完成 → 由逾期刷新标 OVERDUE（不是「停用期间未执行」）");
+    }
+
     // ---------------------------------------------------------------- 入组前已过窗口（E14-T05 领地）
 
     @Test
