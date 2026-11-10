@@ -207,9 +207,11 @@ class Drill:
 
     def exec_mysql(self, sql: str, db: str | None = None) -> str:
         tail = f" {db}" if db else ""
+        # --default-character-set=utf8mb4：中文值读回不乱码；--raw：值内反斜杠不被批处理再转义
         proc = subprocess.run(
             ["docker", "compose", "exec", "-T", "mysql", "sh", "-c",
-             f'exec mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -N -B{tail}'],
+             'exec mysql --default-character-set=utf8mb4 --raw'
+             f' -uroot -p"$MYSQL_ROOT_PASSWORD" -N -B{tail}'],
             cwd=ROOT, input=sql, capture_output=True, text=True,
         )
         if proc.returncode != 0:

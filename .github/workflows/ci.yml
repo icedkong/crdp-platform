@@ -97,6 +97,12 @@ jobs:
       # 恢复 → 注册表切换 → 对象对齐 → 实测 RPO/RTO 报告」全流程。
       - name: 跨区域恢复演练校验与本地演练
         run: python3 scripts/check_cross_region_drill.py --drill
+      # E22-T12：恢复演练测试核对。默认存档核对（演练登记表 ↔ 存档报告交叉核对、清单文档
+      # 与 runbook §4 对齐、审计链镜像防漂移）+ 在 compose MySQL 上重演化身演练并按 §4 清单
+      # 逐项核对恢复数据（三态标记 / 迁移历史 / 注册表 / 对象取回一致 / 审计链重算 / ShedLock /
+      # 报告勾稽）；健康检查、医院端冒烟、DEW 密钥、抢锁为生产核对项，由人按清单执行。
+      - name: 恢复演练核对（E22-T12）
+        run: python3 scripts/drill_recovery_check.py --drill
       - name: 关闭依赖容器
         if: always()
         run: docker compose down -v
