@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component;
  *
  * <p>录音挂在沟通记录上（fu_contact_audio）时按患者可见性校验：越范围 / 已删除一律 40400，不暴露文件存在 （AGENTS §5.2；OQ-62① 的沟通录音部分在
  * E15-T04 提前收紧，报告单文件的范围随 E16 rpt_report_file）。 预览口登录即可 + followup 模块（E10-T04 口径）、下载口另有
- * followup:scan:download 敏感权限，这里补的是 患者数据范围这一层。
+ * followup:scan:download 敏感权限，这里补的是 患者数据范围这一层。未挂沟通记录时返回 false，由文件服务按上传者本人收紧（S1）。
  */
 @Component
 public class ContactAudioScopeGuard implements FilePreviewService.ContactAudioScopePort {
@@ -25,13 +25,14 @@ public class ContactAudioScopeGuard implements FilePreviewService.ContactAudioSc
     }
 
     @Override
-    public void requireAudioPlayable(long fileId) {
+    public boolean requireAudioPlayable(long fileId) {
         Long patientId = mapper.patientIdOfAudioFile(fileId);
         if (patientId == null) {
-            return; // 未挂沟通记录：维持文件服务既有口径（报告单范围随 E16）
+            return false; // 未挂沟通记录：S1 起由文件服务按上传者本人收紧
         }
         if (patientScope.patientIdInScope(patientId) == null) {
             throw new ApiException(404, 40400, "文件不存在或无权访问");
         }
+        return true;
     }
 }

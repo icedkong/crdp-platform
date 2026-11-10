@@ -95,7 +95,7 @@ class FileDownloadServiceTest {
                         audit,
                         properties,
                         redis,
-                        (FilePreviewService.ContactAudioScopePort) fileId -> {},
+                        (FilePreviewService.ContactAudioScopePort) fileId -> false,
                         (ReportFileScopePort) fileId -> null);
         lenient().when(redis.opsForValue()).thenReturn(valueOps);
     }
@@ -180,7 +180,7 @@ class FileDownloadServiceTest {
                         audit,
                         loose,
                         redis,
-                        (FilePreviewService.ContactAudioScopePort) fileId -> {},
+                        (FilePreviewService.ContactAudioScopePort) fileId -> false,
                         (ReportFileScopePort) fileId -> null);
         stubRow(row("t/demoa/files/202611/x.pdf", "pdf", "application/pdf", "PENDING"));
 
@@ -303,7 +303,7 @@ class FileDownloadServiceTest {
                         audit,
                         properties,
                         redis,
-                        (FilePreviewService.ContactAudioScopePort) fileId -> {},
+                        (FilePreviewService.ContactAudioScopePort) fileId -> false,
                         (ReportFileScopePort)
                                 fileId ->
                                         new ReportFileScopePort.ReportFileView(
@@ -335,7 +335,7 @@ class FileDownloadServiceTest {
                         audit,
                         properties,
                         redis,
-                        (FilePreviewService.ContactAudioScopePort) fileId -> {},
+                        (FilePreviewService.ContactAudioScopePort) fileId -> false,
                         (ReportFileScopePort)
                                 fileId -> {
                                     throw new ApiException(404, 40400, "文件不存在或无权访问");
@@ -345,6 +345,27 @@ class FileDownloadServiceTest {
                 assertThrows(ApiException.class, () -> withReport.downloadUrl(FILE_ID));
         assertEquals(40400, error.code());
         verify(audit, never()).append(any(AuditEntry.class));
+    }
+
+    // ---------------------------------------------------------------- S1（M3 审查）：未关联文件只允许上传者本人
+
+    /** S1：未挂沟通记录 / 报告单的文件（PENDING 待关联），非上传者的本院登录用户取下载链接 40400，不写审计。 */
+    @Test
+    void unlinkedDownloadDeniedForNonUploader() {
+        stubRow(row("t/demoa/files/202611/x.pdf", "pdf", "application/pdf", "PENDING"));
+        loginAs(8L);
+
+        ApiException error = assertThrows(ApiException.class, () -> service.downloadUrl(FILE_ID));
+        assertEquals(40400, error.code());
+        verify(audit, never()).append(any(AuditEntry.class));
+    }
+
+    /** S1：上传者本人取自己未关联文件的下载链接不受影响。 */
+    @Test
+    void unlinkedDownloadAllowedForUploader() {
+        stubRow(row("t/demoa/files/202611/x.pdf", "pdf", "application/pdf", "PENDING"));
+        FileDownloadService.DownloadGrant grant = service.downloadUrl(FILE_ID);
+        assertTrue(grant.url().startsWith(URL_PREFIX));
     }
 
     // ---------------------------------------------------------------- 工具
@@ -362,6 +383,14 @@ class FileDownloadServiceTest {
         lenient().when(files.find(FILE_ID)).thenReturn(row);
     }
 
+    /** S1 用：把当前线程会话换成同院另一名用户（不清租户上下文）。 */
+    private static void loginAs(long userId) {
+        SecurityContextHolder.getContext()
+                .setAuthentication(
+                        new UsernamePasswordAuthenticationToken(
+                                principal(true, userId), null, List.of()));
+    }
+
     private static SysFileRow row(String objectKey, String format, String mime, String status) {
         SysFileRow row = new SysFileRow();
         row.setId(FILE_ID);
@@ -377,13 +406,18 @@ class FileDownloadServiceTest {
     }
 
     private static SessionPrincipal principal(boolean hospital) {
+        return principal(hospital, USER);
+    }
+
+    /** S1 用：8 = 同院另一名登录用户「李医生（示例）」（虚构）。 */
+    private static SessionPrincipal principal(boolean hospital, long userId) {
         return new SessionPrincipal(
                 "token",
                 hospital ? "HOSPITAL" : "PLATFORM",
                 hospital ? TENANT : null,
                 hospital ? TENANT_CODE : null,
                 hospital ? "医院 A（示例租户）" : null,
-                USER,
+                userId,
                 "doctor.demo",
                 "王医生（示例）",
                 List.of("TENANT_ADMIN"),

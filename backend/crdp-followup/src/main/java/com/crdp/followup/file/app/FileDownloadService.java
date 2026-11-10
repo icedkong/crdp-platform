@@ -89,9 +89,11 @@ public class FileDownloadService {
             throw notFound();
         }
         // E15-T04：挂在沟通记录上的录音按患者数据范围校验（A-FU-025 下载走敏感权限 + 患者范围双闸）
-        contactScope.requireAudioPlayable(fileId);
+        boolean audioLinked = contactScope.requireAudioPlayable(fileId);
         // E16-T09：挂在报告单上的文件按患者数据范围校验（越范围 40400），并取报告单上下文进审计描述
         ReportFileScopePort.ReportFileView report = reportScope.requireReportFileReadable(fileId);
+        // S1（M3 审查）：未挂任何业务对象的文件只允许上传者本人取下载链接（与预览同口径）
+        FilePreviewService.requireUploaderIfUnlinked(audioLinked, report != null, row, principal);
         relativeKeyOf(row.getObjectKey(), principal.tenantCode());
         Instant expiresAt = Instant.now().plusSeconds(properties.effectiveTtlSeconds());
         String token = signer.sign(principal.tenantId(), principal.tenantCode(), fileId, expiresAt);
