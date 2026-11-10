@@ -284,15 +284,10 @@ class FollowupTaskSchedulerIT {
 
         creationService.runForDate(LocalDate.of(2026, 3, 1));
         Map<String, Object> first = taskOf("demoa", patientId);
-        assertEquals(
-                "NORMAL",
-                first.get("create_type"),
-                "S6：按被补逻辑日 02-08 判定，窗口当时未结束 → 普通待随访");
+        assertEquals("NORMAL", first.get("create_type"), "S6：按被补逻辑日 02-08 判定，窗口当时未结束 → 普通待随访");
         assertEquals(LocalDate.of(2026, 2, 8), date(first.get("created_logical_date")));
         assertEquals(
-                "OVERDUE",
-                first.get("status"),
-                "窗口在运行目标日前结束未完成 → 由逾期刷新标 OVERDUE（不是「停用期间未执行」）");
+                "OVERDUE", first.get("status"), "窗口在运行目标日前结束未完成 → 由逾期刷新标 OVERDUE（不是「停用期间未执行」）");
     }
 
     // ---------------------------------------------------------------- 入组前已过窗口（E14-T05 领地）

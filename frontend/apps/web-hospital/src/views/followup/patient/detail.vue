@@ -209,8 +209,7 @@ async function handleMarkLost(reason: string) {
     message.success(
       `已改为失访；终止未开始 / 未完成任务 ${result.terminatedTasks} 条，后续不再创建随访任务`,
     );
-    const [summary] = await Promise.all([fetchPatientSummary(patientId.value)]);
-    overview.value = summary;
+    overview.value = await fetchPatientSummary(patientId.value);
     statusHistory.value = [];
     void reloadTimeline();
   } catch {

@@ -104,7 +104,7 @@ describe('taskCardActions（手机卡片操作：点卡片主操作 + 次操作�
     ).toBeNull();
   });
 
-  it('S5 / A-FU-012：失访候选医生可「确认失访」（lostConfirm）；随访员（无 record:edit）只看到候选标记', () => {
+  it('s5 / A-FU-012：失访候选医生可「确认失访」（lostConfirm）；随访员（无 record:edit）只看到候选标记', () => {
     expect(
       taskCardActions(row({ status: 'LOST_CANDIDATE' }), perms).secondary,
     ).toEqual(['lostConfirm', 'assign']);
