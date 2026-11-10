@@ -20,7 +20,8 @@ crdp:
     sdk-app-id: ${CRDP_SMS_SDK_APP_ID:}
     sign-name: ${CRDP_SMS_SIGN_NAME:}
     # E22-T10 / PT-SELF-02：状态回执回调 Basic Auth（与腾讯云控制台「状态回执推送」配置一致）。
-    # 都非空时公开回调强制校验（不匹配 40103）；留空 = 迁移期仅 IP 限流（通道启用时启动告警提醒配置）
+    # 都非空时公开回调强制校验（不匹配 40103）；G9（M3 审查）：通道启用而凭据缺失时生产剖面
+    # 启动即失败（ProductionSafetyCheck fail fast，不只剩 IP 限流一道闸）；local / demo 保持告警
     receipt-auth-username: ${CRDP_SMS_RECEIPT_AUTH_USER:}
     receipt-auth-password: ${CRDP_SMS_RECEIPT_AUTH_PASSWORD:}
   storage:
@@ -56,8 +57,9 @@ crdp:
       signing-key: ${CRDP_FILE_DOWNLOAD_SIGNING_KEY:}
   h5-upload:
     # E16-T10 / A-ATT-015、C-SCAN-008：手机扫码上传 H5 的对外基地址（https，公网可扫）。
-    # 经环境变量 / 部署配置注入；缺省回落本机开发地址（二维码扫不通即暴露配置缺失）
-    mobile-base-url: ${CRDP_H5_UPLOAD_MOBILE_BASE_URL:http://127.0.0.1:14175}
+    # G10（M3 审查）：生产不再回落本机开发地址——缺省为空，缺失（空 / 未改回落值）由
+    # ProductionSafetyCheck 启动即失败（报错指明 CRDP_H5_UPLOAD_MOBILE_BASE_URL），二维码不至扫不通才暴露
+    mobile-base-url: ${CRDP_H5_UPLOAD_MOBILE_BASE_URL:}
 
 spring:
   data:

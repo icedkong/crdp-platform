@@ -3,6 +3,7 @@ package com.crdp.server.web;
 import com.crdp.framework.security.CurrentSession;
 import com.crdp.framework.security.PublicApi;
 import com.crdp.framework.web.ApiResponse;
+import com.crdp.framework.web.ClientIpResolver;
 import com.crdp.server.platform.TenantViewProxyService;
 import com.crdp.server.platform.TenantViewService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -39,11 +40,15 @@ public class HospitalViewController {
     private final TenantViewService viewService;
 
     private final TenantViewProxyService proxyService;
+    private final ClientIpResolver clientIps;
 
     public HospitalViewController(
-            TenantViewService viewService, TenantViewProxyService proxyService) {
+            TenantViewService viewService,
+            TenantViewProxyService proxyService,
+            ClientIpResolver clientIps) {
         this.viewService = viewService;
         this.proxyService = proxyService;
+        this.clientIps = clientIps;
     }
 
     @Operation(
@@ -55,8 +60,7 @@ public class HospitalViewController {
     public ApiResponse<TenantViewService.ExchangeResult> enter(
             @Valid @RequestBody EnterRequest request, HttpServletRequest httpRequest) {
         return ApiResponse.ok(
-                viewService.exchangeTicket(
-                        request.ticket(), HospitalAuthController.clientIp(httpRequest)));
+                viewService.exchangeTicket(request.ticket(), clientIps.resolve(httpRequest)));
     }
 
     @Operation(summary = "视角会话信息（PLT-VIEW-003 横幅）：会话号、租户、剩余时长与平台账号（页面水印同口径）；" + "只接受视角令牌")

@@ -683,7 +683,7 @@ interface WatermarkPreviewProps {
 
 - 全屏深色遮罩，顶部工具栏：`下载`（有权限才显示）/ `旋转` / `翻转` / `缩小` / `放大` / `关闭`，图片用 `a-image` 的 `preview` + `toolbarRender`；PDF 用 pdf.js（`packages/viewer`）；DOCX 用 docx-preview；XLSX 只能下载（无权限时显示「无法在线预览，需下载权限」）；音频用 `<audio controls controlsList="nodownload">`（AMR 只能下载）。
 - 内容走预览代理的**短时有效链接**（`GET …/files/{fileId}/preview-url`，推断，待确认），不缓存；后端每次写审计。
-- **水印**（不可关闭）：平铺文本「姓名（账号）· 医院名称 · 预览时间（精确到分钟）」，例如「王医生（示例）（demo_doctor）· 医院 A（示例租户）· 2026-10-31 14:05」；canvas 生成背景图覆盖在预览层之上，`pointer-events: none`，旋转 -20°，透明度约 0.15（推断，待确认）。
+- **水印**（不可关闭）：平铺文本「姓名（账号）· 医院名称 · 预览时间（精确到分钟）」，例如「王医生（示例）（demo_doctor）· 医院 A（示例租户）· 2026-10-31 14:05」；canvas 生成背景图覆盖在预览层之上，`pointer-events: none`，旋转 -20°，透明度约 0.15（推断，待确认）。**水印口径（G6 / OQ-127）：水印仅页面层——短时预览直链与签名下载返回对象存储原件（无水印），持直链者绕过页面即无水印；防线 = 链接短时（5 分钟）+ 签发即审计 + 下载单独权限。上线前若要求水印随文件走，需在预览 / 下载代理烧录（另立任务）。**
 - 防篡改：`MutationObserver` 观察水印节点及其父节点的 `childList`、`attributes`（style / class），被删或改时 **立即重绘**；同时每 2 秒自检一次（推断，待确认）。
 - 下载：点「下载」→ `POST …/files/{fileId}/download-url` 拿 5 分钟签名链接 → `window.location` 打开；后端写审计。
 - 手机 / 平板：全屏，双指缩放（图片），工具栏图标 ≥ 40px。

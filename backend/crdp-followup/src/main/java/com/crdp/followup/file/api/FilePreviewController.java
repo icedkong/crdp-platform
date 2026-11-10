@@ -2,6 +2,7 @@ package com.crdp.followup.file.api;
 
 import com.crdp.followup.file.app.FilePreviewService;
 import com.crdp.framework.security.PublicApi;
+import com.crdp.framework.web.ClientIpResolver;
 import jakarta.servlet.http.HttpServletRequest;
 import java.nio.charset.StandardCharsets;
 import org.springframework.http.ContentDisposition;
@@ -28,15 +29,18 @@ public class FilePreviewController {
     private static final String URL_PREFIX = "/api/hospital/files/preview/";
 
     private final FilePreviewService preview;
+    private final ClientIpResolver clientIps;
 
-    public FilePreviewController(FilePreviewService preview) {
+    public FilePreviewController(FilePreviewService preview, ClientIpResolver clientIps) {
         this.preview = preview;
+        this.clientIps = clientIps;
     }
 
     @GetMapping(URL_PREFIX + "{token}")
     @PublicApi
     public ResponseEntity<byte[]> preview(@PathVariable String token, HttpServletRequest request) {
-        FilePreviewService.PreviewContent content = preview.content(token, clientIp(request));
+        FilePreviewService.PreviewContent content =
+                preview.content(token, clientIps.resolve(request));
         return ResponseEntity.ok()
                 .header(
                         HttpHeaders.CONTENT_DISPOSITION,
@@ -56,12 +60,6 @@ public class FilePreviewController {
                 .body(content.body());
     }
 
-    /** 反代后取真实 IP：优先 X-Forwarded-For 首段，兜底 remoteAddr（与 SmsReceiptController 同口径）。 */
-    private static String clientIp(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            return forwarded.split(",")[0].trim();
-        }
-        return request.getRemoteAddr();
-    }
+    // G9（M3 审查）：限流 IP 统一走 ClientIpResolver（默认只信 RemoteAddr，
+    // crdp.web.trust-xff=true 才取 X-Forwarded-For 首段；与各公开口同口径，OQ-42）
 }

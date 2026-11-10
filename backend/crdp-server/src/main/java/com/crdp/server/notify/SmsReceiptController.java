@@ -4,6 +4,7 @@ import com.crdp.framework.notify.sms.SmsReceiptHandler;
 import com.crdp.framework.notify.sms.TencentSmsProperties;
 import com.crdp.framework.security.PublicApi;
 import com.crdp.framework.web.ApiException;
+import com.crdp.framework.web.ClientIpResolver;
 import jakarta.annotation.PostConstruct;
 import jakarta.servlet.http.HttpServletRequest;
 import java.nio.charset.StandardCharsets;
@@ -43,12 +44,17 @@ public class SmsReceiptController {
     private final SmsReceiptHandler handler;
     private final StringRedisTemplate redis;
     private final TencentSmsProperties properties;
+    private final ClientIpResolver clientIps;
 
     public SmsReceiptController(
-            SmsReceiptHandler handler, StringRedisTemplate redis, TencentSmsProperties properties) {
+            SmsReceiptHandler handler,
+            StringRedisTemplate redis,
+            TencentSmsProperties properties,
+            ClientIpResolver clientIps) {
         this.handler = handler;
         this.redis = redis;
         this.properties = properties;
+        this.clientIps = clientIps;
     }
 
     /** 通道启用而回执凭据未配置 = 公开口只剩限流一道闸：启动告警提醒运维补控制台 + 环境变量配置。 */
@@ -65,7 +71,7 @@ public class SmsReceiptController {
     @PublicApi
     @PostMapping(value = "/api/notify/sms/receipt", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ReceiptAck receive(@RequestBody String rawBody, HttpServletRequest request) {
-        rateLimit(clientIp(request));
+        rateLimit(clientIps.resolve(request));
         if (properties.receiptAuthConfigured()) {
             requireReceiptAuth(request.getHeader("Authorization"));
         }
@@ -115,15 +121,6 @@ public class SmsReceiptController {
         if (count != null && count > properties.getReceiptIpHourlyLimit()) {
             throw new ApiException(429, 42900, "尝试次数过多，请稍后再试");
         }
-    }
-
-    /** 反代后取真实 IP：优先 X-Forwarded-For 首段，兜底 remoteAddr（与 HospitalAuthController 同口径）。 */
-    private static String clientIp(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            return forwarded.split(",")[0].trim();
-        }
-        return request.getRemoteAddr();
     }
 
     /** 腾讯云约定的回执应答：result=0 表示接收成功，非 0 会触发重推。 */

@@ -141,6 +141,8 @@ class DashboardRateCardsIT {
         long nodeId = nodeIdOf("demoa", planId);
         LocalDate planDate = LocalDate.of(2026, 3, 15);
         insertCompletedTask("demoa", onTime, planId, nodeId, planDate, "ON_TIME", "2026-03-15");
+        // G2：窗口内完成按实际随访日期判定——补已提交记录（f214 = 2026-03-16 落窗口 03-08 ~ 03-22）
+        linkSubmittedRecord("demoa", onTime, "2026-03-16");
         // 逾期完成：窗口（03-08 ~ 03-22）结束后的 04-01 完成（验收「逾期完成计入」）
         insertCompletedTask("demoa", overdue, planId, nodeId, planDate, "OVERDUE", "2026-04-01");
         insertPendingTask("demoa", backfill, planId, nodeId, planDate);
@@ -428,6 +430,36 @@ class DashboardRateCardsIT {
     }
 
     /** 已完成任务（completeKind：ON_TIME 窗口内 / OVERDUE 逾期——Q38 两类都计入已随访）。 */
+
+    /**
+     * G2（M3 审查）：任务完成行的窗口内完成按**实际随访日期**判定——为完工任务补一条已提交 TASK 记录，随访日期在表单字段 f214（A_ANNUAL_FU
+     * followup_date，刷新按模板版本解析）。
+     */
+    private void linkSubmittedRecord(String tenant, long patientId, String visitDate) {
+        runInTenant(
+                tenant,
+                () -> {
+                    Long taskId =
+                            jdbc.queryForObject(
+                                    "SELECT id FROM fu_task WHERE patient_id = ? AND status ="
+                                            + " 'COMPLETED' ORDER BY id DESC LIMIT 1",
+                                    Long.class,
+                                    patientId);
+                    jdbc.update(
+                            "INSERT INTO fu_record (patient_id, task_id, source, form_code,"
+                                    + " template_version, status, data) VALUES (?, ?, 'TASK',"
+                                    + " 'A_ANNUAL_FU', 1, 'SUBMITTED', ?)",
+                            patientId,
+                            taskId,
+                            "{\"f214\":\"" + visitDate + "\"}");
+                    jdbc.update(
+                            "UPDATE fu_task SET record_id = (SELECT id FROM fu_record WHERE"
+                                    + " task_id = ? ORDER BY id DESC LIMIT 1) WHERE id = ?",
+                            taskId,
+                            taskId);
+                });
+    }
+
     private void insertCompletedTask(
             String tenant,
             long patientId,

@@ -90,6 +90,37 @@ export const imageUpload = {
   convertHeic: true,
 } as const;
 
+/**
+ * 运行时锁定的业务色 token（G4 / M3 审查）：主色 / 成功 / 警告 / 错误（+ 主色的 info 别名）
+ * 以本文件 antdTheme.token 的设计值为准——Vben 外壳的 CSS 变量（`hsl(var(--primary))`
+ * 等，取自色板 500 档）**不得回写**这些键，否则页面主按钮、成功 / 警告 / 错误色都会
+ * 随外壳色板漂移。外壳仍可主题化（背景 / 文字 / 边框 / 圆角跟随 Vben CSS 变量）。
+ */
+export const DESIGN_LOCKED_TOKEN_KEYS: readonly string[] = [
+  'colorPrimary',
+  'colorInfo',
+  'colorSuccess',
+  'colorWarning',
+  'colorError',
+] as const;
+
+/**
+ * 外壳（Vben `useAntdDesignTokens`）的 CSS 变量值合并进 AntD 主题前的过滤
+ * （app.vue 接线用，G4）：空值与锁定业务色键剔除——锁定色的设计值来自
+ * {@link antdTheme}.token。单测锁定 colorPrimary=#3A75FF 等四色实际生效。
+ */
+export function mergeShellTokens(
+  shell: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(shell)) {
+    if (value === '' || value === undefined) continue;
+    if (DESIGN_LOCKED_TOKEN_KEYS.includes(key)) continue; // 业务四色锁定设计值（G4）
+    merged[key] = value;
+  }
+  return merged;
+}
+
 /** Ant Design Vue 4 主题（a-config-provider :theme）。结构对齐 ThemeConfig。 */
 export const antdTheme = {
   token: {

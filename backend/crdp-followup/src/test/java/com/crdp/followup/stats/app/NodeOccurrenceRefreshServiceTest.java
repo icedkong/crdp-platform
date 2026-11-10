@@ -14,6 +14,7 @@ import static org.mockito.Mockito.when;
 import com.crdp.followup.plan.infra.mapper.PlanMapper;
 import com.crdp.followup.stats.infra.mapper.NodeOccurrenceInsertRow;
 import com.crdp.followup.stats.infra.mapper.NodeOccurrenceMapper;
+import com.crdp.form.record.app.FormService;
 import com.crdp.framework.audit.AuditLogger;
 import com.crdp.framework.job.JobScheduler;
 import com.crdp.framework.job.TenantJob;
@@ -50,6 +51,7 @@ class NodeOccurrenceRefreshServiceTest {
     @Mock private JobScheduler jobScheduler;
     @Mock private NodeOccurrenceMapper occurrenceMapper;
     @Mock private PlanMapper planMapper;
+    @Mock private FormService formService;
     @Mock private com.crdp.followup.dashboard.infra.mapper.DashboardFeatureMapper features;
     @Mock private AuditLogger audit;
     @Mock private JdbcTemplate jdbc;
@@ -73,7 +75,7 @@ class NodeOccurrenceRefreshServiceTest {
 
     private NodeOccurrenceRefreshService service() {
         return new NodeOccurrenceRefreshService(
-                jobScheduler, occurrenceMapper, planMapper, audit, jdbc, transactions);
+                jobScheduler, occurrenceMapper, planMapper, formService, audit, jdbc, transactions);
     }
 
     /** 模拟调度框架：在租户上下文内执行作业体（runForEachTenant 的语义）。 */
@@ -196,7 +198,11 @@ class NodeOccurrenceRefreshServiceTest {
                                         LocalDate.of(2026, 3, 22),
                                         "NORMAL",
                                         "COMPLETED",
-                                        "ON_TIME")));
+                                        "ON_TIME",
+                                        LocalDate.of(2026, 3, 16),
+                                        null,
+                                        null,
+                                        null)));
         lenient().when(occurrenceMapper.findAnchoredRecords()).thenReturn(List.of());
         lenient().when(occurrenceMapper.findFloatingBackfills()).thenReturn(List.of());
         when(occurrenceMapper.findStatusHistory())
@@ -227,10 +233,129 @@ class NodeOccurrenceRefreshServiceTest {
         assertTrue(row.isFollowed(), "任务已完成 → 已随访");
         assertEquals(700L, row.getRecordId(), "已完成任务带回关联记录 id");
         assertEquals("ON_TIME", row.getCompleteKind());
+        assertTrue(row.isInWindow(), "G2：关联记录 visit_date（03-16）落在窗口内 → 窗口内完成");
         assertEquals(AS_OF, row.getRefreshedDate());
         assertEquals("PLAN-IT-1", row.getPlanCode());
         assertEquals(2, row.getPlanVersion());
         verify(audit).append(any());
+    }
+
+    /**
+     * G2（M3 审查）/ Q38：任务录入记录的 visit_date 列为空（历史补录外的常态，A 规格 f214 在表单 JSON 里）， 刷新时按记录模板版本解析
+     * followup_date 字段稳定键后从 data JSON 取实际随访日期；模板没有该字段（或值不可解析）时窗口内完成不计。
+     */
+    @Test
+    void refreshResolvesTaskVisitDateFromFollowupDateField() {
+        tenantWithAnnualEnrollment();
+        when(occurrenceMapper.findRegularTasks())
+                .thenReturn(
+                        List.of(
+                                new NodeOccurrenceMapper.TaskRow(
+                                        902L,
+                                        701L,
+                                        ENROLLMENT_ID,
+                                        NODE_ID,
+                                        1,
+                                        LocalDate.of(2026, 3, 15),
+                                        LocalDate.of(2026, 3, 8),
+                                        LocalDate.of(2026, 3, 22),
+                                        "BACKFILL",
+                                        "COMPLETED",
+                                        "OVERDUE",
+                                        null,
+                                        "fu_annual_v1",
+                                        1,
+                                        "{\"k214\":\"2026-03-10\",\"note\":\"补录（示例）\"}")));
+        when(formService.schema("fu_annual_v1", 1))
+                .thenReturn(
+                        new FormService.SchemaView(
+                                "fu_annual_v1",
+                                "年度随访（示例）",
+                                "FOLLOWUP",
+                                1,
+                                List.of(
+                                        new FormService.CategoryView(
+                                                "basic",
+                                                "随访概况（示例）",
+                                                10,
+                                                List.of(fieldView("k214", "followup_date")))),
+                                List.of()));
+
+        run(service(), AS_OF);
+
+        ArgumentCaptor<NodeOccurrenceInsertRow> captor =
+                ArgumentCaptor.forClass(NodeOccurrenceInsertRow.class);
+        verify(occurrenceMapper).insertFact(captor.capture());
+        NodeOccurrenceInsertRow row = captor.getValue();
+        assertTrue(row.isFollowed(), "补录任务照常算已随访（主随访率口径不变）");
+        assertTrue(row.isInWindow(), "表单 followup_date（03-10）落在窗口内 → 窗口内完成（此前按完成方式 OVERDUE 恒不计）");
+    }
+
+    /** 模板没有 followup_date 字段：实际随访日期未知，窗口内完成不计（主随访率不受影响）。 */
+    @Test
+    void refreshWithoutVisitDateFieldKeepsInWindowFalse() {
+        tenantWithAnnualEnrollment();
+        when(occurrenceMapper.findRegularTasks())
+                .thenReturn(
+                        List.of(
+                                new NodeOccurrenceMapper.TaskRow(
+                                        903L,
+                                        702L,
+                                        ENROLLMENT_ID,
+                                        NODE_ID,
+                                        1,
+                                        LocalDate.of(2026, 3, 15),
+                                        LocalDate.of(2026, 3, 8),
+                                        LocalDate.of(2026, 3, 22),
+                                        "NORMAL",
+                                        "COMPLETED",
+                                        "ON_TIME",
+                                        null,
+                                        "fu_annual_v1",
+                                        1,
+                                        "{\"other\":\"（示例）\"}")));
+        when(formService.schema("fu_annual_v1", 1))
+                .thenReturn(
+                        new FormService.SchemaView(
+                                "fu_annual_v1",
+                                "年度随访（示例）",
+                                "FOLLOWUP",
+                                1,
+                                List.of(
+                                        new FormService.CategoryView(
+                                                "basic",
+                                                "随访概况（示例）",
+                                                10,
+                                                List.of(fieldView("k999", "other_field")))),
+                                List.of()));
+
+        run(service(), AS_OF);
+
+        ArgumentCaptor<NodeOccurrenceInsertRow> captor =
+                ArgumentCaptor.forClass(NodeOccurrenceInsertRow.class);
+        verify(occurrenceMapper).insertFact(captor.capture());
+        assertTrue(captor.getValue().isFollowed());
+        assertTrue(!captor.getValue().isInWindow(), "无实际随访日期可判 → 不计入窗口内完成");
+    }
+
+    private static FormService.FieldView fieldView(String key, String code) {
+        return new FormService.FieldView(
+                key,
+                code,
+                key + "（示例）",
+                "text",
+                null,
+                null,
+                null,
+                null,
+                null,
+                false,
+                null,
+                null,
+                null,
+                false,
+                "json",
+                null);
     }
 
     @Test

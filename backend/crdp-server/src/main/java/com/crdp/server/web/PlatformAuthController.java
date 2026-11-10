@@ -6,6 +6,7 @@ import com.crdp.framework.security.PublicApi;
 import com.crdp.framework.security.SecurityProperties;
 import com.crdp.framework.security.SessionPrincipal;
 import com.crdp.framework.web.ApiResponse;
+import com.crdp.framework.web.ClientIpResolver;
 import com.crdp.server.auth.AuthService;
 import com.crdp.server.auth.MenuQuery;
 import com.crdp.server.auth.PasswordChangeService;
@@ -35,6 +36,7 @@ public class PlatformAuthController {
     private final CaptchaStore captchaStore;
     private final SecurityProperties securityProperties;
     private final SessionAdminService sessionAdminService;
+    private final ClientIpResolver clientIps;
 
     public PlatformAuthController(
             AuthService authService,
@@ -43,7 +45,8 @@ public class PlatformAuthController {
             MenuQuery menuQuery,
             CaptchaStore captchaStore,
             SecurityProperties securityProperties,
-            SessionAdminService sessionAdminService) {
+            SessionAdminService sessionAdminService,
+            ClientIpResolver clientIps) {
         this.authService = authService;
         this.passwordChangeService = passwordChangeService;
         this.reauthService = reauthService;
@@ -51,6 +54,7 @@ public class PlatformAuthController {
         this.captchaStore = captchaStore;
         this.securityProperties = securityProperties;
         this.sessionAdminService = sessionAdminService;
+        this.clientIps = clientIps;
     }
 
     @Operation(summary = "平台端登录。平台账号与医院账号不能混用；强制双因素时返回 challengeId 而不是令牌。")
@@ -62,13 +66,13 @@ public class PlatformAuthController {
                         request.username(),
                         request.password(),
                         new AuthService.CaptchaInput(request.captchaId(), request.captchaCode()),
-                        HospitalAuthController.clientIp(httpRequest)));
+                        clientIps.resolve(httpRequest)));
     }
 
     @Operation(summary = "取图形验证码（公开，按 IP 每小时限流），与医院端同构。", method = "GET")
     @GetMapping("/api/platform/auth/captcha")
     public ApiResponse<CaptchaStore.CaptchaImage> captcha(HttpServletRequest request) {
-        return ApiResponse.ok(captchaStore.issue(HospitalAuthController.clientIp(request)));
+        return ApiResponse.ok(captchaStore.issue(clientIps.resolve(request)));
     }
 
     @Operation(summary = "平台端双因素第二步。验证短信验证码后换会话令牌（E04-T04 / PLT-AUTH-003、005）。")

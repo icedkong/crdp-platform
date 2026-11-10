@@ -1,7 +1,7 @@
 /**
  * E24-T04 / NFR-RESP-002 · 患者详情响应式纯逻辑（pages.md §4.10 手机行：
  * 「随访记录、植入记录、操作日志表格改卡片」与 §4.6「手机：列表卡片」——
- * 本页现有表格为沟通记录与报告单，操作日志页签随后续任务、植入记录随 C 在 M5）。
+ * 操作日志页签随 G3（M3 审查）落地，植入记录随 C 在 M5）。
  * 卡片字段行与分页切片的口径集中在这里，测试见 detail-responsive-logic.spec.ts。
  */
 import type { ReportRow } from '@crdp/api';
@@ -63,4 +63,21 @@ export function pageSlice<T>(items: T[], pageNo: number, pageSize = 20): T[] {
   const totalPage = Math.ceil(items.length / pageSize);
   const safePage = Math.min(Math.max(pageNo, 1), totalPage);
   return items.slice((safePage - 1) * pageSize, safePage * pageSize);
+}
+
+/** 操作日志表格行（G3 / pages.md §4.9 列：时间 / 操作人 / 操作 / 详情）。 */
+export interface PatientLogCardRow {
+  action: string;
+  detailText: string;
+  operatorText: string;
+  timeText: string;
+}
+
+/** 操作日志卡片字段行（时间为卡片标题，操作人 / 操作 / 详情逐行；§4.10 手机转卡片）。 */
+export function patientLogCardLines(row: PatientLogCardRow): CardLine[] {
+  return [
+    { label: '操作人', value: row.operatorText },
+    { label: '操作', value: row.action },
+    { label: '详情', value: row.detailText },
+  ];
 }

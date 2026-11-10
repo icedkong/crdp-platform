@@ -5,6 +5,7 @@ import com.crdp.framework.security.PublicApi;
 import com.crdp.framework.security.RequireModule;
 import com.crdp.framework.security.RequiresPermission;
 import com.crdp.framework.web.ApiResponse;
+import com.crdp.framework.web.ClientIpResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
@@ -33,9 +34,11 @@ public class FileDownloadController {
     private static final String URL_PREFIX = "/api/hospital/files/download/";
 
     private final FileDownloadService download;
+    private final ClientIpResolver clientIps;
 
-    public FileDownloadController(FileDownloadService download) {
+    public FileDownloadController(FileDownloadService download, ClientIpResolver clientIps) {
         this.download = download;
+        this.clientIps = clientIps;
     }
 
     @Operation(
@@ -55,7 +58,8 @@ public class FileDownloadController {
     @GetMapping(URL_PREFIX + "{token}")
     @PublicApi
     public ResponseEntity<byte[]> download(@PathVariable String token, HttpServletRequest request) {
-        FileDownloadService.DownloadContent content = download.content(token, clientIp(request));
+        FileDownloadService.DownloadContent content =
+                download.content(token, clientIps.resolve(request));
         return ResponseEntity.ok()
                 .header(
                         HttpHeaders.CONTENT_DISPOSITION,
@@ -75,12 +79,6 @@ public class FileDownloadController {
                 .body(content.body());
     }
 
-    /** 反代后取真实 IP：优先 X-Forwarded-For 首段，兜底 remoteAddr（与 FilePreviewController 同口径）。 */
-    private static String clientIp(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            return forwarded.split(",")[0].trim();
-        }
-        return request.getRemoteAddr();
-    }
+    // G9（M3 审查）：限流 IP 统一走 ClientIpResolver（默认只信 RemoteAddr，
+    // crdp.web.trust-xff=true 才取 X-Forwarded-For 首段；与各公开口同口径，OQ-42）
 }

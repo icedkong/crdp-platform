@@ -5,6 +5,7 @@ export {
   deviceOf,
   globalCss,
   imageUpload,
+  mergeShellTokens,
   sizes,
   statusTone,
   timings,

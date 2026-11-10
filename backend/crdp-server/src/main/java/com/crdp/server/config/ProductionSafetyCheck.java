@@ -1,8 +1,10 @@
 package com.crdp.server.config;
 
+import com.crdp.followup.report.app.MobileUploadProperties;
 import com.crdp.framework.audit.AuditArchiveProperties;
 import com.crdp.framework.crypto.CryptoProperties;
 import com.crdp.framework.crypto.KmsKeyProvider;
+import com.crdp.framework.notify.sms.TencentSmsProperties;
 import java.util.Arrays;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
@@ -10,10 +12,15 @@ import org.springframework.stereotype.Component;
 @Component
 public class ProductionSafetyCheck {
 
+    /** 手机上传 H5 基地址的本机开发回落值（缺省配置即此值，生产出现 = 未配置，G10）。 */
+    static final String LOCAL_DEV_MOBILE_BASE_URL = "http://127.0.0.1:14175";
+
     public ProductionSafetyCheck(
             Environment environment,
             CryptoProperties cryptoProperties,
-            AuditArchiveProperties auditArchive) {
+            AuditArchiveProperties auditArchive,
+            TencentSmsProperties smsProperties,
+            MobileUploadProperties mobileUploadProperties) {
         boolean prod = Arrays.asList(environment.getActiveProfiles()).contains("prod");
         if (!prod) {
             return;
@@ -41,6 +48,31 @@ public class ProductionSafetyCheck {
                             + " CRDP_OBS_ARCHIVE_SK / CRDP_OBS_ARCHIVE_BUCKET 任一项时进程拒绝启动，"
                             + "不静默回落 none（none 不上传、不删在线数据，审计没有不可变副本）。"
                             + "演示 / 本机请使用 demo / local 剖面（type=none 可用）。");
+        }
+        // G9①（M3 审查）/ E22-T10 PT-SELF-02：短信通道启用而回执 Basic Auth 凭据缺失时，
+        // 公开回执口只剩 IP 限流一道闸（任意来源可伪造回执污染对账数据）——生产拒绝启动
+        // （fail fast），local / demo 不受影响（SmsReceiptController 启动告警兜底）。
+        if (smsProperties.isEnabled() && !smsProperties.receiptAuthConfigured()) {
+            throw new IllegalStateException(
+                    "生产剖面已启用短信通道（crdp.sms.enabled=true）但回执回调凭据未配置"
+                            + "（crdp.sms.receipt-auth-username / receipt-auth-password，与腾讯云控制台「状态回执推送」"
+                            + "Basic Auth 一致，经 CRDP_SMS_RECEIPT_AUTH_USER / CRDP_SMS_RECEIPT_AUTH_PASSWORD 注入）："
+                            + "公开回执口将只剩 IP 限流，任意来源可伪造回执污染对账数据，进程拒绝启动。"
+                            + "请在腾讯云控制台配置状态回执 Basic Auth 并注入两项环境变量后重启。");
+        }
+        // G10（M3 审查）/ A-ATT-015：手机扫码上传二维码的 H5 对外基地址生产缺省回落
+        // http://127.0.0.1:14175（本机开发地址）——二维码扫不通才暴露配置缺失，太晚。
+        // 缺失（空 / 未改本机回落值）即拒绝启动，经 CRDP_H5_UPLOAD_MOBILE_BASE_URL 指向真实域名（https）。
+        String mobileBaseUrl = mobileUploadProperties.getMobileBaseUrl();
+        if (mobileBaseUrl == null
+                || mobileBaseUrl.isBlank()
+                || LOCAL_DEV_MOBILE_BASE_URL.equals(mobileBaseUrl.trim())) {
+            throw new IllegalStateException(
+                    "生产剖面必须配置手机上传 H5 对外基地址（crdp.h5-upload.mobile-base-url，"
+                            + "经 CRDP_H5_UPLOAD_MOBILE_BASE_URL 注入，https 公网可扫，A-ATT-015）："
+                            + "当前为空或仍是本机开发回落值 "
+                            + LOCAL_DEV_MOBILE_BASE_URL
+                            + "——签发的上传二维码将扫不通，进程拒绝启动而不静默回落。");
         }
     }
 }

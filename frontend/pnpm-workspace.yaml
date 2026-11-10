@@ -29,6 +29,7 @@ overrides:
   '@ctrl/tinycolor': 'catalog:'
   clsx: 'catalog:'
   pinia: 'catalog:'
+  tinypool: '>=2.1.2'
   vue: 'catalog:'
 
 catalog:

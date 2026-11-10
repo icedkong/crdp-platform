@@ -11,6 +11,8 @@ import static org.mockito.Mockito.when;
 import com.crdp.framework.notify.sms.SmsReceiptHandler;
 import com.crdp.framework.notify.sms.TencentSmsProperties;
 import com.crdp.framework.web.ApiException;
+import com.crdp.framework.web.ClientIpResolver;
+import com.crdp.framework.web.WebProperties;
 import jakarta.servlet.http.HttpServletRequest;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
@@ -43,7 +45,16 @@ class SmsReceiptControllerTest {
     }
 
     private SmsReceiptController controller() {
-        return new SmsReceiptController(handler, redis, properties);
+        // 默认 trust-xff=false：限流只信 RemoteAddr（G9②）
+        return new SmsReceiptController(
+                handler, redis, properties, new ClientIpResolver(new WebProperties()));
+    }
+
+    /** trust-xff 开（OQ-42：部署侧确认反代 / WAF 覆盖该头后才允许）。 */
+    private SmsReceiptController trustXffController() {
+        WebProperties web = new WebProperties();
+        web.setTrustXff(true);
+        return new SmsReceiptController(handler, redis, properties, new ClientIpResolver(web));
     }
 
     private static HttpServletRequest requestWithAuth(String header) {
@@ -136,5 +147,45 @@ class SmsReceiptControllerTest {
 
         assertEquals(0, ack.result());
         verify(handler).handle("{}");
+    }
+
+    /** G9②：默认（trust-xff=false）伪造 X-Forwarded-For 不刷新限流计数——仍按 RemoteAddr 计数。 */
+    @Test
+    void forwardedHeaderIgnoredForRateLimitUnlessTrustXffEnabled() {
+        @SuppressWarnings("unchecked")
+        ValueOperations<String, String> spoofed = mock(ValueOperations.class);
+        lenient().when(spoofed.increment("crdp:sms-receipt:ip:10.99.99.99")).thenReturn(1L);
+
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setMethod("POST");
+        request.setContentType("application/json");
+        request.setRemoteAddr("127.0.0.1");
+        request.addHeader("X-Forwarded-For", "10.99.99.99"); // 客户端伪造，默认不采信
+
+        var ack = controller().receive("{}", request);
+
+        assertEquals(0, ack.result());
+        // 限流键仍是 remoteAddr（127.0.0.1）：伪造头不能换一个限流桶
+        verify(redis.opsForValue()).increment("crdp:sms-receipt:ip:127.0.0.1");
+    }
+
+    /** G9②：trust-xff=true 时取 X-Forwarded-For 首段作为限流 IP（反代覆盖后的口径）。 */
+    @Test
+    void trustXffTakesFirstForwardedSegmentAsRateLimitIp() {
+        @SuppressWarnings("unchecked")
+        ValueOperations<String, String> ops = mock(ValueOperations.class);
+        when(redis.opsForValue()).thenReturn(ops);
+        when(ops.increment("crdp:sms-receipt:ip:10.0.0.8")).thenReturn(1L);
+
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setMethod("POST");
+        request.setContentType("application/json");
+        request.setRemoteAddr("172.16.0.9");
+        request.addHeader("X-Forwarded-For", "10.0.0.8, 172.16.0.9");
+
+        var ack = trustXffController().receive("{}", request);
+
+        assertEquals(0, ack.result());
+        verify(ops).increment("crdp:sms-receipt:ip:10.0.0.8");
     }
 }

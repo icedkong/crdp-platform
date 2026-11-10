@@ -33,6 +33,10 @@ import java.util.Objects;
  * 草稿补填提交按补录计，Q06）；窗口内 / 逾期 / 补录 / 历史导入 / 窗口外日期都算， 随访中确认死亡并提交的记录算已随访。无锚点的手工补录（source =
  * BACKFILL，A-FU-014）按与各次计划日期 最近的一次归属（暂行口径，见 OQ-106）。
  *
+ * <p><b>窗口内完成</b>（inWindow，参考指标）：表单**实际随访日期**落在窗口内（含首尾两天，Q38 / G2）——
+ * 任务行取关联记录的实际随访日期（fu_record.visit_date 列或表单字段 followup_date 按模板版本解析，加载侧解析后随 {@link TaskInput} 传入），
+ * 补录 / 导入日期落在原窗口内的同样计入；完成方式（completeKind 按提交当天判定）不再作为该指标依据——补录任务被强制标 BACKFILL，按提交日算会让窗口内完成率恒为 0。
+ *
  * <p>次数推进、月末口径与周期回落（FIXED 未存周期 → 周期回落节点偏移，OQ-78①）复用 {@link TaskCreationPlanner} 的同一套口径；
  * 管理周期边界（cycle_type = YEARS）与 LAST_VISIT 只排第 1 次同 E14-T04。
  */
@@ -81,7 +85,8 @@ public final class NodeOccurrenceFactCalculator {
 
     /**
      * 任务输入（fu_task 常规任务行；completeKind = fu_task.complete_kind 窗口前 / 窗口内 / 逾期完成， E15-T01
-     * V53；recordId = fu_task.record_id）。
+     * V53；recordId = fu_task.record_id；visitDate = 关联记录的**实际随访日期**——fu_record.visit_date 列或表单字段
+     * followup_date（A 规格 f214）按模板版本解析，由加载侧（刷新服务）解析后传入）。
      */
     public record TaskInput(
             long taskId,
@@ -93,7 +98,8 @@ public final class NodeOccurrenceFactCalculator {
             LocalDate windowEnd,
             String createType,
             String status,
-            String completeKind) {}
+            String completeKind,
+            LocalDate visitDate) {}
 
     /** 锚点记录输入（fu_record 历史导入 / 历史未随访行，V73 锚点列）。 */
     public record RecordInput(
@@ -323,15 +329,18 @@ public final class NodeOccurrenceFactCalculator {
         }
         boolean inWindow = false;
         if (followed) {
-            if (task != null && taskCompleted) {
-                inWindow = KIND_ON_TIME.equals(completeKind); // 窗口内完成（E15-T01 完成方式判定）
-            } else {
-                LocalDate visitDate = record != null && recordSubmitted ? record.visitDate() : null;
-                inWindow =
-                        visitDate != null
-                                && !visitDate.isBefore(schedule.windowStart())
-                                && !visitDate.isAfter(schedule.windowEnd());
-            }
+            // G2（M3 审查）/ Q38：窗口内完成 = 表单**实际随访日期**落在窗口内（含首尾两天）——不再用
+            // completeKind（完成方式按提交当天算，补录被强制标 BACKFILL，会让窗口内完成率恒为 0）；
+            // 补录 / 导入日期落在原窗口内的同样计入该参考指标（主随访率口径不变，仍含逾期与补录）。
+            LocalDate visitDate =
+                    task != null && taskCompleted
+                            ? firstNonNull(
+                                    task.visitDate(), recordSubmitted ? record.visitDate() : null)
+                            : recordSubmitted ? record.visitDate() : null;
+            inWindow =
+                    visitDate != null
+                            && !visitDate.isBefore(schedule.windowStart())
+                            && !visitDate.isAfter(schedule.windowEnd());
         }
         boolean lost = task != null && "LOST".equals(task.status());
         boolean deathConfirmed =
@@ -431,6 +440,10 @@ public final class NodeOccurrenceFactCalculator {
             }
         }
         return latest != null ? latest.status() : "ACTIVE";
+    }
+
+    private static LocalDate firstNonNull(LocalDate first, LocalDate second) {
+        return first != null ? first : second;
     }
 
     /** 节点行的日期参数（与 TaskCreationPlanner.timingOf 同构；单位归一大写）。 */

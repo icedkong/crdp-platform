@@ -9,6 +9,7 @@ import com.crdp.framework.security.RequireModule;
 import com.crdp.framework.security.RequiresPermission;
 import com.crdp.framework.web.ApiException;
 import com.crdp.framework.web.ApiResponse;
+import com.crdp.framework.web.ClientIpResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
@@ -37,9 +38,11 @@ import org.springframework.web.multipart.MultipartFile;
 public class MobileUploadController {
 
     private final MobileUploadService service;
+    private final ClientIpResolver clientIps;
 
-    public MobileUploadController(MobileUploadService service) {
+    public MobileUploadController(MobileUploadService service, ClientIpResolver clientIps) {
         this.service = service;
+        this.clientIps = clientIps;
     }
 
     // ---------------------------------------------------------------- 电脑端
@@ -81,7 +84,7 @@ public class MobileUploadController {
     @GetMapping("/api/h5/upload/{token}/context")
     public ApiResponse<MobileUploadService.ContextView> context(
             @PathVariable String token, HttpServletRequest request) {
-        service.rateLimit(clientIp(request));
+        service.rateLimit(clientIps.resolve(request));
         return ApiResponse.ok(service.context(token));
     }
 
@@ -93,7 +96,7 @@ public class MobileUploadController {
     @GetMapping("/api/h5/upload/{token}")
     public ApiResponse<MobileUploadService.InfoView> info(
             @PathVariable String token, HttpServletRequest request) {
-        service.rateLimit(clientIp(request));
+        service.rateLimit(clientIps.resolve(request));
         return ApiResponse.ok(service.info(token));
     }
 
@@ -109,7 +112,7 @@ public class MobileUploadController {
             @RequestParam("file") MultipartFile file,
             HttpServletRequest request)
             throws IOException {
-        service.rateLimit(clientIp(request));
+        service.rateLimit(clientIps.resolve(request));
         return ApiResponse.ok(service.upload(token, file.getOriginalFilename(), file.getBytes()));
     }
 
@@ -124,7 +127,7 @@ public class MobileUploadController {
             @PathVariable String token,
             @RequestBody(required = false) SubmitBody body,
             HttpServletRequest request) {
-        service.rateLimit(clientIp(request));
+        service.rateLimit(clientIps.resolve(request));
         return ApiResponse.ok(
                 service.submit(
                         token,
@@ -141,14 +144,8 @@ public class MobileUploadController {
 
     // ---------------------------------------------------------------- 私有
 
-    /** 反代后取真实 IP：优先 X-Forwarded-For 首段，兜底 remoteAddr（与 FileDownloadController 同口径）。 */
-    private static String clientIp(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            return forwarded.split(",")[0].trim();
-        }
-        return request.getRemoteAddr();
-    }
+    // G9（M3 审查）：限流 IP 统一走 ClientIpResolver（默认只信 RemoteAddr，
+    // crdp.web.trust-xff=true 才取 X-Forwarded-For 首段；与各公开口同口径，OQ-42）
 
     private static LocationInput toLocation(LocationBody loc) {
         if (loc == null) {

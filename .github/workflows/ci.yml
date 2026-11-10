@@ -128,3 +128,46 @@ jobs:
       - name: 静态检查、测试与构建
         working-directory: frontend
         run: pnpm lint && pnpm test && pnpm build
+
+  # G7（M3 审查）/ E01-T04「CI：单测、SAST、依赖与镜像扫描，高危漏洞阻断合并」：
+  # ① 前端生产依赖漏洞扫描（pnpm audit --prod --audit-level high，真实阻断语义——
+  #    scripts/check_frontend_audit.py 解析 JSON、HIGH/CRITICAL 退出非 0，已评估例外
+  #    按公告号登记在脚本 ALLOWLIST，不靠 || true 吞掉）；
+  # ② 后端镜像扫描（Trivy 扫 backend/Dockerfile 构建产物，--severity HIGH,CRITICAL
+  #    --exit-code 1；ignore-unfixed：上游未发补丁的 CVE 无法靠代码改动清零，只报不阻，
+  #    有补丁的高危仍阻断）。构建走 buildx + gha 层缓存，pom 未变时重复跑不重复下依赖。
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: 安装依赖（audit 读锁文件与工作区）
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+      - name: 前端生产依赖漏洞扫描（高危阻断）
+        run: python3 scripts/check_frontend_audit.py
+      - name: 准备 buildx
+        uses: docker/setup-buildx-action@v3
+      - name: 构建后端镜像（gha 层缓存）
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          load: true
+          tags: crdp-server:ci-scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Trivy 镜像扫描（HIGH / CRITICAL 阻断）
+        run: |
+          docker run --rm \
+            -v /tmp/trivy-cache:/root/.cache \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PWD:/repo" \
+            aquasec/trivy:0.65.0 image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 \
+            --ignorefile /repo/.trivyignore --format table crdp-server:ci-scan

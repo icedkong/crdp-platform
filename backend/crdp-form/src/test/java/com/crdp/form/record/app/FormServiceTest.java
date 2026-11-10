@@ -8,9 +8,11 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -106,7 +108,9 @@ class FormServiceTest {
                 .thenReturn(List.of(surgeryDate(1), height(1)));
         when(recordMapper.findVersionFields("A_BASELINE", 1))
                 .thenReturn(List.of(smoking(1), surgeryDate(1), height(1)));
-        when(fieldMapper.findOptions("yesno")).thenReturn(List.of(option(0, "否"), option(1, "是")));
+        // G8：schema 的选项集改为按编码集合一轮批量查出（findOptionsBySetCodes）
+        when(fieldMapper.findOptionsBySetCodes(any()))
+                .thenReturn(List.of(option(0, "否"), option(1, "是")));
 
         FormService.SchemaView current = service.schema("A_BASELINE", null);
         assertEquals(2, current.version(), "不传 version 取当前发布版");
@@ -147,6 +151,65 @@ class FormServiceTest {
         assertEquals(50.0, heightField.hardRange().min());
         assertEquals(1, heightField.decimals());
         assertEquals("cm", heightField.unit());
+    }
+
+    /**
+     * G8（M3 审查）/ 性能防回归：打开一份大表单（医院 A 基线约 266 字段，多数带选项集）选项集 只查**一轮**——按编码集合批量查出（{@code
+     * findOptionsBySetCodes}）再按 setCode 组装；不再按字段逐条查 fe_option（{@code findOptions} 零调用）。 mock
+     * 计数器锁定查库次数与编码集合内容。
+     */
+    @Test
+    void schemaLoadsAllOptionSetsInOneBatchedQuery() {
+        when(fieldMapper.findForm("A_BASELINE"))
+                .thenReturn(
+                        new FormRow(
+                                1L,
+                                "A_BASELINE",
+                                "基线档案（示例）",
+                                "BASELINE",
+                                1,
+                                CATEGORIES,
+                                "ENABLED"));
+        when(recordMapper.findVersion("A_BASELINE", 1)).thenReturn(versionRow(1L, 1, 6));
+        // 5 个选项集 × 各 6 个字段 + 2 个无选项字段：此前打开一次 = 30 次 findOptions，现在 1 轮批量
+        List<VersionFieldRow> fields = new java.util.ArrayList<>();
+        fields.add(surgeryDate(1));
+        fields.add(height(1));
+        for (int i = 0; i < 30; i++) {
+            fields.add(optionField(100 + i, "set_" + (i % 5)));
+        }
+        when(recordMapper.findVersionFields("A_BASELINE", 1)).thenReturn(fields);
+        when(fieldMapper.findOptionsBySetCodes(any()))
+                .thenAnswer(
+                        invocation -> {
+                            List<OptionRow> rows = new java.util.ArrayList<>();
+                            for (int set = 0; set < 5; set++) {
+                                rows.add(option("set_" + set, 0, "无（示例）"));
+                                rows.add(option("set_" + set, 1, "有（示例）"));
+                            }
+                            return rows; // 五个集合的行混在一轮结果里（SQL 按 set_code 排序）
+                        });
+
+        FormService.SchemaView schema = service.schema("A_BASELINE", null);
+
+        // 查库次数：选项集一轮批量、逐条查询零次；批量入参 = 去重后的全部编码集合
+        verify(fieldMapper, times(1))
+                .findOptionsBySetCodes(
+                        argThat(
+                                codes ->
+                                        codes instanceof java.util.Set<?> set
+                                                && set.equals(
+                                                        java.util.Set.of(
+                                                                "set_0", "set_1", "set_2", "set_3",
+                                                                "set_4"))));
+        verify(fieldMapper, never()).findOptions(anyString());
+        // 组装：每个选项字段都拿到自己集合的选项（2 项 / 集）
+        long withOptions =
+                schema.categories().stream()
+                        .flatMap(category -> category.fields().stream())
+                        .filter(field -> field.optionSet() != null && field.optionSet().size() == 2)
+                        .count();
+        assertEquals(30, withOptions, "30 个选项字段的选项都从批量结果按 setCode 组装");
     }
 
     @Test
@@ -1115,6 +1178,40 @@ class FormServiceTest {
         return new OptionRow(
                 1L, "yesno", code, label, null, false, false, null, code * 10, "ENABLED", null,
                 null);
+    }
+
+    /** 指定选项集的选项行（G8 批量加载用例：多集合混在一轮结果里）。 */
+    private static OptionRow option(String setCode, int code, String label) {
+        return new OptionRow(
+                1L, setCode, code, label, null, false, false, null, code * 10, "ENABLED", null,
+                null);
+    }
+
+    /** 带选项集的单选字段（G8 批量加载用例；fieldKey / setCode 由调用方区分）。 */
+    private static VersionFieldRow optionField(int index, String setCode) {
+        return new VersionFieldRow(
+                (long) index,
+                1L,
+                "A_BASELINE",
+                1,
+                "f" + index,
+                "opt_" + index,
+                "选项字段（示例 " + index + "）",
+                "basic_info",
+                "radio",
+                null,
+                null,
+                null,
+                null,
+                setCode,
+                false,
+                null,
+                null,
+                null,
+                false,
+                "json",
+                null,
+                60 + index);
     }
 
     private static VersionFieldRow smoking(int version) {

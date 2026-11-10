@@ -42,29 +42,29 @@ import org.springframework.test.context.ActiveProfiles;
  * <table border="1">
  * <caption>Q38 逐条对照</caption>
  * <tr><th>患者</th><th>场景（Q38 条款）</th><th>第 1 年（手工）</th><th>第 2 年（手工）</th></tr>
- * <tr><td>F01</td><td>窗口内完成（ON_TIME）；第 2 年待随访</td><td>due+1 f+1 w+1</td><td>due+1</td></tr>
+ * <tr><td>F01</td><td>窗口内完成（实际随访日期 f214 = 2025-06-01 落窗口内；G2 口径，完成方式仅描述提交时点）；第 2 年待随访</td><td>due+1 f+1 w+1</td><td>due+1</td></tr>
  * <tr><td>F02</td><td>逾期完成（OVERDUE，完成日 2025-07-01）→ 计入已随访、不计窗口内（第二病区，供病区筛选小表）</td><td>due+1 f+1</td><td>due+1</td></tr>
  * <tr><td>F03</td><td>历史导入、日期在窗口外（visit 2025-08-01）→ 照常算已随访</td><td>due+1 f+1</td><td>due+1</td></tr>
- * <tr><td>F04</td><td>补录任务完成（create_type=BACKFILL）→ 计入已随访、不计窗口内</td><td>due+1 f+1</td><td>due+1</td></tr>
+ * <tr><td>F04</td><td>补录任务完成（create_type=BACKFILL，实际随访日期 2025-07-20 在窗口外）→ 计入已随访、不计窗口内（G2：按实际随访日期而非完成方式判定）</td><td>due+1 f+1</td><td>due+1</td></tr>
  * <tr><td>F05</td><td>无锚点手工补录（A-FU-014，visit 2025-05-26 落窗口内）→ 按最近计划日期归属第 1 年</td><td>due+1 f+1 w+1</td><td>due+1</td></tr>
  * <tr><td>F06</td><td>历史导入 visit = 窗口首日 2025-05-25 → 窗口内完成（含首尾两天）</td><td>due+1 f+1 w+1</td><td>due+1</td></tr>
  * <tr><td>F07</td><td>历史导入 visit = 窗口末日 2025-06-08 → 窗口内完成（含首尾两天）</td><td>due+1 f+1 w+1</td><td>due+1</td></tr>
  * <tr><td>F08</td><td>窗口开始日（05-25）前已确认失访（LOST 生效 2025-05-01）→ 此前已失访不在应随访</td><td>不计</td><td>不计</td></tr>
  * <tr><td>F09</td><td>第 1 年任务确认失访（任务 LOST，患者仍存活）→ 计分母与失访、不计分子</td><td>due+1 L+1</td><td>due+1</td></tr>
  * <tr><td>F10</td><td>暂停中（PAUSED 生效 2025-01-01）→ 暂停患者仍计入</td><td>due+1</td><td>due+1</td></tr>
- * <tr><td>F11</td><td>随访中确认死亡并提交（DEAD 生效 2025-06-05 落第 1 年窗口内）→ 算已随访 + 死亡人数；第 2 年窗口开始前已死亡不计</td><td>due+1 f+1 w+1 D+1</td><td>不计</td></tr>
+ * <tr><td>F11</td><td>随访中确认死亡并提交（实际随访日期 = 死亡当日 2025-06-05 落第 1 年窗口内）→ 算已随访 + 死亡人数 + 窗口内完成；第 2 年窗口开始前已死亡不计</td><td>due+1 f+1 w+1 D+1</td><td>不计</td></tr>
  * <tr><td>F12</td><td>窗口开始日前已死亡（DEAD 生效 2025-05-01）→ 不在应随访</td><td>不计</td><td>不计</td></tr>
  * <tr><td>F13</td><td>历史未随访（Q06）草稿：计入应随访、不计已随访；提交后升级见 {@code histMissedSubmitUpgradesFollowed}</td><td>due+1（草稿）</td><td>due+1</td></tr>
  * <tr><td>F14</td><td>计划外随访记录（UNPLANNED，已提交）→ 不计入任何节点次数（A-DASH-012）</td><td>due+1（仅分母）</td><td>due+1</td></tr>
  * <tr><td>F15</td><td>随访年度不设上限：起算 2010-06-01、无任何任务 / 记录 → 第 1 ~ 16 年每年 due+1（计划推算出行，不因缺任务漏分母）</td><td>due+1</td><td>due+1</td></tr>
- * <tr><td>F16</td><td>多计划并行（OQ-106⑤/OQ-109② 复核锁定）：已从计划 X 移除（仍存活、在组计划 Y）→ 患者级时间线判应随访；每年随访率按患者去重只计 1 人，其已随访来自计划 Y（第 1 年完成）</td><td>due+1（X、Y 两行去重）f+1（Y）w+1（Y）</td><td>due+1</td></tr>
+ * <tr><td>F16</td><td>多计划并行（OQ-106⑤/OQ-109② 复核锁定）：已从计划 X 移除（仍存活、在组计划 Y）→ 患者级时间线判应随访；每年随访率按患者去重只计 1 人，其已随访来自计划 Y（第 1 年完成，实际随访日期 2025-06-01 落窗口内）</td><td>due+1（X、Y 两行去重）f+1（Y）w+1（Y）</td><td>due+1</td></tr>
  * </table>
  *
  * <p><b>手工汇总</b>：第 1 年 due=14（F01–F07、F09–F11、F13–F16；F08/F12
- * 不计）、f=9（F01–F07、F11、F16）、w=6（F01、F05–F07、F11、F16）、L=1（F09）、D=1（F11）→ 随访率 9/14=64.3%、窗口内完成率
- * 6/14=42.9%、失访率 1/14=7.1%；第 2 年 due=13（第 1 年少 F11）、f=0；第 3 ~ 16 年每年 due=1（F15）、f=0；只列有应随访患者的年度（共
- * 16 行）。 节点随访率（计划 X）同行结构但按入组行计数：第 1 年 due=14、f=8、w=5（F16 的已随访在计划 Y，不进 X）、L=1、D=1 →
- * 8/14=57.1%、5/14=35.7%。
+ * 不计）、f=9（F01–F07、F11、F16）、w=6（F01、F05–F07、F11、F16；G2 口径：全部按实际随访日期〔f214 /
+ * visit_date〕落窗判定）、L=1（F09）、D=1（F11）→ 随访率 9/14=64.3%、窗口内完成率 6/14=42.9%、失访率 1/14=7.1%；第 2 年 due=13（第
+ * 1 年少 F11）、f=0；第 3 ~ 16 年每年 due=1（F15）、f=0；只列有应随访患者的年度（共 16 行）。 节点随访率（计划 X）同行结构但按入组行计数：第 1 年
+ * due=14、f=8、w=5（F16 的已随访在计划 Y，不进 X）、L=1、D=1 → 8/14=57.1%、5/14=35.7%。
  *
  * <p>门控 CRDP_IT_MYSQL_PORT（CI 起 docker compose 注入端口）。自建自清（前缀 IT-E19T08 / PLAN-IT-E19T08）。全部虚构数据。
  */
@@ -360,6 +360,8 @@ class StatsQ38CaliberIT {
                 "COMPLETED",
                 "ON_TIME",
                 "2025-06-01");
+        // G2：任务完成行的窗口内完成按实际随访日期（f214）判定——visit 2025-06-01 落窗口内
+        linkSubmittedRecord("demoa", f01, "2025-06-01");
         insertTask("demoa", f01, plans.get("X"), nodeIdX, 2, "NORMAL", "PENDING", null, null);
         // F02 逾期完成（第二病区）
         long f02 = registerPatient("demoa", admin, "F02", "2024-06-01", ward2);
@@ -392,6 +394,8 @@ class StatsQ38CaliberIT {
                 "COMPLETED",
                 "OVERDUE",
                 "2025-06-20");
+        // G2：补录完成按实际随访日期判定——visit 2025-07-20 在窗口外 → 不计窗口内（与完成方式无关）
+        linkSubmittedRecord("demoa", f04, "2025-07-20");
         // F05 无锚点手工补录（visit 落第 1 年窗口内 → 归属第 1 年并计窗口内）
         long f05 = registerPatient("demoa", admin, "F05", "2024-06-01", ward1);
         enrollOnce(f05, plans.get("X"));
@@ -431,6 +435,8 @@ class StatsQ38CaliberIT {
                 "COMPLETED",
                 "ON_TIME",
                 "2025-06-05");
+        // G2：随访中确认死亡提交——实际随访日期（f214 = 死亡当日 2025-06-05）落窗口内 → 窗口内完成
+        linkSubmittedRecord("demoa", f11, "2025-06-05");
         markStatus("demoa", f11, "DEAD", LocalDate.of(2025, 6, 5));
         // F12 窗口开始日前已死亡
         long f12 = registerPatient("demoa", admin, "F12", "2024-06-01", ward1);
@@ -486,6 +492,8 @@ class StatsQ38CaliberIT {
                 "COMPLETED",
                 "ON_TIME",
                 "2025-06-01");
+        // G2：计划 Y 完工任务的实际随访日期 2025-06-01 落窗口内 → 窗口内完成
+        linkSubmittedRecord("demoa", f16, "2025-06-01");
 
         patients.put("F01", f01);
         patients.put("F02", f02);
@@ -734,6 +742,32 @@ class StatsQ38CaliberIT {
                                 completeKind,
                                 completedOn == null ? null : completedOn + " 09:00:00",
                                 LocalDate.now(java.time.ZoneId.of("Asia/Shanghai"))));
+    }
+
+    /**
+     * G2（M3 审查）：任务完成行的窗口内完成按**实际随访日期**判定——为完工任务补一条已提交 TASK 记录，随访日期在表单字段 f214（A_ANNUAL_FU
+     * followup_date，刷新按模板版本解析）。
+     */
+    private void linkSubmittedRecord(String tenant, long patientId, String visitDate) {
+        runInTenant(
+                tenant,
+                () -> {
+                    jdbc.update(
+                            "INSERT INTO fu_record (patient_id, task_id, source, form_code,"
+                                    + " template_version, status, data) VALUES (?, (SELECT t.id"
+                                    + " FROM fu_task t WHERE t.patient_id = ? AND t.status ="
+                                    + " 'COMPLETED' ORDER BY t.id DESC LIMIT 1), 'TASK',"
+                                    + " 'A_ANNUAL_FU', 1, 'SUBMITTED', ?)",
+                            patientId,
+                            patientId,
+                            "{\"f214\":\"" + visitDate + "\"}");
+                    jdbc.update(
+                            "UPDATE fu_task SET record_id = (SELECT id FROM fu_record WHERE"
+                                    + " patient_id = ? AND task_id IS NOT NULL ORDER BY id DESC"
+                                    + " LIMIT 1) WHERE patient_id = ? AND status = 'COMPLETED'",
+                            patientId,
+                            patientId);
+                });
     }
 
     /** 锚点记录（历史导入 / 历史未随访，E18-T05 锚点列；无任务）。 */
