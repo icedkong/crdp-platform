@@ -16,7 +16,7 @@ import org.springframework.stereotype.Component;
  * 不记模板参数与明文。调用方拿不到「已发送」的假象（{@link SmsChannelException}）。
  */
 @Component
-public class TencentSmsChannel {
+public class TencentSmsChannel implements SmsOutbound {
 
     private static final Logger log = LoggerFactory.getLogger(TencentSmsChannel.class);
 
@@ -45,6 +45,7 @@ public class TencentSmsChannel {
      * @return 腾讯云流水号（SerialNo），回执按它回填台账
      * @throws SmsChannelException 任一前置校验或服务商调用失败
      */
+    @Override
     public String send(SmsSendCommand command) {
         Accepted accepted;
         try {

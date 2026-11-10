@@ -185,6 +185,10 @@ public class SecurityConfig {
                                                 "/actuator/health/**",
                                                 "/actuator/info")
                                         .permitAll()
+                                        // 演示剖面的模拟短信页（crdp.sms.provider=mock 才有控制器）。
+                                        // 不在 /api 下，不进接口登记表。页面只含虚构账号的验证码。
+                                        .requestMatchers(HttpMethod.GET, "/dev/mock-sms")
+                                        .permitAll()
                                         .requestMatchers(
                                                 "/v3/api-docs/**",
                                                 "/swagger-ui/**",

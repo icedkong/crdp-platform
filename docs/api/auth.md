@@ -64,7 +64,7 @@
   - 验证码 6 位数字、**5 分钟有效**（`crdp.security.sms-code-ttl-seconds`）、输错 5 次作废；重发间隔 60 秒、同一手机号每日 10 条（Redis 只存验证码 SHA-256 摘要）。
   - 验证码按「租户编码 + 手机号」隔离，A 院的码不能在 B 院用；验证码错误 / 过期 / 被作废统一 **40102**「验证码错误或已过期」。
   - 短信登录：手机号需已绑定且本院唯一；先验证码后查账号，未绑定手机号与凭据失败同口径 **40101**。短信登录本身即「持有手机」凭据，不再叠加第二因素。
-  - 双因素：平台账号按配置强制（`crdp.security.platform-two-factor-enabled`，默认 true；短信通道 E09-T03 接入前 local/dev 关闭以保证演示可用）；医院端按租户 `cfg_param` 的 `security.two-factor.roles`（逗号分隔角色编码）配置。密码第一步通过后 `login` 返回 `{ challengeId, methods: ["SMS"] }`（token 为 null），challengeId 5 分钟有效、一次性，向账号绑定手机号自动发送验证码；第二步 `POST /auth/2fa/verify` 通过后换会话令牌。challenge 缺失 / 过期 / 已用返回 **40100**。
+  - 双因素：平台账号按配置强制（`crdp.security.platform-two-factor-enabled`，默认 true；`local` / `demo` 关闭以保证密码可登录）。医院端按租户 `cfg_param` 的 `security.two-factor.roles`（逗号分隔角色编码）配置。密码第一步通过后 `login` 返回 `{ challengeId, methods: ["SMS"] }`（token 为 null），challengeId 5 分钟有效、一次性，向账号绑定手机号发送验证码；第二步 `POST /auth/2fa/verify` 通过后换会话令牌。challenge 缺失 / 过期 / 已用返回 **40100**。`local` / `demo` 的 `crdp.sms.provider=mock` 不外发短信，验证码在 `GET /dev/mock-sms` 和后端日志「模拟短信」。`provider=tencent` 且未启用通道时发送失败，不假装已送达。
   - 账号绑定手机号信封加密存储（租户库 `sys_user.phone` purpose=`sys-user-phone`、平台库 `plt_account.phone` purpose=`plt-account-phone`），登录按盲索引 `phone_idx` 查询；审计与日志只落脱敏手机号（`139****0001`）。短信发送通道为占位（E09-T03 接腾讯云短信），未接入时发送动作报 50000。
   - 短信登录失败计数按「HS:租户编码:手机号」分桶，上限同密码登录（42900），成功后清零。
 - 图形验证码与失败锁定（E04-T05 / PLT-AUTH-001、007，等保参数表）：

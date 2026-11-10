@@ -1,0 +1,46 @@
+# 可部署的演示剖面：不依赖华为云 KMS，也不依赖腾讯云短信。
+# 敏感字段仍用本地 AES-256-GCM 信封加密（不是明文）。只允许虚构数据。
+# 接入 KMS 之前禁止导入真实患者数据。生产剖面仍是 prod，启动即失败，直到 KMS 接入。
+crdp:
+  security:
+    platform-two-factor-enabled: false
+  crypto:
+    mode: local
+    # 未设置时进程会在 data/demo-crypto.key 生成一把并沿用。换机或清空该文件后，旧密文解不开。
+    local-key: ${CRDP_CRYPTO_LOCAL_KEY:}
+  sms:
+    provider: mock
+  demo:
+    password: ${CRDP_DEMO_PASSWORD:Demo@2026}
+    hash-marker: PENDING_DEMO_HASH
+  platform:
+    datasource:
+      url: ${CRDP_PLATFORM_JDBC_URL:jdbc:mysql://127.0.0.1:13306/crdp_platform?useUnicode=true&characterEncoding=utf8&connectionTimeZone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false}
+      username: ${CRDP_PLATFORM_DB_USERNAME:crdp_app}
+      password: "${CRDP_PLATFORM_DB_PASSWORD:DevOnly#app2026}"
+  tenant:
+    base-domain: ${CRDP_TENANT_BASE_DOMAIN:crdp.local}
+  provisioning:
+    jdbc-url: ${CRDP_PROVISION_JDBC_URL:jdbc:mysql://127.0.0.1:13306/?useSSL=false&allowPublicKeyRetrieval=true}
+    username: ${CRDP_PROVISION_DB_USERNAME:root}
+    password: "${CRDP_PROVISION_DB_PASSWORD:DevOnly#root2026}"
+    tenant-jdbc-url-template: ${CRDP_TENANT_JDBC_URL_TEMPLATE:jdbc:mysql://127.0.0.1:13306/{db}?useUnicode=true&characterEncoding=utf8&connectionTimeZone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false}
+  h5-upload:
+    # 局域网手机扫码时设成 http://<这台机器的局域网 IP>:14175 ，不要用 127.0.0.1。
+    # scripts/dev.sh 会尽量自动填本机出口地址。
+    mobile-base-url: ${CRDP_H5_UPLOAD_MOBILE_BASE_URL:http://127.0.0.1:14175}
+
+spring:
+  data:
+    redis:
+      host: ${CRDP_REDIS_HOST:127.0.0.1}
+      port: ${CRDP_REDIS_PORT:16379}
+
+management:
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.crdp: INFO

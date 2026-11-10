@@ -1,6 +1,7 @@
 package com.crdp.framework.crypto;
 
 import com.crdp.framework.audit.AuditLogger;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import org.springframework.beans.factory.ObjectProvider;
@@ -23,7 +24,10 @@ public class CryptoConfiguration {
         if (!"local".equalsIgnoreCase(properties.getMode())) {
             throw new IllegalStateException("未知的 crdp.crypto.mode: " + properties.getMode());
         }
-        return new LocalEnvelopeKeyProvider(properties.getLocalKey());
+        String key =
+                LocalKeyMaterial.resolve(
+                        properties.getLocalKey(), Path.of("data", "demo-crypto.key"));
+        return new LocalEnvelopeKeyProvider(key);
     }
 
     @Bean

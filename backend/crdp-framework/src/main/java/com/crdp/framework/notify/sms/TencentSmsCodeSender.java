@@ -27,9 +27,9 @@ public class TencentSmsCodeSender implements SmsCodeSender {
     /** 代重置密码的临时密码模板（E20-T06 / PLT-VIEW-017，种子 V112）。 */
     public static final String TEMPLATE_TEMP_PASSWORD = "AUTH_TEMP_PASSWORD";
 
-    private final TencentSmsChannel channel;
+    private final SmsOutbound channel;
 
-    public TencentSmsCodeSender(TencentSmsChannel channel) {
+    public TencentSmsCodeSender(SmsOutbound channel) {
         this.channel = channel;
     }
 

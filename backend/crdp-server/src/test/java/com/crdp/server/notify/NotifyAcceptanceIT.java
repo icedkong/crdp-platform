@@ -64,6 +64,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
             "server.port=0",
             "crdp.outbox.dispatch.interval-ms=3600000",
             "crdp.notify.digest.tick-ms=3600000",
+            "crdp.sms.provider=tencent",
             "crdp.sms.enabled=true",
             "crdp.sms.secret-id=AKIDit0000000000000000000000000",
             "crdp.sms.secret-key=itSecretKey000000000000000000000000",

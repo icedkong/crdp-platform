@@ -13,6 +13,10 @@ frontend/**/dist/
 frontend/**/.vite/
 *.tsbuildinfo
 
+# 本地演示生成的主密钥与对象存储替身（不含真实数据，也不入库）
+data/demo-crypto.key
+data/storage/
+
 # Env and local data
 .env
 .env.*

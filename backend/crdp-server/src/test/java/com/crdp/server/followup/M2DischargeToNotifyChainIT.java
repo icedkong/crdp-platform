@@ -279,7 +279,8 @@ class M2DischargeToNotifyChainIT {
                         doctorId),
                 "逾期短信台账 QUEUED ×2（待汇总合并发送）");
 
-        // ⑧ 每日汇总作业：站内信汇总（数量与短信一致）+ 台账出队（本地通道未启用记 FAILED，行不丢可重试）
+        // ⑧ 每日汇总作业：站内信汇总（数量与短信一致）+ 台账出队。
+        // local / demo 默认模拟短信，校验通过后记 SENT，不访问腾讯云。
         runInTenant("demoa", () -> digestService.digest(today.atTime(10, 0)));
         Map<?, ?> digest = inboxMessageByEvent(doctor, "DAILY_DIGEST");
         assertEquals("每日汇总", digest.get("title"));
@@ -300,10 +301,9 @@ class M2DischargeToNotifyChainIT {
                 2,
                 count(
                         "SELECT COUNT(*) FROM ntf_send_log WHERE event_type = 'TASK_OVERDUE'"
-                                + " AND recipient_id = ? AND channel = 'SMS' AND send_status = 'FAILED'"
-                                + " AND detail LIKE '%CHANNEL_DISABLED%'",
+                                + " AND recipient_id = ? AND channel = 'SMS' AND send_status = 'SENT'",
                         doctorId),
-                "本地通道未启用记 FAILED（行不丢，通道接入后可重试）");
+                "模拟短信发送成功记 SENT（未外发）");
         // 链路收尾：TaskOpened 全程保持 PENDING（订阅方上线即消费，不丢）
         assertEquals("PENDING", outboxStatusOf(patientId, "TaskOpened"));
     }

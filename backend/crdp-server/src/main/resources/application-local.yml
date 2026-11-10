@@ -1,11 +1,15 @@
 crdp:
   security:
-    # 本地无腾讯云凭据（E09-T03 后通道已接入，但 crdp.sms.enabled 默认 false），演示关闭平台强制双因素
-    # （医院端不受影响；配置真实凭据并启用通道后可走完整双因素流程）
+    # 本地用模拟短信（不外发）。平台强制双因素仍关闭，密码登录可直接进演示。
+    # 需要短信验证码时打开 /dev/mock-sms 或看日志「模拟短信」。
     platform-two-factor-enabled: false
   crypto:
+    # 本地 AES-256-GCM 信封加密。这把钥匙只用于虚构数据，不是生产密钥。
+    # 可用环境变量 CRDP_CRYPTO_LOCAL_KEY 覆盖；留空则写入 data/demo-crypto.key。
     mode: local
-    local-key: dev-only-not-a-production-key
+    local-key: ${CRDP_CRYPTO_LOCAL_KEY:dev-only-not-a-production-key}
+  sms:
+    provider: mock
   demo:
     password: "Demo@2026"
     hash-marker: PENDING_DEMO_HASH
