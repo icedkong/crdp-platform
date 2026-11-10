@@ -1,0 +1,21 @@
+# G7（M3 审查）/ E01-T04：Trivy 镜像扫描（--severity HIGH,CRITICAL --exit-code 1）的已评估例外。
+# 规则：只登记“当前无法修复、且评估不构成可利用路径”的公告，每条写明原因与解除条件；
+# 有补丁版本的一律升依赖（见 backend/pom.xml 的 G7 补丁段），不许进这里。
+# CI 中新增任何其他 HIGH / CRITICAL 都会阻断合并。
+
+# Spring Framework XsltView 远程代码执行（CRITICAL）。修复版只有 Spring Framework 7.0.9
+# （需升 Spring Boot 4，属大版本迁移）。本项目全部接口为 REST/JSON（@RestController +
+# jackson 序列化），未注册、未使用任何 XSLT 视图（XsltView / 转换器），无可达路径。
+# 解除条件：升级 Spring Boot 4 后删除本条。
+CVE-2026-47884
+
+# Spring Framework SSE（Server-Sent Events）视图流损坏（CRITICAL）。修复版同样只有
+# Spring Framework 7.0.9（Spring Boot 4）。本项目无 SSE 端点（无 SseEmitter /
+# text/event-stream 产出），无可达路径。解除条件：升级 Spring Boot 4 后删除本条。
+CVE-2026-47890
+
+# 基础镜像 eclipse-temurin:21-jre-jammy 的 apt 高危（修复包 2.4.15ubuntu0.1 已发布但
+# 当日最新 jammy tag 尚未收入）。apt 漏洞要求本地攻击者借下载目录硬链接复用提权，
+# 容器内单进程运行、无交互登录，风险受限。解除条件：基础镜像 tag 收入修复包后删除本条
+# （或随镜像基线换 -noble）。
+CVE-2026-109518
