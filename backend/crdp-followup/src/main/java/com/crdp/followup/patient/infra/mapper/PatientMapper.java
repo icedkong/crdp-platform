@@ -234,19 +234,24 @@ public interface PatientMapper {
             @Param("guardedOn") String guardedOn,
             @Param("updatedBy") Long updatedBy);
 
-    /** 出院登记写入；并发同号由 uk_pt_patient_mrn 兜底（DuplicateKeyException → 40902）。 */
+    /**
+     * 出院登记写入；并发同号由 uk_pt_patient_mrn 兜底（DuplicateKeyException → 40902）。 followup_status
+     * 随行写入（E23-T09 / UAT-SELF-05）：出院状态 = 3 死亡 → DEAD（A 规格 §10 状态规则表），其余 ACTIVE（OQ-71②）；此前依赖列默认
+     * ACTIVE 导致死亡患者可被批量入组。
+     */
     @Insert(
             """
             INSERT INTO pt_patient
               (mrn_cipher, mrn_blind, name_cipher, name_blind, id_card_cipher, address_cipher,
                gender, birth_date, dept_id, ward_id, surgery_date, admission_date, discharge_date,
-               discharge_status, legacy_no, created_by)
+               discharge_status, legacy_no, created_by, followup_status)
             VALUES
               (#{row.mrnCipher}, #{row.mrnBlind}, #{row.nameCipher}, #{row.nameBlind},
                #{row.idCardCipher}, #{row.addressCipher},
                #{row.gender}, #{row.birthDate}, #{row.deptId}, #{row.wardId},
                #{row.surgeryDate}, #{row.admissionDate}, #{row.dischargeDate},
-               #{row.dischargeStatus}, #{row.legacyNo}, #{row.createdBy})
+               #{row.dischargeStatus}, #{row.legacyNo}, #{row.createdBy},
+               COALESCE(#{row.followupStatus}, 'ACTIVE'))
             """)
     @Options(useGeneratedKeys = true, keyProperty = "row.id", keyColumn = "id")
     int insertPatient(@Param("row") PatientInsert row);

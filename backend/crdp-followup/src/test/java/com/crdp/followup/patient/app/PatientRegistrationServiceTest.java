@@ -406,6 +406,66 @@ class PatientRegistrationServiceTest {
                         .toList());
     }
 
+    // ---------------------------------------------------------------- 登记即死亡（E23-T09 / UAT-SELF-05）
+
+    /**
+     * A 规格 §10 状态规则表「已死亡：随访记录是否死亡=是，或出院状态=死亡」——出院状态 = 3（死亡）的患者登记后 followup_status 必须是 DEAD（不是
+     * ACTIVE），状态时间线初始行同样记 DEAD；后续批量入组凭 followupStatus 守卫自然跳过（A 规格
+     * §5「批量入组：已在该计划中、已死亡、已从该计划移除的患者跳过」）。
+     */
+    @Test
+    void createMarksDeadFollowupStatusWhenDischargedDead() {
+        wardEnabled();
+        when(gateway.liveIdByMrnBlind("BLIND:" + MRN)).thenReturn(null);
+        when(mapper.findWards()).thenReturn(List.of(new PatientMapper.OptionRow(WARD_ID, "示例二病区")));
+        when(mapper.insertPatient(any()))
+                .thenAnswer(
+                        invocation -> {
+                            PatientInsert row = invocation.getArgument(0);
+                            row.setId(102L);
+                            return 1;
+                        });
+
+        service.create(request(MRN, NAME).withDischargeStatus(3).build());
+
+        ArgumentCaptor<PatientInsert> captor = ArgumentCaptor.forClass(PatientInsert.class);
+        verify(mapper).insertPatient(captor.capture());
+        assertEquals(
+                "DEAD", captor.getValue().getFollowupStatus(), "出院状态=死亡 → 登记即已死亡（A 规格 §10 状态规则）");
+
+        verify(statusHistory).recordRegistrationDead(102L, LocalDate.now(), OPERATOR_ID);
+        verify(statusHistory, never()).recordRegistration(anyLong(), any(), any());
+        verify(summary).recompute(102L, OPERATOR_ID);
+        // 出院状态照常传给自动入组（plan 侧死亡不加入，Q35）
+        verify(enrollments).autoEnrollOnRegistration(102L, 3);
+    }
+
+    /** 出院状态 1（存活）/ 2（病重自动出院，照常入组）登记仍为 ACTIVE（OQ-71② 原口径不回退）。 */
+    @Test
+    void createKeepsActiveForAliveAndCriticalDischarge() {
+        wardEnabled();
+        when(gateway.liveIdByMrnBlind(anyString())).thenReturn(null);
+        when(mapper.findWards()).thenReturn(List.of(new PatientMapper.OptionRow(WARD_ID, "示例二病区")));
+        when(mapper.insertPatient(any()))
+                .thenAnswer(
+                        invocation -> {
+                            PatientInsert row = invocation.getArgument(0);
+                            row.setId(103L);
+                            return 1;
+                        });
+
+        service.create(request(MRN + "1", NAME).build());
+        service.create(request(MRN + "2", NAME).withDischargeStatus(2).build());
+
+        ArgumentCaptor<PatientInsert> captor = ArgumentCaptor.forClass(PatientInsert.class);
+        verify(mapper, org.mockito.Mockito.times(2)).insertPatient(captor.capture());
+        assertEquals("ACTIVE", captor.getAllValues().get(0).getFollowupStatus());
+        assertEquals("ACTIVE", captor.getAllValues().get(1).getFollowupStatus());
+        verify(statusHistory, org.mockito.Mockito.times(2))
+                .recordRegistration(anyLong(), any(), eq(OPERATOR_ID));
+        verify(statusHistory, never()).recordRegistrationDead(anyLong(), any(), any());
+    }
+
     // ---------------------------------------------------------------- 辅助
 
     private void wardEnabled() {
