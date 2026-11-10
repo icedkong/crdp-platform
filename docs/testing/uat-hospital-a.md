@@ -269,7 +269,18 @@ python3 scripts/uat_intake.py --selftest
 
 复演方式：`./scripts/dev.sh` 起全套 → 按 §5 逐组走 UI；或 API 级复演（登录 → registration-options → POST /patients → followup-timeline → tasks/search MINE → start → draft → submit → contacts NOT_REACHED → 等 6 秒 notify/messages），口径同 m2-acceptance §2.2。
 
-### 10.2 UAT 执行留痕（W33–W35 结束后回填）
+### 10.2 E23-T10 分担面自查（本机，2026-11-10）
+
+（全栈 2 修复任务的自查预演：证明 §5 分担面 H / I / J / M 组 + E-5 交叉项在缺陷修复后可走通；发现与处置明细见 `docs/testing/uat-remediation-hospital-a.md` §4。）
+
+| 项 | 内容 |
+|---|---|
+| 环境 | colima + docker compose（MySQL 13306 / Redis；**mysql 增 `--default-time-zone=+08:00` 与生产 RDS 基线对齐**，UAT-SELF-02 修复）；后端 `local` 剖面 18080；`t_demoa` 应用全量迁移（含 V133 补授种子，UAT-SELF-01 修复）；角色按 §10.1 同一账号矩阵；全部虚构数据 |
+| 自查范围与角色 | §5 H 组随访员 `a.cvs1.nur01` / 病区医生 `a.cvs1.doc01`、I 组科主任 `a.cvs1.dir`、J 组数据录入员 `a.fu.clerk01`、M 组租户管理员 `nurse.demo` + 平台管理员 `platform.admin`；E-5 科主任 `a.cvs1.dir` |
+| 发现 | **2 条**（阻断 1 / 严重 1，均已修复，处置表与测试见修复手册 §4）：UAT-SELF-01 V123 预置角色权限面缺口（随访员 / 病区医生缺 `followup:scan:upload`、数据录入员缺 `followup:patient:import`、科主任缺 `followup:task:assign` → H-1 / H-2 / J-1 / E-5 40300）；UAT-SELF-02 本地 / CI MySQL 时区与生产 RDS 基线漂移 8 小时（审计 `created_at` 落库 UTC 墙钟，M-1 / M-2「当日」窗口检索恒空） |
+| 修复后复测 | H-1 上传 jpg / pdf + 报告单归档 ✅、H-2 心脏超声映射预览 / 确认写入基线（时相拦截正确）✅、H-4 预览短链 ✅、H-5 全院检索 ✅、I-1 卡片显示 / 隐藏 ✅、I-2 / I-3 各卡接口 ✅（事实表随每日作业）、J-1 模板下载 / 链路由 `ImportRehearsalVerifyIT` 覆盖 ✅、M-1 当日窗口审计命中 ✅、M-2 视角进入 / 退出双侧留痕 ✅、E-5 批量指定不再 40300 ✅ |
+
+### 10.3 UAT 执行留痕（W33–W35 结束后回填）
 
 | 项 | 内容 |
 |---|---|
@@ -285,7 +296,7 @@ python3 scripts/uat_intake.py --selftest
 | E23-T02 | 前置依赖：预置计划「冠心病术后年度随访」即脚本 B-3 / D-1 的验收对象（V61） |
 | E23-T05 | 输入：脱敏样本链路即脚本 J-1 的前置（`hospital-a-sample-intake.md`） |
 | E23-T06 / E23-T07 | 同窗联动：导入演练（W34–W35），J 组核对与其验收共用证据 |
-| E23-T09 / E23-T10 | 后续：UAT 缺陷修复（全栈 1 / 2），以入库 Issue 为工作清单 |
+| E23-T09 / E23-T10 | 后续：UAT 缺陷修复（全栈 1 / 2），以入库 Issue 为工作清单；全栈 2 分担面（H/I/J/M + E-5）自查与修复手册见 `docs/testing/uat-remediation-hospital-a.md`（E23-T10，窗口内真实发现按其 §2 同一流程处置） |
 | E19-T10 | 后续：UAT 支持与缺陷复测（测试），Issue 关闭口径见 §6 |
 | E23-T11 | 后续：A 正式数据导入与上线切换（W36），以 §7 判据达成为前置 |
 | E24-T08 / E24-T09 | L 组引用：真机矩阵（`device-matrix.md`）与走查脚本（`responsive-walkthrough.md` §1） |

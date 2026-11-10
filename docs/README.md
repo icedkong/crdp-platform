@@ -22,6 +22,7 @@
 | `testing/device-matrix.md` | 平板与手机真机矩阵（六档）与 5 个关键页面测试用例、CI 自动化覆盖图、真机执行记录表（档案唯一来源 `frontend/packages/responsive/src/device-matrix.ts`；物理真机执行由人按记录表完成，E24-T08） | 响应式改动前后、真机验收（E24） |
 | `testing/responsive-walkthrough.md` | 平板与手机交互走查脚本与执行记录（手机 390 / 平板 820 双档逐页）、走查问题清单与关闭状态（W-0 表单白屏 / W-1 抽屉触控尺寸 / W-2 基线编辑登记 / W-3 状态点；E24-T09） | 响应式回归、产品验收复走（E24） |
 | `testing/uat-hospital-a.md` | 医院 A UAT 组织、脚本与问题跟踪手册：组织与日程（W33–W35）、UAT 脚本 47 条（P0/P1/P2）、发现入缺陷库（模板 `testing/uat-findings-template.csv` + `scripts/uat_intake.py`）、签字判据与签字单（现场执行与签字由人完成，E23-T08） | A 租户 UAT、上线放行（E23；C 的 UAT E23-T23 复用框架） |
+| `testing/uat-remediation-hospital-a.md` | 医院 A UAT 缺陷修复手册（全栈 2）：处置流程（Issue→关闭）、三选一处置口径、分担面（H/I/J/M + E-5 交叉）UAT 脚本自查与修复（阻断 1 / 严重 1，已修复：V133 预置角色补授、compose MySQL 时区对齐生产 RDS 基线）、人工事项清单与复测闭环判据（窗口内真实发现到达后按同一流程处置） | UAT 缺陷关闭（E23-T10；E23-T09 分担面另册） |
 | `ops/rds-prod.md` | RDS 8.0 生产实例运维手册：参数基线、主备切换验证、跨区域备份开启（IaC 在 `iac/rds-prod/`；真实云操作由运维执行） | 数据库运维、备份恢复演练（E22） |
 | `ops/cce-prod.md` | CCE 生产环境三级基线运维手册：集群 / ELB / WAF / 通配符证书 / HSS 对照清单与验证（IaC 在 `iac/cce-prod/`；真实云操作由运维执行） | 生产入口、主机防护、渗透测试对接（E22） |
 | `ops/audit-worm-archive.md` | 审计归档 OBS WORM 桶 runbook：桶级 WORM（合规 15 年）开通顺序、生产验证清单（删除 / 覆盖尝试必须失败）、归档演练与留痕模板（IaC 在 `iac/obs-archive/`；真实云操作由运维执行，CI 含本地不可删改演练） | 审计长期留存、防篡改验证（E22-T08 / PLT-AUD-010） |
