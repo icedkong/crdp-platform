@@ -57,8 +57,9 @@ crdp:
       signing-key: ${CRDP_FILE_DOWNLOAD_SIGNING_KEY:}
   h5-upload:
     # E16-T10 / A-ATT-015、C-SCAN-008：手机扫码上传 H5 的对外基地址（https，公网可扫）。
-    # 经环境变量 / 部署配置注入；缺省回落本机开发地址（二维码扫不通即暴露配置缺失）
-    mobile-base-url: ${CRDP_H5_UPLOAD_MOBILE_BASE_URL:http://127.0.0.1:14175}
+    # G10（M3 审查）：生产不再回落本机开发地址——缺省为空，缺失（空 / 未改回落值）由
+    # ProductionSafetyCheck 启动即失败（报错指明 CRDP_H5_UPLOAD_MOBILE_BASE_URL），二维码不至扫不通才暴露
+    mobile-base-url: ${CRDP_H5_UPLOAD_MOBILE_BASE_URL:}
 
 spring:
   data:

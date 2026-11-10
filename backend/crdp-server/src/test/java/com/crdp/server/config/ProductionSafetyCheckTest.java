@@ -155,6 +155,50 @@ class ProductionSafetyCheckTest {
                                 mobile(null)));
     }
 
+    /**
+     * G10（M3 审查）/ A-ATT-015：生产手机上传 H5 基地址缺失（空 / 仍是本机开发回落值 http://127.0.0.1:14175）拒绝启动，报错指明
+     * CRDP_H5_UPLOAD_MOBILE_BASE_URL；配置真实域名不触发。
+     */
+    @Test
+    void prodMobileBaseUrlMissingOrLocalhostRefusesToStart() {
+        for (String bad : new String[] {null, "", "  ", "http://127.0.0.1:14175"}) {
+            IllegalStateException failure =
+                    assertThrows(
+                            IllegalStateException.class,
+                            () ->
+                                    new ProductionSafetyCheck(
+                                            environment("prod"),
+                                            properties("mode-bypassed（单测占位）"),
+                                            archive("obs"),
+                                            sms(false, null, null),
+                                            mobile(bad)),
+                            "mobile-base-url=" + bad);
+            assertTrue(
+                    failure.getMessage().contains("CRDP_H5_UPLOAD_MOBILE_BASE_URL"),
+                    "报错指明配置键：" + failure.getMessage());
+            assertTrue(failure.getMessage().contains("127.0.0.1:14175"), "说明回落后果");
+        }
+
+        assertDoesNotThrow(
+                () ->
+                        new ProductionSafetyCheck(
+                                environment("prod"),
+                                properties("mode-bypassed（单测占位）"),
+                                archive("obs"),
+                                sms(false, null, null),
+                                mobile("https://m.example-hospital.cn")));
+
+        // local / demo 不受影响（缺省本机开发回落值仍可用）
+        assertDoesNotThrow(
+                () ->
+                        new ProductionSafetyCheck(
+                                environment("local"),
+                                properties("local"),
+                                archive("none"),
+                                sms(false, null, null),
+                                mobile(null)));
+    }
+
     private static Environment environment(String profile) {
         Environment environment = mock(Environment.class);
         when(environment.getActiveProfiles()).thenReturn(new String[] {profile});

@@ -12,6 +12,9 @@ import org.springframework.stereotype.Component;
 @Component
 public class ProductionSafetyCheck {
 
+    /** 手机上传 H5 基地址的本机开发回落值（缺省配置即此值，生产出现 = 未配置，G10）。 */
+    static final String LOCAL_DEV_MOBILE_BASE_URL = "http://127.0.0.1:14175";
+
     public ProductionSafetyCheck(
             Environment environment,
             CryptoProperties cryptoProperties,
@@ -57,4 +60,19 @@ public class ProductionSafetyCheck {
                             + "公开回执口将只剩 IP 限流，任意来源可伪造回执污染对账数据，进程拒绝启动。"
                             + "请在腾讯云控制台配置状态回执 Basic Auth 并注入两项环境变量后重启。");
         }
+        // G10（M3 审查）/ A-ATT-015：手机扫码上传二维码的 H5 对外基地址生产缺省回落
+        // http://127.0.0.1:14175（本机开发地址）——二维码扫不通才暴露配置缺失，太晚。
+        // 缺失（空 / 未改本机回落值）即拒绝启动，经 CRDP_H5_UPLOAD_MOBILE_BASE_URL 指向真实域名（https）。
+        String mobileBaseUrl = mobileUploadProperties.getMobileBaseUrl();
+        if (mobileBaseUrl == null
+                || mobileBaseUrl.isBlank()
+                || LOCAL_DEV_MOBILE_BASE_URL.equals(mobileBaseUrl.trim())) {
+            throw new IllegalStateException(
+                    "生产剖面必须配置手机上传 H5 对外基地址（crdp.h5-upload.mobile-base-url，"
+                            + "经 CRDP_H5_UPLOAD_MOBILE_BASE_URL 注入，https 公网可扫，A-ATT-015）："
+                            + "当前为空或仍是本机开发回落值 "
+                            + LOCAL_DEV_MOBILE_BASE_URL
+                            + "——签发的上传二维码将扫不通，进程拒绝启动而不静默回落。");
+        }
+    }
 }
