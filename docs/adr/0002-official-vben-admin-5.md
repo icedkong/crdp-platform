@@ -26,7 +26,7 @@ M0 用自研 `@crdp/admin-shell` 模仿 Vben 5 的布局和后端权限模式。
 - 登录后首页是 `/dashboard`，与现有菜单和 `pages.md` 一致。`tokens.ts` 里曾经写的 `/workbench` 已改为 `/dashboard`。
 - 平板宽度下侧栏是否收成图标，跟随 Vben 自己的断点（小于 768 进抽屉）。页面内容（附件导航、分类条）仍按 768 / 1280 适配。
 - 功能开关还没有从 `me` 下发（OQ-03）。样板页用虚构患者上的 feature 字段驱动医院 A / C 差异，不写 `if (tenant === 'A')`。
-- 演示种子没有把 `followup:patient:plain`、`followup:scan:upload` 授给 `nurse.demo`。样板页用 `referenceMode` 把这些控件展示出来，正式页面必须改回 `hasPermission` 并且没有权限就隐藏。
+- 演示种子没有把 `followup:patient:plain`、`followup:scan:upload` 授给 `nurse.demo`。样板页曾用 `referenceMode` 把这些控件展示出来；**2026-11-10 更新（M3 审查 A1）**：该后门已删除，`MaskedField` 一律按 `hasPermission` 显隐，想演示明文交互就给种子角色补权限码（走迁移）。
 
 ## 后果
 

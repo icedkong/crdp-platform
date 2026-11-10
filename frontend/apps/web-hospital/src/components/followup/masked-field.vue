@@ -9,7 +9,6 @@ import { timings } from '@crdp/tokens';
 import { Button, message, Modal, Popconfirm } from 'ant-design-vue';
 
 import { revealPatientPlaintext } from '#/api/core';
-import { findPatient } from '#/reference/fixtures';
 import { usePlaintextReveal } from '#/reference/plaintext';
 import { useBreakpoint } from '#/reference/use-breakpoint';
 import { usePermission } from '#/reference/use-permission';
@@ -19,14 +18,11 @@ const props = withDefaults(
     field: string;
     patientId: string;
     permission?: string;
-    /** 样板页打开，用来演示明文交互（虚构数据）。正式页面不要传。 */
-    referenceMode?: boolean;
     revealable?: boolean;
     value: string;
   }>(),
   {
     permission: 'followup:patient:plain',
-    referenceMode: false,
     revealable: false,
   },
 );
@@ -42,21 +38,14 @@ const CONFIRM =
 const { hasPermission } = usePermission();
 const { isMobile } = useBreakpoint();
 const confirmOpen = ref(false);
+// A1（M3 审查）：明文入口只认权限码，不存在绕过 hasPermission 的演示通道；
+// 样板页与正式页面同一条链路（reference-pages.md §怎么抄 6）。
 const allowed = computed(
-  () =>
-    props.revealable &&
-    (props.referenceMode || hasPermission(props.permission)),
+  () => props.revealable && hasPermission(props.permission),
 );
 
 const revealApi = usePlaintextReveal({
   reveal: async () => {
-    if (props.referenceMode) {
-      // 样板页用虚构数据演示交互；正式页面走明文接口（E07-T05 已落地）。
-      const patient = findPatient(props.patientId);
-      if (!patient) return props.value;
-      if (props.field === 'phone') return patient.phonePlain;
-      return patient.namePlain;
-    }
     const request = buildPlaintextRevealRequest(props.field, 'detail');
     if (!request) {
       // 目录外字段不发起明文请求，保持脱敏值
