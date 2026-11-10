@@ -46,7 +46,8 @@ import org.springframework.stereotype.Service;
  *
  * <ul>
  *   <li>功能开关 {@code wide_import} 关闭 → 40301（AGENTS.md 规则 7；无行视为默认启用，与 compare_highlight 同口径）；
- *   <li>同一租户同一时间只允许一个导入作业（建作业 40901，tech-plan §12；取消旧作业后可重新上传）；
+ *   <li>同一租户同一时间只允许一个导入作业（建作业 40901，tech-plan §12；取消旧作业后可重新上传）；建作业被拒时回收已写对象， 不在桶内留孤儿文件（E23-T07
+ *       演练发现）；
  *   <li>有 ERROR 问题时确认被拦（40001，E18-T05 prepare 门控）；原文件按租户前缀写对象存储（OBS SSE-KMS，ADR 0006），
  *       imp_job.storage_key 存相对键；
  *   <li>上传 / 取消 / 报告下载写作业级审计（IMPORT_UPLOAD / IMPORT_CANCEL / DOWNLOAD；提交与回滚审计在 E18-T05 服务内）。
@@ -210,11 +211,18 @@ public class ImportJobService {
                 relativeKey,
                 body,
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-        long jobId =
-                stagingService.createJob(
-                        new NewImportFile(fileName.strip(), body.length, sha256),
-                        principal.userId(),
-                        principal.username());
+        long jobId;
+        try {
+            jobId =
+                    stagingService.createJob(
+                            new NewImportFile(fileName.strip(), body.length, sha256),
+                            principal.userId(),
+                            principal.username());
+        } catch (RuntimeException rejection) {
+            // E23-T07 演练发现：建作业被拒（40901 已有运行中作业等）时先写的对象无人清理，桶内留孤儿文件——拒绝路径回收已写对象
+            deleteQuietly(relativeKey);
+            throw rejection;
+        }
         staging.updateStorageKey(jobId, relativeKey);
         audit.append(
                 AuditEntry.operation("followup", "IMPORT_UPLOAD")
@@ -243,6 +251,15 @@ public class ImportJobService {
                     stagingService.runPrecheck(
                             id, new ByteArrayInputStream(body == null ? new byte[0] : body));
                 });
+    }
+
+    /** 尽力删除对象存储键（清理被拒上传的孤儿文件；删除失败只记日志，不掩盖原始异常）。 */
+    private void deleteQuietly(String relativeKey) {
+        try {
+            storage.delete(relativeKey);
+        } catch (RuntimeException failure) {
+            log.warn("拒绝上传后的对象清理失败（键不回显）：{}", failure.getMessage());
+        }
     }
 
     // ---------------------------------------------------------------- 状态与问题

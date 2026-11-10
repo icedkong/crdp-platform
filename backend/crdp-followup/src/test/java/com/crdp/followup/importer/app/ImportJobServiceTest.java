@@ -128,6 +128,30 @@ class ImportJobServiceTest {
     }
 
     @Test
+    void uploadCleansStoredObjectWhenJobCreationRejected() {
+        // E23-T07 演练发现：建作业被拒（40901 已有运行中作业是「想整批重来」时的常态操作）时，
+        // 先写对象存储的原始文件无人清理，成为桶内孤儿——拒绝路径必须回收已写对象。
+        when(storage.put(anyString(), any(), anyString()))
+                .thenReturn("t/demoa/imports/imp-orph.xlsx");
+        when(stagingService.createJob(
+                        any(ImportStagingService.NewImportFile.class),
+                        eq(OPERATOR),
+                        eq(OPERATOR_NAME)))
+                .thenThrow(new ApiException(409, 40901, "同一租户同一时间只允许一个导入作业，已有运行中的作业"));
+
+        ApiException rejected =
+                assertThrows(
+                        ApiException.class, () -> service.upload("患者导入（示例）.xlsx", new byte[1]));
+
+        assertEquals(40901, rejected.code(), "拒绝原因原样上抛");
+        ArgumentCaptor<String> deleted = ArgumentCaptor.forClass(String.class);
+        verify(storage).delete(deleted.capture());
+        assertTrue(deleted.getValue().startsWith("imports/"), "清理的是本次刚写的对象键");
+        verify(staging, never()).updateStorageKey(anyLong(), anyString());
+        verify(stagingService, never()).runPrecheck(anyLong(), any(InputStream.class));
+    }
+
+    @Test
     void uploadRejectsBlankFileNameAndEmptyBody() {
         ApiException noName =
                 assertThrows(ApiException.class, () -> service.upload(" ", new byte[1]));
