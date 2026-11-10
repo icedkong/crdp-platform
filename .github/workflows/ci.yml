@@ -49,8 +49,12 @@ jobs:
           python3 scripts/check_uat_docs.py
       # E23-T10：医院 A UAT 缺陷修复（全栈 2）。修复手册 / 自查发现处置表 /
       # V133 补授迁移与 compose MySQL 时区基线（对齐生产 RDS UTC+08:00）防漂移校验。
-      - name: UAT 修复校验
+      - name: UAT 修复校验（全栈 2）
         run: python3 scripts/check_uat_remediation.py
+      # E23-T09：医院 A UAT 缺陷修复（全栈 1）。修复手册 / 自查发现处置表 /
+      # V134 补授迁移、登记即死亡代码路径与 patient.md 更正（OQ-124）防漂移校验。
+      - name: UAT 修复校验（全栈 1）
+        run: python3 scripts/check_uat_remediation_fullstack1.py
       # E23-T05：医院样本脱敏工具自检（不联网、内置虚构样本：版面核对 / 标识替换 /
       # 一致性 / 复现 / 仓库内路径护栏 / 写后自检；V38 锚点防漂移）。
       - name: 样本脱敏工具自检

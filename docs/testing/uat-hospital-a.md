@@ -280,7 +280,18 @@ python3 scripts/uat_intake.py --selftest
 | 发现 | **2 条**（阻断 1 / 严重 1，均已修复，处置表与测试见修复手册 §4）：UAT-SELF-01 V123 预置角色权限面缺口（随访员 / 病区医生缺 `followup:scan:upload`、数据录入员缺 `followup:patient:import`、科主任缺 `followup:task:assign` → H-1 / H-2 / J-1 / E-5 40300）；UAT-SELF-02 本地 / CI MySQL 时区与生产 RDS 基线漂移 8 小时（审计 `created_at` 落库 UTC 墙钟，M-1 / M-2「当日」窗口检索恒空） |
 | 修复后复测 | H-1 上传 jpg / pdf + 报告单归档 ✅、H-2 心脏超声映射预览 / 确认写入基线（时相拦截正确）✅、H-4 预览短链 ✅、H-5 全院检索 ✅、I-1 卡片显示 / 隐藏 ✅、I-2 / I-3 各卡接口 ✅（事实表随每日作业）、J-1 模板下载 / 链路由 `ImportRehearsalVerifyIT` 覆盖 ✅、M-1 当日窗口审计命中 ✅、M-2 视角进入 / 退出双侧留痕 ✅、E-5 批量指定不再 40300 ✅ |
 
-### 10.3 UAT 执行留痕（W33–W35 结束后回填）
+### 10.3 E23-T09 分担面自查（本机，2026-11-10）
+
+（全栈 1 修复任务的自查预演：证明 §5 分担面 A / B / C / D / E / F / G / K / L 组深挖在缺陷修复后可走通；发现与处置明细见 `docs/testing/uat-remediation-hospital-a-fullstack1.md` §4。）
+
+| 项 | 内容 |
+|---|---|
+| 环境 | colima + docker compose（MySQL 13306 / Redis，时区基线同 §10.2）；后端 `local` 剖面 18080；`t_demoa` 应用全量迁移（含 V134 通知设置补授种子，UAT-SELF-04 修复）；角色按 §10.1 同一账号矩阵；全部虚构数据 |
+| 自查范围与角色 | §5 九组深挖（A-2/A-3、B-4/B-5/B-6、C-1~C-3、D-1~D-3、E-4/E-5、F-1~F-3、G-1/G-3/G-4、K-2~K-4、L-1/L-2；E23-T08 §10.1 已覆盖的 P0 主链路做回归）；角色按「角色」列 |
+| 发现 | **3 条**（严重 2 已修复 / 一般 1 缓解，处置表与测试见修复手册 §4）：UAT-SELF-04 全新租户库无人持有「通知设置」权限（V22 授予先于 V100 建角色落空 → G-3 全角色 40300，修复 = 种子 V134 补授 TENANT_ADMIN←36）；UAT-SELF-05 出院状态=死亡登记后仍 ACTIVE、可被批量入组（违反 §10 状态规则表与 §5 跳过口径 → D-2 失败，修复 = 登记即 DEAD + 状态历史初始行，入组守卫随之生效）；UAT-SELF-06 patient.md 的 `PUT /patients/{id}` 行与代码漂移（文档更正 + OQ-124 待产品定夺） |
+| 修复后复测 | A-2 改密 / A-3 文案一致 ✅、B-4 盲索引与条件树 ✅、B-5 基线字段历史（含原因）✅、C-1 BMI 23.7 ✅、C-2 40900 冲突详情 ✅、C-3 病区医生锁定 40901 / 解锁原因必填 ✅（口径注记见手册 §4）、D-1 预置计划节点口径 ✅、D-2 预检 / 执行死亡患者 `SKIP/DEAD` ✅、D-3 40901 + 复制 ✅、E-4 已过窗口补录任务可执行 ✅、E-5 改派回归 ✅、F-1~F-3 模板 / 暂存恢复 / previous+compareRules ✅、G-1 留痕 ✅、G-3 十事件默认规则（7 天 / 2 天 / 站内+短信+抄送）✅、K-2 直链 40400 ✅、K-3 明文 60 秒 + VIEW_PLAIN 审计 ✅、K-4 敏感权限零预授 ✅、L 组静态核对 ✅ |
+
+### 10.4 UAT 执行留痕（W33–W35 结束后回填）
 
 | 项 | 内容 |
 |---|---|
@@ -296,7 +307,7 @@ python3 scripts/uat_intake.py --selftest
 | E23-T02 | 前置依赖：预置计划「冠心病术后年度随访」即脚本 B-3 / D-1 的验收对象（V61） |
 | E23-T05 | 输入：脱敏样本链路即脚本 J-1 的前置（`hospital-a-sample-intake.md`） |
 | E23-T06 / E23-T07 | 同窗联动：导入演练（W34–W35），J 组核对与其验收共用证据 |
-| E23-T09 / E23-T10 | 后续：UAT 缺陷修复（全栈 1 / 2），以入库 Issue 为工作清单；全栈 2 分担面（H/I/J/M + E-5）自查与修复手册见 `docs/testing/uat-remediation-hospital-a.md`（E23-T10，窗口内真实发现按其 §2 同一流程处置） |
+| E23-T09 / E23-T10 | 后续：UAT 缺陷修复（全栈 1 / 2），以入库 Issue 为工作清单；全栈 2 分担面（H/I/J/M + E-5）自查与修复手册见 `docs/testing/uat-remediation-hospital-a.md`（E23-T10）、全栈 1 分担面（A/B/C/D/E/F/G/K/L 深挖）见 `docs/testing/uat-remediation-hospital-a-fullstack1.md`（E23-T09，窗口内真实发现按其 §2 同一流程处置） |
 | E19-T10 | 后续：UAT 支持与缺陷复测（测试），Issue 关闭口径见 §6 |
 | E23-T11 | 后续：A 正式数据导入与上线切换（W36），以 §7 判据达成为前置 |
 | E24-T08 / E24-T09 | L 组引用：真机矩阵（`device-matrix.md`）与走查脚本（`responsive-walkthrough.md` §1） |
