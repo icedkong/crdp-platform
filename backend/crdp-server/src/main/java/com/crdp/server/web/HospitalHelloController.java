@@ -2,17 +2,23 @@ package com.crdp.server.web;
 
 import com.crdp.framework.security.CurrentSession;
 import com.crdp.framework.security.PublicApi;
-import com.crdp.framework.security.RequireModule;
-import com.crdp.framework.security.RequiresPermission;
 import com.crdp.framework.security.SessionPrincipal;
 import com.crdp.framework.web.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+/**
+ * E01-T09 子域名 hello：返回当前令牌命中的租户与租户库名，用于演示 / 本机确认数据源路由。
+ *
+ * <p>A3（M3 审查）：接口用 {@code SELECT DATABASE()} 回显当前数据库名，属于环境信息泄露面，仅 demo / local / dev 演示剖面注册；prod
+ * 剖面不注册（404）。权限链占位已拆到全剖面可用的 {@link FollowupPingController}。
+ */
 @Tag(name = "租户路由")
+@Profile({"demo", "local", "dev"})
 @RestController
 public class HospitalHelloController {
 
@@ -32,14 +38,4 @@ public class HospitalHelloController {
                 new HelloResponse(
                         principal.tenantCode(), principal.tenantName(), database, "租户路由已接通"));
     }
-
-    @Operation(summary = "权限链占位：模块开通并且持有 followup:task:view 才能访问。")
-    @GetMapping("/api/hospital/followup/ping")
-    @RequireModule("followup")
-    @RequiresPermission("followup:task:view")
-    public ApiResponse<PingResponse> ping() {
-        return ApiResponse.ok(new PingResponse("followup", "placeholder"));
-    }
-
-    public record PingResponse(String module, String status) {}
 }
