@@ -92,6 +92,11 @@ jobs:
       # 用虚构租户 rstcheck 演练「PITR 快照 → 导出 → 导入 → 切换注册表 → 回滚」全流程。
       - name: 单院恢复脚本校验与本地演练
         run: python3 scripts/check_restore_script.py --drill
+      # E22-T07：跨区域恢复演练。静态校验（护栏 / 七阶段 / RPO·RTO 实测与验收门 / 报告存档）+
+      # 在 compose MySQL 上用虚构租户 xrgcheck 演练「区域不可用 → 备用区域从跨区域副本重建
+      # 恢复 → 注册表切换 → 对象对齐 → 实测 RPO/RTO 报告」全流程。
+      - name: 跨区域恢复演练校验与本地演练
+        run: python3 scripts/check_cross_region_drill.py --drill
       - name: 关闭依赖容器
         if: always()
         run: docker compose down -v

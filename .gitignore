@@ -48,6 +48,8 @@ crash.log
 
 # E22-T06 单院恢复工作目录（含租户库转储，数据不得入库）
 restore-work/
+# E22-T07 跨区域恢复演练工作目录（含化身库转储，数据不得入库）
+drill-work/
 
 # Uploaded source documents (not part of the skeleton)
 uploads/
