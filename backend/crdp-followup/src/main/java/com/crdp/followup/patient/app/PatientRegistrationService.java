@@ -50,6 +50,9 @@ public class PatientRegistrationService {
     /** C-PAT-002 可能重复提示的上限（提示即可，不整页拉人）。 */
     static final int IDENTITY_MATCH_LIMIT = 5;
 
+    /** 出院状态：3 = 死亡（A 规格字段 191；登记即「已死亡」，E23-T09 / UAT-SELF-05）。 */
+    static final int DISCHARGE_STATUS_DEAD = 3;
+
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private final PatientMapper mapper;
@@ -201,6 +204,10 @@ public class PatientRegistrationService {
         row.setDischargeStatus(dischargeStatus);
         row.setLegacyNo(blankToNull(request.legacyNo()));
         row.setCreatedBy(CurrentSession.requireHospital().userId());
+        // E23-T09 / UAT-SELF-05：出院状态 = 3 死亡 → 登记即「已死亡」（A 规格 §10 状态规则表），
+        // 批量入组凭 followup_status 守卫跳过（§5）；此前依赖列默认 ACTIVE，死亡患者可被入组并创建随访任务
+        boolean dischargedDead = dischargeStatus == DISCHARGE_STATUS_DEAD;
+        row.setFollowupStatus(dischargedDead ? "DEAD" : "ACTIVE");
         try {
             mapper.insertPatient(row);
         } catch (DuplicateKeyException race) {
@@ -209,9 +216,14 @@ public class PatientRegistrationService {
             throw duplicateBlocked(mrn, mrnBlind);
         }
 
-        // E13-T03：状态时间线初始行（登记即随访中，OQ-71②）与当前状态摘要建行（同一事务）
-        statusHistory.recordRegistration(
-                row.getId(), LocalDate.now(), CurrentSession.requireHospital().userId());
+        // E13-T03：状态时间线初始行（登记即随访中，OQ-71②；死亡分支 UAT-SELF-05）与当前状态摘要建行（同一事务）
+        if (dischargedDead) {
+            statusHistory.recordRegistrationDead(
+                    row.getId(), LocalDate.now(), CurrentSession.requireHospital().userId());
+        } else {
+            statusHistory.recordRegistration(
+                    row.getId(), LocalDate.now(), CurrentSession.requireHospital().userId());
+        }
         summary.recompute(row.getId(), CurrentSession.requireHospital().userId());
 
         // E14-T05 / Q35 自动入组：出院登记后自动加入预置计划（auto_enroll 的已发布计划），

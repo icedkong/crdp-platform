@@ -311,6 +311,76 @@ class PatientRegistrationIT {
                 "出院日期不能早于手术日期");
     }
 
+    // ---------------------------------------------------------------- 登记即死亡（E23-T09 / UAT-SELF-05）
+
+    /**
+     * A 规格 §10 状态规则表「已死亡：……或出院状态 = 死亡」与 §5「批量入组：已在该计划中、已死亡、已从该计划 移除的患者跳过并说明」：出院状态 = 3（死亡）的患者登记后
+     * followup_status 必须是 DEAD（不是 ACTIVE）、 状态时间线初始行记 DEAD，且批量入组预检 / 执行按 DEAD 跳过——修复前依赖列默认
+     * ACTIVE，死亡患者可被 批量入组并继续创建随访任务（UAT 脚本 D-2 预期「死亡患者被跳过并说明」失败）。
+     */
+    @Test
+    void dischargedDeadRegistrationMarksDeadAndSkipsBatchEnrollment() {
+        String token = doctorToken();
+        long wardId = wardIdByCode("W-DEMO-1");
+        String mrn = "IT-MRN-DEAD1";
+        Map<String, Object> dead = body(mrn, "殳病故（示例）", wardId, "1950-06-06");
+        dead.put("dischargeStatus", 3);
+
+        Map<?, ?> created = post("/api/hospital/followup/patients", token, dead);
+        assertEquals(0, codeOf(created), "死亡出院登记应成功（可建档但不加入，A 规格 §5）");
+        long patientId = Long.parseLong(String.valueOf(data(created).get("id")));
+
+        runInTenant(
+                "demoa",
+                () -> {
+                    assertEquals(
+                            "DEAD",
+                            jdbc.queryForObject(
+                                    "SELECT followup_status FROM pt_patient WHERE id = ?",
+                                    String.class,
+                                    patientId),
+                            "出院状态=死亡 → 登记即已死亡（A 规格 §10 状态规则表，UAT-SELF-05）");
+                    assertEquals(
+                            "DEAD",
+                            jdbc.queryForObject(
+                                    "SELECT status FROM pt_status_history WHERE patient_id = ?"
+                                            + " AND source = 'REGISTRATION'",
+                                    String.class,
+                                    patientId),
+                            "状态时间线初始行记 DEAD（登记，不写 ACTIVE）");
+                    Integer enrollments =
+                            jdbc.queryForObject(
+                                    "SELECT COUNT(*) FROM fu_enrollment WHERE patient_id = ?",
+                                    Integer.class,
+                                    patientId);
+                    assertEquals(0, enrollments, "死亡患者不自动入组（Q35）");
+                });
+
+        // D-2 口径：批量入组预检与执行对死亡患者按 DEAD 跳过并说明（A 规格 §5）
+        List<Long> plans =
+                runInTenant(
+                        "demoa",
+                        () ->
+                                jdbc.queryForList(
+                                        "SELECT id FROM fu_plan WHERE code = 'A_ANNUAL_FU_PLAN'"
+                                                + " AND status = 'PUBLISHED'",
+                                        Long.class));
+        if (!plans.isEmpty()) {
+            Map<?, ?> outcome =
+                    post(
+                            "/api/hospital/followup/plans/"
+                                    + plans.get(0)
+                                    + "/enrollments/batch-preview",
+                            token,
+                            Map.of("patientIds", List.of(String.valueOf(patientId))));
+            assertEquals(0, codeOf(outcome), "预检失败：" + outcome);
+            List<Map<?, ?>> items = (List<Map<?, ?>>) data(outcome).get("items");
+            assertEquals(1, items.size());
+            assertEquals("SKIP", items.get(0).get("outcome"), "死亡患者预检应跳过");
+            assertEquals("DEAD", items.get(0).get("reason"), "跳过原因应为 DEAD（D-2 预期）");
+        }
+    }
+
     // ---------------------------------------------------------------- 权限、模块与租户隔离
 
     @Test

@@ -20,6 +20,7 @@ public class PatientInsert {
     private Integer dischargeStatus;
     private String legacyNo;
     private Long createdBy;
+    private String followupStatus;
 
     public PatientInsert() {}
 
@@ -157,5 +158,14 @@ public class PatientInsert {
 
     public void setCreatedBy(Long createdBy) {
         this.createdBy = createdBy;
+    }
+
+    /** 随访状态（E23-T09 / UAT-SELF-05：出院状态 = 3 死亡 → 登记即 DEAD，A 规格 §10 状态规则表；其余 ACTIVE）。 */
+    public String getFollowupStatus() {
+        return followupStatus;
+    }
+
+    public void setFollowupStatus(String followupStatus) {
+        this.followupStatus = followupStatus;
     }
 }

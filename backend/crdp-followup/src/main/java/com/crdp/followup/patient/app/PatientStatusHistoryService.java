@@ -56,6 +56,21 @@ public class PatientStatusHistoryService {
         insert(patientId, "ACTIVE", effectiveDate, null, "REGISTRATION", createdBy);
     }
 
+    /**
+     * 登记初始行·死亡分支（E23-T09 / UAT-SELF-05）：出院状态 = 3（死亡，A 规格字段 191）的患者登记即「已死亡」 （A 规格 §10
+     * 状态规则表「已死亡：随访记录是否死亡 = 是，**或出院状态 = 死亡**」），状态时间线初始行同记 DEAD；后续批量入组凭 pt_patient.followup_status
+     * 守卫自然跳过（A 规格 §5「已死亡患者跳过并说明」）。 审计口径与 {@link #recordRegistration} 一致（PATIENT_CREATE 本身留痕）。
+     */
+    public void recordRegistrationDead(long patientId, LocalDate effectiveDate, Long createdBy) {
+        insert(
+                patientId,
+                "DEAD",
+                effectiveDate,
+                "出院状态为死亡（登记，A 规格字段 191）",
+                "REGISTRATION",
+                createdBy);
+    }
+
     /** 追加一行状态记录（E14-T06 流转入口预留：状态值校验 + 只追加写入；pt_patient 同步、原因必填与任务联动 由调用方编排）。 */
     public void record(
             long patientId,
