@@ -13,13 +13,19 @@ import com.crdp.followup.stats.infra.mapper.NodeOccurrenceInsertRow;
 import com.crdp.followup.stats.infra.mapper.NodeOccurrenceMapper;
 import com.crdp.followup.task.app.FollowupTaskCreationService;
 import com.crdp.followup.task.domain.TaskCreationPlanner.NodeDef;
+import com.crdp.form.record.app.FormService;
 import com.crdp.framework.audit.AuditEntry;
 import com.crdp.framework.audit.AuditLogger;
 import com.crdp.framework.audit.AuditResult;
 import com.crdp.framework.job.JobScheduler;
 import com.crdp.framework.job.TenantJobResult;
 import com.crdp.framework.tenant.TenantContext;
+import com.crdp.framework.web.ApiException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
 import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -55,25 +61,32 @@ public class NodeOccurrenceRefreshService {
     /** job_tenant_run 作业编码（按日幂等键成分）。 */
     static final String JOB_CODE = "st-node-refresh";
 
+    /** 随访实际随访日期的字段编码（A 规格 f214 followup_date；与 CompletenessStatsService 同口径）。 */
+    static final String VISIT_DATE_FIELD_CODE = "followup_date";
+
     private static final Logger log = LoggerFactory.getLogger(NodeOccurrenceRefreshService.class);
 
     private final JobScheduler jobScheduler;
     private final NodeOccurrenceMapper occurrenceMapper;
     private final PlanMapper planMapper;
+    private final FormService formService;
     private final AuditLogger audit;
     private final JdbcTemplate jdbc;
     private final TransactionTemplate transactions;
+    private final ObjectMapper json = new ObjectMapper();
 
     public NodeOccurrenceRefreshService(
             JobScheduler jobScheduler,
             NodeOccurrenceMapper occurrenceMapper,
             PlanMapper planMapper,
+            FormService formService,
             AuditLogger audit,
             JdbcTemplate jdbc,
             TransactionTemplate transactions) {
         this.jobScheduler = jobScheduler;
         this.occurrenceMapper = occurrenceMapper;
         this.planMapper = planMapper;
+        this.formService = formService;
         this.audit = audit;
         this.jdbc = jdbc;
         this.transactions = transactions;
@@ -129,6 +142,7 @@ public class NodeOccurrenceRefreshService {
         if (enrollments.isEmpty()) {
             return List.of();
         }
+        Map<String, String> visitDateKeys = new HashMap<>(); // formCode#version → 随访日期字段稳定键
         Map<Long, List<TaskInput>> tasksByEnrollment = new HashMap<>();
         for (NodeOccurrenceMapper.TaskRow task : occurrenceMapper.findRegularTasks()) {
             tasksByEnrollment
@@ -144,7 +158,11 @@ public class NodeOccurrenceRefreshService {
                                     task.windowEnd(),
                                     task.createType(),
                                     task.status(),
-                                    task.completeKind()));
+                                    task.completeKind(),
+                                    // G2：窗口内完成按实际随访日期判定——只给已完成任务解析（省无谓的模板查询）
+                                    "COMPLETED".equals(task.status())
+                                            ? resolveVisitDate(task, visitDateKeys)
+                                            : null));
         }
         Map<Long, List<RecordInput>> recordsByEnrollment = new HashMap<>();
         for (NodeOccurrenceMapper.AnchoredRecordRow record :
@@ -244,6 +262,58 @@ public class NodeOccurrenceRefreshService {
                 fact.lost(),
                 fact.deathConfirmed(),
                 asOf);
+    }
+
+    /**
+     * 任务关联记录的**实际随访日期**（G2 / Q38 窗口内完成口径）：visit_date 列（补录 / 导入有值）→ 表单字段 followup_date（任务录入，A 规格
+     * f214）按记录模板版本解析；每版本的随访日期字段键只解析一次 （visitDateKeys 缓存，与 CompletenessStatsService.resolveVisitDate
+     * 同一规则）。 无关联记录或日期解析不出返回 null——窗口内完成该行不计（与完整度卡「日期未知的记录不计入时间筛选」同防御口径）。
+     */
+    private LocalDate resolveVisitDate(
+            NodeOccurrenceMapper.TaskRow task, Map<String, String> visitDateKeys) {
+        if (task.recordVisitDate() != null) {
+            return task.recordVisitDate();
+        }
+        if (task.recordFormCode() == null
+                || task.recordTemplateVersion() == null
+                || task.recordData() == null) {
+            return null; // 无关联记录（如历史脏数据）：无实际随访日期可判
+        }
+        String cacheKey = task.recordFormCode() + "#" + task.recordTemplateVersion();
+        if (!visitDateKeys.containsKey(cacheKey)) {
+            String key = null;
+            try {
+                outer:
+                for (FormService.CategoryView category :
+                        formService
+                                .schema(task.recordFormCode(), task.recordTemplateVersion())
+                                .categories()) {
+                    for (FormService.FieldView field : category.fields()) {
+                        if (VISIT_DATE_FIELD_CODE.equals(field.code())) {
+                            key = field.key();
+                            break outer;
+                        }
+                    }
+                }
+            } catch (ApiException unknownFormOrVersion) {
+                // 防御：模板 / 版本不存在（理论不可达——版本快照不删）不让整租户刷新失败，
+                // 该行按「实际随访日期未知」处理（不计窗口内完成）
+            }
+            visitDateKeys.put(cacheKey, key);
+        }
+        String dateKey = visitDateKeys.get(cacheKey);
+        if (dateKey == null) {
+            return null;
+        }
+        try {
+            JsonNode value = json.readTree(task.recordData()).get(dateKey);
+            if (value != null && value.isTextual() && !value.asText().isBlank()) {
+                return LocalDate.parse(value.asText());
+            }
+        } catch (IOException | DateTimeParseException | IllegalArgumentException bad) {
+            return null; // 脏数据不计入窗口内完成（主随访率不受影响）
+        }
+        return null;
     }
 
     /** followup 模块是否对该租户开通（plt_tenant_module，平台库；OQ-46② 扇出过滤）。 */

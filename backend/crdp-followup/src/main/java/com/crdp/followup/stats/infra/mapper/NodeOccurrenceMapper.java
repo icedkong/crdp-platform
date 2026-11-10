@@ -29,7 +29,10 @@ public interface NodeOccurrenceMapper {
             String mode,
             LocalDate enrolledOn) {}
 
-    /** 刷新输入：常规任务行（跟进 / 临时任务由查询过滤；recordStatus = 关联记录状态）。 */
+    /**
+     * 刷新输入：常规任务行（跟进 / 临时任务由查询过滤；关联记录的 visit_date / 表单 JSON / 模板版本随行—— G2
+     * 起窗口内完成按**实际随访日期**判定，visit_date 列为空的任务录入记录按表单字段 followup_date 解析）。
+     */
     record TaskRow(
             long taskId,
             Long recordId,
@@ -41,7 +44,11 @@ public interface NodeOccurrenceMapper {
             LocalDate windowEnd,
             String createType,
             String status,
-            String completeKind) {}
+            String completeKind,
+            LocalDate recordVisitDate,
+            String recordFormCode,
+            Integer recordTemplateVersion,
+            String recordData) {}
 
     /** 刷新输入：锚点记录行（E18 历史导入 / 历史未随访，V73 锚点列；任务录入记录经任务行携带）。 */
     record AnchoredRecordRow(
@@ -117,15 +124,18 @@ public interface NodeOccurrenceMapper {
 
     @IgnoreScope(
             reason =
-                    "每日刷新（E19-T01）读取常规任务行与关联记录状态重建事实表：作业无用户上下文，"
-                            + "行内无患者明细；任务查询侧（E15-T01）按 @DataScope 出行")
+                    "每日刷新（E19-T01）读取常规任务行与关联记录（实际随访日期解析用列）重建事实表："
+                            + "作业无用户上下文，行内无患者明细；任务查询侧（E15-T01）按 @DataScope 出行")
     @Select(
             """
             SELECT t.id AS taskId, t.record_id AS recordId, t.enrollment_id AS enrollmentId,
                    t.node_id AS nodeId, t.occurrence, t.plan_date AS planDate,
                    t.window_start AS windowStart, t.window_end AS windowEnd,
-                   t.create_type AS createType, t.status, t.complete_kind AS completeKind
+                   t.create_type AS createType, t.status, t.complete_kind AS completeKind,
+                   r.visit_date AS recordVisitDate, r.form_code AS recordFormCode,
+                   r.template_version AS recordTemplateVersion, r.data AS recordData
             FROM fu_task t
+            LEFT JOIN fu_record r ON r.id = t.record_id
             WHERE t.occurrence > 0 AND t.followup_seq = 0
             ORDER BY t.enrollment_id, t.node_id, t.occurrence
             """)

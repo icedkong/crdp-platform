@@ -78,6 +78,12 @@ class NodeOccurrenceFactCalculatorTest {
     }
 
     private static TaskInput task(int occurrence, String status, String completeKind) {
+        return task(occurrence, status, completeKind, null);
+    }
+
+    /** visitDate = 关联记录的实际随访日期（G2：窗口内完成按它判定，不再看完成方式）。 */
+    private static TaskInput task(
+            int occurrence, String status, String completeKind, LocalDate visitDate) {
         return new TaskInput(
                 900L + occurrence,
                 null,
@@ -88,7 +94,8 @@ class NodeOccurrenceFactCalculatorTest {
                 BASIS.plusYears(occurrence).plusDays(7),
                 "NORMAL",
                 status,
-                completeKind);
+                completeKind,
+                visitDate);
     }
 
     private static FactRow soleRow(List<FactRow> rows) {
@@ -106,7 +113,7 @@ class NodeOccurrenceFactCalculatorTest {
                                 annualNodes(),
                                 new PlanVersion(PLAN_ID, "PLAN-IT-1", 3),
                                 enrollment(LocalDate.of(2025, 3, 20)),
-                                List.of(task(1, "COMPLETED", "ON_TIME")),
+                                List.of(task(1, "COMPLETED", "ON_TIME", LocalDate.of(2026, 3, 16))),
                                 List.of(),
                                 List.of(),
                                 List.of(new StatusPoint("ACTIVE", LocalDate.of(2025, 3, 20))),
@@ -124,8 +131,81 @@ class NodeOccurrenceFactCalculatorTest {
         assertEquals("DUE", row.dueReason());
         assertTrue(row.followed(), "已提交 → 已随访");
         assertEquals("ON_TIME", row.completeKind());
-        assertTrue(row.inWindow());
+        assertTrue(row.inWindow(), "实际随访日期（03-16）落在窗口内 → 窗口内完成");
         assertEquals(900L + 1, row.taskId());
+    }
+
+    /**
+     * G2（M3 审查）/ Q38：窗口内完成按**实际随访日期**与窗口起止比较（含首尾），不再用完成方式—— 完成方式按提交当天算，补录任务被强制标
+     * BACKFILL，按提交日算窗口内完成率恒为 0。主随访率口径不变（补录 / 逾期照常计入已随访）。
+     */
+    @Test
+    void inWindowFollowsActualVisitDateNotCompleteKind() {
+        // 补录任务、完成方式 OVERDUE（提交在窗口后），但表单实际随访日期落在原窗口内 → 参考指标计入
+        FactRow backfillInsideWindow =
+                soleRow(
+                        NodeOccurrenceFactCalculator.compute(
+                                annualNodes(),
+                                new PlanVersion(PLAN_ID, "PLAN-IT-1", 1),
+                                enrollment(LocalDate.of(2025, 3, 20)),
+                                List.of(task(1, "COMPLETED", "OVERDUE", LocalDate.of(2026, 3, 10))),
+                                List.of(),
+                                List.of(),
+                                List.of(new StatusPoint("ACTIVE", LocalDate.of(2025, 3, 20))),
+                                null,
+                                AS_OF));
+        assertTrue(backfillInsideWindow.followed(), "主随访率：逾期完成照常算已随访（口径不变）");
+        assertTrue(backfillInsideWindow.inWindow(), "实际随访日期（03-10）在窗口内 → 窗口内完成");
+
+        // 完成方式 ON_TIME（提交日在窗口内），但表单实际随访日期在窗口外 → 不计入窗口内完成
+        FactRow onTimeButVisitedOutside =
+                soleRow(
+                        NodeOccurrenceFactCalculator.compute(
+                                annualNodes(),
+                                new PlanVersion(PLAN_ID, "PLAN-IT-1", 1),
+                                enrollment(LocalDate.of(2025, 3, 20)),
+                                List.of(task(1, "COMPLETED", "ON_TIME", LocalDate.of(2026, 4, 2))),
+                                List.of(),
+                                List.of(),
+                                List.of(new StatusPoint("ACTIVE", LocalDate.of(2025, 3, 20))),
+                                null,
+                                AS_OF));
+        assertTrue(onTimeButVisitedOutside.followed());
+        assertTrue(!onTimeButVisitedOutside.inWindow(), "实际随访日期（04-02）在窗口外 → 不计入窗口内完成（不看完成方式）");
+
+        // 实际随访日期未知（无关联记录 / 表单未填 f214）：无法判定，不计入窗口内完成
+        FactRow unknownVisitDate =
+                soleRow(
+                        NodeOccurrenceFactCalculator.compute(
+                                annualNodes(),
+                                new PlanVersion(PLAN_ID, "PLAN-IT-1", 1),
+                                enrollment(LocalDate.of(2025, 3, 20)),
+                                List.of(task(1, "COMPLETED", "ON_TIME")),
+                                List.of(),
+                                List.of(),
+                                List.of(new StatusPoint("ACTIVE", LocalDate.of(2025, 3, 20))),
+                                null,
+                                AS_OF));
+        assertTrue(unknownVisitDate.followed());
+        assertTrue(!unknownVisitDate.inWindow(), "实际随访日期未知 → 不计入窗口内完成");
+
+        // 边界：任务行实际随访日期 = 窗口首日 / 末日 → 计入（含首尾两天）
+        for (LocalDate visit :
+                new LocalDate[] {LocalDate.of(2026, 3, 8), LocalDate.of(2026, 3, 22)}) {
+            FactRow boundary =
+                    soleRow(
+                            NodeOccurrenceFactCalculator.compute(
+                                    annualNodes(),
+                                    new PlanVersion(PLAN_ID, "PLAN-IT-1", 1),
+                                    enrollment(LocalDate.of(2025, 3, 20)),
+                                    List.of(task(1, "COMPLETED", "ON_TIME", visit)),
+                                    List.of(),
+                                    List.of(),
+                                    List.of(new StatusPoint("ACTIVE", LocalDate.of(2025, 3, 20))),
+                                    null,
+                                    AS_OF));
+            assertTrue(boundary.inWindow(), visit + " = 窗口首 / 末日 → 计入（含首尾两天）");
+        }
     }
 
     @Test
@@ -405,7 +485,8 @@ class NodeOccurrenceFactCalculatorTest {
                                                 BASIS.plusYears(1).plusDays(7),
                                                 "BACKFILL",
                                                 "COMPLETED",
-                                                "OVERDUE")),
+                                                "OVERDUE",
+                                                BASIS.plusYears(1))),
                                 List.of(),
                                 List.of(),
                                 List.of(new StatusPoint("ACTIVE", LocalDate.of(2025, 3, 20))),
@@ -414,6 +495,7 @@ class NodeOccurrenceFactCalculatorTest {
 
         assertTrue(row.followed());
         assertEquals("BACKFILL", row.completeKind(), "补录任务完成方式记补录（E14-T05 口径）");
+        assertTrue(row.inWindow(), "G2：补录任务的实际随访日期（计划日 03-15）落在原窗口内 → 窗口内完成计入（此前按完成方式恒为 0）");
     }
 
     // ---------------------------------------------------------------- 入组与边界
@@ -455,6 +537,7 @@ class NodeOccurrenceFactCalculatorTest {
                                         BASIS.plusYears(1).plusDays(7),
                                         "BACKFILL",
                                         "PENDING",
+                                        null,
                                         null)),
                         List.of(),
                         List.of(),
