@@ -743,11 +743,14 @@ public class FormService {
 
     private SchemaView buildSchema(
             FormRow form, FormVersionRow snapshot, List<VersionFieldRow> fields) {
+        // G8（M3 审查）：选项集按编码集合一次批量查出再组装——医院 A 基线约 266 个字段，
+        // 打开一次表单只查一轮（此前每个带选项集的字段单独查一次 fe_option）
+        Map<String, List<OptionItemView>> optionsBySet = loadOptionsBySet(fields);
         Map<String, List<FieldView>> byCategory = new LinkedHashMap<>();
         for (VersionFieldRow field : fields) {
             byCategory
                     .computeIfAbsent(field.categoryKey(), key -> new ArrayList<>())
-                    .add(toFieldView(field));
+                    .add(toFieldView(field, optionsBySet));
         }
         List<CategoryView> categories = new ArrayList<>();
         List<Map.Entry<String, Integer>> declared = declaredCategories(snapshot.categories());
@@ -846,22 +849,38 @@ public class FormService {
         return key;
     }
 
-    private FieldView toFieldView(VersionFieldRow field) {
-        List<OptionItemView> options = null;
-        if (field.optionSetCode() != null) {
-            List<OptionItemView> loaded = new ArrayList<>();
-            for (OptionRow option : fieldMapper.findOptions(field.optionSetCode())) {
-                loaded.add(
-                        new OptionItemView(
-                                option.optionCode(),
-                                option.label(),
-                                option.ordinal(),
-                                option.exclusive(),
-                                option.needsDetail(),
-                                "DISABLED".equals(option.status())));
+    /** 选项集批量加载（G8）：字段里出现的选项集编码去重后一轮查回，按 setCode 分组—— 没有选项集字段时零查询。 */
+    private Map<String, List<OptionItemView>> loadOptionsBySet(List<VersionFieldRow> fields) {
+        LinkedHashSet<String> setCodes = new LinkedHashSet<>();
+        for (VersionFieldRow field : fields) {
+            if (field.optionSetCode() != null) {
+                setCodes.add(field.optionSetCode());
             }
-            options = loaded;
         }
+        if (setCodes.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, List<OptionItemView>> bySet = new LinkedHashMap<>();
+        for (OptionRow option : fieldMapper.findOptionsBySetCodes(setCodes)) {
+            bySet.computeIfAbsent(option.setCode(), key -> new ArrayList<>())
+                    .add(
+                            new OptionItemView(
+                                    option.optionCode(),
+                                    option.label(),
+                                    option.ordinal(),
+                                    option.exclusive(),
+                                    option.needsDetail(),
+                                    "DISABLED".equals(option.status())));
+        }
+        return bySet;
+    }
+
+    private FieldView toFieldView(
+            VersionFieldRow field, Map<String, List<OptionItemView>> optionsBySet) {
+        List<OptionItemView> options =
+                field.optionSetCode() != null
+                        ? optionsBySet.getOrDefault(field.optionSetCode(), List.of())
+                        : null;
         return new FieldView(
                 field.fieldKey(),
                 field.fieldCode(),

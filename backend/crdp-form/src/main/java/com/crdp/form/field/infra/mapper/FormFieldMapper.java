@@ -1,5 +1,6 @@
 package com.crdp.form.field.infra.mapper;
 
+import java.util.Collection;
 import java.util.List;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
@@ -186,6 +187,20 @@ public interface FormFieldMapper {
             FROM fe_option WHERE set_code = #{setCode} ORDER BY sort_no, option_code
             """)
     List<OptionRow> findOptions(@Param("setCode") String setCode);
+
+    /** 多个选项集一次查出（G8 / M3 审查：打开大表单〔医院 A 基线约 266 字段〕不再按选项集逐条查库， 按编码集合一轮取回后组装；行带 setCode 由调用方分组）。 */
+    @Select(
+            """
+            <script>
+            SELECT id, set_code AS setCode, option_code AS optionCode, label, ordinal,
+                   exclusive, needs_detail AS needsDetail, aliases, sort_no AS sortNo,
+                   status, updated_by AS updatedBy, updated_at AS updatedAt
+            FROM fe_option WHERE set_code IN
+            <foreach collection="setCodes" item="item" open="(" separator="," close=")">#{item}</foreach>
+            ORDER BY set_code, sort_no, option_code
+            </script>
+            """)
+    List<OptionRow> findOptionsBySetCodes(@Param("setCodes") Collection<String> setCodes);
 
     /**
      * 新增选项（E11-T09 导入）：与 {@link #insertOption} 的差别是带序数 / 互斥 / 需补充说明 / 别名 —— 这四列实施录入（导入）可写，
