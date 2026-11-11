@@ -120,6 +120,16 @@ jobs:
           python3 scripts/hypercare_verify.py --selftest
           python3 scripts/hypercare_verify.py
           python3 scripts/hypercare_verify.py --drill
+      # E23-T14：医院 A 上线后运行保障（全栈 2 分担面另册）。防漂移校验（时限表与全栈 1 册
+      # 双册互锁 / 共用台账列 / 分担面巡检项 HC-H1~HC-M2 与阈值 / 互引）+ 工具自检（与全栈 1
+      # 工具常量一致 / 判定边界 / 只读护栏）+ 在 compose MySQL 两个隔离库（租户侧克隆 t_demoa、
+      # 平台侧克隆 crdp_platform，结束整库删除）上自验分担面巡检：基线全 PASS、六类异常
+      # 逐项检出、清场归零；台账判定（--ledger / --all）与生产巡检（--host）由值班人执行。
+      - name: 上线后运行保障校验（E23-T14 · 全栈 2 分担面）
+        run: |
+          python3 scripts/hypercare_verify_fullstack2.py --selftest
+          python3 scripts/hypercare_verify_fullstack2.py
+          python3 scripts/hypercare_verify_fullstack2.py --drill
       - name: 关闭依赖容器
         if: always()
         run: docker compose down -v
