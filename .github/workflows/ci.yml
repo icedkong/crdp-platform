@@ -162,6 +162,13 @@ jobs:
       # 在场执行（W38）。
       - name: 医院B上线校验（E23-T19）
         run: python3 scripts/check_hospital_b_golive.py
+      # E23-T28：医院 B 回归（A 功能不受影响）。A 回归手册 ↔ 回归 IT（RA-x 用例锚点）↔
+      # B 上线 runbook §9 衔接 / 索引 / CI 接线防漂移校验；机器侧回归 IT
+      # （BRegressionAUnaffectedIT，demob 置 B 上线态后复跑 demoa A 基线）随上方
+      # mvn test 门控 CRDP_IT_MYSQL_PORT 运行；生产 A 回归由测试按
+      # docs/testing/hospital-b-regression-a.md 在场执行（W38，B 上线切换后立即）。
+      - name: 医院B回归校验（E23-T28）
+        run: python3 scripts/check_hospital_b_regression.py
       - name: 关闭依赖容器
         if: always()
         run: docker compose down -v

@@ -116,7 +116,7 @@
 
 | 任务 | 用本任务的什么 |
 |---|---|
-| E23-T28 B 回归（A 功能不受影响） | 切换后立即执行：以 A 上线基线 + §4 第 6 项只读核对为起点做生产回归（其机器面已由 `TenantBOnboardingMySqlIT` 等「只写 B 库」断言锁定） |
+| E23-T28 B 回归（A 功能不受影响） | 切换后立即执行：A 回归手册 `docs/testing/hospital-b-regression-a.md`（用例集 RA-0~RA-7 + 生产动线，以 A 上线基线 + §4 第 6 项只读核对为起点）；机器面 `BRegressionAUnaffectedIT`（demob 置 B 上线态后复跑 demoa A 基线）CI 门控恒跑，`TenantBOnboardingMySqlIT` 等「只写 B 库」断言并行补证 |
 | 医院 B 观察期（W38–W39） | §5 动作 6 启动的值班 / 台账 / 巡检（hypercare 两册复用）；退出评审按 `hospital-a-hypercare.md` §8 判据，未满足顺延一周 |
 | E22-T07 跨区域演练 / E22-T14 等保测评 | B 上线后生产租户数 +1：演练与测评范围把 B 租户库与 B 流量计入（`cross-region-drill.md` / `pentest.md` 口径） |
 | E23-T20 起 C 上线准备（M5）/ E23-T26 C 上线切换（W46） | 本册是「配置差异型租户（无数据导入）上线」的第二次实践；C 有纸质资料导入演练（E23-T27），其切换仍复用 `hospital-a-go-live.md` 全套口径（闸门 → 导入 → 核对 → 切换 → 回滚），观察期与冒烟口径复用本册与 hypercare |
