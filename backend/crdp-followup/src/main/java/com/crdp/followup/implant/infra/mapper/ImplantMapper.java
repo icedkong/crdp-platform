@@ -37,6 +37,7 @@ public interface ImplantMapper {
             String doctor,
             String indication,
             String indicationNote,
+            String note,
             String status,
             LocalDate endDate,
             String endReason,
@@ -51,7 +52,7 @@ public interface ImplantMapper {
             SELECT id, patient_id AS patientId, implant_type AS implantType,
                    implant_date AS implantDate, device_type AS deviceType, brand, model,
                    serial_no AS serialNo, pacing_mode AS pacingMode, hospital, doctor,
-                   indication, indication_note AS indicationNote, status,
+                   indication, indication_note AS indicationNote, note, status,
                    end_date AS endDate, end_reason AS endReason, version,
                    created_by AS createdBy, updated_by AS updatedBy
             FROM pt_implant
@@ -67,7 +68,7 @@ public interface ImplantMapper {
             SELECT id, patient_id AS patientId, implant_type AS implantType,
                    implant_date AS implantDate, device_type AS deviceType, brand, model,
                    serial_no AS serialNo, pacing_mode AS pacingMode, hospital, doctor,
-                   indication, indication_note AS indicationNote, status,
+                   indication, indication_note AS indicationNote, note, status,
                    end_date AS endDate, end_reason AS endReason, version,
                    created_by AS createdBy, updated_by AS updatedBy
             FROM pt_implant
@@ -82,7 +83,7 @@ public interface ImplantMapper {
             SELECT id, patient_id AS patientId, implant_type AS implantType,
                    implant_date AS implantDate, device_type AS deviceType, brand, model,
                    serial_no AS serialNo, pacing_mode AS pacingMode, hospital, doctor,
-                   indication, indication_note AS indicationNote, status,
+                   indication, indication_note AS indicationNote, note, status,
                    end_date AS endDate, end_reason AS endReason, version,
                    created_by AS createdBy, updated_by AS updatedBy
             FROM pt_implant
@@ -95,12 +96,12 @@ public interface ImplantMapper {
             """
             INSERT INTO pt_implant
               (patient_id, implant_type, implant_date, device_type, brand, model, serial_no,
-               pacing_mode, hospital, doctor, indication, indication_note, status,
+               pacing_mode, hospital, doctor, indication, indication_note, note, status,
                end_date, end_reason, version, created_by)
             VALUES
               (#{row.patientId}, #{row.implantType}, #{row.implantDate}, #{row.deviceType},
                #{row.brand}, #{row.model}, #{row.serialNo}, #{row.pacingMode}, #{row.hospital},
-               #{row.doctor}, #{row.indication}, #{row.indicationNote}, #{row.status},
+               #{row.doctor}, #{row.indication}, #{row.indicationNote}, #{row.note}, #{row.status},
                #{row.endDate}, #{row.endReason}, 0, #{row.createdBy})
             """)
     @Options(useGeneratedKeys = true, keyProperty = "row.id", keyColumn = "id")
@@ -115,6 +116,7 @@ public interface ImplantMapper {
                 serial_no = #{row.serialNo}, pacing_mode = #{row.pacingMode},
                 hospital = #{row.hospital}, doctor = #{row.doctor},
                 indication = #{row.indication}, indication_note = #{row.indicationNote},
+                note = #{row.note},
                 version = version + 1, updated_by = #{row.updatedBy}
             WHERE id = #{row.id} AND version = #{row.baseVersion}
             """)
@@ -129,6 +131,20 @@ public interface ImplantMapper {
             WHERE id = #{implantId} AND status = 'ACTIVE'
             """)
     int supersedeActive(
+            @Param("implantId") long implantId,
+            @Param("endDate") LocalDate endDate,
+            @Param("endReason") String endReason,
+            @Param("updatedBy") long updatedBy);
+
+    /** 取出在用记录（E21-T02 / C-FU-007 的状态面：置 EXPLANTED，结束日期 = 取出日期；计划切换随 E21-T06）。 */
+    @Update(
+            """
+            UPDATE pt_implant
+            SET status = 'EXPLANTED', end_date = #{endDate}, end_reason = #{endReason},
+                version = version + 1, updated_by = #{updatedBy}
+            WHERE id = #{implantId} AND status = 'ACTIVE'
+            """)
+    int explantActive(
             @Param("implantId") long implantId,
             @Param("endDate") LocalDate endDate,
             @Param("endReason") String endReason,
@@ -262,6 +278,7 @@ public interface ImplantMapper {
         private String doctor;
         private String indication;
         private String indicationNote;
+        private String note;
         private String status;
         private LocalDate endDate;
         private String endReason;
@@ -371,6 +388,14 @@ public interface ImplantMapper {
             this.indicationNote = indicationNote;
         }
 
+        public String getNote() {
+            return note;
+        }
+
+        public void setNote(String note) {
+            this.note = note;
+        }
+
         public String getStatus() {
             return status;
         }
@@ -419,6 +444,7 @@ public interface ImplantMapper {
         private String doctor;
         private String indication;
         private String indicationNote;
+        private String note;
         private long updatedBy;
 
         public long getId() {
@@ -523,6 +549,14 @@ public interface ImplantMapper {
 
         public void setIndicationNote(String indicationNote) {
             this.indicationNote = indicationNote;
+        }
+
+        public String getNote() {
+            return note;
+        }
+
+        public void setNote(String note) {
+            this.note = note;
         }
 
         public long getUpdatedBy() {

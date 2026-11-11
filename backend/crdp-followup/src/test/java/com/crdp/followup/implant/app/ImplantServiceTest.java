@@ -207,6 +207,7 @@ class ImplantServiceTest {
                                                 null,
                                                 "OTHER",
                                                 null,
+                                                null,
                                                 null)));
         assertEquals(40001, failure.code(), "指征选「其他」须填补充说明（Q16）");
     }
@@ -513,6 +514,7 @@ class ImplantServiceTest {
                                 null,
                                 null,
                                 null,
+                                null,
                                 null));
         assertEquals("CRT_D", view.pacingMode());
         assertEquals("CRT-D", view.pacingModeLabel(), "停用项的历史值照常显示（C-FLD-009）");
@@ -563,6 +565,7 @@ class ImplantServiceTest {
                                 null,
                                 null,
                                 null,
+                                null,
                                 null));
         assertEquals("示例自有品牌", view.brandLabel(), "本院自有项可保存并解析显示名");
     }
@@ -583,6 +586,7 @@ class ImplantServiceTest {
                                                 null,
                                                 null,
                                                 "VDD",
+                                                null,
                                                 null,
                                                 null,
                                                 null,
@@ -613,8 +617,8 @@ class ImplantServiceTest {
 
     // ---------------------------------------------------------------- 夹具
 
-    /** 平台库 V70 预置口径（字典项全量、按 sortNo 升序）；显示名与迁移一致。 */
-    private static List<ImplantDictPort.DictItem> presetDict(String dictCode) {
+    /** 平台库 V70 预置口径（字典项全量、按 sortNo 升序）；显示名与迁移一致。E21-T02 更换流程用例共用。 */
+    static List<ImplantDictPort.DictItem> presetDict(String dictCode) {
         return switch (dictCode) {
             case ImplantDictPort.DICT_PACING_MODE ->
                     List.of(
@@ -696,6 +700,7 @@ class ImplantServiceTest {
                 "示例医生",
                 "SSS",
                 null,
+                null,
                 leads);
     }
 
@@ -728,6 +733,7 @@ class ImplantServiceTest {
                 "虚构示例医院",
                 "示例医生",
                 "SSS",
+                null,
                 null,
                 status,
                 null,

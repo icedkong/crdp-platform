@@ -119,6 +119,7 @@ public class PatientRegistrationController {
             @Size(max = 64) String doctor,
             @Size(max = 32) String indication,
             @Size(max = 255) String indicationNote,
+            @Size(max = 255) String note,
             List<LeadPayloadRequest> leads) {
 
         com.crdp.followup.implant.app.ImplantService.ImplantPayload toPayload() {
@@ -134,6 +135,7 @@ public class PatientRegistrationController {
                     doctor,
                     indication,
                     indicationNote,
+                    note,
                     leads == null
                             ? null
                             : leads.stream()

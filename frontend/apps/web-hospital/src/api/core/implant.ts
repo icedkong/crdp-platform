@@ -1,12 +1,15 @@
 /**
- * E21-T01 / C-PAT-004、C-PAT-005：植入记录（一对多）与电极记录接口
+ * E21-T01 / C-PAT-004、C-PAT-005：植入记录（一对多）与电极记录接口；
+ * E21-T02 / C-PAT-006：更换 / 升级 / 电极修正 / 取出专用流程
  * （docs/api/implant.md §1；查询 followup:patient:view，写入 followup:implant:edit）。
  */
 import type {
+  ImplantExplantPayload,
   ImplantListResult,
   ImplantOptions,
   ImplantPayload,
   ImplantRecordView,
+  ImplantReplacePayload,
   ImplantUpdatePayload,
 } from '@crdp/api';
 
@@ -45,5 +48,27 @@ export function updatePatientImplant(
 export function fetchImplantOptions() {
   return requestClient.get<ImplantOptions>(
     apiPath('/followup/implants/options'),
+  );
+}
+
+/** 更换 / 升级 / 电极修正（旧器械自动结束，电极逐根处置；C-PAT-006，E21-T02）。 */
+export function replacePatientImplant(
+  implantId: string,
+  payload: ImplantReplacePayload,
+) {
+  return requestClient.post<ImplantRecordView>(
+    apiPath(`/followup/implants/${implantId}/replace`),
+    payload,
+  );
+}
+
+/** 取出（在用记录置已取出；在用电极逐根标废弃留置 / 已拔除）。 */
+export function explantPatientImplant(
+  implantId: string,
+  payload: ImplantExplantPayload,
+) {
+  return requestClient.post<ImplantRecordView>(
+    apiPath(`/followup/implants/${implantId}/explant`),
+    payload,
   );
 }

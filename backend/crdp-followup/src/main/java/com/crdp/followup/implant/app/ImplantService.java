@@ -107,10 +107,36 @@ public class ImplantService {
             String doctor,
             String indication,
             String indicationNote,
+            String note,
             List<LeadPayload> leads) {}
 
     /** 编辑请求：baseVersion 乐观锁（AGENTS §5.10）；leads 为 null 表示本次不动电极。 */
     public record UpdateRequest(int baseVersion, ImplantPayload implant) {}
+
+    /**
+     * 电极处置（E21-T02 / C-PAT-006 器械更换流程第 2–3 步）：KEEP 沿用（同一电极行挂到新植入记录下， 保留原植入日期）／ ABANDON 废弃留置 ／
+     * EXTRACT 已拔除。
+     */
+    public static final String ACTION_KEEP = "KEEP";
+
+    public static final String ACTION_ABANDON = "ABANDON";
+    public static final String ACTION_EXTRACT = "EXTRACT";
+
+    /** 更换 / 升级请求（E21-T02）：type 即新记录植入类型（REPLACE / UPGRADE / LEAD_REVISION / OTHER）。 */
+    public record ReplaceRequest(
+            int baseVersion,
+            String type,
+            String note,
+            ImplantPayload implant,
+            List<LeadAction> leadActions,
+            List<LeadPayload> newLeads) {}
+
+    /** 旧电极处置行：leadId + action（KEEP / ABANDON / EXTRACT）。 */
+    public record LeadAction(String leadId, String action) {}
+
+    /** 取出请求（E21-T02）：取出后无在用器械，其在用电极须逐根显式处置（不产生沿用电极）。 */
+    public record ExplantRequest(
+            int baseVersion, LocalDate date, String reason, List<LeadAction> leadActions) {}
 
     /** 电极视图（编码 + 显示名一并下发，页面不硬编码文案）。 */
     public record LeadView(
@@ -146,6 +172,7 @@ public class ImplantService {
             String indication,
             String indicationLabel,
             String indicationNote,
+            String note,
             String status,
             String statusLabel,
             LocalDate endDate,
@@ -252,6 +279,7 @@ public class ImplantService {
         row.setDoctor(normalized.doctor());
         row.setIndication(normalized.indication());
         row.setIndicationNote(normalized.indicationNote());
+        row.setNote(normalized.note());
         row.setCreatedBy(userId);
 
         String supersededNote = null;
@@ -350,6 +378,7 @@ public class ImplantService {
         row.setDoctor(normalized.doctor());
         row.setIndication(normalized.indication());
         row.setIndicationNote(normalized.indicationNote());
+        row.setNote(normalized.note());
         row.setUpdatedBy(userId);
         if (mapper.updateImplant(row) == 0) {
             throw new ApiException(409, 40900, "该植入记录已被他人修改，请刷新后重试");
@@ -402,6 +431,383 @@ public class ImplantService {
     /** 开关当前是否开启（登记页 C 模式判定用；无行视为关闭）。 */
     public boolean implantEnabled() {
         return Boolean.TRUE.equals(features.findEnabled(FEATURE_IMPLANT));
+    }
+
+    // ---------------------------------------------------------------- 更换 / 升级 / 电极修正（E21-T02 /
+    // C-PAT-006）
+
+    /**
+     * 更换 / 升级 / 电极修正专用流程（C 规格 §4「器械更换流程」，tasks.csv 验收「每种变更保留历史」）。
+     *
+     * <p>每次变更新增一条植入记录（type = REPLACE / UPGRADE / LEAD_REVISION / OTHER，FIRST 走登记 / 新建），
+     * 旧（目标）记录自动结束为「已更换」、结束日期 = 新植入日期——电极修正同样落一条 LEAD_REVISION 记录（验收用例集 SW-5「新增『电极修正』记录」、
+     * C-ACC-06），但脉冲发生器不变：类型 / 品牌 / 型号 / 序列号须与原记录一致；「其他」须填说明（note，V83）。电极三选一逐根显式处置（在用电极缺项 40001）：
+     *
+     * <ul>
+     *   <li>KEEP 沿用：电极行不动（保留原植入日期，验收「沿用的电极趋势连续」），补挂到新植入记录下；
+     *   <li>ABANDON 废弃留置 / EXTRACT 已拔除：电极行更新状态、保留在旧记录下（历史不删）；
+     *   <li>newLeads 新植：新行落库，植入日期缺省 = 手术日期（电极修正的新电极从修正日期起比较参数）。
+     * </ul>
+     *
+     * <p>baseVersion 乐观锁与「目标必须在用」为 40900；无导线新器械不可携带电极（40001）。随访计划重新起算（C-FU-007）随 E21-T05 / T06
+     * 的映射与切换规则接入。成功写 IMPLANT_REPLACE 审计。
+     */
+    @Transactional
+    public ImplantView replace(long implantId, ReplaceRequest request) {
+        requireFeatureEnabled();
+        ImplantRow target = requireActiveImplantInScope(implantId, "更换 / 升级 / 电极修正");
+        if (request == null || request.baseVersion() != target.version()) {
+            throw new ApiException(409, 40900, "该植入记录已被他人修改，请刷新后重试");
+        }
+        String type = normalizeReplaceType(request.type());
+        DictTables dicts = loadDicts();
+        // type 与 note 由流程单独承载，注入载荷后复用统一的字段校验（电极不走 implant.leads）
+        ImplantPayload source = request.implant();
+        ImplantPayload merged =
+                new ImplantPayload(
+                        type,
+                        source == null ? null : source.implantDate(),
+                        source == null ? null : source.deviceType(),
+                        source == null ? null : source.brand(),
+                        source == null ? null : source.model(),
+                        source == null ? null : source.serialNo(),
+                        source == null ? null : source.pacingMode(),
+                        source == null ? null : source.hospital(),
+                        source == null ? null : source.doctor(),
+                        source == null ? null : source.indication(),
+                        source == null ? null : source.indicationNote(),
+                        request.note(),
+                        null);
+        Normalized normalized = normalize(merged, dicts);
+        if (normalized.implantDate().isBefore(target.implantDate())) {
+            throw new ApiException(400, 40001, "新植入日期不能早于原植入日期（" + target.implantDate() + "）");
+        }
+        if (ImplantCodes.TYPE_LEAD_REVISION.equals(type)) {
+            requireSameGenerator(target, normalized);
+        }
+
+        long userId = CurrentSession.requireHospital().userId();
+        List<LeadRow> targetLeads = gateway.leadsOfImplant(implantId);
+        Map<Long, LeadAction> actions =
+                normalizeLeadActions(request.leadActions(), targetLeads, true);
+        List<LeadPayload> newLeads =
+                normalizeLeads(
+                        request.newLeads(),
+                        normalized.deviceType(),
+                        normalized.implantDate(),
+                        dicts);
+        if (ImplantCodes.DEVICE_LEADLESS.equals(normalized.deviceType())) {
+            rejectLeadlessWithLeads(
+                    normalized.deviceType(), keptOrNewLeads(actions, targetLeads, newLeads));
+        }
+
+        // 旧器械自动结束（0 行 = 并发被他人接替，40900）
+        String typeLabel = labelOf(ImplantCodes.IMPLANT_TYPES, type);
+        String endReason =
+                typeLabel
+                        + "：新植入记录（"
+                        + dicts.deviceTypes().label(normalized.deviceType())
+                        + "）接替在用";
+        if (mapper.supersedeActive(implantId, normalized.implantDate(), endReason, userId) == 0) {
+            throw new ApiException(409, 40900, "该植入记录刚被他人处理，请刷新后重试");
+        }
+
+        ImplantInsert row = new ImplantInsert();
+        row.setPatientId(target.patientId());
+        row.setImplantType(type);
+        row.setImplantDate(normalized.implantDate());
+        row.setDeviceType(normalized.deviceType());
+        row.setBrand(normalized.brand());
+        row.setModel(normalized.model());
+        row.setSerialNo(normalized.serialNo());
+        row.setPacingMode(normalized.pacingMode());
+        row.setHospital(normalized.hospital());
+        row.setDoctor(normalized.doctor());
+        row.setIndication(normalized.indication());
+        row.setIndicationNote(normalized.indicationNote());
+        row.setNote(normalized.note());
+        row.setStatus(ImplantCodes.STATUS_ACTIVE);
+        row.setCreatedBy(userId);
+        try {
+            mapper.insertImplant(row);
+        } catch (DuplicateKeyException race) {
+            log.warn("更换流程并发冲突：植入记录 {}", implantId);
+            throw new ApiException(409, 40900, "该患者刚被他人保存植入记录，请刷新后重试");
+        }
+        applyLeadActions(target.patientId(), implantId, row.getId(), actions, targetLeads, userId);
+        insertLeads(target.patientId(), row.getId(), newLeads, userId);
+
+        audit.append(
+                AuditEntry.operation("followup", "IMPLANT_REPLACE")
+                        .objectType("PATIENT")
+                        .objectId(String.valueOf(target.patientId()))
+                        .description(
+                                typeLabel
+                                        + "：植入记录 "
+                                        + implantId
+                                        + "（"
+                                        + dicts.deviceTypes().label(target.deviceType())
+                                        + " · "
+                                        + target.implantDate()
+                                        + "）→ 新记录（"
+                                        + dicts.deviceTypes().label(normalized.deviceType())
+                                        + " · "
+                                        + normalized.implantDate()
+                                        + "）；电极 沿用 "
+                                        + countAction(actions, ACTION_KEEP)
+                                        + " / 废弃留置 "
+                                        + countAction(actions, ACTION_ABANDON)
+                                        + " / 已拔除 "
+                                        + countAction(actions, ACTION_EXTRACT)
+                                        + " / 新植 "
+                                        + newLeads.size())
+                        .beforeJson(
+                                writeJson(
+                                        Map.of(
+                                                "implantId", implantId,
+                                                "deviceType", nullSafe(target.deviceType()),
+                                                "implantDate", target.implantDate().toString())))
+                        .afterJson(
+                                writeJson(
+                                        Map.of(
+                                                "implantId", row.getId(),
+                                                "type", type,
+                                                "deviceType", nullSafe(normalized.deviceType()),
+                                                "implantDate",
+                                                        normalized.implantDate().toString())))
+                        .result(AuditResult.SUCCESS)
+                        .build());
+
+        return listUnchecked(target.patientId()).items().stream()
+                .filter(item -> item.id().equals(String.valueOf(row.getId())))
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("植入记录保存后不可见：" + row.getId()));
+    }
+
+    // ---------------------------------------------------------------- 取出（E21-T02 / C-FU-007 状态面）
+
+    /**
+     * 取出（POST /implants/{id}/explant）：在用记录置「已取出」，结束日期 = 取出日期，理由缺省「器械取出」； 在用电极须逐根显式标废弃留置 /
+     * 已拔除（不产生沿用电极，行保留在旧记录下）。取出后患者无在用器械，再植入走登记 / 新建。 计划侧（入组结束、未完成任务处理）随 E21-T06 切换规则接入。 成功写
+     * IMPLANT_EXPLANT 审计。
+     */
+    @Transactional
+    public ImplantView explant(long implantId, ExplantRequest request) {
+        requireFeatureEnabled();
+        ImplantRow target = requireActiveImplantInScope(implantId, "取出");
+        if (request == null || request.baseVersion() != target.version()) {
+            throw new ApiException(409, 40900, "该植入记录已被他人修改，请刷新后重试");
+        }
+        LocalDate date = requireDate(request.date(), "请填写取出日期");
+        if (date.isBefore(target.implantDate())) {
+            throw new ApiException(400, 40001, "取出日期不能早于植入日期（" + target.implantDate() + "）");
+        }
+        if (date.isAfter(LocalDate.now())) {
+            throw new ApiException(400, 40001, "取出日期不能晚于今天");
+        }
+        long userId = CurrentSession.requireHospital().userId();
+        List<LeadRow> targetLeads = gateway.leadsOfImplant(implantId);
+        Map<Long, LeadAction> actions =
+                normalizeLeadActions(request.leadActions(), targetLeads, false);
+
+        String reason = trimToNull(request.reason(), 255, "取出原因");
+        String endReason = reason == null ? "器械取出" : reason;
+        if (mapper.explantActive(implantId, date, endReason, userId) == 0) {
+            throw new ApiException(409, 40900, "该植入记录刚被他人处理，请刷新后重试");
+        }
+        applyLeadActions(target.patientId(), implantId, -1L, actions, targetLeads, userId);
+
+        audit.append(
+                AuditEntry.operation("followup", "IMPLANT_EXPLANT")
+                        .objectType("PATIENT")
+                        .objectId(String.valueOf(target.patientId()))
+                        .description(
+                                "取出植入记录："
+                                        + implantId
+                                        + "（"
+                                        + loadDicts().deviceTypes().label(target.deviceType())
+                                        + " · "
+                                        + target.implantDate()
+                                        + " → 取出 "
+                                        + date
+                                        + "）；电极 已拔除 "
+                                        + countAction(actions, ACTION_EXTRACT)
+                                        + " / 废弃留置 "
+                                        + countAction(actions, ACTION_ABANDON))
+                        .beforeJson(
+                                writeJson(
+                                        Map.of(
+                                                "implantId", implantId,
+                                                "status", target.status(),
+                                                "implantDate", target.implantDate().toString())))
+                        .afterJson(
+                                writeJson(
+                                        Map.of(
+                                                "implantId",
+                                                implantId,
+                                                "status",
+                                                ImplantCodes.STATUS_EXPLANTED,
+                                                "endDate",
+                                                date.toString())))
+                        .result(AuditResult.SUCCESS)
+                        .build());
+
+        return listUnchecked(target.patientId()).items().stream()
+                .filter(item -> item.id().equals(String.valueOf(implantId)))
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("植入记录保存后不可见：" + implantId));
+    }
+
+    // ---------------------------------------------------------------- 内部：更换流程共用
+
+    /** 范围内且在用的目标记录（越范围 / 不存在 40400；不在用 40900——更换 / 取出只针对当前器械）。 */
+    private ImplantRow requireActiveImplantInScope(long implantId, String operation) {
+        ImplantRow target = gateway.implantInScope(implantId);
+        if (target == null) {
+            throw new ApiException(404, 40400, "植入记录不存在或不在您的数据范围内");
+        }
+        if (!ImplantCodes.STATUS_ACTIVE.equals(target.status())) {
+            throw new ApiException(
+                    409, 40900, "该植入记录不在用，无法" + operation + "（只有当前器械可以" + operation + "）");
+        }
+        return target;
+    }
+
+    /** 更换流程的植入类型（FIRST 走登记 / 新建；字典外取值拒绝）。 */
+    private String normalizeReplaceType(String value) {
+        String type = requireCode(value, "请选择植入类型");
+        if (ImplantCodes.TYPE_FIRST.equals(type)) {
+            throw new ApiException(400, 40001, "首次植入请在患者登记或「新建植入记录」中录入");
+        }
+        if (!ImplantCodes.IMPLANT_TYPES.containsKey(type)) {
+            throw new ApiException(400, 40001, "植入类型不正确：" + value);
+        }
+        return type;
+    }
+
+    /** 电极修正不改变脉冲发生器：类型 / 品牌 / 型号 / 序列号须与原记录一致（起搏模式为程控设置，可变）。 */
+    private void requireSameGenerator(ImplantRow target, Normalized normalized) {
+        List<String> diffs = new ArrayList<>();
+        if (!equalsNullable(target.deviceType(), normalized.deviceType())) diffs.add("起搏器类型");
+        if (!equalsNullable(target.brand(), normalized.brand())) diffs.add("品牌");
+        if (!equalsNullable(target.model(), normalized.model())) diffs.add("型号");
+        if (!equalsNullable(target.serialNo(), normalized.serialNo())) diffs.add("序列号");
+        if (!diffs.isEmpty()) {
+            throw new ApiException(
+                    400, 40001, "电极修正不改变脉冲发生器，" + String.join("、", diffs) + "须与原植入记录一致");
+        }
+    }
+
+    /**
+     * 电极处置行归一化：leadId 必须挂在目标植入记录下（40001）；KEEP 只允许在用电极、且只属于更换流程（取出 时 40001）；目标下每根<b>在用</b>电极必须显式处置
+     * 40001（缺项拒绝，避免静默沿用 / 遗弃）。已非在用的电极允许改标废弃留置 / 已拔除（术后补记）。
+     */
+    private Map<Long, LeadAction> normalizeLeadActions(
+            List<LeadAction> actions, List<LeadRow> targetLeads, boolean keepAllowed) {
+        Map<Long, LeadRow> targetById = new LinkedHashMap<>();
+        for (LeadRow lead : targetLeads) {
+            targetById.put(lead.id(), lead);
+        }
+        Map<Long, LeadAction> byLeadId = new LinkedHashMap<>();
+        if (actions != null) {
+            for (LeadAction action : actions) {
+                Long leadId = parseId(action == null ? null : action.leadId());
+                LeadRow lead = targetById.get(leadId);
+                if (lead == null) {
+                    throw new ApiException(400, 40001, "电极不属于该植入记录：" + action.leadId());
+                }
+                String code = action.action() == null ? "" : action.action().trim();
+                if (!ACTION_KEEP.equals(code)
+                        && !ACTION_ABANDON.equals(code)
+                        && !ACTION_EXTRACT.equals(code)) {
+                    throw new ApiException(400, 40001, "电极处置只支持沿用 / 废弃留置 / 已拔除：" + action.action());
+                }
+                if (ACTION_KEEP.equals(code)) {
+                    if (!keepAllowed) {
+                        throw new ApiException(400, 40001, "取出不产生沿用电极，请改选废弃留置或已拔除");
+                    }
+                    if (!ImplantCodes.LEAD_STATUS_ACTIVE.equals(lead.status())) {
+                        throw new ApiException(400, 40001, "非在用电极不可沿用：" + action.leadId());
+                    }
+                }
+                if (byLeadId.put(leadId, new LeadAction(String.valueOf(leadId), code)) != null) {
+                    throw new ApiException(400, 40001, "电极处置重复：" + action.leadId());
+                }
+            }
+        }
+        for (LeadRow lead : targetLeads) {
+            if (ImplantCodes.LEAD_STATUS_ACTIVE.equals(lead.status())
+                    && !byLeadId.containsKey(lead.id())) {
+                throw new ApiException(400, 40001, "请为每根在用电极选择处置（沿用 / 废弃留置 / 已拔除）：" + lead.id());
+            }
+        }
+        return byLeadId;
+    }
+
+    /** 落电极处置：KEEP 补挂新植入记录（行不动，保留原植入日期）；ABANDON / EXTRACT 更新状态、留旧记录下。 */
+    private void applyLeadActions(
+            long patientId,
+            long oldImplantId,
+            long newImplantId,
+            Map<Long, LeadAction> actions,
+            List<LeadRow> targetLeads,
+            long userId) {
+        for (LeadRow lead : targetLeads) {
+            LeadAction action = actions.get(lead.id());
+            if (action == null) {
+                continue;
+            }
+            if (ACTION_KEEP.equals(action.action())) {
+                mapper.linkLead(patientId, newImplantId, lead.id());
+                continue;
+            }
+            LeadUpdate update = new LeadUpdate();
+            update.setId(lead.id());
+            update.setPatientId(patientId);
+            update.setBaseVersion(lead.version());
+            update.setChamber(lead.chamber());
+            update.setPosition(lead.position());
+            update.setModel(lead.model());
+            update.setImplantDate(lead.implantDate());
+            update.setStatus(
+                    ACTION_ABANDON.equals(action.action())
+                            ? ImplantCodes.LEAD_STATUS_ABANDONED
+                            : ImplantCodes.LEAD_STATUS_EXTRACTED);
+            update.setUpdatedBy(userId);
+            if (mapper.updateLead(update) == 0) {
+                throw new ApiException(409, 40900, "该电极刚被他人修改，请刷新后重试");
+            }
+        }
+    }
+
+    /** 无导线校验的电极面：沿用电极 + 新植电极（KEEP 的行 + newLeads 载荷）。 */
+    private static List<LeadPayload> keptOrNewLeads(
+            Map<Long, LeadAction> actions, List<LeadRow> targetLeads, List<LeadPayload> newLeads) {
+        List<LeadPayload> kept = new ArrayList<>();
+        for (LeadRow lead : targetLeads) {
+            LeadAction action = actions.get(lead.id());
+            if (action != null && ACTION_KEEP.equals(action.action())) {
+                kept.add(
+                        new LeadPayload(
+                                String.valueOf(lead.id()),
+                                lead.chamber(),
+                                lead.position(),
+                                lead.model(),
+                                lead.implantDate(),
+                                lead.status()));
+            }
+        }
+        List<LeadPayload> all = new ArrayList<>(kept);
+        all.addAll(newLeads);
+        return all;
+    }
+
+    private static int countAction(Map<Long, LeadAction> actions, String action) {
+        return (int) actions.values().stream().filter(item -> item.action().equals(action)).count();
+    }
+
+    private static boolean equalsNullable(String left, String right) {
+        return left == null ? right == null : left.equals(right);
     }
 
     // ---------------------------------------------------------------- 内部：电极
@@ -581,6 +987,7 @@ public class ImplantService {
                 row.indication(),
                 dicts.indications().label(row.indication()),
                 row.indicationNote(),
+                row.note(),
                 row.status(),
                 labelOf(ImplantCodes.IMPLANT_STATUSES, row.status()),
                 row.endDate(),
@@ -590,7 +997,7 @@ public class ImplantService {
                 leadViews);
     }
 
-    /** 归一化后的植入记录字段（新建与编辑共用校验）。 */
+    /** 归一化后的植入记录字段（新建、编辑与更换流程共用校验）。 */
     private record Normalized(
             String implantType,
             LocalDate implantDate,
@@ -603,6 +1010,7 @@ public class ImplantService {
             String doctor,
             String indication,
             String indicationNote,
+            String note,
             List<LeadPayload> leads) {}
 
     private Normalized normalize(ImplantPayload payload, DictTables dicts) {
@@ -610,6 +1018,12 @@ public class ImplantService {
             throw new ApiException(400, 40001, "请填写植入记录信息");
         }
         String implantType = normalizeImplantType(payload.implantType());
+        return normalizeDevicePart(payload, implantType, dicts);
+    }
+
+    /** 归一化除植入类型与电极外的字段（更换流程的 type 单独承载、电极经 leadActions / newLeads 传递， 复用同一套字段校验）。 */
+    private Normalized normalizeDevicePart(
+            ImplantPayload payload, String implantType, DictTables dicts) {
         LocalDate implantDate = requireDate(payload.implantDate(), "请填写植入日期");
         if (implantDate.isAfter(LocalDate.now())) {
             throw new ApiException(400, 40001, "植入日期不能晚于今天");
@@ -625,6 +1039,10 @@ public class ImplantService {
                 && (indicationNote == null || indicationNote.isBlank())) {
             throw new ApiException(400, 40001, "植入指征选「其他」时须填写补充说明");
         }
+        String note = trimToNull(payload.note(), 255, "植入说明");
+        if (ImplantCodes.TYPE_OTHER.equals(implantType) && (note == null || note.isBlank())) {
+            throw new ApiException(400, 40001, "植入类型选「其他」时须填写说明（C-PAT-006）");
+        }
         List<LeadPayload> leads = normalizeLeads(payload.leads(), deviceType, implantDate, dicts);
         return new Normalized(
                 implantType,
@@ -638,6 +1056,7 @@ public class ImplantService {
                 trimToNull(payload.doctor(), 64, "植入医生"),
                 indication,
                 indicationNote,
+                note,
                 leads);
     }
 
@@ -902,6 +1321,7 @@ public class ImplantService {
                 row.getDoctor(),
                 row.getIndication(),
                 row.getIndicationNote(),
+                row.getNote(),
                 row.getStatus(),
                 row.getEndDate(),
                 row.getEndReason(),

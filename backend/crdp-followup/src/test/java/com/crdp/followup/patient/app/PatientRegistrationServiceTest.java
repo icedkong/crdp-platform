@@ -277,6 +277,7 @@ class PatientRegistrationServiceTest {
                 "示例医生",
                 "SSS",
                 null,
+                null,
                 List.of(
                         new com.crdp.followup.implant.app.ImplantService.LeadPayload(
                                 null, "RA", "RA_APPENDAGE", null, null, null),
