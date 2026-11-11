@@ -151,6 +151,18 @@ class MenuSyncServiceTest {
                         "followup:patient:export",
                         20,
                         "ENABLED"),
+                // E21-T01 编辑植入记录按钮（平台库 V69 同构）：患者档案菜单下的 followup 按钮
+                manifestRow(
+                        228L,
+                        21L,
+                        "BUTTON",
+                        "编辑植入记录",
+                        null,
+                        null,
+                        null,
+                        "followup:implant:edit",
+                        50,
+                        "ENABLED"),
                 // E13-T01 新建患者（隐藏路由，平台库 V37 同构）：患者档案菜单下的 followup 菜单项
                 manifestRow(
                         213L,

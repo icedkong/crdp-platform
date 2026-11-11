@@ -1,6 +1,9 @@
 <script lang="ts" setup>
 import type {
   DuplicateNotice,
+  ImplantForm,
+  ImplantFormErrors,
+  ImplantOptions,
   PatientDuplicateCheckResult,
   PatientRegistrationForm,
   PatientRegistrationOptions,
@@ -13,8 +16,11 @@ import { Page } from '@vben/common-ui';
 
 import {
   buildDuplicateCheckPayload,
+  buildImplantPayload,
   buildRegistrationPayload,
   duplicateNoticeOf,
+  emptyImplantForm,
+  validateCRegistration,
   validateRegistration,
 } from '@crdp/api';
 import {
@@ -33,12 +39,15 @@ import {
   Tooltip,
 } from 'ant-design-vue';
 
+import { fetchImplantOptions } from '#/api/core/implant';
 import {
   checkPatientDuplicate,
   createPatientRegistration,
   fetchPatientRegistrationOptions,
 } from '#/api/core/patient';
+import ImplantFields from '#/components/followup/implant-fields.vue';
 import { useBreakpoint } from '#/reference/use-breakpoint';
+import { useFeature } from '#/reference/use-feature';
 
 import { noticeFromSubmitError, patientDetailPath } from './new-logic';
 
@@ -80,6 +89,28 @@ const form = reactive<PatientRegistrationForm>({
 });
 
 const errors = ref<Partial<Record<keyof PatientRegistrationForm, string>>>({});
+
+// E21-T01 / OQ-71①：implant 开关开启 → 医院 C 登记口径（C-PAT-001 最小必填：
+// 姓名、性别、出生日期、病历号、科室、病区 + 须同时建立第一条植入记录）；
+// 关闭 → A 出院登记口径不变（A / B 租户不受影响）
+const { isEnabled } = useFeature();
+const implantMode = computed(() => isEnabled('implant'));
+const implantForm = reactive<ImplantForm>(emptyImplantForm());
+const implantOptions = ref<ImplantOptions | null>(null);
+const implantErrors = ref<ImplantFormErrors>({});
+
+watch(
+  implantMode,
+  (enabled) => {
+    if (!enabled || implantOptions.value) return;
+    fetchImplantOptions()
+      .then((data) => {
+        implantOptions.value = data;
+      })
+      .catch(() => message.error('植入选项加载失败，请刷新重试'));
+  },
+  { immediate: true },
+);
 const checking = ref(false);
 const submitting = ref(false);
 const duplicateNotice = ref<DuplicateNotice>(null);
@@ -153,9 +184,32 @@ function matchLabel(item: {
 
 // ---------------------------------------------------------------- 保存
 
+/** C 模式校验（患者 C 最小必填 + 首条植入记录），错误按前缀拆回两块表单。 */
+function validateForMode() {
+  if (!implantMode.value) {
+    errors.value = validateRegistration(form);
+    implantErrors.value = {};
+    return;
+  }
+  const merged = validateCRegistration(form, implantForm, implantOptions.value);
+  const patientErrors: Partial<Record<keyof PatientRegistrationForm, string>> =
+    {};
+  const leadErrors: ImplantFormErrors = {};
+  for (const [key, value] of Object.entries(merged)) {
+    if (key.startsWith('patient.'))
+      patientErrors[key.slice(8) as keyof PatientRegistrationForm] = value;
+    else if (key.startsWith('implant.')) leadErrors[key.slice(8)] = value;
+  }
+  errors.value = patientErrors;
+  implantErrors.value = leadErrors;
+}
+
 async function submit() {
-  errors.value = validateRegistration(form);
-  if (Object.keys(errors.value).length > 0) {
+  validateForMode();
+  if (
+    Object.keys(errors.value).length > 0 ||
+    Object.keys(implantErrors.value).length > 0
+  ) {
     message.warning('请先补全必填项');
     return;
   }
@@ -165,9 +219,13 @@ async function submit() {
   }
   submitting.value = true;
   try {
-    const created = await createPatientRegistration(
-      buildRegistrationPayload(form),
-    );
+    const created = await createPatientRegistration({
+      ...buildRegistrationPayload(form),
+      // C-PAT-001：登记同时建立首条植入记录（implant 开关开启时后端必校验）
+      ...(implantMode.value
+        ? { implant: buildImplantPayload(implantForm) }
+        : {}),
+    });
     message.success('登记成功，正在进入患者档案');
     void router.push(patientDetailPath(created.id));
   } catch (error) {
@@ -194,7 +252,11 @@ async function submit() {
       </Button>
     </template>
   </Result>
-  <Page v-else title="新建患者 · 出院登记" class="patient-new">
+  <Page
+    v-else
+    :title="implantMode ? '新建患者 · 患者登记' : '新建患者 · 出院登记'"
+    class="patient-new"
+  >
     <Card :bordered="false">
       <Spin :spinning="loadingOptions">
         <Alert
@@ -292,7 +354,15 @@ async function submit() {
                 </SelectOption>
               </Select>
             </FormItem>
-            <FormItem label="出生日期">
+            <FormItem
+              :required="implantMode"
+              label="出生日期"
+              :validate-status="errors.birthDate ? 'error' : undefined"
+              :help="
+                errors.birthDate ||
+                (implantMode ? undefined : 'C 登记必填；A 可空')
+              "
+            >
               <DatePicker
                 v-model:value="form.birthDate"
                 value-format="YYYY-MM-DD"
@@ -316,80 +386,109 @@ async function submit() {
                 </SelectOption>
               </Select>
             </FormItem>
-            <FormItem label="科室">
+            <FormItem
+              :required="implantMode"
+              label="科室"
+              :validate-status="errors.deptId ? 'error' : undefined"
+              :help="errors.deptId"
+            >
               <Select
                 v-model:value="form.deptId"
                 :options="
                   options.depts.map((d) => ({ label: d.name, value: d.id }))
                 "
                 allow-clear
-                placeholder="可空"
+                :placeholder="implantMode ? '请选择' : '可空'"
               />
             </FormItem>
           </div>
 
-          <div class="group-title">住院与出院</div>
-          <div class="form-grid">
-            <FormItem
-              label="入院日期"
-              required
-              :validate-status="errors.admissionDate ? 'error' : undefined"
-              :help="errors.admissionDate"
-            >
-              <DatePicker
-                v-model:value="form.admissionDate"
-                value-format="YYYY-MM-DD"
-                style="width: 100%"
-              />
-            </FormItem>
-            <FormItem
-              label="手术日期"
-              required
-              :validate-status="errors.surgeryDate ? 'error' : undefined"
-              :help="errors.surgeryDate"
-            >
-              <DatePicker
-                v-model:value="form.surgeryDate"
-                value-format="YYYY-MM-DD"
-                style="width: 100%"
-              />
-            </FormItem>
-            <FormItem
-              label="出院日期"
-              required
-              :validate-status="errors.dischargeDate ? 'error' : undefined"
-              :help="errors.dischargeDate"
-            >
-              <DatePicker
-                v-model:value="form.dischargeDate"
-                value-format="YYYY-MM-DD"
-                style="width: 100%"
-              />
-            </FormItem>
-            <FormItem
-              label="出院状态"
-              required
-              :validate-status="errors.dischargeStatus ? 'error' : undefined"
-              :help="errors.dischargeStatus"
-            >
-              <Select v-model:value="form.dischargeStatus" placeholder="请选择">
-                <SelectOption
-                  v-for="s in options.dischargeStatuses"
-                  :key="s.code"
-                  :value="Number(s.code)"
+          <!-- C 登记口径无住院 / 出院字段（C 规格 §4：原表无此三项，附录 A 患者 #1–#21） -->
+          <template v-if="!implantMode">
+            <div class="group-title">住院与出院</div>
+            <div class="form-grid">
+              <FormItem
+                label="入院日期"
+                required
+                :validate-status="errors.admissionDate ? 'error' : undefined"
+                :help="errors.admissionDate"
+              >
+                <DatePicker
+                  v-model:value="form.admissionDate"
+                  value-format="YYYY-MM-DD"
+                  style="width: 100%"
+                />
+              </FormItem>
+              <FormItem
+                label="手术日期"
+                required
+                :validate-status="errors.surgeryDate ? 'error' : undefined"
+                :help="errors.surgeryDate"
+              >
+                <DatePicker
+                  v-model:value="form.surgeryDate"
+                  value-format="YYYY-MM-DD"
+                  style="width: 100%"
+                />
+              </FormItem>
+              <FormItem
+                label="出院日期"
+                required
+                :validate-status="errors.dischargeDate ? 'error' : undefined"
+                :help="errors.dischargeDate"
+              >
+                <DatePicker
+                  v-model:value="form.dischargeDate"
+                  value-format="YYYY-MM-DD"
+                  style="width: 100%"
+                />
+              </FormItem>
+              <FormItem
+                label="出院状态"
+                required
+                :validate-status="errors.dischargeStatus ? 'error' : undefined"
+                :help="errors.dischargeStatus"
+              >
+                <Select
+                  v-model:value="form.dischargeStatus"
+                  placeholder="请选择"
                 >
-                  {{ s.label }}
-                </SelectOption>
-              </Select>
-            </FormItem>
+                  <SelectOption
+                    v-for="s in options.dischargeStatuses"
+                    :key="s.code"
+                    :value="Number(s.code)"
+                  >
+                    {{ s.label }}
+                  </SelectOption>
+                </Select>
+              </FormItem>
+              <FormItem label="原系统编号" help="历史数据迁移时保留，可空">
+                <Input
+                  v-model:value="form.legacyNo"
+                  :maxlength="64"
+                  placeholder="如 OLD-A-000123（示例）"
+                />
+              </FormItem>
+            </div>
+          </template>
+
+          <template v-else>
+            <div class="group-title group-title-implant">
+              首条植入记录与电极（C-PAT-001 / C-PAT-004 / C-PAT-005）
+            </div>
+            <ImplantFields
+              v-model:form="implantForm"
+              :errors="implantErrors"
+              :options="implantOptions"
+            />
             <FormItem label="原系统编号" help="历史数据迁移时保留，可空">
               <Input
                 v-model:value="form.legacyNo"
                 :maxlength="64"
-                placeholder="如 OLD-A-000123（示例）"
+                placeholder="如 OLD-C-000123（示例）"
               />
             </FormItem>
-          </div>
+          </template>
         </Form>
 
         <div class="form-actions">

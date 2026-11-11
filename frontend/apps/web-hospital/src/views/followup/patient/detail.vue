@@ -94,6 +94,7 @@ import { compareTargetsOf } from '#/components/followup/compare-entry-logic';
 import ContactLogModal from '#/components/followup/contact-log-modal.vue';
 import { downloadFileById } from '#/components/followup/file-download';
 import FollowupTimeline from '#/components/followup/followup-timeline.vue';
+import ImplantSection from '#/components/followup/implant-section.vue';
 import InlineAttachmentStrip from '#/components/followup/inline-attachment-strip.vue';
 import MobileUploadQrModal from '#/components/followup/mobile-upload-qr.vue';
 import PatientHeader from '#/components/followup/patient-header.vue';
@@ -163,6 +164,9 @@ const { hasPermission } = usePermission();
 // G3：报告单页签按租户功能开关 report 显隐（E19-T04 useFeature；关闭后后端 40301）
 const { isEnabled: isFeatureEnabled } = useFeature();
 const reportTabVisible = computed(() => isFeatureEnabled('report'));
+// E21-T01 / C-PAT-004、C-PAT-005：基线资料页签的植入记录区块随 implant 开关显隐
+// （pages.md §4.4；关闭直接隐藏，后端仍按开关 40301 兜底）
+const implantSectionVisible = computed(() => isFeatureEnabled('implant'));
 // E16-T14：左栏布局形态（桌面左栏 / 平板与手机收为「附件（n）」抽屉入口）；
 // E24-T04：isMobile 驱动手机形态（页签横向滚动、沟通 / 报告单 / 操作日志表格转卡片）
 const { isDesktop, isMobile } = useBreakpoint();
@@ -247,6 +251,15 @@ const patientId = computed(() => String(route.params.id ?? ''));
 const currentWardId = computed<null | number>(
   () => overview.value?.wardId ?? null,
 );
+
+/** E21-T01：植入记录保存后安静刷新概览（失败保留旧数据，不影响档案主体）。 */
+async function reloadOverviewQuietly() {
+  try {
+    overview.value = await fetchPatientSummary(patientId.value);
+  } catch {
+    // 刷新失败保留旧概览
+  }
+}
 
 async function reloadTimeline() {
   try {
@@ -1203,6 +1216,12 @@ const timelineLegendNote =
             @upload="openReportUpload(baselineUploadPreset(section.code))"
           />
         </section>
+        <!-- E21-T01 / C-PAT-004、C-PAT-005：植入记录与电极（当前器械置顶；手机转卡片 §4.10） -->
+        <ImplantSection
+          v-if="implantSectionVisible"
+          :patient-id="patientId"
+          @changed="() => void reloadOverviewQuietly()"
+        />
         <p v-if="baseline && baselineSectionViews.length === 0" class="hint">
           基线分节尚未填写：点「编辑」按分类补录（A-PAT-003
           可分次补录、先暂存后保存）。
