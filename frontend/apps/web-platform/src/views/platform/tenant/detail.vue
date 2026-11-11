@@ -55,6 +55,7 @@ import {
   validateReason,
 } from './lifecycle';
 import ModulesTab from './modules-tab.vue';
+import QuotaTab from './quota-tab.vue';
 import ScopeTab from './scope-tab.vue';
 
 defineOptions({ name: 'PlatformTenantDetail' });
@@ -301,6 +302,10 @@ onMounted(load);
           </TabPane>
           <TabPane v-if="canScopeView" key="scope" tab="授权范围">
             <ScopeTab :tenant-id="tenantId" />
+          </TabPane>
+          <!-- 配额（E05-T09 / PLT-TEN-014）：上限与用量、80% 预警与满额横幅、维护弹窗 -->
+          <TabPane key="quota" tab="配额">
+            <QuotaTab :tenant-id="tenantId" />
           </TabPane>
           <TabPane key="expiry" tab="到期设置">
             <div class="toolbar">

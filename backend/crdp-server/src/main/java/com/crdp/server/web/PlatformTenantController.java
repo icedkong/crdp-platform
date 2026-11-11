@@ -1,11 +1,13 @@
 package com.crdp.server.web;
 
 import com.crdp.framework.security.RequiresPermission;
+import com.crdp.framework.web.ApiException;
 import com.crdp.framework.web.ApiResponse;
 import com.crdp.server.config.TenantOnboardingService;
 import com.crdp.server.platform.PlatformAccountService;
 import com.crdp.server.platform.TenantDirectoryService;
 import com.crdp.server.platform.TenantLifecycleService;
+import com.crdp.server.platform.TenantQuotaService;
 import com.crdp.server.platform.TenantSuspensionService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -26,7 +28,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * 平台端租户管理 API。开通向导与进度是 E02-T07/T08；列表检索与信息维护（PLT-TEN-001、009）是 E05-T01；
- * 状态流转、到期设置与续期（PLT-TEN-010..013）是 E05-T02；模块开通（E05-T05）接入后向导再传对应数据。
+ * 状态流转、到期设置与续期（PLT-TEN-010..013）是 E05-T02；配额查看与维护（PLT-TEN-014、PLT-ORG-010） 是 E05-T09——用户数上限拦截新建 /
+ * 启用用户、存储上限拦截上传在租户侧服务（TenantQuotaGuard、文件服务）。
  */
 @Tag(name = "平台端租户管理")
 @RestController
@@ -40,6 +43,10 @@ public class PlatformTenantController {
     private final TenantLifecycleService lifecycleService;
     private final TenantSuspensionService suspensionService;
     private final PlatformAccountService accountService;
+
+    /** E05-T09 / PLT-TEN-014：配额查看与维护。 */
+    private final TenantQuotaService quotaService;
+
     private final SecureRandom random = new SecureRandom();
 
     public PlatformTenantController(
@@ -47,12 +54,14 @@ public class PlatformTenantController {
             TenantDirectoryService directoryService,
             TenantLifecycleService lifecycleService,
             TenantSuspensionService suspensionService,
-            PlatformAccountService accountService) {
+            PlatformAccountService accountService,
+            TenantQuotaService quotaService) {
         this.onboardingService = onboardingService;
         this.directoryService = directoryService;
         this.lifecycleService = lifecycleService;
         this.suspensionService = suspensionService;
         this.accountService = accountService;
+        this.quotaService = quotaService;
     }
 
     /**
@@ -71,7 +80,9 @@ public class PlatformTenantController {
             Integer graceDays,
             Boolean graceReadOnly,
             List<String> modules,
-            Long templateId) {}
+            Long templateId,
+            Integer userLimit,
+            Long storageLimitBytes) {}
 
     @Operation(summary = "租户列表（PLT-TEN-001）：按名称/编码关键词、状态、到期日、模块检索")
     @GetMapping
@@ -157,6 +168,29 @@ public class PlatformTenantController {
         return ApiResponse.ok(suspensionService.suspensionsOf(tenantId));
     }
 
+    @Operation(
+            summary =
+                    "配额视图（PLT-TEN-014，E05-T09）：上限（null=不限）与实时用量——启用中用户数、存储字节"
+                            + "（sys_file 未删除行合计；租户库不可达时为空）；用量达 80% 预警、达到上限即满额")
+    @GetMapping("/{tenantId}/quota")
+    @RequiresPermission("platform:tenant:view")
+    public ApiResponse<TenantQuotaService.QuotaView> quota(@PathVariable long tenantId) {
+        return ApiResponse.ok(quotaService.view(tenantId));
+    }
+
+    @Operation(
+            summary =
+                    "维护配额（PLT-TEN-014，E05-T09）：用户数与存储上限，null=不限（清除）；上限不强制高于当前用量，"
+                            + "调低只挡新增不回收存量；写 TENANT_QUOTA 审计（前后值）。租户侧拦截：达用户数上限禁止新建 / 启用用户（PLT-ORG-010），"
+                            + "达存储上限禁止上传")
+    @PutMapping("/{tenantId}/quota")
+    @RequiresPermission("platform:tenant:edit")
+    public ApiResponse<TenantQuotaService.QuotaView> updateQuota(
+            @PathVariable long tenantId,
+            @RequestBody TenantQuotaService.QuotaUpdateRequest request) {
+        return ApiResponse.ok(quotaService.update(tenantId, request));
+    }
+
     @Operation(summary = "按租户反查负责人（PLT-VIEW-006）：负责该租户的平台账号（platform-spec §8「平台账号管理 · 负责租户」）")
     @GetMapping("/{tenantId}/responsible-owners")
     @RequiresPermission("platform:account:view")
@@ -170,6 +204,12 @@ public class PlatformTenantController {
     @RequiresPermission("platform:tenant:create")
     public ApiResponse<TenantOnboardingService.OnboardingResult> create(
             @RequestBody CreateTenantRequest request) {
+        // 配额随本任务接入（PLT-TEN-014）：向导第 2 步可带初始上限，null=不限，非法值开工前拒绝（不建库不登记）
+        String quotaError =
+                TenantQuotaService.limitError(request.userLimit(), request.storageLimitBytes());
+        if (quotaError != null) {
+            throw new ApiException(400, 40001, quotaError);
+        }
         String code =
                 request.code() == null || request.code().isBlank()
                         ? suggestCode()
@@ -200,7 +240,9 @@ public class PlatformTenantController {
                                 request.adminInitialPassword(),
                                 expire,
                                 request.modules(),
-                                request.templateId())));
+                                request.templateId(),
+                                request.userLimit(),
+                                request.storageLimitBytes())));
     }
 
     @Operation(summary = "开通进度（PLT-TEN-008）：租户状态与逐步结果")

@@ -72,6 +72,8 @@ class FileUploadServiceTest {
     private final UploadParamMapper overrides = mock(UploadParamMapper.class);
     private final SysFileMapper files = mock(SysFileMapper.class);
     private final AuditLogger audit = mock(AuditLogger.class);
+    // E05-T09 / PLT-TEN-014：存储配额端口（默认不限；满额用例里回上限与用量）
+    private final TenantStorageQuota quota = mock(TenantStorageQuota.class);
     private ObjectStorage storage;
 
     private FilePolicyService policy;
@@ -89,7 +91,8 @@ class FileUploadServiceTest {
                         new ImageThumbnailGenerator(128),
                         files,
                         storage,
-                        audit);
+                        audit,
+                        quota);
         SecurityContextHolder.getContext()
                 .setAuthentication(
                         new UsernamePasswordAuthenticationToken(principal(), null, List.of()));
@@ -113,6 +116,8 @@ class FileUploadServiceTest {
                         })
                 .when(files)
                 .insert(any(SysFileRow.class));
+        // 存储配额默认不限（E05-T09 / PLT-TEN-014：满额用例单独回上限与用量）
+        lenient().when(quota.storageLimitBytes()).thenReturn(null);
     }
 
     @AfterEach
@@ -340,7 +345,8 @@ class FileUploadServiceTest {
                         new ImageThumbnailGenerator(128),
                         files,
                         brokenStorage(),
-                        audit);
+                        audit,
+                        quota);
         ApiException ex =
                 assertThrows(
                         ApiException.class,
@@ -361,6 +367,37 @@ class FileUploadServiceTest {
         FileUploadService.FileUploadView amr =
                 service.upload("通话（示例）.amr", FileTypeDetectorTest.amr());
         assertEquals("amr", amr.format());
+    }
+
+    // ---------------------------------------------------------------- 存储配额（E05-T09 / PLT-TEN-014）
+
+    /** 设置了存储上限且存量 + 本次将超出：40001 拒绝，不写对象也不落台账。 */
+    @Test
+    void storageQuotaRejectsUploadBeyondLimit() {
+        when(quota.storageLimitBytes()).thenReturn(10_000L);
+        // 存量已顶到上限：任何非空文件都放不下
+        when(files.sumActiveBytes()).thenReturn(10_000L);
+        byte[] body = FileTypeDetectorTest.pdf();
+        ApiException ex =
+                assertThrows(ApiException.class, () -> service.upload("出院小结（示例）.pdf", body));
+        assertEquals(40001, ex.code());
+        assertTrue(ex.getMessage().contains("存储空间已达上限"), "提示含原因：" + ex.getMessage());
+        verify(files, never()).insert(any(SysFileRow.class));
+        verify(audit, never()).record(any(AuditEvent.class));
+    }
+
+    /** 恰好放到上限（存量 + 本次 == 上限）允许；不限（null）时不查用量直接放行。 */
+    @Test
+    void storageQuotaAllowsExactFitAndSkipsCheckWhenUnlimited() {
+        when(quota.storageLimitBytes()).thenReturn((long) FileTypeDetectorTest.pdf().length);
+        when(files.sumActiveBytes()).thenReturn(0L);
+        FileUploadService.FileUploadView view =
+                service.upload("出院小结（示例）.pdf", FileTypeDetectorTest.pdf());
+        assertEquals("pdf", view.format());
+
+        when(quota.storageLimitBytes()).thenReturn(null);
+        service.upload("出院小结（示例）.pdf", FileTypeDetectorTest.pdf());
+        verify(files, org.mockito.Mockito.times(1)).sumActiveBytes();
     }
 
     // ---------------------------------------------------------------- 工具

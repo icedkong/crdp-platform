@@ -90,7 +90,8 @@ public class TenantOnboardingService {
      * 开通请求：编码与医院名称必填；首个管理员在开通时提供，也可启用前经 E06 补设。 expire 为向导第 2 步的到期设置（E05-T02
      * /PLT-TEN-011），空表示长期有效；重试重入时不会改写已登记租户的到期设置。 modules 为向导第 2 步勾选的 业务模块（E05-T05 /PLT-MOD-004，base
      * 必开不传），null 表示重试重入——沿用上次已登记模块。 templateId 为向导第 2 步选择的配置模板（E12-T05 / A-FLD-014
-     * 「新建租户时选择模板初始化」），null 表示未选择或重试重入——重入时沿用 plt_tenant.init_template_id 已登记的模板。
+     * 「新建租户时选择模板初始化」），null 表示未选择或重试重入——重入时沿用 plt_tenant.init_template_id 已登记的模板。 userLimit /
+     * storageLimitBytes 为向导第 2 步的初始配额（E05-T09 / PLT-TEN-014，null=不限），重试重入不改写已登记值。
      */
     public record OnboardingRequest(
             String code,
@@ -100,7 +101,33 @@ public class TenantOnboardingService {
             String adminInitialPassword,
             TenantLifecycleService.ExpiryView expire,
             List<String> modules,
-            Long templateId) {}
+            Long templateId,
+            Integer userLimit,
+            Long storageLimitBytes) {
+
+        /** 兼容构造（无配额 = 不限）：重试重入与旧调用方沿用的形态。 */
+        public OnboardingRequest(
+                String code,
+                String name,
+                String adminUsername,
+                String adminDisplayName,
+                String adminInitialPassword,
+                TenantLifecycleService.ExpiryView expire,
+                List<String> modules,
+                Long templateId) {
+            this(
+                    code,
+                    name,
+                    adminUsername,
+                    adminDisplayName,
+                    adminInitialPassword,
+                    expire,
+                    modules,
+                    templateId,
+                    null,
+                    null);
+        }
+    }
 
     public record StepResult(String step, String status, String error) {}
 
@@ -368,8 +395,8 @@ public class TenantOnboardingService {
                                 "INSERT INTO plt_tenant"
                                         + " (code, name, status, expire_type, expire_at,"
                                         + " remind_days, grace_days, grace_read_only,"
-                                        + " init_template_id)"
-                                        + " VALUES (?, ?, 'PROVISIONING', ?, ?, ?, ?, ?, ?)",
+                                        + " init_template_id, user_limit, storage_limit_bytes)"
+                                        + " VALUES (?, ?, 'PROVISIONING', ?, ?, ?, ?, ?, ?, ?, ?)",
                                 request.code(),
                                 request.name(),
                                 expire.expireType(),
@@ -377,7 +404,9 @@ public class TenantOnboardingService {
                                 TenantLifecycleService.joinRemindDays(expire.remindDays()),
                                 expire.graceDays(),
                                 expire.graceReadOnly() ? 1 : 0,
-                                request.templateId());
+                                request.templateId(),
+                                request.userLimit(),
+                                request.storageLimitBytes());
                     } catch (DuplicateKeyException ex) {
                         // 并发插入撞编码时重查可得；重查仍为空说明撞的是医院名称唯一键（E05-T01 起 name 唯一）
                         Long raced =

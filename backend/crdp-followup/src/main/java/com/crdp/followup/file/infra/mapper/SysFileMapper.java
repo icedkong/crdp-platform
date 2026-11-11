@@ -41,6 +41,10 @@ public interface SysFileMapper {
     @Select("SELECT COUNT(*) FROM sys_file WHERE sha256 = #{sha256} AND status <> 'DELETED'")
     int countBySha256(@org.apache.ibatis.annotations.Param("sha256") String sha256);
 
+    /** 存储用量（E05-T09 / PLT-TEN-014）：未删除行的 size_bytes 合计；空表返回 0。 上传前的配额校验（达到上限禁止上传）按本口径。 */
+    @Select("SELECT COALESCE(SUM(size_bytes), 0) FROM sys_file WHERE status <> 'DELETED'")
+    long sumActiveBytes();
+
     /**
      * 关联沟通记录录音（E15-T04 / A-FU-025）：PENDING → ATTACHED（守卫更新，落空 0 = 已关联他处或已删除， 调用方按 40001
      * 转译，防止同一文件挂两条沟通记录；报告单关联随 E16 复用同一状态机）。

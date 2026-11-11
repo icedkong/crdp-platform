@@ -76,6 +76,10 @@ public class UserAccountAdminService {
     private final AuditLogger audit;
     private final PermissionVersionStore permissionVersions;
     private final com.crdp.system.event.OrgUserEvents events;
+
+    /** E05-T09 / PLT-ORG-010：用户数配额拦截（达到上限禁止新建或启用用户；不限或读不到配额放行）。 */
+    private final com.crdp.server.platform.TenantQuotaGuard quotaGuard;
+
     private final RandomGenerator random = new SecureRandom();
 
     public UserAccountAdminService(
@@ -87,7 +91,8 @@ public class UserAccountAdminService {
             SecurityProperties securityProperties,
             AuditLogger audit,
             PermissionVersionStore permissionVersions,
-            com.crdp.system.event.OrgUserEvents events) {
+            com.crdp.system.event.OrgUserEvents events,
+            com.crdp.server.platform.TenantQuotaGuard quotaGuard) {
         this.jdbc = jdbc;
         this.cryptoService = cryptoService;
         this.passwordEncoder = passwordEncoder;
@@ -97,6 +102,7 @@ public class UserAccountAdminService {
         this.audit = audit;
         this.permissionVersions = permissionVersions;
         this.events = events;
+        this.quotaGuard = quotaGuard;
     }
 
     // ---------------------------------------------------------------- 视图与请求
@@ -345,6 +351,8 @@ public class UserAccountAdminService {
         if (!holder.isEmpty()) {
             throw duplicate("该手机号已绑定本院其他账号：" + maskedPhone(phone));
         }
+        // PLT-ORG-010：设置了用户数上限且启用中用户数已达上限 → 40901（新建即启用，占一个名额）
+        quotaGuard.assertUserQuotaAvailable(jdbc, "新建用户");
         String temporary =
                 generateTemporaryPassword(username, effectiveMinPasswordLength(), random);
         try {
@@ -484,6 +492,10 @@ public class UserAccountAdminService {
         String target = targetStatus(request);
         String current = str(row.get("status"));
         ensureTransition(current, target);
+        if (!STATUS_ENABLED.equals(current) && STATUS_ENABLED.equals(target)) {
+            // PLT-ORG-010：启用停用账号也占一个启用中名额，达上限即拒（RESIGNED 不可再启用，到不了这里）
+            quotaGuard.assertUserQuotaAvailable(jdbc, "启用用户");
+        }
         if (STATUS_ENABLED.equals(current) && isBuiltInTenantAdminMember(userId)) {
             guardLastEnabledTenantAdmin(userId, STATUS_RESIGNED.equals(target) ? "离职" : "停用");
         }

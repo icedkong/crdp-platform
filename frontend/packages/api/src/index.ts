@@ -610,10 +610,39 @@ export interface CreateTenantRequest {
   name: string;
   remindDays?: null | number[];
   /**
+  /** 初始存储上限（字节；E05-T09 / PLT-TEN-014）：省略 = 不限；达上限禁止上传。 */
+  storageLimitBytes?: null | number;
+  /**
    * 初始化所选配置模板（E12-T05 / A-FLD-014「新建租户时选择模板初始化」，向导第 2 步）：
    * 省略 = 不用模板（开通 config-template 步骤记 SKIPPED）；未知模板 40400。
    */
   templateId?: number;
+  /**
+   * 初始用户数上限（E05-T09 / PLT-TEN-014，向导第 2 步）：省略 = 不限；
+   * 上限按「启用中用户数」拦截新建与启用（PLT-ORG-010）。
+   */
+  userLimit?: null | number;
+}
+
+/**
+ * 配额视图（E05-T09 / PLT-TEN-014）：上限（null=不限）与实时用量；用量为 null 表示租户库
+ * 暂不可达（不阻塞展示）。用量达 80% 预警、达到上限即满额（*LimitReached）。
+ */
+export interface TenantQuotaView {
+  enabledUserCount: null | number;
+  storageLimitBytes: null | number;
+  storageLimitReached: boolean;
+  storageUsedBytes: null | number;
+  storageWarning: boolean;
+  userLimit: null | number;
+  userLimitReached: boolean;
+  userWarning: boolean;
+}
+
+/** 配额维护提交（PLT-TEN-014）：null / 省略 = 不限（清除上限）；上限不强制高于当前用量。 */
+export interface TenantQuotaUpdateRequest {
+  storageLimitBytes?: null | number;
+  userLimit?: null | number;
 }
 
 export interface TenantProvisionStep {

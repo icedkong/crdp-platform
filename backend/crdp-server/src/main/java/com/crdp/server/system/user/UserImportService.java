@@ -75,6 +75,10 @@ public class UserImportService {
     private final PasswordEncoder passwordEncoder;
     private final SecurityProperties securityProperties;
     private final AuditLogger audit;
+
+    /** E05-T09 / PLT-ORG-010：批量导入也是新建，达到用户数上限的行按行失败（单行失败不影响其他行的口径不变）。 */
+    private final com.crdp.server.platform.TenantQuotaGuard quotaGuard;
+
     private final RandomGenerator random = new SecureRandom();
 
     public UserImportService(
@@ -82,12 +86,14 @@ public class UserImportService {
             CryptoService cryptoService,
             PasswordEncoder passwordEncoder,
             SecurityProperties securityProperties,
-            AuditLogger audit) {
+            AuditLogger audit,
+            com.crdp.server.platform.TenantQuotaGuard quotaGuard) {
         this.jdbc = jdbc;
         this.cryptoService = cryptoService;
         this.passwordEncoder = passwordEncoder;
         this.securityProperties = securityProperties;
         this.audit = audit;
+        this.quotaGuard = quotaGuard;
     }
 
     /** 模板：表头 + 两行示例（全部虚构数据；示例账号 it.nurse.example 不与种子冲突）。 */
@@ -194,6 +200,9 @@ public class UserImportService {
             } catch (DuplicateKeyException ex) {
                 // 并发兜底：导入过程中他人新建了同账号 / 同手机号
                 results.add(new RowResult(row.rowNo(), row.username(), "FAILED", "账号或手机号已被其他用户占用"));
+            } catch (ApiException ex) {
+                // PLT-ORG-010：配额满额等业务拒绝按行失败（insertUser 里配额校验在落库前）
+                results.add(new RowResult(row.rowNo(), row.username(), "FAILED", ex.getMessage()));
             }
         }
         int failed = results.size() - created;
@@ -326,6 +335,8 @@ public class UserImportService {
             Map<String, Long> deptIdsByCode,
             Map<String, Long> wardIdsByCode,
             Map<String, Map<String, Object>> rolesByCode) {
+        // PLT-ORG-010：批量导入也是新建（导入即启用），配额满额该行失败
+        quotaGuard.assertUserQuotaAvailable(jdbc, "导入用户");
         String temporary =
                 UserAccountAdminService.generateTemporaryPassword(
                         row.username(),
