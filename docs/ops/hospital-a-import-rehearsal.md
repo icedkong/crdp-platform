@@ -3,7 +3,7 @@
 > 任务 E23-T06（测试，3 人天，依赖 E23-T05；验收：**抽样核对与汇总数核对一致**）。
 > 需求依据：`docs/requirements/hospital-a-spec.md` A-PAT-018（宽表历史数据导入）§4「宽表历史数据导入流程」与「校验报告中的常见问题」（Q36 / Q37 已确认口径）、A-NFR-001（约 5000 名历史患者，医院已确认）。
 > 按 `AGENTS.md` 第 9 节：「测试」任务交付自动化用例——仓库内常跑的是 **`ImportRehearsalVerifyIT`**（门控 `CRDP_IT_MYSQL_PORT`，CI 覆盖，门控与 `ImportScale5000IT` 同款），本手册是它在测试环境的人工对照版，也是 UAT J-2（`docs/testing/uat-hospital-a.md` §5 J 组）的执行依据。
-> 衔接：E23-T05（样本脱敏，本演练的输入）、E23-T07（技术执行与问题修复：**耗时记录与回滚演练**，见 `docs/ops/hospital-a-import-rollback.md`，不在本手册）、E23-T11（正式导入与上线切换，W36）。
+> 衔接：E23-T05（样本脱敏，本演练的输入）、E23-T07（技术执行与问题修复：**耗时记录与回滚演练**，见 `docs/ops/hospital-a-import-rollback.md`，不在本手册）、E23-T11（正式导入与上线切换，W36，见 `docs/ops/hospital-a-go-live.md`）。
 
 ## 1. 目标与验收口径
 
