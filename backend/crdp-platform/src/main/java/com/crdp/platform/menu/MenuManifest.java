@@ -124,6 +124,21 @@ public class MenuManifest {
                             "followup:patient:export",
                             null,
                             20),
+                    // E21-T01 / C-PAT-004、C-PAT-005：编辑植入记录（新增与编辑植入记录、电极；
+                    // 更换 / 升级与电极修正复用同一权限码，随 E21-T02）
+                    new MenuManifestItem(
+                            "followup",
+                            "HOSPITAL",
+                            "BUTTON",
+                            "followup:implant:edit",
+                            "FollowupPatient",
+                            "编辑植入记录",
+                            null,
+                            null,
+                            null,
+                            "followup:implant:edit",
+                            null,
+                            50),
                     // E09-T04 / A-NTF-001、C-NTF-001：通知设置（挂 base 的系统设置目录下，菜单本体属 followup 模块）
                     new MenuManifestItem(
                             "followup",

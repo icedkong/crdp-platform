@@ -106,7 +106,10 @@ class ImplantRecordIT {
     }
 
     @AfterAll
-    void restoreFeature() {
+    void cleanUp() {
+        // 与 PatientRegistrationIT 同款：最后一个用例的数据不外泄给同库后续 IT
+        // （紧随其后的 DashboardCardsIT 按精确条数断言患者状态分布）
+        cleanState();
         runInTenant(
                 "demoa",
                 () ->
