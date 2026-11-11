@@ -261,6 +261,7 @@ class TenantOnboardingServiceMySqlIT {
                 // imp_batch_write、fu_record 排期锚点列）；E18-T08 增加 V75（rpt_report 旧关联 legacy 列）；
                 // E19-T06 增加 V77（首页卡片目录 dash_card 与布局 dash_role_layout / 用户偏好 dash_user_pref）；
                 // M3 审查修复增加 V78（G1 rpt_report_link 空值占位唯一索引）与 V79（G8 列表排序列索引）。
+                // E23-T16 增加 V80（医院 B 预置计划 fu_plan / fu_plan_node / fu_plan_log，未发布草稿随包）。
                 // 此处随迁移清单维护
                 List.of(
                         "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14",
@@ -269,7 +270,7 @@ class TenantOnboardingServiceMySqlIT {
                         "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50",
                         "51", "52", "53", "54", "55", "56", "57", "58", "59", "60", "61", "62",
                         "63", "64", "65", "66", "67", "68", "69", "70", "71", "72", "73", "74",
-                        "75", "76", "77", "78", "79"),
+                        "75", "76", "77", "78", "79", "80"),
                 root.queryForList(
                         "SELECT version FROM "
                                 + DB
