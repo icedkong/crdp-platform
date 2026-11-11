@@ -11,6 +11,7 @@ import { useAccessStore, useUserStore } from '@vben/stores';
 import { tenantViewWatermarkText } from '@crdp/api';
 import { useResponsiveShell } from '@crdp/responsive';
 
+import AnnouncementBell from '#/components/notify/announcement-bell.vue';
 import NoticeBell from '#/components/notify/notice-bell.vue';
 import ProxyReasonDialog from '#/components/view/proxy-reason-dialog.vue';
 import TenantViewBanner from '#/components/view/tenant-view-banner.vue';
@@ -109,6 +110,8 @@ const userMenus = [
       <!-- E09-T02 / A-NTF-002、C-NTF-002：顶栏站内信铃铛（未读角标 60 秒轮询，点击消息跳到对应任务）；
            视角模式不轮询业务接口（视角令牌 fail closed，随 E20-T03 放开） -->
       <template v-if="!tenantViewStore.active" #notification>
+        <!-- E05-T11 / PLT-CFG-009：顶栏系统公告铃铛（平台发布，登录即可看；视角模式不轮询业务接口） -->
+        <AnnouncementBell />
         <NoticeBell />
       </template>
       <template #user-dropdown>

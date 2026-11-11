@@ -204,12 +204,17 @@ E20-T06 落地口径（PLT-VIEW-013、017、018，验收「默认关闭，开启
 | GET | `/api/platform/params` | `platform:param:edit` | **已实现（E06-T10）**。参数列表：`{paramKey,name,description,valueType(TEXT/NUMBER/BOOLEAN/ENUM/JSON),platformValue,tenantOverridable,valueRange,updatedAt}` | PLT-CFG-003 |
 | POST | `/api/platform/params` | `platform:param:edit` | **已实现**。新建：全部字段必填（说明可空）；参数键全局唯一（40902）、小写字母开头 3–64 位 `[a-z][a-z0-9.]`、创建后不可改；取值范围 JSON（NUMBER `{min,max}` 至少一端 / TEXT `{maxLength}` 1–512 / ENUM `{options[]}` 非空）可覆盖时必填（BOOLEAN/JSON 除外，范围本身非法 40001）；平台默认值也要过类型与范围校验（40001）；写 PARAM_CREATE 审计 | PLT-CFG-003 |
 | PUT | `/api/platform/params/{paramKey}` | `platform:param:edit` | **已实现**。维护名称 / 说明 / 值类型 / 平台默认值 / 层级（tenantOverridable）/ 取值范围（参数键不可改）；改为「平台锁定」不回写租户库——租户已覆盖的值即时失效并提示（`system.md` §4 stale），覆盖行保留、重新放开自动恢复；写 PARAM_UPDATE 审计（锁定流转在 detail 注明） | PLT-CFG-003、011 |
+| POST | `/api/platform/announcements` | `platform:notice:edit` | **已实现（E05-T11）**。发布公告（发布即生效，无草稿 / 排期）：`{title(1–128),content(1–5000),scope(ALL/TENANTS),tenantIds?}`；scope=ALL 不得携带 tenantIds、TENANTS 至少 1 个（≤50，去重，未知租户 40400）；发布后不可编辑，更正走撤下 + 重新发布；写 ANNOUNCEMENT_PUBLISH 审计 | PLT-CFG-009 |
+| GET | `/api/platform/announcements` | `platform:notice:edit` | **已实现**。公告分页（新→旧）：`?pageNo&pageSize&keyword(标题模糊,≤64)` → `{items[{id,title,scope,scopeText,status(PUBLISHED/REVOKED),tenants[{tenantId,tenantCode,tenantName}],publishedAt,publishedByName,revokedAt}],total,pageNo,pageSize}` | PLT-CFG-009 |
+| GET | `/api/platform/announcements/{id}` | `platform:notice:edit` | **已实现**。公告详情（含定向租户名单）；未知 40400 | PLT-CFG-009 |
+| PUT | `/api/platform/announcements/{id}/revoke` | `platform:notice:edit` | **已实现**。撤下公告（医院端即刻不可见，不可恢复）；未知 40400、已撤下 40901；写 ANNOUNCEMENT_REVOKE 审计 | PLT-CFG-009 |
+| GET | `/api/hospital/announcements` | 登录即可（无权限码，同个人中心一类） | **已实现**。本院可见的生效公告（PUBLISHED 且 scope=ALL 或定向命中；新→旧，上限 50 条）：`[{id,title,content,publishedAt}]`；只读平台库，不写租户库 | PLT-CFG-009 |
 
 | 资源 | 路径 | 权限 |
 |---|---|---|
 | 通知渠道与短信模板 | `/api/platform/notice/channels`、`/notice/templates` | `platform:notice:edit` |
 | Webhook | `/api/platform/webhooks`、`/webhooks/{id}/deliveries`、`.../deliveries/{id}/redeliver` | `platform:webhook:edit` |
-| 系统公告 | `/api/platform/announcements` | `platform:notice:edit` |
+| 系统公告 | `/api/platform/announcements`（**已实现，见上表**；医院端读取 `/api/hospital/announcements`） | `platform:notice:edit` |
 | 文件上传配置 | `/api/platform/params/upload`（格式、大小上限） | `platform:param:edit` |
 | 安全策略下限 | `/api/platform/security-policy`（密码策略、锁定、会话、二次认证场景） | `platform:security:edit` |
 | 配置模板 | 见 §7.1（导出 E12-T01、应用 E12-T02、敏感检查 E12-T03 均已实现；管理页与导入预览已随 E12-T04 落地，见 `docs/design/pages.md` §11） | 导出 `platform:tenant:create`，读 `platform:tenant:view` |

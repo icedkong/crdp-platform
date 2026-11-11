@@ -108,14 +108,30 @@ export type {
   SavedFilterPayload,
 } from './advanced-search';
 
+// E05-T11 系统公告（PLT-CFG-009）
+export {
+  announcementStatusText,
+  recentAnnouncementCount,
+} from './announcement';
+export type {
+  AnnouncementScope,
+  AnnouncementStatus,
+  AnnouncementTenantRef,
+  HospitalAnnouncement,
+  PlatformAnnouncementPage,
+  PlatformAnnouncementPublishRequest,
+  PlatformAnnouncementView,
+} from './announcement';
 // E08-T04 审计中心（PLT-AUD-005~007）
 export * from './audit';
+
 export {
   cooldownRemaining,
   isTwoFactorChallenge,
   maskPhone,
   pickTwoFactorChallenge,
 } from './auth-flow';
+
 export type { TwoFactorChallenge } from './auth-flow';
 
 // E13-T02 基线分节、基线锁定与解锁（A-PAT-003、A-PAT-005、A-PAT-006）
@@ -132,7 +148,6 @@ export {
   showBaselineUnlock,
   sliceSchemaCategory,
 } from './baseline';
-
 export type {
   BaselineCategoryProgress,
   BaselineDraftPayload,
@@ -154,6 +169,7 @@ export {
   doctorOptionLabel,
   filterDoctorsByWards,
 } from './batch-operation';
+
 export type {
   BatchOutcomeItem,
   BatchResult,
@@ -192,17 +208,16 @@ export {
   toCompareRuleUpdate,
   validateCompareRuleModel,
 } from './compare-rule';
-
 export type {
   CompareRule,
   CompareRuleParams,
   CompareRuleType,
   CompareRuleUpdate,
 } from './compare-rule';
-
 // E24-T07 真机兼容：structuredClone / Object.hasOwn 的全内核替身（微信 XWeb 等
 // 旧内核没有这两个 API，调用即 TypeError）
 export { deepCloneJson, hasOwnProp } from './compat';
+
 export {
   DICT_LOG_ACTION_TEXT,
   DICT_SOURCE_TEXT,
@@ -218,6 +233,7 @@ export {
   paramValueTypeText,
   validateOverrideValue,
 } from './config';
+
 export type {
   DictItemSource,
   DictStatus,
@@ -237,10 +253,8 @@ export type {
   TenantParamOverrideRequest,
   TenantParamView,
 } from './config';
-
 // E12-T04 配置模板管理页与导入预览（A-FLD-014，接口随 E12-T01/T02/T03 已交付）
 export * from './config-template';
-
 // E15-T04 沟通记录与录音（A-FU-006、A-FU-025、C-FU-019；pages.md §4.8）
 export {
   CONTACT_METHOD_OPTIONS,
@@ -367,6 +381,7 @@ export type {
 } from './notify';
 // E09-T07 发送记录与个人通知偏好（A-NTF-006、A-NTF-007）
 export { NOTIFY_SEND_STATUS_LABELS } from './notify';
+
 export type {
   NotifyPrefOption,
   NotifyPrefUpdate,
@@ -379,7 +394,6 @@ export type {
   NotifySettingsUpdate,
 } from './notify';
 export { DEPT_TYPE_OPTIONS, ORG_STATUS_TEXT, orgStatusText } from './org';
-
 export type {
   DeptImpactView,
   DeptNodeView,
@@ -498,6 +512,7 @@ export {
   duplicateNoticeOf,
   validateRegistration,
 } from './patient-registration';
+
 export type {
   DuplicateNotice,
   DuplicatePatientSummary,
@@ -532,6 +547,7 @@ export type {
   PatientSortSpec,
   PatientWardOption,
 } from './patient-search';
+
 export {
   API_ACTION_TYPE_TEXT,
   API_AUDIT_LEVEL_TEXT,
@@ -554,45 +570,6 @@ export {
   resourceChangeChannelText,
   resourceChangeTypeText,
 } from './perm-resources';
-
-export type {
-  ApiMarkRequest,
-  ApiResourceItem,
-  ApiSyncOutcome,
-  ApiSyncResult,
-  MenuCreateRequest,
-  MenuResourceNode,
-  MenuSyncApplyResult,
-  MenuSyncDiffItem,
-  MenuSyncDiffResult,
-  MenuUpdateRequest,
-  ResourceChangeAction,
-  ResourceChangeChannel,
-  ResourceChangeLogItem,
-  ResourceChangeLogPage,
-  ResourceChangeLogQuery,
-  ResourceChangeType,
-} from './perm-resources';
-
-// E14-T02 随访计划配置（docs/api/followup.md §1；页面 pages.md §8）
-export {
-  PLAN_ENROLL_MODE_TEXT,
-  PLAN_ENROLLMENT_STATUS_TEXT,
-  PLAN_LOG_ACTION_TEXT,
-  PLAN_NODE_BASIS_TEXT,
-  PLAN_OFFSET_UNIT_TEXT,
-  PLAN_OWNER_TYPE_TEXT,
-  PLAN_PASSED_WINDOW_TEXT,
-  PLAN_REMIND_UNIT_TEXT,
-  PLAN_REPEAT_MODE_TEXT,
-  PLAN_START_DATE_FIELD_OPTIONS,
-  PLAN_START_DATE_FIELD_TEXT,
-  PLAN_TASK_TYPE_TEXT,
-  planCycleText,
-  planEnrollmentStatusText,
-  planLogActionText,
-  planStartDateFieldText,
-} from './plan';
 
 export interface CreateTenantRequest {
   /** 不填由后端自动生成（页面展示建议值可改）。 */
@@ -1097,6 +1074,44 @@ export interface ModuleOpenLog {
 }
 
 export type {
+  ApiMarkRequest,
+  ApiResourceItem,
+  ApiSyncOutcome,
+  ApiSyncResult,
+  MenuCreateRequest,
+  MenuResourceNode,
+  MenuSyncApplyResult,
+  MenuSyncDiffItem,
+  MenuSyncDiffResult,
+  MenuUpdateRequest,
+  ResourceChangeAction,
+  ResourceChangeChannel,
+  ResourceChangeLogItem,
+  ResourceChangeLogPage,
+  ResourceChangeLogQuery,
+  ResourceChangeType,
+} from './perm-resources';
+// E14-T02 随访计划配置（docs/api/followup.md §1；页面 pages.md §8）
+export {
+  PLAN_ENROLL_MODE_TEXT,
+  PLAN_ENROLLMENT_STATUS_TEXT,
+  PLAN_LOG_ACTION_TEXT,
+  PLAN_NODE_BASIS_TEXT,
+  PLAN_OFFSET_UNIT_TEXT,
+  PLAN_OWNER_TYPE_TEXT,
+  PLAN_PASSED_WINDOW_TEXT,
+  PLAN_REMIND_UNIT_TEXT,
+  PLAN_REPEAT_MODE_TEXT,
+  PLAN_START_DATE_FIELD_OPTIONS,
+  PLAN_START_DATE_FIELD_TEXT,
+  PLAN_TASK_TYPE_TEXT,
+  planCycleText,
+  planEnrollmentStatusText,
+  planLogActionText,
+  planStartDateFieldText,
+} from './plan';
+
+export type {
   PlanCreateRequest,
   PlanCycleType,
   PlanDetailView,
@@ -1227,7 +1242,6 @@ export type {
   ReportTypeView,
 } from './report-config';
 export type { OnlineSessionView } from './session';
-
 // E15-T02 / A-FU-004、A-FU-005、C-FU-020：我的任务、任务列表与随访工作台；
 // E15-T06 / A-FU-013、A-FU-026：临时添加任务与站内提醒（无需填表）
 export {
@@ -1285,6 +1299,7 @@ export {
   tenantRoleTypeHint,
   tenantRoleTypeText,
 } from './tenant-role';
+
 export type {
   FieldPolicy,
   RoleScopeType,
@@ -1307,7 +1322,6 @@ export type {
   TenantRoleView,
 } from './tenant-role';
 export { TENANT_SCOPE_STATE_TEXT } from './tenant-scope';
-
 export type {
   ScopeTemplateItem,
   ScopeTemplateModule,
@@ -1371,6 +1385,7 @@ export type {
 export { menuNodesToRoutes, menuNodeToRoute, toIconifyIcon } from './vben-menu';
 export type { VbenMenuRoute } from './vben-menu';
 export * from './view-rule';
+
 export {
   buildTransferPayload,
   buildWardPayload,
