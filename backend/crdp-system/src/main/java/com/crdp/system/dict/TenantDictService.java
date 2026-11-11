@@ -182,6 +182,15 @@ public class TenantDictService {
     }
 
     /**
+     * 生效项列表（含停用项，供调用方区分「进下拉」与「历史值照常显示」，C-FLD-009）； 字典不存在（未预置或平台停用）返回空列表——业务读取端口用，不抛 40400（E21-T04
+     * 植入记录选项）。
+     */
+    public List<DictItemView> itemsOrEmpty(String code) {
+        List<DictItemView> merged = mergedItemsOf(code);
+        return merged == null ? List.of() : merged;
+    }
+
+    /**
      * 字典变更记录（A-FLD-009、C-FLD-009）：倒序最近 {@value LOG_LIMIT} 条，含前后值快照、操作人（联查 sys_user 姓名）与时间；未知字典
      * 40400。
      */

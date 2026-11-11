@@ -221,6 +221,28 @@ class TenantDictServiceTest {
         assertEquals(40400, assertThrows(ApiException.class, () -> service.logs("nosuch")).code());
     }
 
+    @Test
+    void itemsOrEmptyKeepsDisabledRowsAndReturnsEmptyForUnknownDict() {
+        // E21-T04：业务读取端口（植入记录选项）用——含停用行（历史值照常显示，C-FLD-009），未知字典不抛 40400
+        when(port.dict("pacing_mode")).thenReturn(Optional.of(GENDER));
+        when(mapper.findOwnDict("pacing_mode")).thenReturn(null);
+        ConfigMapper.ItemRow disabled = new ConfigMapper.ItemRow();
+        disabled.setDictCode("pacing_mode");
+        disabled.setItemCode("1");
+        disabled.setSource("PLATFORM");
+        disabled.setStatus("DISABLED");
+        disabled.setSortNo(10);
+        when(mapper.listItems("pacing_mode")).thenReturn(List.of(disabled));
+
+        List<TenantDictService.DictItemView> items = service.itemsOrEmpty("pacing_mode");
+        assertEquals(2, items.size(), "停用行保留（调用方按 status 区分下拉与历史显示）");
+        assertEquals("DISABLED", items.get(0).status());
+
+        when(port.dict(anyString())).thenReturn(Optional.empty());
+        when(mapper.findOwnDict(anyString())).thenReturn(null);
+        assertTrue(service.itemsOrEmpty("nosuch").isEmpty(), "未知字典返回空列表而非 40400");
+    }
+
     // --------------------------------------------------------------- E11-T08：别名与变更记录
 
     private static final PlatformConfigPort.PlatformDictDef PATIENT_TYPE =
