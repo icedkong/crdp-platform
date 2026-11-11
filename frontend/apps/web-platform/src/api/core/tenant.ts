@@ -9,6 +9,8 @@ import type {
   TenantListQuery,
   TenantOnboardingResult,
   TenantProvisionView,
+  TenantQuotaUpdateRequest,
+  TenantQuotaView,
   TenantStatusAction,
   TenantStatusImpact,
   TenantStatusResult,
@@ -106,5 +108,29 @@ export function applyTenantExpiry(tenantId: number, data: TenantExpireRequest) {
 export function listResponsibleOwners(tenantId: number) {
   return requestClient.get<PlatformResponsibleOwner[]>(
     apiPath(`/tenants/${tenantId}/responsible-owners`),
+  );
+}
+
+/**
+ * 配额视图（E05-T09 / PLT-TEN-014）：上限（null=不限）与实时用量（启用中用户数、存储字节）；
+ * 用量达 80% 预警、达到上限即满额；租户库不可达时用量为空。
+ */
+export function tenantQuota(tenantId: number) {
+  return requestClient.get<TenantQuotaView>(
+    apiPath(`/tenants/${tenantId}/quota`),
+  );
+}
+
+/**
+ * 维护配额（PLT-TEN-014）：用户数与存储上限，null = 不限（清除）；写 TENANT_QUOTA 审计。
+ * 租户侧拦截：达用户数上限禁止新建 / 启用用户（PLT-ORG-010），达存储上限禁止上传。
+ */
+export function updateTenantQuota(
+  tenantId: number,
+  data: TenantQuotaUpdateRequest,
+) {
+  return requestClient.put<TenantQuotaView>(
+    apiPath(`/tenants/${tenantId}/quota`),
+    data,
   );
 }

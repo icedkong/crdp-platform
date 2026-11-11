@@ -54,12 +54,17 @@ class UserImportServiceTest {
     private final PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
     private final SecurityProperties securityProperties = new SecurityProperties();
     private final AuditLogger audit = mock(AuditLogger.class);
+    // E05-T09 / PLT-ORG-010：配额拦截（默认放行；满额用例里对指定动作抛 40901）
+    private final com.crdp.server.platform.TenantQuotaGuard quotaGuard =
+            mock(com.crdp.server.platform.TenantQuotaGuard.class);
 
     private UserImportService service;
 
     @BeforeEach
     void setUp() {
-        service = new UserImportService(jdbc, crypto, passwordEncoder, securityProperties, audit);
+        service =
+                new UserImportService(
+                        jdbc, crypto, passwordEncoder, securityProperties, audit, quotaGuard);
         TenantContext.useTenant(TENANT_ID, "demoa");
         stubDirectory(
                 List.of(
@@ -213,6 +218,37 @@ class UserImportServiceTest {
         verify(jdbc).update(contains("sys_user_ward"), eq(55L), eq(WARD_ID));
         verify(jdbc).update(contains("sys_user_dept_scope"), eq(55L), eq(DEPT_ID));
         verify(jdbc, never()).update(contains("UPDATE sys_user"), any(Object[].class));
+    }
+
+    /** E05-T09 / PLT-ORG-010：批量导入也是新建——配额满额的行按行失败（带原因），后续行照常校验落库， 且失败行不触发 INSERT。 */
+    @Test
+    void quotaFullRowFailsAloneAndReportsReason() {
+        org.mockito.Mockito.doThrow(
+                        new com.crdp.framework.web.ApiException(
+                                409, 40901, "已达用户数上限（5），无法导入用户，请联系平台调整配额"))
+                .when(quotaGuard)
+                .assertUserQuotaAvailable(jdbc, "导入用户");
+        ImportReport report =
+                service.importUsers(
+                        xlsx(
+                                UserImportHeaders.EXPECTED,
+                                List.of(
+                                        List.of(
+                                                "it.nurse.full",
+                                                "李护士（示例）",
+                                                "S-1001",
+                                                "13900000001",
+                                                "DEPT-CARDIO",
+                                                "FOLLOWUP_DOCTOR",
+                                                "",
+                                                ""))));
+        assertEquals(1, report.total());
+        assertEquals(0, report.created());
+        assertEquals(1, report.failed());
+        RowResult row = report.rows().get(0);
+        assertEquals("FAILED", row.action());
+        assertEquals("已达用户数上限（5），无法导入用户，请联系平台调整配额", row.message());
+        verify(jdbc, never()).update(contains("INSERT INTO sys_user"), any(Object[].class));
     }
 
     @Test

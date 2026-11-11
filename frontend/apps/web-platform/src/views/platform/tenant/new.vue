@@ -40,6 +40,12 @@ import {
   validateExpiryForm,
 } from './lifecycle';
 import {
+  EMPTY_QUOTA_FORM,
+  quotaFormText,
+  toCreateQuota,
+  validateQuotaForm,
+} from './quota';
+import {
   PROVISION_TITLES,
   provisionSkipText,
   subdomainPreview,
@@ -117,6 +123,9 @@ onMounted(async () => {
 // 到期设置（E05-T02 / PLT-TEN-011，向导第 2 步）：默认长期有效，选择有到期日时展开其余项
 const expiry = reactive({ ...EMPTY_EXPIRY_FORM });
 const expiryErrors = computed(() => validateExpiryForm(expiry));
+// 配额（E05-T09 / PLT-TEN-014，向导第 2 步）：默认不限；开启后填入上限（存储 GB → 字节）
+const quota = reactive({ ...EMPTY_QUOTA_FORM });
+const quotaErrors = computed(() => validateQuotaForm(quota));
 const adminSkipped = ref(true);
 const admin = reactive({
   displayName: '',
@@ -148,7 +157,10 @@ const canLeaveStep = computed(() => {
     return basic.name.trim().length > 0 && !codeError.value;
   }
   if (current.value === 1) {
-    return Object.keys(expiryErrors.value).length === 0;
+    return (
+      Object.keys(expiryErrors.value).length === 0 &&
+      Object.keys(quotaErrors.value).length === 0
+    );
   }
   if (current.value === 2) {
     return (
@@ -188,6 +200,7 @@ async function submit() {
       name: basic.name.trim(),
       templateId: templateId.value,
       ...toCreateExpiry(expiry),
+      ...toCreateQuota(quota),
     });
   } catch (error) {
     submitError.value = error instanceof Error ? error.message : String(error);
@@ -353,6 +366,39 @@ const provisionItems = computed(() => {
             </span>
           </FormItem>
         </template>
+        <!-- 配额（E05-T09 / PLT-TEN-014）：默认不限；保存后可随时在详情「配额」页签调整 -->
+        <FormItem
+          label="用户数上限"
+          :help="
+            quota.userLimited ? '达到上限后禁止新建或启用用户' : '不限（默认）'
+          "
+        >
+          <Switch v-model:checked="quota.userLimited" />
+          <InputNumber
+            v-if="quota.userLimited"
+            v-model:value="quota.userLimit"
+            :min="1"
+            :precision="0"
+            placeholder="如：50"
+            style="width: 160px; margin-left: 12px"
+          />
+        </FormItem>
+        <FormItem
+          label="存储上限（GB）"
+          :help="
+            quota.storageLimited ? '达到上限后禁止上传文件' : '不限（默认）'
+          "
+        >
+          <Switch v-model:checked="quota.storageLimited" />
+          <InputNumber
+            v-if="quota.storageLimited"
+            v-model:value="quota.storageLimitGb"
+            :min="0.1"
+            :step="1"
+            placeholder="如：100"
+            style="width: 160px; margin-left: 12px"
+          />
+        </FormItem>
       </Form>
 
       <!-- 第 3 步：首个租户管理员（可跳过，启用前补设） -->
@@ -417,6 +463,9 @@ const provisionItems = computed(() => {
         </DescriptionsItem>
         <DescriptionsItem label="到期设置">
           {{ expiryFormText(expiry) }}
+        </DescriptionsItem>
+        <DescriptionsItem label="配额">
+          {{ quotaFormText(quota) }}
         </DescriptionsItem>
         <DescriptionsItem label="首个管理员">
           {{

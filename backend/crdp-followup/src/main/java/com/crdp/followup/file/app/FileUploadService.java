@@ -55,19 +55,24 @@ public class FileUploadService {
     private final ObjectStorage storage;
     private final AuditLogger audit;
 
+    /** 存储配额（E05-T09 / PLT-TEN-014）：达到上限禁止上传；null=不限不校验。 */
+    private final TenantStorageQuota quota;
+
     public FileUploadService(
             FilePolicyService policy,
             FileTypeDetector detector,
             ImageThumbnailGenerator thumbnails,
             SysFileMapper files,
             ObjectStorage storage,
-            AuditLogger audit) {
+            AuditLogger audit,
+            TenantStorageQuota quota) {
         this.policy = policy;
         this.detector = detector;
         this.thumbnails = thumbnails;
         this.files = files;
         this.storage = storage;
         this.audit = audit;
+        this.quota = quota;
     }
 
     /** 上传结果（report.md §1：fileId、sha256、size、mime、format、originalName、pages）。 */
@@ -131,6 +136,20 @@ public class FileUploadService {
             thumbnail = thumbnails.generate(body, mime);
             pages = 1;
         }
+        // 存储配额（E05-T09 / PLT-TEN-014）：设置了上限且存量 + 本次将超出 → 拒绝（写任何对象之前）；
+        // 不限（null）不校验。用量口径 = 未删除台账行的 size_bytes 合计；80% 预警由平台配额视图展示
+        Long storageLimit = quota.storageLimitBytes();
+        if (storageLimit != null) {
+            long used = files.sumActiveBytes();
+            if (used + body.length > storageLimit) {
+                throw bad(
+                        "存储空间已达上限（"
+                                + formatBytes(storageLimit)
+                                + "，已用 "
+                                + formatBytes(used)
+                                + "），无法上传，请联系平台调整配额");
+            }
+        }
         // 先 PUT 对象再落台账（ADR 0006 §4）：台账失败只留下无引用的孤儿对象（键含随机 UUID），
         // 反过来会留下取不到内容的 PENDING 台账行；租户前缀由存储端口强制（验收：按租户前缀隔离）
         String objectKey = storage.put(relativeKey("files", real), body, mime);
@@ -173,6 +192,17 @@ public class FileUploadService {
     }
 
     // ---------------------------------------------------------------- 私有
+
+    /** 字节数的展示文案（配额提示用）：MB / GB 一位小数，小于 1 MB 按字节。 */
+    static String formatBytes(long bytes) {
+        if (bytes < 1024 * 1024) {
+            return bytes + " 字节";
+        }
+        if (bytes < 1024L * 1024 * 1024) {
+            return String.format(Locale.ROOT, "%.1f MB", bytes / 1024.0 / 1024.0);
+        }
+        return String.format(Locale.ROOT, "%.1f GB", bytes / 1024.0 / 1024.0 / 1024.0);
+    }
 
     /** 去掉路径部分、限制长度；无文件名 / 超长 / 含路径分隔符直接 40001。 */
     private static String sanitizeName(String filename) {

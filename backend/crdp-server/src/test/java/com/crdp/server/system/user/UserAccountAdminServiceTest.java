@@ -61,6 +61,9 @@ class UserAccountAdminServiceTest {
     private final PermissionVersionStore permissionVersions = mock(PermissionVersionStore.class);
     private final com.crdp.system.event.OrgUserEvents events =
             mock(com.crdp.system.event.OrgUserEvents.class);
+    // E05-T09 / PLT-ORG-010：用户数配额拦截（达到上限禁止新建或启用用户）
+    private final com.crdp.server.platform.TenantQuotaGuard quotaGuard =
+            mock(com.crdp.server.platform.TenantQuotaGuard.class);
 
     private UserAccountAdminService service;
 
@@ -76,7 +79,8 @@ class UserAccountAdminServiceTest {
                         securityProperties,
                         audit,
                         permissionVersions,
-                        events);
+                        events,
+                        quotaGuard);
         TenantContext.useTenant(TENANT_ID, "demoa");
         stubUserRow(userRow("ENABLED"));
         stubRoles(List.of(Map.of("id", ROLE_ID, "code", "FOLLOWUP_DOCTOR", "role_type", "CUSTOM")));
@@ -243,6 +247,42 @@ class UserAccountAdminServiceTest {
     }
 
     // ---------------------------------------------------------------- 新建（PLT-ORG-006 新建用户流程）
+
+    /** E05-T09 / PLT-ORG-010：设置了用户数上限且达到上限时，新建与启用用户被拒（40901），不落库； 不限时（guard 放行）正常创建与启用。 */
+    @Test
+    void userQuotaBlocksCreateAndEnableWhenLimitReached() {
+        org.mockito.Mockito.doThrow(new ApiException(409, 40901, "已达用户数上限（5），无法新建用户，请联系平台调整配额"))
+                .when(quotaGuard)
+                .assertUserQuotaAvailable(jdbc, "新建用户");
+        ApiException blocked =
+                assertThrows(ApiException.class, () -> service.create(validCreateRequest()));
+        assertEquals(40901, blocked.code());
+        verify(jdbc, never()).update(contains("INSERT INTO sys_user"), any(Object[].class));
+        org.mockito.Mockito.verify(quotaGuard).assertUserQuotaAvailable(jdbc, "新建用户");
+
+        // 启用停用账号同样受配额拦截（新建即启用、启用 +1，计数为启用中用户）
+        stubUserRow(userRow("DISABLED"));
+        org.mockito.Mockito.doThrow(new ApiException(409, 40901, "已达用户数上限（5），无法启用用户，请联系平台调整配额"))
+                .when(quotaGuard)
+                .assertUserQuotaAvailable(jdbc, "启用用户");
+        ApiException enableBlocked =
+                assertThrows(
+                        ApiException.class,
+                        () -> service.changeStatus(USER_ID, new StatusChange("ENABLE", null)));
+        assertEquals(40901, enableBlocked.code());
+        verify(jdbc, never()).update(contains("UPDATE sys_user SET status"), any(Object[].class));
+    }
+
+    /** 配额不限（guard 默认放行）：新建与启用照常，且校验点在落库前（动作标签正确）。 */
+    @Test
+    void userQuotaUncheckedWhenUnlimited() {
+        service.create(validCreateRequest());
+        org.mockito.Mockito.verify(quotaGuard).assertUserQuotaAvailable(jdbc, "新建用户");
+
+        stubUserRow(userRow("DISABLED"));
+        service.changeStatus(USER_ID, new StatusChange("ENABLE", null));
+        org.mockito.Mockito.verify(quotaGuard).assertUserQuotaAvailable(jdbc, "启用用户");
+    }
 
     @Test
     void createRequiresRoleMainDeptAndUniqueUsernameAndPhone() {
