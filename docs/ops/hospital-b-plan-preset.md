@@ -3,7 +3,7 @@
 > 任务 E23-T16（产品 · 产品，2 人天，依赖 **E23-T15** B 租户开通；验收：**节点、提醒与窗口按 Q42 配出**）。
 > 需求依据：`docs/requirements/hospital-a-spec.md` 第 14 章「随访计划（医院 B 预置）」与「术后第 1 / 3 / 5 天任务」（Q42 窗口与频率、Q43 完整随访记录表单、Q44 出院时建档与补录）、A-FU-016（计划模板三层结构）、A-FU-017（预置计划的 B 侧对应）。
 > 按 `AGENTS.md` 第 9 节：生产侧的激活操作（停用 A 预置、发布 B 预置、与医院 B 确认节点参数）由实施 / 租户管理员在场完成，本 runbook 是他们照着走的**配置手册**；仓库交付预置迁移（followup V80）、行级核对（`BPresetPlanSqlTest`，CI 恒跑）与激活路径演练 IT（`BPresetPlanVerifyIT`，门控 CRDP_IT_MYSQL_PORT，demob 作 B 化身走完全链路）。
-> 衔接：E23-T15（B 租户开通，配置与 A 一致）→ **E23-T16（本任务）** → E23-T17（B 验收：补录任务与节点随访率）、E23-T19（B 上线切换，复用 `hospital-a-go-live.md` §6 口径）。
+> 衔接：E23-T15（B 租户开通，配置与 A 一致）→ **E23-T16（本任务）** → E23-T17（B 验收：补录任务与节点随访率）、E23-T19（B 上线切换，runbook `docs/ops/hospital-b-go-live.md`，复用 `hospital-a-go-live.md` 口径）。
 
 ## 1. 目标与验收口径
 

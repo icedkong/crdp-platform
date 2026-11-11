@@ -155,6 +155,13 @@ jobs:
       # 生产验收由测试 + 实施按 docs/testing/hospital-b-acceptance.md 在场执行（W38）。
       - name: 医院B验收校验（E23-T17）
         run: python3 scripts/check_hospital_b_acceptance.py
+      # E23-T19：医院 B 上线（W38）。上线切换 runbook 防漂移校验（tasks.csv 行 /
+      # 三处差异声明（无导入 · 入口复用 · 转正已随 E23-T15）/ 闸门 / 切换动作 /
+      # 冒烟清单 BG-x / 回滚租户级收敛 / 互引）；机器侧锚点为引用型（五个既有 IT，
+      # 不新建）；生产切换与冒烟由持账号运维 / 测试按 docs/ops/hospital-b-go-live.md
+      # 在场执行（W38）。
+      - name: 医院B上线校验（E23-T19）
+        run: python3 scripts/check_hospital_b_golive.py
       - name: 关闭依赖容器
         if: always()
         run: docker compose down -v
