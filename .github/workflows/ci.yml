@@ -103,6 +103,14 @@ jobs:
       # 报告勾稽）；健康检查、医院端冒烟、DEW 密钥、抢锁为生产核对项，由人按清单执行。
       - name: 恢复演练核对（E22-T12）
         run: python3 scripts/drill_recovery_check.py --drill
+      # E23-T11：医院 A 正式数据导入与上线切换。runbook 防漂移校验（放行闸门 / 核对口径 /
+      # 回滚引用 / 转正动作）+ 核对工具自检（台账 / 只读护栏）+ 在 compose MySQL 上自验
+      # （虚构终态全 PASS、四类差异逐项检出、清场归零）；生产核对由持账号运维按 runbook §5.2 执行。
+      - name: 上线切换校验（E23-T11）
+        run: |
+          python3 scripts/golive_import_verify.py --selftest
+          python3 scripts/golive_import_verify.py
+          python3 scripts/golive_import_verify.py --drill
       - name: 关闭依赖容器
         if: always()
         run: docker compose down -v

@@ -126,4 +126,4 @@ CRDP_IT_MYSQL_PORT=13306 mvn -B -f backend/pom.xml -pl crdp-server test -Dtest=I
 - 测试环境现场演练的排期与参加人员（开发 + 测试在场；医院脱敏样本版需实施 / 产品在场）；
 - 用**医院脱敏样本**走 §5 同环演练（样本交接与保密按 `docs/ops/hospital-a-sample-intake.md` §4；真实数据只到测试环境、永不进仓库）；
 - §6 演练记录的归档与放行结论（供 E23-T11 正式导入与上线切换引用）；
-- E23-T11 生产导入前按本方案 §1 确认回滚预案已评审（生产导入只在核对不一致时才触发回滚，正常路径见 `docs/tasks/tasks.csv` E23-T11）。
+- E23-T11 生产导入前按本方案 §1 确认回滚预案已评审（生产导入只在核对不一致时才触发回滚，正常路径与上线切换见 `docs/ops/hospital-a-go-live.md`）。
