@@ -149,13 +149,19 @@ public class CompareSourceService {
         return enabled;
     }
 
-    /** 白名单键：启用规则的对比字段 + 新发事件规则的日期字段（params.dateField）。 */
+    /**
+     * 白名单键：启用规则的对比字段 + 新发事件规则的日期字段（params.dateField）+ 变化率规则的参考注字段（params.noteField，E21-T20 脉宽参考）。
+     */
     private static Set<String> referencedKeys(List<CompareRuleRow> enabled) {
         Set<String> keys = new LinkedHashSet<>();
         for (CompareRuleRow row : enabled) {
             keys.add(row.targetField());
             Object dateField = readParams(row.params()).get("dateField");
             if (dateField instanceof String key && !key.isBlank()) {
+                keys.add(key);
+            }
+            Object noteField = readParams(row.params()).get("noteField");
+            if (noteField instanceof String key && !key.isBlank()) {
                 keys.add(key);
             }
         }

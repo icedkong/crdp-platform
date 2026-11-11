@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   conditionText,
+  toCompareRuleFormModel,
   toCompareRuleUpdate,
   validateCompareRuleModel,
 } from './compare-rule';
@@ -99,6 +100,50 @@ describe('e17-T01 对比规则（A-FU-027）', () => {
       params: { direction: 'DROP', threshold: 15 },
     });
     expect((update.params as Record<string, unknown>).direction).toBe('DROP');
+  });
+
+  it('e21-T20：C 起搏阈值规则（含脉宽参考注键）调阈值时 noteField / noteText 原样保留', () => {
+    const raThresholdRise: CompareRule = {
+      ...efDrop,
+      baselineField: null,
+      baselineFieldLabel: null,
+      baselineFormCode: null,
+      categoryKey: 'threshold',
+      fieldLabel: null,
+      fieldUnit: 'V',
+      formCode: 'C_PROGRAM_FU',
+      formName: null,
+      message: '心房起搏阈值比上次升高超过 50%',
+      name: '心房起搏阈值升高',
+      params: {
+        direction: 'RISE',
+        noteField: 'f309',
+        noteText: '脉宽不同，仅供参考',
+        percent: 50,
+      },
+      ruleCode: 'ra_threshold_rise',
+      ruleType: 'CHANGE_PCT',
+      ruleTypeLabel: '变化率',
+      targetField: 'f308',
+    };
+    const model = toCompareRuleFormModel(raThresholdRise);
+    expect(model).toEqual({ enabled: true, threshold: 50 });
+    const update = toCompareRuleUpdate(raThresholdRise, {
+      enabled: true,
+      threshold: 60,
+    });
+    expect(update.params).toEqual({
+      direction: 'RISE',
+      noteField: 'f309',
+      noteText: '脉宽不同，仅供参考',
+      percent: 60,
+    });
+    expect(
+      validateCompareRuleModel(raThresholdRise, {
+        enabled: true,
+        threshold: 60,
+      }),
+    ).toEqual([]);
   });
 
   it('表单校验与后端同口径：空值 / 越界 / 小数位', () => {

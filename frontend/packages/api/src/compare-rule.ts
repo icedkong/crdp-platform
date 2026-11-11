@@ -26,6 +26,10 @@ export interface CompareRuleParams {
   direction?: 'ANY' | 'DROP' | 'RISE';
   /** ORDINAL_RISE：升级级数（1–5）。 */
   grades?: number;
+  /** CHANGE_PCT：参考注字段键（C 脉宽，E21-T20 / C-FU-010；预置，只读）。 */
+  noteField?: string;
+  /** CHANGE_PCT：noteField 本次与上一次均为数值且不同时追加的注（如「脉宽不同，仅供参考」；预置，只读）。 */
+  noteText?: string;
   /** OUT_OF_RANGE / VALUE_HIT：比较符。 */
   op?: 'GT' | 'GTE' | 'LT' | 'LTE';
   /** CHANGE_PCT：变化率百分比阈值。 */

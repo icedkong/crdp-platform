@@ -94,6 +94,83 @@ class CompareRuleTypeTest {
                                 params("direction", "RISE", "percent", 50.5)));
     }
 
+    /**
+     * 变化率参考注键（E21-T20 / C-FU-010「脉宽不同，仅供参考」）：noteField 与 noteText 成对出现或都省略； 单边缺失、空串、超长 → 40001；DIFF
+     * 不支持参考注键（未知键）。
+     */
+    @Test
+    void changePctValidatesNoteKeys() {
+        assertDoesNotThrow(
+                () ->
+                        CompareRuleType.CHANGE_PCT.validateParams(
+                                params(
+                                        "direction",
+                                        "RISE",
+                                        "percent",
+                                        50,
+                                        "noteField",
+                                        "f309",
+                                        "noteText",
+                                        "脉宽不同，仅供参考")));
+        // 只带一边 → 40001
+        assertEquals(
+                40001,
+                invalid(
+                                CompareRuleType.CHANGE_PCT,
+                                params("direction", "RISE", "percent", 50, "noteField", "f309"))
+                        .code());
+        assertEquals(
+                40001,
+                invalid(
+                                CompareRuleType.CHANGE_PCT,
+                                params("direction", "RISE", "percent", 50, "noteText", "脉宽不同，仅供参考"))
+                        .code());
+        // 空串 / 超长文案 → 40001
+        assertEquals(
+                40001,
+                invalid(
+                                CompareRuleType.CHANGE_PCT,
+                                params(
+                                        "direction",
+                                        "RISE",
+                                        "percent",
+                                        50,
+                                        "noteField",
+                                        " ",
+                                        "noteText",
+                                        "脉宽不同，仅供参考"))
+                        .code());
+        assertEquals(
+                40001,
+                invalid(
+                                CompareRuleType.CHANGE_PCT,
+                                params(
+                                        "direction",
+                                        "RISE",
+                                        "percent",
+                                        50,
+                                        "noteField",
+                                        "f309",
+                                        "noteText",
+                                        "注".repeat(51)))
+                        .code());
+        // DIFF 不支持参考注键（未知键）
+        assertEquals(
+                40001,
+                invalid(
+                                CompareRuleType.DIFF,
+                                params(
+                                        "direction",
+                                        "RISE",
+                                        "threshold",
+                                        5,
+                                        "noteField",
+                                        "f309",
+                                        "noteText",
+                                        "脉宽不同，仅供参考"))
+                        .code());
+    }
+
     /** 序数升级：grades 1–5 整数；reachCodes 为字符串数组（可缺省）。 */
     @Test
     void ordinalRiseValidatesGradesAndReachCodes() {

@@ -1,0 +1,1088 @@
+{
+  "formCode": "C_PROGRAM_FU",
+  "source": "V82__hospital_c_compare_rule_preset.sql（E21-T20），hospital-c-spec 第 5 章「异常对比规则（医院已确认，阈值可配置，Q02）」默认值；由 CCompareRulePresetSqlTest.cSharedCaseFileMatchesPresetRows 锁定与本文件一致",
+  "rules": [
+    {
+      "ruleCode": "ra_threshold_rise",
+      "categoryKey": "threshold",
+      "targetField": "f308",
+      "ruleType": "CHANGE_PCT",
+      "params": {
+        "direction": "RISE",
+        "percent": 50,
+        "noteField": "f309",
+        "noteText": "脉宽不同，仅供参考"
+      },
+      "baselineField": null,
+      "unit": "V",
+      "message": "心房起搏阈值比上次升高超过 50%"
+    },
+    {
+      "ruleCode": "rv_threshold_rise",
+      "categoryKey": "threshold",
+      "targetField": "f313",
+      "ruleType": "CHANGE_PCT",
+      "params": {
+        "direction": "RISE",
+        "percent": 50,
+        "noteField": "f314",
+        "noteText": "脉宽不同，仅供参考"
+      },
+      "baselineField": null,
+      "unit": "V",
+      "message": "心室起搏阈值比上次升高超过 50%"
+    },
+    {
+      "ruleCode": "ra_impedance_shift",
+      "categoryKey": "impedance",
+      "targetField": "f311",
+      "ruleType": "CHANGE_PCT",
+      "params": {
+        "direction": "ANY",
+        "percent": 50
+      },
+      "baselineField": null,
+      "unit": "Ω",
+      "message": "心房阻抗比上次升高或降低超过 50%"
+    },
+    {
+      "ruleCode": "rv_impedance_shift",
+      "categoryKey": "impedance",
+      "targetField": "f316",
+      "ruleType": "CHANGE_PCT",
+      "params": {
+        "direction": "ANY",
+        "percent": 50
+      },
+      "baselineField": null,
+      "unit": "Ω",
+      "message": "心室阻抗比上次升高或降低超过 50%"
+    },
+    {
+      "ruleCode": "ra_impedance_below_200",
+      "categoryKey": "impedance",
+      "targetField": "f311",
+      "ruleType": "OUT_OF_RANGE",
+      "params": {
+        "op": "LT",
+        "value": 200
+      },
+      "baselineField": null,
+      "unit": "Ω",
+      "message": "心房阻抗 ＜ 200 Ω（超出提示范围）"
+    },
+    {
+      "ruleCode": "ra_impedance_above_2000",
+      "categoryKey": "impedance",
+      "targetField": "f311",
+      "ruleType": "OUT_OF_RANGE",
+      "params": {
+        "op": "GT",
+        "value": 2000
+      },
+      "baselineField": null,
+      "unit": "Ω",
+      "message": "心房阻抗 ＞ 2000 Ω（超出提示范围）"
+    },
+    {
+      "ruleCode": "rv_impedance_below_200",
+      "categoryKey": "impedance",
+      "targetField": "f316",
+      "ruleType": "OUT_OF_RANGE",
+      "params": {
+        "op": "LT",
+        "value": 200
+      },
+      "baselineField": null,
+      "unit": "Ω",
+      "message": "心室阻抗 ＜ 200 Ω（超出提示范围）"
+    },
+    {
+      "ruleCode": "rv_impedance_above_2000",
+      "categoryKey": "impedance",
+      "targetField": "f316",
+      "ruleType": "OUT_OF_RANGE",
+      "params": {
+        "op": "GT",
+        "value": 2000
+      },
+      "baselineField": null,
+      "unit": "Ω",
+      "message": "心室阻抗 ＞ 2000 Ω（超出提示范围）"
+    },
+    {
+      "ruleCode": "ra_sensing_drop",
+      "categoryKey": "sensing",
+      "targetField": "f310",
+      "ruleType": "CHANGE_PCT",
+      "params": {
+        "direction": "DROP",
+        "percent": 50
+      },
+      "baselineField": null,
+      "unit": "mV",
+      "message": "心房感知 P 波比上次下降超过 50%"
+    },
+    {
+      "ruleCode": "rv_sensing_drop",
+      "categoryKey": "sensing",
+      "targetField": "f315",
+      "ruleType": "CHANGE_PCT",
+      "params": {
+        "direction": "DROP",
+        "percent": 50
+      },
+      "baselineField": null,
+      "unit": "mV",
+      "message": "心室感知 R 波比上次下降超过 50%"
+    },
+    {
+      "ruleCode": "eri_status_abnormal",
+      "categoryKey": "battery",
+      "targetField": "f323",
+      "ruleType": "VALUE_HIT",
+      "params": {
+        "codes": [
+          "1",
+          "2"
+        ]
+      },
+      "baselineField": null,
+      "unit": null,
+      "message": "ERI 状态为接近ERI或已达ERI(EOI)"
+    },
+    {
+      "ruleCode": "battery_life_low",
+      "categoryKey": "battery",
+      "targetField": "f324",
+      "ruleType": "VALUE_HIT",
+      "params": {
+        "op": "LTE",
+        "value": 1
+      },
+      "baselineField": null,
+      "unit": "年",
+      "message": "预计电池寿命 ≤ 1 年"
+    }
+  ],
+  "ordinals": {},
+  "cases": [
+    {
+      "name": "ra_threshold_rise 正：心房阈值 0.6 → 1.1 V（升高 83.33% ＞ 50%），脉宽 0.4 → 0.5 不同 → 追加仅供参考（C-FU-010 示例口径）",
+      "ruleCodes": [
+        "ra_threshold_rise"
+      ],
+      "current": {
+        "f308": 1.1,
+        "f309": 0.5
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f308": 0.6,
+          "f309": 0.4
+        }
+      },
+      "expectedHits": [
+        {
+          "ruleId": "ra_threshold_rise",
+          "key": "f308",
+          "categoryKey": "threshold",
+          "message": "心房起搏阈值比上次升高超过 50%；脉宽不同，仅供参考",
+          "previousValue": 0.6,
+          "change": 83.33,
+          "changeText": "升高 83.33%"
+        }
+      ]
+    },
+    {
+      "name": "ra_threshold_rise 反：升高恰 50%（0.5 → 0.75）不命中（CHANGE_PCT 严格 ＞）",
+      "ruleCodes": [
+        "ra_threshold_rise"
+      ],
+      "current": {
+        "f308": 0.75,
+        "f309": 0.5
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f308": 0.5,
+          "f309": 0.4
+        }
+      },
+      "expectedHits": []
+    },
+    {
+      "name": "ra_threshold_rise 反：阈值下降（1.0 → 0.8）不命中（方向 RISE）",
+      "ruleCodes": [
+        "ra_threshold_rise"
+      ],
+      "current": {
+        "f308": 0.8,
+        "f309": 0.5
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f308": 1.0,
+          "f309": 0.4
+        }
+      },
+      "expectedHits": []
+    },
+    {
+      "name": "ra_threshold_rise 反：上一次阈值为空跳过（没有上一次值时不比较，C 规格 §5）",
+      "ruleCodes": [
+        "ra_threshold_rise"
+      ],
+      "current": {
+        "f308": 1.1,
+        "f309": 0.5
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f309": 0.4
+        }
+      },
+      "expectedHits": []
+    },
+    {
+      "name": "rv_threshold_rise 正：心室阈值 0.7 → 1.2 V（升高 71.43% ＞ 50%），脉宽相同不追加注（趋势图示例）",
+      "ruleCodes": [
+        "rv_threshold_rise"
+      ],
+      "current": {
+        "f313": 1.2,
+        "f314": 0.4
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f313": 0.7,
+          "f314": 0.4
+        }
+      },
+      "expectedHits": [
+        {
+          "ruleId": "rv_threshold_rise",
+          "key": "f313",
+          "categoryKey": "threshold",
+          "message": "心室起搏阈值比上次升高超过 50%",
+          "previousValue": 0.7,
+          "change": 71.43,
+          "changeText": "升高 71.43%"
+        }
+      ]
+    },
+    {
+      "name": "rv_threshold_rise 正：脉宽上一次为空 → 无法判断不同，不追加注",
+      "ruleCodes": [
+        "rv_threshold_rise"
+      ],
+      "current": {
+        "f313": 1.2,
+        "f314": 0.6
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f313": 0.7
+        }
+      },
+      "expectedHits": [
+        {
+          "ruleId": "rv_threshold_rise",
+          "key": "f313",
+          "categoryKey": "threshold",
+          "message": "心室起搏阈值比上次升高超过 50%",
+          "previousValue": 0.7,
+          "change": 71.43,
+          "changeText": "升高 71.43%"
+        }
+      ]
+    },
+    {
+      "name": "rv_threshold_rise 反：升高 40%（0.7 → 0.98）不命中",
+      "ruleCodes": [
+        "rv_threshold_rise"
+      ],
+      "current": {
+        "f313": 0.98,
+        "f314": 0.4
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f313": 0.7,
+          "f314": 0.4
+        }
+      },
+      "expectedHits": []
+    },
+    {
+      "name": "ra_impedance_shift 正（升高）：心房阻抗 500 → 900 Ω（+80% ＞ 50%）",
+      "ruleCodes": [
+        "ra_impedance_shift"
+      ],
+      "current": {
+        "f311": 900
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f311": 500
+        }
+      },
+      "expectedHits": [
+        {
+          "ruleId": "ra_impedance_shift",
+          "key": "f311",
+          "categoryKey": "impedance",
+          "message": "心房阻抗比上次升高或降低超过 50%",
+          "previousValue": 500,
+          "change": 80,
+          "changeText": "升高 80%"
+        }
+      ]
+    },
+    {
+      "name": "ra_impedance_shift 正（降低）：900 → 400 Ω（−55.56% ＞ 50%，ANY 双向）",
+      "ruleCodes": [
+        "ra_impedance_shift"
+      ],
+      "current": {
+        "f311": 400
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f311": 900
+        }
+      },
+      "expectedHits": [
+        {
+          "ruleId": "ra_impedance_shift",
+          "key": "f311",
+          "categoryKey": "impedance",
+          "message": "心房阻抗比上次升高或降低超过 50%",
+          "previousValue": 900,
+          "change": -55.56,
+          "changeText": "下降 55.56%"
+        }
+      ]
+    },
+    {
+      "name": "ra_impedance_shift 反：波动 40%（500 → 700）不命中",
+      "ruleCodes": [
+        "ra_impedance_shift"
+      ],
+      "current": {
+        "f311": 700
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f311": 500
+        }
+      },
+      "expectedHits": []
+    },
+    {
+      "name": "rv_impedance_shift 正（降低）：心室阻抗 800 → 350 Ω（−56.25% ＞ 50%）",
+      "ruleCodes": [
+        "rv_impedance_shift"
+      ],
+      "current": {
+        "f316": 350
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f316": 800
+        }
+      },
+      "expectedHits": [
+        {
+          "ruleId": "rv_impedance_shift",
+          "key": "f316",
+          "categoryKey": "impedance",
+          "message": "心室阻抗比上次升高或降低超过 50%",
+          "previousValue": 800,
+          "change": -56.25,
+          "changeText": "下降 56.25%"
+        }
+      ]
+    },
+    {
+      "name": "rv_impedance_shift 反：降低 37.5%（800 → 500）不命中",
+      "ruleCodes": [
+        "rv_impedance_shift"
+      ],
+      "current": {
+        "f316": 500
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f316": 800
+        }
+      },
+      "expectedHits": []
+    },
+    {
+      "name": "ra_impedance_below_200 正（默认停用，规则本身求值）：心房阻抗 190 Ω ＜ 200",
+      "ruleCodes": [
+        "ra_impedance_below_200"
+      ],
+      "current": {
+        "f311": 190
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f311": 500
+        }
+      },
+      "expectedHits": [
+        {
+          "ruleId": "ra_impedance_below_200",
+          "key": "f311",
+          "categoryKey": "impedance",
+          "message": "心房阻抗 ＜ 200 Ω（超出提示范围）",
+          "previousValue": null,
+          "change": null,
+          "changeText": null
+        }
+      ]
+    },
+    {
+      "name": "ra_impedance_below_200 反：恰 200 Ω 不命中（严格 ＜）",
+      "ruleCodes": [
+        "ra_impedance_below_200"
+      ],
+      "current": {
+        "f311": 200
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f311": 500
+        }
+      },
+      "expectedHits": []
+    },
+    {
+      "name": "ra_impedance_above_2000 正：心房阻抗 2200 Ω ＞ 2000",
+      "ruleCodes": [
+        "ra_impedance_above_2000"
+      ],
+      "current": {
+        "f311": 2200
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f311": 900
+        }
+      },
+      "expectedHits": [
+        {
+          "ruleId": "ra_impedance_above_2000",
+          "key": "f311",
+          "categoryKey": "impedance",
+          "message": "心房阻抗 ＞ 2000 Ω（超出提示范围）",
+          "previousValue": null,
+          "change": null,
+          "changeText": null
+        }
+      ]
+    },
+    {
+      "name": "ra_impedance_above_2000 反：恰 2000 Ω 不命中（严格 ＞）",
+      "ruleCodes": [
+        "ra_impedance_above_2000"
+      ],
+      "current": {
+        "f311": 2000
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f311": 900
+        }
+      },
+      "expectedHits": []
+    },
+    {
+      "name": "rv_impedance_below_200 正：心室阻抗 180 Ω ＜ 200",
+      "ruleCodes": [
+        "rv_impedance_below_200"
+      ],
+      "current": {
+        "f316": 180
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f316": 800
+        }
+      },
+      "expectedHits": [
+        {
+          "ruleId": "rv_impedance_below_200",
+          "key": "f316",
+          "categoryKey": "impedance",
+          "message": "心室阻抗 ＜ 200 Ω（超出提示范围）",
+          "previousValue": null,
+          "change": null,
+          "changeText": null
+        }
+      ]
+    },
+    {
+      "name": "rv_impedance_below_200 反：恰 200 Ω 不命中",
+      "ruleCodes": [
+        "rv_impedance_below_200"
+      ],
+      "current": {
+        "f316": 200
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f316": 800
+        }
+      },
+      "expectedHits": []
+    },
+    {
+      "name": "rv_impedance_above_2000 正：心室阻抗 3000 Ω ＞ 2000（字段建议范围 100–3000 软校验外另提示）",
+      "ruleCodes": [
+        "rv_impedance_above_2000"
+      ],
+      "current": {
+        "f316": 3000
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f316": 900
+        }
+      },
+      "expectedHits": [
+        {
+          "ruleId": "rv_impedance_above_2000",
+          "key": "f316",
+          "categoryKey": "impedance",
+          "message": "心室阻抗 ＞ 2000 Ω（超出提示范围）",
+          "previousValue": null,
+          "change": null,
+          "changeText": null
+        }
+      ]
+    },
+    {
+      "name": "rv_impedance_above_2000 反：恰 2000 Ω 不命中",
+      "ruleCodes": [
+        "rv_impedance_above_2000"
+      ],
+      "current": {
+        "f316": 2000
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f316": 900
+        }
+      },
+      "expectedHits": []
+    },
+    {
+      "name": "ra_sensing_drop 正：P 波 4.0 → 1.6 mV（下降 60% ＞ 50%）",
+      "ruleCodes": [
+        "ra_sensing_drop"
+      ],
+      "current": {
+        "f310": 1.6
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f310": 4.0
+        }
+      },
+      "expectedHits": [
+        {
+          "ruleId": "ra_sensing_drop",
+          "key": "f310",
+          "categoryKey": "sensing",
+          "message": "心房感知 P 波比上次下降超过 50%",
+          "previousValue": 4.0,
+          "change": -60,
+          "changeText": "下降 60%"
+        }
+      ]
+    },
+    {
+      "name": "ra_sensing_drop 反：下降 40%（4.0 → 2.4）不命中",
+      "ruleCodes": [
+        "ra_sensing_drop"
+      ],
+      "current": {
+        "f310": 2.4
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f310": 4.0
+        }
+      },
+      "expectedHits": []
+    },
+    {
+      "name": "ra_sensing_drop 反：感知升高（2.0 → 4.0）不命中（方向 DROP）",
+      "ruleCodes": [
+        "ra_sensing_drop"
+      ],
+      "current": {
+        "f310": 4.0
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f310": 2.0
+        }
+      },
+      "expectedHits": []
+    },
+    {
+      "name": "rv_sensing_drop 正：R 波 8.0 → 3.2 mV（下降 60% ＞ 50%）",
+      "ruleCodes": [
+        "rv_sensing_drop"
+      ],
+      "current": {
+        "f315": 3.2
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f315": 8.0
+        }
+      },
+      "expectedHits": [
+        {
+          "ruleId": "rv_sensing_drop",
+          "key": "f315",
+          "categoryKey": "sensing",
+          "message": "心室感知 R 波比上次下降超过 50%",
+          "previousValue": 8.0,
+          "change": -60,
+          "changeText": "下降 60%"
+        }
+      ]
+    },
+    {
+      "name": "rv_sensing_drop 反：下降 40%（8.0 → 4.8）不命中",
+      "ruleCodes": [
+        "rv_sensing_drop"
+      ],
+      "current": {
+        "f315": 4.8
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f315": 8.0
+        }
+      },
+      "expectedHits": []
+    },
+    {
+      "name": "eri_status_abnormal 正：本次 ERI 状态 = 接近ERI（编码 1）",
+      "ruleCodes": [
+        "eri_status_abnormal"
+      ],
+      "current": {
+        "f323": 1
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f323": 0
+        }
+      },
+      "expectedHits": [
+        {
+          "ruleId": "eri_status_abnormal",
+          "key": "f323",
+          "categoryKey": "battery",
+          "message": "ERI 状态为接近ERI或已达ERI(EOI)",
+          "previousValue": null,
+          "change": null,
+          "changeText": null
+        }
+      ]
+    },
+    {
+      "name": "eri_status_abnormal 正：本次 ERI 状态 = 已达ERI(EOI)（编码 2）",
+      "ruleCodes": [
+        "eri_status_abnormal"
+      ],
+      "current": {
+        "f323": 2
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f323": 0
+        }
+      },
+      "expectedHits": [
+        {
+          "ruleId": "eri_status_abnormal",
+          "key": "f323",
+          "categoryKey": "battery",
+          "message": "ERI 状态为接近ERI或已达ERI(EOI)",
+          "previousValue": null,
+          "change": null,
+          "changeText": null
+        }
+      ]
+    },
+    {
+      "name": "eri_status_abnormal 反：本次 ERI 状态 = 正常（编码 0）",
+      "ruleCodes": [
+        "eri_status_abnormal"
+      ],
+      "current": {
+        "f323": 0
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f323": 0
+        }
+      },
+      "expectedHits": []
+    },
+    {
+      "name": "eri_status_abnormal 反：本次未填 ERI 状态（空值不命中）",
+      "ruleCodes": [
+        "eri_status_abnormal"
+      ],
+      "current": {},
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f323": 0
+        }
+      },
+      "expectedHits": []
+    },
+    {
+      "name": "battery_life_low 正：预计电池寿命 0.8 年 ≤ 1",
+      "ruleCodes": [
+        "battery_life_low"
+      ],
+      "current": {
+        "f324": 0.8
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f324": 3.5
+        }
+      },
+      "expectedHits": [
+        {
+          "ruleId": "battery_life_low",
+          "key": "f324",
+          "categoryKey": "battery",
+          "message": "预计电池寿命 ≤ 1 年",
+          "previousValue": null,
+          "change": null,
+          "changeText": null
+        }
+      ]
+    },
+    {
+      "name": "battery_life_low 正：恰 1 年（≤ 含边界）",
+      "ruleCodes": [
+        "battery_life_low"
+      ],
+      "current": {
+        "f324": 1
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f324": 3.5
+        }
+      },
+      "expectedHits": [
+        {
+          "ruleId": "battery_life_low",
+          "key": "f324",
+          "categoryKey": "battery",
+          "message": "预计电池寿命 ≤ 1 年",
+          "previousValue": null,
+          "change": null,
+          "changeText": null
+        }
+      ]
+    },
+    {
+      "name": "battery_life_low 反：1.5 年 ＞ 1 不命中",
+      "ruleCodes": [
+        "battery_life_low"
+      ],
+      "current": {
+        "f324": 1.5
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f324": 3.5
+        }
+      },
+      "expectedHits": []
+    },
+    {
+      "name": "全表单正例（8 条默认启用规则齐上，命中按 sort_no 序；首条为 C-FU-010 验收示例口径）",
+      "ruleCodes": [
+        "ra_threshold_rise",
+        "rv_threshold_rise",
+        "ra_impedance_shift",
+        "rv_impedance_shift",
+        "ra_sensing_drop",
+        "rv_sensing_drop",
+        "eri_status_abnormal",
+        "battery_life_low"
+      ],
+      "current": {
+        "f308": 1.1,
+        "f309": 0.5,
+        "f313": 1.2,
+        "f314": 0.4,
+        "f311": 900,
+        "f316": 350,
+        "f310": 1.6,
+        "f315": 3.2,
+        "f323": 1,
+        "f324": 0.8
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f308": 0.6,
+          "f309": 0.4,
+          "f313": 0.7,
+          "f314": 0.4,
+          "f311": 500,
+          "f316": 800,
+          "f310": 4.0,
+          "f315": 8.0,
+          "f323": 0,
+          "f324": 3.5
+        }
+      },
+      "expectedHits": [
+        {
+          "ruleId": "ra_threshold_rise",
+          "key": "f308",
+          "categoryKey": "threshold",
+          "message": "心房起搏阈值比上次升高超过 50%；脉宽不同，仅供参考",
+          "previousValue": 0.6,
+          "change": 83.33,
+          "changeText": "升高 83.33%"
+        },
+        {
+          "ruleId": "rv_threshold_rise",
+          "key": "f313",
+          "categoryKey": "threshold",
+          "message": "心室起搏阈值比上次升高超过 50%",
+          "previousValue": 0.7,
+          "change": 71.43,
+          "changeText": "升高 71.43%"
+        },
+        {
+          "ruleId": "ra_impedance_shift",
+          "key": "f311",
+          "categoryKey": "impedance",
+          "message": "心房阻抗比上次升高或降低超过 50%",
+          "previousValue": 500,
+          "change": 80,
+          "changeText": "升高 80%"
+        },
+        {
+          "ruleId": "rv_impedance_shift",
+          "key": "f316",
+          "categoryKey": "impedance",
+          "message": "心室阻抗比上次升高或降低超过 50%",
+          "previousValue": 800,
+          "change": -56.25,
+          "changeText": "下降 56.25%"
+        },
+        {
+          "ruleId": "ra_sensing_drop",
+          "key": "f310",
+          "categoryKey": "sensing",
+          "message": "心房感知 P 波比上次下降超过 50%",
+          "previousValue": 4.0,
+          "change": -60,
+          "changeText": "下降 60%"
+        },
+        {
+          "ruleId": "rv_sensing_drop",
+          "key": "f315",
+          "categoryKey": "sensing",
+          "message": "心室感知 R 波比上次下降超过 50%",
+          "previousValue": 8.0,
+          "change": -60,
+          "changeText": "下降 60%"
+        },
+        {
+          "ruleId": "eri_status_abnormal",
+          "key": "f323",
+          "categoryKey": "battery",
+          "message": "ERI 状态为接近ERI或已达ERI(EOI)",
+          "previousValue": null,
+          "change": null,
+          "changeText": null
+        },
+        {
+          "ruleId": "battery_life_low",
+          "key": "f324",
+          "categoryKey": "battery",
+          "message": "预计电池寿命 ≤ 1 年",
+          "previousValue": null,
+          "change": null,
+          "changeText": null
+        }
+      ]
+    },
+    {
+      "name": "ra_threshold_rise 反：升高恰 50%（0.5 → 0.75）不命中（CHANGE_PCT 严格 ＞）",
+      "ruleCodes": [
+        "ra_threshold_rise",
+        "rv_threshold_rise",
+        "ra_impedance_shift",
+        "rv_impedance_shift",
+        "ra_sensing_drop",
+        "rv_sensing_drop",
+        "eri_status_abnormal",
+        "battery_life_low"
+      ],
+      "current": {
+        "f308": 0.75,
+        "f309": 0.4,
+        "f313": 0.98,
+        "f314": 0.4,
+        "f311": 700,
+        "f316": 500,
+        "f310": 2.4,
+        "f315": 4.8,
+        "f323": 0,
+        "f324": 1.5
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-09-12",
+        "values": {
+          "f308": 0.5,
+          "f309": 0.4,
+          "f313": 0.7,
+          "f314": 0.4,
+          "f311": 500,
+          "f316": 800,
+          "f310": 4.0,
+          "f315": 8.0,
+          "f323": 0,
+          "f324": 3.5
+        }
+      },
+      "expectedHits": []
+    },
+    {
+      "name": "没有上一次随访：对比类规则全部跳过（C 规格 §5「没有上一次时不比较」），固定阈值规则照常命中",
+      "ruleCodes": [
+        "ra_threshold_rise",
+        "rv_threshold_rise",
+        "ra_impedance_shift",
+        "rv_impedance_shift",
+        "ra_sensing_drop",
+        "rv_sensing_drop",
+        "eri_status_abnormal",
+        "battery_life_low"
+      ],
+      "current": {
+        "f308": 1.1,
+        "f309": 0.5,
+        "f313": 1.2,
+        "f314": 0.4,
+        "f311": 900,
+        "f316": 350,
+        "f310": 1.6,
+        "f315": 3.2,
+        "f323": 2,
+        "f324": 0.5
+      },
+      "previous": null,
+      "expectedHits": [
+        {
+          "ruleId": "eri_status_abnormal",
+          "key": "f323",
+          "categoryKey": "battery",
+          "message": "ERI 状态为接近ERI或已达ERI(EOI)",
+          "previousValue": null,
+          "change": null,
+          "changeText": null
+        },
+        {
+          "ruleId": "battery_life_low",
+          "key": "f324",
+          "categoryKey": "battery",
+          "message": "预计电池寿命 ≤ 1 年",
+          "previousValue": null,
+          "change": null,
+          "changeText": null
+        }
+      ]
+    }
+  ]
+}
