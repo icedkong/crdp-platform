@@ -8,14 +8,25 @@
           "categoryKey": "fu_echo",
           "targetField": "f248",
           "ruleType": "DIFF",
-          "params": { "direction": "DROP", "threshold": 10 },
+          "params": {
+            "direction": "DROP",
+            "threshold": 10
+          },
           "unit": "%",
           "baselineField": "f102",
           "message": "EF 比上次（或出院前）下降 ≥ 10 个百分点"
         }
       ],
-      "current": { "f248": 45 },
-      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f248": 56 } },
+      "current": {
+        "f248": 45
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-11-05",
+        "values": {
+          "f248": 56
+        }
+      },
       "ordinals": {},
       "expectedHits": [
         {
@@ -37,14 +48,25 @@
           "categoryKey": "fu_echo",
           "targetField": "f248",
           "ruleType": "DIFF",
-          "params": { "direction": "DROP", "threshold": 10 },
+          "params": {
+            "direction": "DROP",
+            "threshold": 10
+          },
           "unit": "%",
           "baselineField": "f102",
           "message": "EF 比上次（或出院前）下降 ≥ 10 个百分点"
         }
       ],
-      "current": { "f248": 44 },
-      "previous": { "kind": "BASELINE", "values": { "f102": 55, "f103": 52 } },
+      "current": {
+        "f248": 44
+      },
+      "previous": {
+        "kind": "BASELINE",
+        "values": {
+          "f102": 55,
+          "f103": 52
+        }
+      },
       "ordinals": {},
       "expectedHits": [
         {
@@ -66,14 +88,25 @@
           "categoryKey": "fu_echo",
           "targetField": "f248",
           "ruleType": "DIFF",
-          "params": { "direction": "DROP", "threshold": 10 },
+          "params": {
+            "direction": "DROP",
+            "threshold": 10
+          },
           "unit": "%",
           "baselineField": "f102",
           "message": "EF 比上次（或出院前）下降 ≥ 10 个百分点"
         }
       ],
-      "current": { "f248": 46 },
-      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f248": 55 } },
+      "current": {
+        "f248": 46
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-11-05",
+        "values": {
+          "f248": 55
+        }
+      },
       "ordinals": {},
       "expectedHits": []
     },
@@ -85,14 +118,25 @@
           "categoryKey": "fu_echo",
           "targetField": "f248",
           "ruleType": "DIFF",
-          "params": { "direction": "DROP", "threshold": 10 },
+          "params": {
+            "direction": "DROP",
+            "threshold": 10
+          },
           "unit": "%",
           "baselineField": "f102",
           "message": "EF 比上次（或出院前）下降 ≥ 10 个百分点"
         }
       ],
-      "current": { "f248": 30 },
-      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f249": 58 } },
+      "current": {
+        "f248": 30
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-11-05",
+        "values": {
+          "f249": 58
+        }
+      },
       "ordinals": {},
       "expectedHits": []
     },
@@ -104,7 +148,10 @@
           "categoryKey": "fu_echo",
           "targetField": "f248",
           "ruleType": "DIFF",
-          "params": { "direction": "DROP", "threshold": 10 },
+          "params": {
+            "direction": "DROP",
+            "threshold": 10
+          },
           "unit": "%",
           "baselineField": "f102",
           "message": "EF 比上次（或出院前）下降 ≥ 10 个百分点"
@@ -114,13 +161,22 @@
           "categoryKey": "fu_echo",
           "targetField": "f248",
           "ruleType": "OUT_OF_RANGE",
-          "params": { "op": "LT", "value": 40 },
+          "params": {
+            "op": "LT",
+            "value": 40
+          },
           "unit": "%",
           "message": "EF < 40%"
         }
       ],
       "current": {},
-      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f248": 56 } },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-11-05",
+        "values": {
+          "f248": 56
+        }
+      },
       "ordinals": {},
       "expectedHits": []
     },
@@ -132,14 +188,25 @@
           "categoryKey": "fu_echo",
           "targetField": "f249",
           "ruleType": "DIFF",
-          "params": { "direction": "RISE", "threshold": 5 },
+          "params": {
+            "direction": "RISE",
+            "threshold": 5
+          },
           "unit": "mm",
           "baselineField": "f103",
           "message": "LVDd 比上次（或出院前）增加 ≥ 5 mm"
         }
       ],
-      "current": { "f249": 58 },
-      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f249": 52 } },
+      "current": {
+        "f249": 58
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-11-05",
+        "values": {
+          "f249": 52
+        }
+      },
       "ordinals": {},
       "expectedHits": [
         {
@@ -161,14 +228,25 @@
           "categoryKey": "fu_echo",
           "targetField": "f248",
           "ruleType": "DIFF",
-          "params": { "direction": "DROP", "threshold": 10 },
+          "params": {
+            "direction": "DROP",
+            "threshold": 10
+          },
           "unit": "%",
           "baselineField": "f102",
           "message": "EF 比上次（或出院前）下降 ≥ 10 个百分点"
         }
       ],
-      "current": { "f248": 44.2 },
-      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f248": 55.5 } },
+      "current": {
+        "f248": 44.2
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-11-05",
+        "values": {
+          "f248": 55.5
+        }
+      },
       "ordinals": {},
       "expectedHits": [
         {
@@ -190,7 +268,10 @@
           "categoryKey": "fu_echo",
           "targetField": "f248",
           "ruleType": "DIFF",
-          "params": { "direction": "DROP", "threshold": 10 },
+          "params": {
+            "direction": "DROP",
+            "threshold": 10
+          },
           "unit": "%",
           "baselineField": "f102",
           "message": "EF 比上次（或出院前）下降 ≥ 10 个百分点"
@@ -200,13 +281,24 @@
           "categoryKey": "fu_echo",
           "targetField": "f248",
           "ruleType": "OUT_OF_RANGE",
-          "params": { "op": "LT", "value": 40 },
+          "params": {
+            "op": "LT",
+            "value": 40
+          },
           "unit": "%",
           "message": "EF < 40%"
         }
       ],
-      "current": { "f248": 39 },
-      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f248": 56 } },
+      "current": {
+        "f248": 39
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-11-05",
+        "values": {
+          "f248": 56
+        }
+      },
       "ordinals": {},
       "expectedHits": [
         {
@@ -237,12 +329,17 @@
           "categoryKey": "fu_echo",
           "targetField": "f248",
           "ruleType": "OUT_OF_RANGE",
-          "params": { "op": "LT", "value": 40 },
+          "params": {
+            "op": "LT",
+            "value": 40
+          },
           "unit": "%",
           "message": "EF < 40%"
         }
       ],
-      "current": { "f248": 38 },
+      "current": {
+        "f248": 38
+      },
       "previous": null,
       "ordinals": {},
       "expectedHits": [
@@ -265,12 +362,17 @@
           "categoryKey": "fu_echo",
           "targetField": "f248",
           "ruleType": "OUT_OF_RANGE",
-          "params": { "op": "LT", "value": 40 },
+          "params": {
+            "op": "LT",
+            "value": 40
+          },
           "unit": "%",
           "message": "EF < 40%"
         }
       ],
-      "current": { "f248": 40 },
+      "current": {
+        "f248": 40
+      },
       "previous": null,
       "ordinals": {},
       "expectedHits": []
@@ -283,13 +385,24 @@
           "categoryKey": "fu_battery",
           "targetField": "f401",
           "ruleType": "CHANGE_PCT",
-          "params": { "direction": "ANY", "percent": 50 },
+          "params": {
+            "direction": "ANY",
+            "percent": 50
+          },
           "unit": "Ω",
           "message": "阻抗较上次升高或降低 > 50%"
         }
       ],
-      "current": { "f401": 800 },
-      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f401": 500 } },
+      "current": {
+        "f401": 800
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-11-05",
+        "values": {
+          "f401": 500
+        }
+      },
       "ordinals": {},
       "expectedHits": [
         {
@@ -311,13 +424,24 @@
           "categoryKey": "fu_sensing",
           "targetField": "f402",
           "ruleType": "CHANGE_PCT",
-          "params": { "direction": "DROP", "percent": 50 },
+          "params": {
+            "direction": "DROP",
+            "percent": 50
+          },
           "unit": "mV",
           "message": "感知较上次下降 > 50%"
         }
       ],
-      "current": { "f402": 3.6 },
-      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f402": 8 } },
+      "current": {
+        "f402": 3.6
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-11-05",
+        "values": {
+          "f402": 8
+        }
+      },
       "ordinals": {},
       "expectedHits": [
         {
@@ -339,13 +463,24 @@
           "categoryKey": "fu_sensing",
           "targetField": "f402",
           "ruleType": "CHANGE_PCT",
-          "params": { "direction": "DROP", "percent": 50 },
+          "params": {
+            "direction": "DROP",
+            "percent": 50
+          },
           "unit": "mV",
           "message": "感知较上次下降 > 50%"
         }
       ],
-      "current": { "f402": 4 },
-      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f402": 8 } },
+      "current": {
+        "f402": 4
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-11-05",
+        "values": {
+          "f402": 8
+        }
+      },
       "ordinals": {},
       "expectedHits": []
     },
@@ -357,13 +492,24 @@
           "categoryKey": "fu_battery",
           "targetField": "f401",
           "ruleType": "CHANGE_PCT",
-          "params": { "direction": "ANY", "percent": 50 },
+          "params": {
+            "direction": "ANY",
+            "percent": 50
+          },
           "unit": "Ω",
           "message": "阻抗较上次升高或降低 > 50%"
         }
       ],
-      "current": { "f401": 300 },
-      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f401": 0 } },
+      "current": {
+        "f401": 300
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-11-05",
+        "values": {
+          "f401": 0
+        }
+      },
       "ordinals": {},
       "expectedHits": []
     },
@@ -375,13 +521,35 @@
           "categoryKey": "fu_echo",
           "targetField": "f239",
           "ruleType": "ORDINAL_RISE",
-          "params": { "grades": 2, "reachCodes": ["3", "4"] },
+          "params": {
+            "grades": 2,
+            "reachCodes": [
+              "3",
+              "4"
+            ]
+          },
           "message": "二尖瓣返流较上次加重 ≥ 2 级，或达到中量 / 大量"
         }
       ],
-      "current": { "f239": 2 },
-      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f239": 0 } },
-      "ordinals": { "f239": { "0": 0, "1": 1, "2": 2, "3": 3, "4": 4 } },
+      "current": {
+        "f239": 2
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-11-05",
+        "values": {
+          "f239": 0
+        }
+      },
+      "ordinals": {
+        "f239": {
+          "0": 0,
+          "1": 1,
+          "2": 2,
+          "3": 3,
+          "4": 4
+        }
+      },
       "expectedHits": [
         {
           "ruleId": "mr_rise",
@@ -402,13 +570,35 @@
           "categoryKey": "fu_echo",
           "targetField": "f239",
           "ruleType": "ORDINAL_RISE",
-          "params": { "grades": 2, "reachCodes": ["3", "4"] },
+          "params": {
+            "grades": 2,
+            "reachCodes": [
+              "3",
+              "4"
+            ]
+          },
           "message": "二尖瓣返流较上次加重 ≥ 2 级，或达到中量 / 大量"
         }
       ],
-      "current": { "f239": 3 },
-      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f239": 2 } },
-      "ordinals": { "f239": { "0": 0, "1": 1, "2": 2, "3": 3, "4": 4 } },
+      "current": {
+        "f239": 3
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-11-05",
+        "values": {
+          "f239": 2
+        }
+      },
+      "ordinals": {
+        "f239": {
+          "0": 0,
+          "1": 1,
+          "2": 2,
+          "3": 3,
+          "4": 4
+        }
+      },
       "expectedHits": [
         {
           "ruleId": "mr_rise",
@@ -429,13 +619,31 @@
           "categoryKey": "fu_echo",
           "targetField": "f239",
           "ruleType": "ORDINAL_RISE",
-          "params": { "grades": 2 },
+          "params": {
+            "grades": 2
+          },
           "message": "二尖瓣返流较上次加重 ≥ 2 级"
         }
       ],
-      "current": { "f239": 4 },
-      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f239": 9 } },
-      "ordinals": { "f239": { "0": 0, "1": 1, "2": 2, "3": 3, "4": 4 } },
+      "current": {
+        "f239": 4
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-11-05",
+        "values": {
+          "f239": 9
+        }
+      },
+      "ordinals": {
+        "f239": {
+          "0": 0,
+          "1": 1,
+          "2": 2,
+          "3": 3,
+          "4": 4
+        }
+      },
       "expectedHits": []
     },
     {
@@ -446,12 +654,23 @@
           "categoryKey": "fu_event",
           "targetField": "f223",
           "ruleType": "NEW_EVENT",
-          "params": { "dateField": "f224" },
+          "params": {
+            "dateField": "f224"
+          },
           "message": "新发再住院（本次填写且日期晚于上一次随访）"
         }
       ],
-      "current": { "f223": 2, "f224": "2026-05-01" },
-      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f224": null } },
+      "current": {
+        "f223": 2,
+        "f224": "2026-05-01"
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-11-05",
+        "values": {
+          "f224": null
+        }
+      },
       "ordinals": {},
       "expectedHits": [
         {
@@ -473,12 +692,24 @@
           "categoryKey": "fu_event",
           "targetField": "f223",
           "ruleType": "NEW_EVENT",
-          "params": { "dateField": "f224" },
+          "params": {
+            "dateField": "f224"
+          },
           "message": "新发再住院（本次填写且日期晚于上一次随访）"
         }
       ],
-      "current": { "f223": 2, "f224": "2025-08-01" },
-      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f223": 1, "f224": "2025-05-01" } },
+      "current": {
+        "f223": 2,
+        "f224": "2025-08-01"
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-11-05",
+        "values": {
+          "f223": 1,
+          "f224": "2025-05-01"
+        }
+      },
       "ordinals": {},
       "expectedHits": []
     },
@@ -490,12 +721,23 @@
           "categoryKey": "fu_event",
           "targetField": "f225",
           "ruleType": "NEW_EVENT",
-          "params": { "dateField": "f226" },
+          "params": {
+            "dateField": "f226"
+          },
           "message": "新发再血运重建（再次血运重建 ≠ 无且日期晚于上一次随访）"
         }
       ],
-      "current": { "f225": 1, "f226": "2025-01-10" },
-      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f225": 0 } },
+      "current": {
+        "f225": 1,
+        "f226": "2025-01-10"
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-11-05",
+        "values": {
+          "f225": 0
+        }
+      },
       "ordinals": {},
       "expectedHits": [
         {
@@ -517,12 +759,25 @@
           "categoryKey": "fu_event",
           "targetField": "f223",
           "ruleType": "NEW_EVENT",
-          "params": { "dateField": "f224", "triggerCodes": ["1", "2"] },
+          "params": {
+            "dateField": "f224",
+            "triggerCodes": [
+              "1",
+              "2"
+            ]
+          },
           "message": "新发再住院（心衰 / 冠脉疾病）"
         }
       ],
-      "current": { "f223": 5, "f224": "2026-05-01" },
-      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": {} },
+      "current": {
+        "f223": 5,
+        "f224": "2026-05-01"
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-11-05",
+        "values": {}
+      },
       "ordinals": {},
       "expectedHits": []
     },
@@ -534,12 +789,20 @@
           "categoryKey": "fu_event",
           "targetField": "f225",
           "ruleType": "NEW_EVENT",
-          "params": { "dateField": "f226" },
+          "params": {
+            "dateField": "f226"
+          },
           "message": "新发再血运重建（再次血运重建 ≠ 无且日期晚于上一次随访）"
         }
       ],
-      "current": { "f225": 0 },
-      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": {} },
+      "current": {
+        "f225": 0
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-11-05",
+        "values": {}
+      },
       "ordinals": {},
       "expectedHits": []
     },
@@ -556,8 +819,16 @@
           "message": "新发心室血栓（由否变是）"
         }
       ],
-      "current": { "f258": 1 },
-      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f258": 0 } },
+      "current": {
+        "f258": 1
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-11-05",
+        "values": {
+          "f258": 0
+        }
+      },
       "ordinals": {},
       "expectedHits": [
         {
@@ -584,8 +855,16 @@
           "message": "新发心室血栓（由否变是）"
         }
       ],
-      "current": { "f258": 1 },
-      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f258": 1 } },
+      "current": {
+        "f258": 1
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-11-05",
+        "values": {
+          "f258": 1
+        }
+      },
       "ordinals": {},
       "expectedHits": []
     },
@@ -601,8 +880,15 @@
           "message": "本次随访记录死亡（是否死亡 = 是）"
         }
       ],
-      "current": { "f215": 1 },
-      "previous": { "kind": "BASELINE", "values": { "f102": 55 } },
+      "current": {
+        "f215": 1
+      },
+      "previous": {
+        "kind": "BASELINE",
+        "values": {
+          "f102": 55
+        }
+      },
       "ordinals": {},
       "expectedHits": [
         {
@@ -629,8 +915,13 @@
           "message": "新发心室血栓（由否变是）"
         }
       ],
-      "current": { "f258": 1 },
-      "previous": { "kind": "BASELINE", "values": {} },
+      "current": {
+        "f258": 1
+      },
+      "previous": {
+        "kind": "BASELINE",
+        "values": {}
+      },
       "ordinals": {},
       "expectedHits": []
     },
@@ -642,11 +933,18 @@
           "categoryKey": "fu_battery",
           "targetField": "f403",
           "ruleType": "VALUE_HIT",
-          "params": { "codes": ["2", "3"] },
+          "params": {
+            "codes": [
+              "2",
+              "3"
+            ]
+          },
           "message": "ERI 状态非正常"
         }
       ],
-      "current": { "f403": 2 },
+      "current": {
+        "f403": 2
+      },
       "previous": null,
       "ordinals": {},
       "expectedHits": [
@@ -669,12 +967,17 @@
           "categoryKey": "fu_battery",
           "targetField": "f404",
           "ruleType": "VALUE_HIT",
-          "params": { "op": "LTE", "value": 1 },
+          "params": {
+            "op": "LTE",
+            "value": 1
+          },
           "unit": "年",
           "message": "预计电池寿命 ≤ 1 年"
         }
       ],
-      "current": { "f404": 0.8 },
+      "current": {
+        "f404": 0.8
+      },
       "previous": null,
       "ordinals": {},
       "expectedHits": [
@@ -697,13 +1000,24 @@
           "categoryKey": "fu_echo",
           "targetField": "f250",
           "ruleType": "OUT_OF_RANGE",
-          "params": { "op": "GT", "value": 45 },
+          "params": {
+            "op": "GT",
+            "value": 45
+          },
           "unit": "mm",
           "message": "LA > 45 mm"
         }
       ],
-      "current": { "f250": 47 },
-      "previous": { "kind": "FOLLOWUP", "date": "2025-11-05", "values": { "f250": 44 } },
+      "current": {
+        "f250": 47
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-11-05",
+        "values": {
+          "f250": 44
+        }
+      },
       "ordinals": {},
       "expectedHits": [
         {
@@ -716,6 +1030,171 @@
           "changeText": null
         }
       ]
+    },
+    {
+      "name": "CHANGE_PCT noteField：命中且脉宽不同（0.4 → 0.6）→ 提示追加「；脉宽不同，仅供参考」（C-FU-010）",
+      "rules": [
+        {
+          "ruleCode": "threshold_rise_note",
+          "categoryKey": "fu_threshold",
+          "targetField": "f411",
+          "ruleType": "CHANGE_PCT",
+          "params": {
+            "direction": "RISE",
+            "percent": 50,
+            "noteField": "f412",
+            "noteText": "脉宽不同，仅供参考"
+          },
+          "unit": "V",
+          "baselineField": null,
+          "message": "起搏阈值比上次升高超过 50%"
+        }
+      ],
+      "current": {
+        "f411": 1.2,
+        "f412": 0.6
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-11-05",
+        "values": {
+          "f411": 0.7,
+          "f412": 0.4
+        }
+      },
+      "ordinals": {},
+      "expectedHits": [
+        {
+          "ruleId": "threshold_rise_note",
+          "key": "f411",
+          "categoryKey": "fu_threshold",
+          "message": "起搏阈值比上次升高超过 50%；脉宽不同，仅供参考",
+          "previousValue": 0.7,
+          "change": 71.43,
+          "changeText": "升高 71.43%"
+        }
+      ]
+    },
+    {
+      "name": "CHANGE_PCT noteField：命中但脉宽相同（0.4 → 0.4）→ 不追加注",
+      "rules": [
+        {
+          "ruleCode": "threshold_rise_note",
+          "categoryKey": "fu_threshold",
+          "targetField": "f411",
+          "ruleType": "CHANGE_PCT",
+          "params": {
+            "direction": "RISE",
+            "percent": 50,
+            "noteField": "f412",
+            "noteText": "脉宽不同，仅供参考"
+          },
+          "unit": "V",
+          "baselineField": null,
+          "message": "起搏阈值比上次升高超过 50%"
+        }
+      ],
+      "current": {
+        "f411": 1.2,
+        "f412": 0.4
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-11-05",
+        "values": {
+          "f411": 0.7,
+          "f412": 0.4
+        }
+      },
+      "ordinals": {},
+      "expectedHits": [
+        {
+          "ruleId": "threshold_rise_note",
+          "key": "f411",
+          "categoryKey": "fu_threshold",
+          "message": "起搏阈值比上次升高超过 50%",
+          "previousValue": 0.7,
+          "change": 71.43,
+          "changeText": "升高 71.43%"
+        }
+      ]
+    },
+    {
+      "name": "CHANGE_PCT noteField：命中但上一次脉宽为空 → 无法判断不同，不追加注",
+      "rules": [
+        {
+          "ruleCode": "threshold_rise_note",
+          "categoryKey": "fu_threshold",
+          "targetField": "f411",
+          "ruleType": "CHANGE_PCT",
+          "params": {
+            "direction": "RISE",
+            "percent": 50,
+            "noteField": "f412",
+            "noteText": "脉宽不同，仅供参考"
+          },
+          "unit": "V",
+          "baselineField": null,
+          "message": "起搏阈值比上次升高超过 50%"
+        }
+      ],
+      "current": {
+        "f411": 1.2,
+        "f412": 0.6
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-11-05",
+        "values": {
+          "f411": 0.7
+        }
+      },
+      "ordinals": {},
+      "expectedHits": [
+        {
+          "ruleId": "threshold_rise_note",
+          "key": "f411",
+          "categoryKey": "fu_threshold",
+          "message": "起搏阈值比上次升高超过 50%",
+          "previousValue": 0.7,
+          "change": 71.43,
+          "changeText": "升高 71.43%"
+        }
+      ]
+    },
+    {
+      "name": "CHANGE_PCT noteField：不命中（升高 40% ≤ 50）→ 无提示，注不参与",
+      "rules": [
+        {
+          "ruleCode": "threshold_rise_note",
+          "categoryKey": "fu_threshold",
+          "targetField": "f411",
+          "ruleType": "CHANGE_PCT",
+          "params": {
+            "direction": "RISE",
+            "percent": 50,
+            "noteField": "f412",
+            "noteText": "脉宽不同，仅供参考"
+          },
+          "unit": "V",
+          "baselineField": null,
+          "message": "起搏阈值比上次升高超过 50%"
+        }
+      ],
+      "current": {
+        "f411": 0.98,
+        "f412": 0.6
+      },
+      "previous": {
+        "kind": "FOLLOWUP",
+        "date": "2025-11-05",
+        "values": {
+          "f411": 0.7,
+          "f412": 0.4
+        }
+      },
+      "ordinals": {},
+      "expectedHits": []
     }
   ]
 }

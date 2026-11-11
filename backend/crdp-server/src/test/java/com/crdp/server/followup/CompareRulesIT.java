@@ -25,7 +25,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 /**
- * E17-T01 端到端 / A-FU-027（Q41 默认规则的前两条随迁移 V67 种子；C-FU-011 随 E21）。验收原文：规则开关与阈值由租户管理员配置。
+ * E17-T01 端到端 / A-FU-027（Q41 默认规则的前两条随迁移 V67 种子；C-FU-011 已随 E21-T20 预置 V82 十二条， 见
+ * adminAdjustsThresholdAndSwitch 的 C 清单断言）。验收原文：规则开关与阈值由租户管理员配置。
  *
  * <p>链路：租户管理员（TENANT_ADMIN，菜单 plt_menu 40 / 权限码 followup:abnormal:config，平台库 V57 + followup V67 /
  * 种子 V127 授予）→ GET /compare-rules 清单（含字段显示名）→ PUT 开关 + 调阈值 → 落库 fu_compare_rule.params → 写
@@ -94,7 +95,7 @@ class CompareRulesIT {
         Map<?, ?> list = get("/api/hospital/followup/compare-rules", adminToken).getBody();
         assertEquals(0, code(list));
         List<?> items = (List<?>) list.get("data");
-        assertEquals(17, items.size(), "Q41 默认规则全量（V67 两条 + V70 预置十五条）");
+        assertEquals(29, items.size(), "A 的 Q41 17 条（V67 + V70）+ C 的 12 条（V82，E21-T20）");
         Map<?, ?> ef =
                 items.stream()
                         .map(item -> (Map<?, ?>) item)
@@ -106,6 +107,33 @@ class CompareRulesIT {
         assertEquals("出院前最后一次EF", ef.get("baselineFieldLabel"), "基线回落字段显示名");
         assertEquals(Boolean.TRUE, ef.get("enabled"));
         assertEquals(10, ((Number) paramsOf(ef).get("threshold")).intValue());
+
+        // E21-T20 / C-FU-011：C 预置规则同入口可见可配（C 阈值可配置）——12 条、8 条默认启用
+        // （阻抗绝对范围 4 条默认停用）；C 字段字典未落地（E23-T20），字段 / 表单显示名回落稳定键（OQ-130①）。
+        Map<?, ?> cList =
+                get("/api/hospital/followup/compare-rules?formCode=C_PROGRAM_FU", adminToken)
+                        .getBody();
+        assertEquals(0, code(cList));
+        List<?> cItems = (List<?>) cList.get("data");
+        assertEquals(12, cItems.size(), "C 异常对比规则表 4 行拆 12 条（V82）");
+        assertEquals(
+                8L,
+                cItems.stream()
+                        .map(item -> (Map<?, ?>) item)
+                        .filter(item -> Boolean.TRUE.equals(item.get("enabled")))
+                        .count(),
+                "C 默认启用 8 条（绝对范围 200–2000 Ω 四条默认停用）");
+        Map<?, ?> raThreshold =
+                cItems.stream()
+                        .map(item -> (Map<?, ?>) item)
+                        .filter(item -> "ra_threshold_rise".equals(item.get("ruleCode")))
+                        .findFirst()
+                        .orElseThrow();
+        assertEquals("threshold", raThreshold.get("categoryKey"));
+        assertEquals("f308", raThreshold.get("targetField"), "字段字典落地前显示稳定键");
+        assertEquals(50, ((Number) paramsOf(raThreshold).get("percent")).intValue());
+        assertEquals("f309", paramsOf(raThreshold).get("noteField"), "脉宽参考注字段");
+        assertEquals("脉宽不同，仅供参考", paramsOf(raThreshold).get("noteText"));
 
         long id = ((Number) ef.get("id")).longValue();
         Map<?, ?> updated =
@@ -165,12 +193,15 @@ class CompareRulesIT {
 
     /**
      * E17-T05 验收位（tasks.csv：Q41 规则全部可开关）：Q41 全量 17 条（V67 两条 + V70 十五条）逐条 PUT 关 / 开 都返回 0 且 enabled
-     * 落库翻转（params 原样回传，各类型键集校验通过），最后全部恢复启用。
+     * 落库翻转（params 原样回传，各类型键集校验通过），最后全部恢复启用。按 formCode 取 A 表单（E21-T20 起清单 还含 C 的 12 条，其中绝对范围 4
+     * 条默认停用，不在本用例翻动）。
      */
     @Test
     void allQ41PresetRulesToggleable() {
         String adminToken = login(TENANT_A, ADMIN);
-        Map<?, ?> list = get("/api/hospital/followup/compare-rules", adminToken).getBody();
+        Map<?, ?> list =
+                get("/api/hospital/followup/compare-rules?formCode=A_ANNUAL_FU", adminToken)
+                        .getBody();
         List<?> items = (List<?>) list.get("data");
         assertEquals(17, items.size(), "Q41 全量预置");
         for (Object item : items) {
@@ -195,7 +226,8 @@ class CompareRulesIT {
                         assertEquals(
                                 17L,
                                 jdbc.queryForObject(
-                                        "SELECT COUNT(*) FROM fu_compare_rule WHERE status = 'ENABLED'",
+                                        "SELECT COUNT(*) FROM fu_compare_rule WHERE status ="
+                                                + " 'ENABLED' AND form_code = 'A_ANNUAL_FU'",
                                         Long.class),
                                 "全部恢复启用"));
     }
@@ -272,10 +304,11 @@ class CompareRulesIT {
                     assertFalse(
                             jdbc.queryForObject(
                                             "SELECT COUNT(*) FROM fu_compare_rule WHERE status ="
-                                                    + " 'DISABLED'",
+                                                    + " 'DISABLED' AND form_code ="
+                                                    + " 'A_ANNUAL_FU'",
                                             Integer.class)
                                     > 0,
-                            "未停用任何规则");
+                            "未停用任何规则（A 表单；C 绝对范围 4 条默认停用不计）");
                 });
     }
 

@@ -33,6 +33,10 @@ export interface CompareRuleThresholds {
   dateField?: string;
   direction?: 'ANY' | 'DROP' | 'RISE';
   grades?: number;
+  /** CHANGE_PCT：参考注字段键（C 脉宽，预置只读；E21-T20 / C-FU-010）。 */
+  noteField?: string;
+  /** CHANGE_PCT：noteField 本次与上一次均为数值且不同时追加的注（如「脉宽不同，仅供参考」）。 */
+  noteText?: string;
   op?: 'GT' | 'GTE' | 'LT' | 'LTE';
   percent?: number;
   reachCodes?: string[];
@@ -214,11 +218,32 @@ function evaluateChangePct(
     ruleId: rule.ruleCode,
     key: rule.targetField,
     categoryKey: rule.categoryKey,
-    message: rule.message,
+    message: messageWithNote(rule, current, previous),
     previousValue: prevRaw,
     change,
     changeText: `${word} ${formatCompareNumber(Math.abs(change))}%`,
   };
+}
+
+/**
+ * CHANGE_PCT 参考注（E21-T20 / C-FU-010「脉宽不同时注明仅供参考」，可选键
+ * noteField / noteText）：命中且 noteField 本次与上一次均为数值且不同时，
+ * 提示文案追加「；noteText」；任一侧为空无法判断不同，不追加。
+ */
+function messageWithNote(
+  rule: CompareRuleInput,
+  current: Record<string, unknown>,
+  previous: ComparePrevious | null,
+): string {
+  const noteField = rule.params.noteField;
+  const noteText = rule.params.noteText;
+  if (!noteField || !noteText) return rule.message;
+  const curNote = numberOf(current[noteField]);
+  const prevNote = numberOf(previous?.values[noteField]);
+  if (curNote === null || prevNote === null || curNote === prevNote) {
+    return rule.message;
+  }
+  return `${rule.message}；${noteText}`;
 }
 
 /** 序数升级：序数差 ≥ grades，或本次取值 ∈ reachCodes；任一侧序数未知跳过。 */

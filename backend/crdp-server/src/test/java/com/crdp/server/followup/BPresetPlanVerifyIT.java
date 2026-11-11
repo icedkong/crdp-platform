@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import com.crdp.framework.tenant.TenantContext;
 import com.crdp.server.AuditTableMaintenance;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -63,6 +64,10 @@ class BPresetPlanVerifyIT {
     private static final String PASSWORD = "Demo@2026";
 
     private static final String LEGACY = "IT-E23T16";
+
+    // 排期按北京时间计算窗口（PlanDateCalculator.BUSINESS_ZONE，A-NFR-006）；CI 在 UTC 16:00–24:00（北京次日凌晨）
+    // 运行时 LocalDate.now() 比北京慢一天，「当天未结束正常创建」的跨界用例会错位（第 5 天窗口被视作已开启）。
+    private static final LocalDate TODAY = LocalDate.now(ZoneId.of("Asia/Shanghai"));
 
     private static final String A_PLAN_CODE = "A_ANNUAL_FU_PLAN";
 
@@ -235,7 +240,7 @@ class BPresetPlanVerifyIT {
     @Test
     @Order(3)
     void registrationBackfillsPassedEarlyNodesAndCachesThreeMonth() {
-        LocalDate today = LocalDate.now();
+        LocalDate today = TODAY; // 北京业务日（与 PlanDateCalculator.BUSINESS_ZONE 同一日）
         LocalDate surgery =
                 today.minusDays(8); // 第 1 / 3 / 5 天窗口分别止于 today-6 / today-4 / today-2，均已结束
         long patientId = registerPatient("B1", surgery, today);
@@ -289,7 +294,7 @@ class BPresetPlanVerifyIT {
     @Test
     @Order(4)
     void straddlingWindowCreatesNormalTaskOnEnrollmentDay() {
-        LocalDate today = LocalDate.now();
+        LocalDate today = TODAY; // 北京业务日（与 PlanDateCalculator.BUSINESS_ZONE 同一日）
         LocalDate surgery =
                 today.minusDays(4); // 第 1 天窗口 [today-3, today-2] 已结束；第 3 天窗口 [today-1, today] 未结束
         long patientId = registerPatient("N1", surgery, today);
@@ -334,7 +339,7 @@ class BPresetPlanVerifyIT {
     @Test
     @Order(5)
     void yearOneWindowPlusMinusOneMonth() {
-        LocalDate today = LocalDate.now();
+        LocalDate today = TODAY; // 北京业务日（与 PlanDateCalculator.BUSINESS_ZONE 同一日）
         LocalDate surgery = today.minusYears(1); // 第 1 年计划日期 = 今天，窗口 [today-1 月, today+1 月] 处于窗口内
         long patientId = registerPatient("Y1", surgery, today);
 

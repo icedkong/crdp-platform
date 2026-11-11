@@ -17,8 +17,12 @@ public enum CompareRuleType {
     /** 差值下降 / 上升：{direction: DROP|RISE, threshold: 差值阈值}。A：EF 下降 ≥ 10 个百分点、LVDd 增加 ≥ 5 mm。 */
     DIFF(List.of("direction", "threshold"), Set.of()),
 
-    /** 变化率：{direction: DROP|RISE|ANY, percent: 百分比阈值}。C：阈值升高 > 50%、阻抗升高或降低 > 50%（ANY）。 */
-    CHANGE_PCT(List.of("direction", "percent"), Set.of()),
+    /**
+     * 变化率：{direction: DROP|RISE|ANY, percent: 百分比阈值, noteField?, noteText?}。C：阈值升高 > 50%、 阻抗升高或降低 >
+     * 50%（ANY）；noteField / noteText 成对可选（E21-T20 / C-FU-010）：命中且该字段本次与上一次均为数值且不同时，
+     * 提示追加「；noteText」（C 起搏阈值「脉宽不同，仅供参考」，components.md §10.4）。
+     */
+    CHANGE_PCT(List.of("direction", "percent"), Set.of("noteField", "noteText")),
 
     /** 序数升级：{grades: 升级级数, reachCodes?: 达到即标红的选项编码}。A：返流加重 ≥ 2 级或达到中量 / 大量。 */
     ORDINAL_RISE(List.of("grades"), Set.of("reachCodes")),
@@ -109,6 +113,7 @@ public enum CompareRuleType {
                     requirePositive(params.get("threshold"), "params.threshold");
                 } else {
                     requirePositive(params.get("percent"), "params.percent");
+                    requireNote(params);
                 }
             }
             case ORDINAL_RISE -> {
@@ -162,6 +167,27 @@ public enum CompareRuleType {
         String op = String.valueOf(params.get("op"));
         if (!List.of("LT", "LTE", "GT", "GTE").contains(op)) {
             throw invalid("params.op（须为 LT|LTE|GT|GTE）");
+        }
+    }
+
+    /** CHANGE_PCT 参考注键（E21-T20 / C-FU-010）：noteField 与 noteText 成对出现或都省略；文案 ≤ 50 字。 */
+    private static void requireNote(Map<String, Object> params) {
+        boolean hasField = params.containsKey("noteField");
+        boolean hasText = params.containsKey("noteText");
+        if (hasField == hasText) {
+            if (!hasField) {
+                return; // 都省略：无参考注
+            }
+        } else {
+            throw invalid("params.noteField / params.noteText（参考注键须成对出现）");
+        }
+        requireFieldKey(params.get("noteField"), "params.noteField");
+        Object text = params.get("noteText");
+        if (!(text instanceof String note) || note.isBlank()) {
+            throw invalid("params.noteText（须为非空字符串）");
+        }
+        if (note.length() > 50) {
+            throw invalid("params.noteText（最多 50 字）");
         }
     }
 

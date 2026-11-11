@@ -152,7 +152,12 @@ public final class CompareEvaluator {
                 word + " " + formatNumber(Math.abs(rounded)) + unitSuffix(rule.unit()));
     }
 
-    /** 变化率：（本次 − 上一次）÷ 上一次 × 100，严格 > percent；上一次为 0 无效跳过。 */
+    /**
+     * 变化率：（本次 − 上一次）÷ 上一次 × 100，严格 > percent；上一次为 0 无效跳过。
+     *
+     * <p>参考注（E21-T20 / C-FU-010，可选键 noteField / noteText）：命中且 noteField 本次与上一次均为数值且不同时，
+     * 提示文案追加「；noteText」（起搏阈值「脉宽不同，仅供参考」）；任一侧为空无法判断不同，不追加。
+     */
     private static Hit changePct(EvalRule rule, Map<String, Object> current, EvalPrevious prev) {
         Double cur = numberOf(current.get(rule.targetField()));
         Double old = numberOf(previousValue(rule, prev));
@@ -178,10 +183,28 @@ public final class CompareEvaluator {
                 rule.ruleCode(),
                 rule.targetField(),
                 rule.categoryKey(),
-                rule.message(),
+                messageWithNote(rule, current, prev),
                 previousValue(rule, prev),
                 rounded,
                 word + " " + formatNumber(Math.abs(rounded)) + "%");
+    }
+
+    /** CHANGE_PCT 参考注：noteField 本次与上一次均为数值且不同 → 提示追加「；noteText」。 */
+    private static String messageWithNote(
+            EvalRule rule, Map<String, Object> current, EvalPrevious prev) {
+        String noteField = rule.paramString("noteField");
+        String noteText = rule.paramString("noteText");
+        if (noteField == null || noteText == null) {
+            return rule.message();
+        }
+        Double curNote = numberOf(current.get(noteField));
+        Double prevNote = prev.values() == null ? null : numberOf(prev.values().get(noteField));
+        if (curNote == null
+                || prevNote == null
+                || curNote.doubleValue() == prevNote.doubleValue()) {
+            return rule.message();
+        }
+        return rule.message() + "；" + noteText;
     }
 
     /** 序数升级：序数差 ≥ grades，或本次取值 ∈ reachCodes（达到即标红）；任一侧序数未知跳过。 */
