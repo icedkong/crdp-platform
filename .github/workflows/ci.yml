@@ -111,6 +111,15 @@ jobs:
           python3 scripts/golive_import_verify.py --selftest
           python3 scripts/golive_import_verify.py
           python3 scripts/golive_import_verify.py --drill
+      # E23-T13：医院 A 上线后运行保障（全栈 1）。保障手册防漂移校验（SLA 时限表 / 台账列 /
+      # 巡检项与阈值 / go-live §6~§7 承接互引）+ 工具自检（时限判定 / 台账校验 / 只读护栏）+
+      # 在 compose MySQL 隔离库（克隆真实 schema、结束整库删除）上自验巡检：基线全 PASS、
+      # 六类异常逐项检出、清场归零；台账判定（--ledger）与生产巡检（--host）由值班人执行。
+      - name: 上线后运行保障校验（E23-T13）
+        run: |
+          python3 scripts/hypercare_verify.py --selftest
+          python3 scripts/hypercare_verify.py
+          python3 scripts/hypercare_verify.py --drill
       - name: 关闭依赖容器
         if: always()
         run: docker compose down -v
