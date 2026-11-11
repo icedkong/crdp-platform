@@ -537,6 +537,30 @@ class TaskCreationPlannerTest {
     }
 
     @Test
+    void occurrenceScheduleReturnsNullBeyondFixedRepeatCount() {
+        // E23-T17（B 验收发现）：FIXED 固定次数排完后该次不存在——医院 B 术后早期随访为 FIXED ×1，
+        // 术后第 1 天无「第 2 次」；漏判会凭空算出下一次开启日（周期回落节点偏移），把补录任务的
+        // 提交误拦在直接录入期之外（§14「可直接录入」；withinDirectEntryPeriod 的「FIXED 排完返回
+        // null → 不设界」注释本就预设了本行为）
+        assertNull(
+                TaskCreationPlanner.occurrenceScheduleOf(
+                        planOf(
+                                milestoneNode(NODE_ID, 1, "BACKFILL"),
+                                subplan("FIXED", 1, null, null)),
+                        NODE_ID,
+                        2,
+                        LocalDate.of(2026, 1, 1)),
+                "FIXED ×1 的第 2 次不存在");
+        assertNull(
+                TaskCreationPlanner.occurrenceScheduleOf(
+                        planOf(milestoneNode(NODE_ID, 10, null), subplan("FIXED", 5, null, null)),
+                        NODE_ID,
+                        6,
+                        LocalDate.of(2026, 1, 1)),
+                "FIXED ×5 的第 6 次不存在（次数内仍可取，见回落用例）");
+    }
+
+    @Test
     void occurrenceScheduleReturnsNullForUnknownNodeOrSubplanRow() {
         List<NodeDef> nodes = planOf(annualNode(), subplan("CYCLE", null, 1, "YEAR"));
         assertNull(

@@ -145,6 +145,12 @@ jobs:
           python3 scripts/check_tenant_b_onboarding.py --selftest
           python3 scripts/check_tenant_b_onboarding.py
           python3 scripts/check_tenant_b_onboarding.py --drill
+      # E23-T17：医院 B 验收（补录任务与节点随访率）。手册 ↔ 验收 IT（B-x 用例锚点）↔
+      # runbook / OQ-128 ④ 定夺回写 / 索引 / CI 接线防漂移校验；机器侧验收 IT
+      # （BAcceptanceBackfillNodeRateIT）随上方 mvn test 门控 CRDP_IT_MYSQL_PORT 运行；
+      # 生产验收由测试 + 实施按 docs/testing/hospital-b-acceptance.md 在场执行（W38）。
+      - name: 医院B验收校验（E23-T17）
+        run: python3 scripts/check_hospital_b_acceptance.py
       - name: 关闭依赖容器
         if: always()
         run: docker compose down -v
