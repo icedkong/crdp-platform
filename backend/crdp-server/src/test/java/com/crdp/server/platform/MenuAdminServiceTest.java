@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -40,13 +42,20 @@ class MenuAdminServiceTest {
     @Mock private TenantRoutingDataSource routing;
     @Mock private PermissionVersionStore permissionVersions;
     @Mock private AuditLogger audit;
+    @Mock private ResourceChangeRecorder resourceChanges;
 
     private MenuAdminService service;
 
     @BeforeEach
     void setUp() {
         service =
-                new MenuAdminService(platformMapper, platform, routing, permissionVersions, audit);
+                new MenuAdminService(
+                        platformMapper,
+                        platform,
+                        routing,
+                        permissionVersions,
+                        audit,
+                        resourceChanges);
         lenient().when(platformMapper.listModuleCodes()).thenReturn(List.of("base", "followup"));
     }
 
@@ -376,5 +385,97 @@ class MenuAdminServiceTest {
     void treeRejectsUnknownSide() {
         ApiException error = assertThrows(ApiException.class, () -> service.tree("ADMIN"));
         assertEquals(40001, error.code());
+    }
+
+    // ---------------------------------------------------------------- 资源变更记录（PLT-PERM-012）
+
+    @Test
+    void createWritesResourceChangeLog() {
+        when(platformMapper.findMenu(113L))
+                .thenReturn(row(113L, "PLATFORM", "MENU", "platform:menu:view", "ENABLED"));
+        when(platformMapper.countMenuByPermCode("PLATFORM", "base:demo:act", 0L)).thenReturn(0);
+        when(platformMapper.insertMenu(any()))
+                .thenAnswer(
+                        invocation -> {
+                            MenuRow inserted = invocation.getArgument(0);
+                            inserted.setId(999L);
+                            return 1;
+                        });
+        when(platformMapper.findMenu(999L))
+                .thenReturn(row(999L, "PLATFORM", "BUTTON", "base:demo:act", "ENABLED"));
+
+        service.create(
+                new MenuAdminService.CreateRequest(
+                        "PLATFORM",
+                        "113",
+                        "BUTTON",
+                        "base",
+                        "演示按钮",
+                        null,
+                        null,
+                        null,
+                        "base:demo:act",
+                        null,
+                        10,
+                        true));
+
+        verify(resourceChanges)
+                .record(
+                        eq("MENU"),
+                        eq(999L),
+                        eq("演示按钮"),
+                        eq("base:demo:act"),
+                        eq("CREATE"),
+                        eq("PAGE"),
+                        contains("新建按钮"));
+    }
+
+    @Test
+    void updateWritesResourceChangeLogWithFieldDiff() {
+        when(platformMapper.findMenu(119L))
+                .thenReturn(row(119L, "PLATFORM", "BUTTON", "platform:tenant:status", "ENABLED"));
+        when(platformMapper.accountIdsGrantedMenu(119L)).thenReturn(List.of());
+
+        service.update(
+                119L,
+                new MenuAdminService.UpdateRequest(
+                        "租户状态变更（改）", null, null, null, null, 40, true, "DISABLED"));
+
+        verify(resourceChanges)
+                .record(
+                        eq("MENU"),
+                        eq(119L),
+                        eq("演示菜单"),
+                        eq("platform:tenant:status"),
+                        eq("UPDATE"),
+                        eq("PAGE"),
+                        argThat(
+                                detail ->
+                                        detail.contains("标题 演示菜单 → 租户状态变更（改）")
+                                                && detail.contains("排序 0 → 40")
+                                                && detail.contains("状态 启用 → 停用")));
+    }
+
+    @Test
+    void deleteWritesResourceChangeLog() {
+        MenuRow target = row(211L, "HOSPITAL", "BUTTON", "followup:patient:plain", "ENABLED");
+        when(platformMapper.findMenu(211L)).thenReturn(target);
+        when(platformMapper.countChildMenus(211L)).thenReturn(0);
+        when(platformMapper.accountIdsGrantedMenu(211L)).thenReturn(List.of());
+        when(platform.queryForList(
+                        eq("SELECT id, code FROM plt_tenant WHERE status <> 'CANCELLED'")))
+                .thenReturn(List.of());
+
+        service.delete(211L);
+
+        verify(resourceChanges)
+                .record(
+                        eq("MENU"),
+                        eq(211L),
+                        eq("演示菜单"),
+                        eq("followup:patient:plain"),
+                        eq("DELETE"),
+                        eq("PAGE"),
+                        contains("软删"));
     }
 }

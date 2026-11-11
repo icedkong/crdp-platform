@@ -547,6 +547,12 @@ export {
   menuSourceText,
   menuSyncActionText,
   menuTypeText,
+  RESOURCE_CHANGE_ACTION_TEXT,
+  RESOURCE_CHANGE_CHANNEL_TEXT,
+  RESOURCE_CHANGE_TYPE_TEXT,
+  resourceChangeActionText,
+  resourceChangeChannelText,
+  resourceChangeTypeText,
 } from './perm-resources';
 
 export type {
@@ -560,6 +566,12 @@ export type {
   MenuSyncDiffItem,
   MenuSyncDiffResult,
   MenuUpdateRequest,
+  ResourceChangeAction,
+  ResourceChangeChannel,
+  ResourceChangeLogItem,
+  ResourceChangeLogPage,
+  ResourceChangeLogQuery,
+  ResourceChangeType,
 } from './perm-resources';
 
 // E14-T02 随访计划配置（docs/api/followup.md §1；页面 pages.md §8）

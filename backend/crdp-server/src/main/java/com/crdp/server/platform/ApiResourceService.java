@@ -30,12 +30,17 @@ public class ApiResourceService {
     private final PlatformMapper platformMapper;
     private final ApiResourceScanner scanner;
     private final AuditLogger audit;
+    private final ResourceChangeRecorder resourceChanges;
 
     public ApiResourceService(
-            PlatformMapper platformMapper, ApiResourceScanner scanner, AuditLogger audit) {
+            PlatformMapper platformMapper,
+            ApiResourceScanner scanner,
+            AuditLogger audit,
+            ResourceChangeRecorder resourceChanges) {
         this.platformMapper = platformMapper;
         this.scanner = scanner;
         this.audit = audit;
+        this.resourceChanges = resourceChanges;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -177,7 +182,75 @@ public class ApiResourceService {
                                 + sensitiveLevel
                                 + "，动作 "
                                 + actionType));
+        resourceChanges.record(
+                ResourceChangeRecorder.TYPE_API,
+                row.getId(),
+                row.getHttpMethod() + " " + row.getPathPattern(),
+                row.getPathPattern(),
+                ResourceChangeRecorder.ACTION_UPDATE,
+                ResourceChangeRecorder.CHANNEL_PAGE,
+                markDiff(row, permCode, publicAccess, auditLevel, sensitiveLevel, actionType));
         return TenantContext.callAsPlatform(
                 () -> ApiView.of(platformMapper.findApiResourceById(id)));
+    }
+
+    /** 标记接口属性的逐字段差异（PLT-PERM-012）：只列变化项；无变化写「无字段变化」。 */
+    private static String markDiff(
+            ApiResourceRow before,
+            String permCode,
+            boolean publicAccess,
+            String auditLevel,
+            String sensitiveLevel,
+            String actionType) {
+        StringBuilder diff = new StringBuilder("标记接口属性：");
+        boolean changed = false;
+        String beforePerm =
+                before.getPermCode() == null || before.getPermCode().isBlank()
+                        ? null
+                        : before.getPermCode();
+        if ((beforePerm == null && permCode != null)
+                || (beforePerm != null && !beforePerm.equals(permCode))) {
+            diff.append("权限码 ")
+                    .append(beforePerm == null ? "（无）" : beforePerm)
+                    .append(" → ")
+                    .append(permCode == null ? "（无）" : permCode);
+            changed = true;
+        }
+        if (Boolean.TRUE.equals(before.getPublicAccess()) != publicAccess) {
+            diff.append(changed ? "；" : "")
+                    .append("公共 ")
+                    .append(Boolean.TRUE.equals(before.getPublicAccess()) ? "是" : "否")
+                    .append(" → ")
+                    .append(publicAccess ? "是" : "否");
+            changed = true;
+        }
+        if (!auditLevel.equals(before.getAuditLevel())) {
+            diff.append(changed ? "；" : "")
+                    .append("审计级别 ")
+                    .append(before.getAuditLevel())
+                    .append(" → ")
+                    .append(auditLevel);
+            changed = true;
+        }
+        if (!sensitiveLevel.equals(before.getSensitiveLevel())) {
+            diff.append(changed ? "；" : "")
+                    .append("敏感级别 ")
+                    .append(before.getSensitiveLevel())
+                    .append(" → ")
+                    .append(sensitiveLevel);
+            changed = true;
+        }
+        if (!actionType.equals(before.getActionType())) {
+            diff.append(changed ? "；" : "")
+                    .append("动作类型 ")
+                    .append(before.getActionType())
+                    .append(" → ")
+                    .append(actionType);
+            changed = true;
+        }
+        if (!changed) {
+            diff.append("无字段变化");
+        }
+        return diff.toString();
     }
 }

@@ -43,18 +43,21 @@ public class MenuAdminService {
     private final TenantRoutingDataSource routing;
     private final PermissionVersionStore permissionVersions;
     private final AuditLogger audit;
+    private final ResourceChangeRecorder resourceChanges;
 
     public MenuAdminService(
             PlatformMapper platformMapper,
             JdbcTemplate platform,
             TenantRoutingDataSource routing,
             PermissionVersionStore permissionVersions,
-            AuditLogger audit) {
+            AuditLogger audit,
+            ResourceChangeRecorder resourceChanges) {
         this.platformMapper = platformMapper;
         this.platform = platform;
         this.routing = routing;
         this.permissionVersions = permissionVersions;
         this.audit = audit;
+        this.resourceChanges = resourceChanges;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -234,6 +237,20 @@ public class MenuAdminService {
                         + (permCode == null ? "" : "（" + permCode + "）")
                         + "，模块 "
                         + row.getModuleCode());
+        resourceChanges.record(
+                ResourceChangeRecorder.TYPE_MENU,
+                row.getId(),
+                row.getTitle(),
+                permCode == null ? routeName : permCode,
+                ResourceChangeRecorder.ACTION_CREATE,
+                ResourceChangeRecorder.CHANNEL_PAGE,
+                "新建"
+                        + typeText(type)
+                        + "："
+                        + sideText(request.side())
+                        + "，模块 "
+                        + row.getModuleCode()
+                        + (permCode == null ? "" : "，权限码 " + permCode));
         return TenantContext.callAsPlatform(() -> nodeOf(row.getId()));
     }
 
@@ -268,6 +285,15 @@ public class MenuAdminService {
         }
         // 启用 / 停用之间的任何切换都改变授权范围：停用收权、启用恢复，都要让持有人立即重算（E06-T06 / PLT-PERM-010）
         boolean grantsChanged = "ENABLED".equals(status) != "ENABLED".equals(row.getStatus());
+        // 变更前快照（PLT-PERM-012 资源变更记录的逐字段前后值）
+        String beforeTitle = row.getTitle();
+        String beforeRouteName = row.getRouteName();
+        String beforePath = row.getPath();
+        String beforeComponent = row.getComponent();
+        String beforeIcon = row.getIcon();
+        int beforeSortNo = row.getSortNo() == null ? 0 : row.getSortNo();
+        int beforeHidden = row.getHidden() == null ? 0 : row.getHidden();
+        String beforeStatus = row.getStatus();
         row.setTitle(request.title());
         row.setRouteName(routeName);
         row.setPath(path);
@@ -296,6 +322,28 @@ public class MenuAdminService {
                         + row.getTitle()
                         + (grantsChanged
                                 ? "，启用 / 停用切换改变授权范围；递增受影响用户版本 "
+                                        + (refreshedPlatformAccounts + refreshedTenantUsers)
+                                        + " 人"
+                                : ""));
+        resourceChanges.record(
+                ResourceChangeRecorder.TYPE_MENU,
+                row.getId(),
+                beforeTitle,
+                "BUTTON".equals(row.getType()) ? row.getPermCode() : row.getRouteName(),
+                ResourceChangeRecorder.ACTION_UPDATE,
+                ResourceChangeRecorder.CHANNEL_PAGE,
+                updateDiff(
+                                row,
+                                beforeTitle,
+                                beforeRouteName,
+                                beforePath,
+                                beforeComponent,
+                                beforeIcon,
+                                beforeSortNo,
+                                beforeHidden,
+                                beforeStatus)
+                        + (grantsChanged
+                                ? "；启用 / 停用切换，递增受影响用户版本 "
                                         + (refreshedPlatformAccounts + refreshedTenantUsers)
                                         + " 人"
                                 : ""));
@@ -342,6 +390,24 @@ public class MenuAdminService {
                         + " 个）；递增受影响用户版本 "
                         + (affectedAccounts.size() + refreshedTenantUsers)
                         + " 人");
+        resourceChanges.record(
+                ResourceChangeRecorder.TYPE_MENU,
+                id,
+                row.getTitle(),
+                "BUTTON".equals(row.getType()) ? row.getPermCode() : row.getRouteName(),
+                ResourceChangeRecorder.ACTION_DELETE,
+                ResourceChangeRecorder.CHANNEL_PAGE,
+                "删除"
+                        + typeText(row.getType())
+                        + "（软删）："
+                        + sideText(row.getSide())
+                        + "，模块 "
+                        + row.getModuleCode()
+                        + "；移除平台角色授予 "
+                        + removedGrants
+                        + " 条，清理租户库 "
+                        + tenantsCleaned[0]
+                        + " 个");
     }
 
     /** 逐租户删除 sys_role_menu 中对该菜单的引用；返回 [已清理租户数, 跳过租户数]。 */
@@ -507,6 +573,86 @@ public class MenuAdminService {
             case "BUTTON" -> "按钮";
             default -> type;
         };
+    }
+
+    private static String sideText(String side) {
+        return "PLATFORM".equals(side) ? "平台端" : "医院端";
+    }
+
+    /** 维护的逐字段差异（PLT-PERM-012）：只列变化的字段，前后值以 → 分隔；无变化时给「无字段变化」。 */
+    private static String updateDiff(
+            MenuRow row,
+            String beforeTitle,
+            String beforeRouteName,
+            String beforePath,
+            String beforeComponent,
+            String beforeIcon,
+            int beforeSortNo,
+            int beforeHidden,
+            String beforeStatus) {
+        StringBuilder diff = new StringBuilder("维护").append(typeText(row.getType())).append('：');
+        boolean changed = false;
+        changed |= diffField(diff, "标题", beforeTitle, row.getTitle());
+        if (!"BUTTON".equals(row.getType())) {
+            changed |= diffField(diff, "路由名", beforeRouteName, row.getRouteName());
+            changed |= diffField(diff, "路径", beforePath, row.getPath());
+            if ("MENU".equals(row.getType())) {
+                changed |= diffField(diff, "视图", beforeComponent, row.getComponent());
+            }
+        }
+        changed |= diffField(diff, "图标", beforeIcon, row.getIcon());
+        int afterSortNo = row.getSortNo() == null ? 0 : row.getSortNo();
+        if (afterSortNo != beforeSortNo) {
+            diff.append(changed ? "；" : "")
+                    .append("排序 ")
+                    .append(beforeSortNo)
+                    .append(" → ")
+                    .append(afterSortNo);
+            changed = true;
+        }
+        int afterHidden = row.getHidden() == null ? 0 : row.getHidden();
+        if (afterHidden != beforeHidden) {
+            diff.append(changed ? "；" : "")
+                    .append("隐藏 ")
+                    .append(beforeHidden == 1 ? "是" : "否")
+                    .append(" → ")
+                    .append(afterHidden == 1 ? "是" : "否");
+            changed = true;
+        }
+        if (!beforeStatus.equals(row.getStatus())) {
+            diff.append(changed ? "；" : "")
+                    .append("状态 ")
+                    .append(statusText(beforeStatus))
+                    .append(" → ")
+                    .append(statusText(row.getStatus()));
+            changed = true;
+        }
+        if (!changed) {
+            diff.append("无字段变化");
+        }
+        return diff.toString();
+    }
+
+    /** 追加一个字段的前后值（有变化才写）；返回是否有变化。 */
+    private static boolean diffField(
+            StringBuilder diff, String label, String before, String after) {
+        boolean same = before == null ? after == null : before.equals(after);
+        if (same) {
+            return false;
+        }
+        if (diff.charAt(diff.length() - 1) != '：') {
+            diff.append('；');
+        }
+        diff.append(label)
+                .append(' ')
+                .append(before == null ? "（空）" : before)
+                .append(" → ")
+                .append(after == null ? "（空）" : after);
+        return true;
+    }
+
+    private static String statusText(String status) {
+        return "ENABLED".equals(status) ? "启用" : "停用";
     }
 
     private void audit(String eventType, long menuId, String detail) {

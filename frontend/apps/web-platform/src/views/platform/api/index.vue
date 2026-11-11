@@ -40,6 +40,7 @@ import {
 } from '#/api/core/api-resource';
 import { usePermission } from '#/reference/use-permission';
 
+import ResourceLogDrawer from '../components/resource-log-drawer.vue';
 import {
   ACTION_TYPE_OPTIONS,
   AUDIT_LEVEL_OPTIONS,
@@ -56,12 +57,15 @@ defineOptions({ name: 'PlatformApi' });
 const router = useRouter();
 const { hasPermission } = usePermission();
 const canEdit = hasPermission('platform:api:edit');
+// 资源变更记录入口（E05-T10 / PLT-PERM-012）：接口与菜单共用，权限是菜单查看 platform:menu:view
+const canViewLog = hasPermission('platform:menu:view');
 
 const isMobile = ref(false);
 const loading = ref(false);
 const errorMessage = ref('');
 const items = ref<ApiResourceItem[]>([]);
 const filters = ref({ moduleCode: '', permCode: '', unbound: false });
+const logOpen = ref(false);
 
 // 手动同步（与启动同一套逻辑）
 const syncing = ref(false);
@@ -231,6 +235,13 @@ onUnmounted(() => window.removeEventListener('resize', read));
           </Checkbox>
         </Space>
         <Button
+          v-if="canViewLog"
+          data-testid="api-resource-log"
+          @click="logOpen = true"
+        >
+          变更记录
+        </Button>
+        <Button
           v-if="canEdit"
           data-testid="api-sync"
           :loading="syncing"
@@ -376,6 +387,12 @@ onUnmounted(() => window.removeEventListener('resize', read));
         </FormItem>
       </Form>
     </Modal>
+
+    <ResourceLogDrawer
+      :open="logOpen"
+      default-resource-type="API"
+      @close="logOpen = false"
+    />
   </Page>
 </template>
 
