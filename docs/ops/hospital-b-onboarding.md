@@ -105,7 +105,7 @@
 | E23-T17 B 验收 | §5 两级核对基线（复验口径）；节点随访率验收（`docs/testing/hospital-b-acceptance.md`，开关行载体定夺见其 §6 / OQ-128 ④） |
 | E23-T18 B 用户病区角色 | 空的术者 / 病区取值与角色模板骨架；按交接单录入约 30 名用户（手册 `docs/ops/hospital-b-user-ward-role.md`，演示预置随包种子 V136） |
 | E23-T28 B 回归 | A 生产基线对照（B 接入不影响 A：模板只读导出，A 无写路径） |
-| E23-T19 B 上线 | 开通完成 + 差异配置就绪的 B 租户；切换动作复用 `hospital-a-go-live.md` §6 |
+| E23-T19 B 上线 | 开通完成 + 差异配置就绪的 B 租户；切换 runbook 见 `docs/ops/hospital-b-go-live.md`（复用 `hospital-a-go-live.md` 全套口径，B 无正式数据导入、入口复用无 DNS 动作） |
 
 ## 9. 由人执行的事项（按 `AGENTS.md` 第 9 节）
 
