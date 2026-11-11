@@ -60,10 +60,12 @@ class PatientRegistrationServiceTest {
     private final PatientSummaryService summary = mock(PatientSummaryService.class);
     private final com.crdp.followup.plan.app.PlanEnrollmentService enrollments =
             mock(com.crdp.followup.plan.app.PlanEnrollmentService.class);
+    private final com.crdp.followup.implant.app.ImplantService implants =
+            mock(com.crdp.followup.implant.app.ImplantService.class);
 
     private final PatientRegistrationService service =
             new PatientRegistrationService(
-                    mapper, gateway, crypto, audit, statusHistory, summary, enrollments);
+                    mapper, gateway, crypto, audit, statusHistory, summary, enrollments, implants);
 
     @BeforeEach
     void login() {
@@ -256,6 +258,98 @@ class PatientRegistrationServiceTest {
         AuditEntry registration = captor.getAllValues().get(1);
         assertEquals("PATIENT_CREATE", registration.action(), "登记本体照常成功记审计");
         assertEquals(AuditResult.SUCCESS, registration.result());
+    }
+
+    // ---------------------------------------------------------------- C 登记口径（E21-T01 /
+    // OQ-71①：implant 开关）
+
+    /** C 首条植入记录载荷（虚构示例数据）。 */
+    private static com.crdp.followup.implant.app.ImplantService.ImplantPayload implantPayload() {
+        return new com.crdp.followup.implant.app.ImplantService.ImplantPayload(
+                "FIRST",
+                LocalDate.of(2026, 1, 5),
+                "DDD",
+                "MEDTRONIC",
+                "示例型号 S-01",
+                "DEMO-SN-0001",
+                "DDD",
+                "虚构示例医院",
+                "示例医生",
+                "SSS",
+                null,
+                List.of(
+                        new com.crdp.followup.implant.app.ImplantService.LeadPayload(
+                                null, "RA", "RA_APPENDAGE", null, null, null),
+                        new com.crdp.followup.implant.app.ImplantService.LeadPayload(
+                                null, "RV", "RV_APEX", null, null, null)));
+    }
+
+    @Test
+    void cModeRegistrationRequiresFirstImplantAndSkipsPresetEnrollment() {
+        wardEnabled();
+        when(mapper.countEnabledDept(7L)).thenReturn(1);
+        when(gateway.liveIdByMrnBlind("BLIND:" + MRN)).thenReturn(null);
+        when(mapper.findWards()).thenReturn(List.of(new PatientMapper.OptionRow(WARD_ID, "示例二病区")));
+        when(mapper.insertPatient(any()))
+                .thenAnswer(
+                        invocation -> {
+                            PatientInsert row = invocation.getArgument(0);
+                            row.setId(101L);
+                            return 1;
+                        });
+        when(implants.implantEnabled()).thenReturn(true);
+
+        // C-PAT-001 最小必填：姓名、性别、出生日期、病历号、科室、病区 + 首条植入记录；
+        // 无住院 / 出院字段也可登记
+        PatientRegistrationService.CreatedView view =
+                service.create(
+                        request(MRN, NAME)
+                                .withDept(7L)
+                                .withoutHospitalStay()
+                                .withImplant(implantPayload())
+                                .build());
+
+        assertEquals("101", view.id());
+        ArgumentCaptor<PatientInsert> captor = ArgumentCaptor.forClass(PatientInsert.class);
+        verify(mapper).insertPatient(captor.capture());
+        assertNull(captor.getValue().getDischargeDate(), "C 登记不要求出院日期");
+        assertEquals(BIRTH, captor.getValue().getBirthDate(), "出生日期为 C 最小必填");
+
+        // 同一事务建首条植入记录；A 预置计划自动入组不套用（按器械映射随 E21-T05）
+        verify(implants).createForRegistration(eq(101L), any(), eq(OPERATOR_ID));
+        verify(enrollments, never()).autoEnrollOnRegistration(anyLong(), any());
+    }
+
+    @Test
+    void cModeRegistrationRejectsMissingImplantBirthDateOrDept() {
+        wardEnabled();
+        when(gateway.liveIdByMrnBlind("BLIND:" + MRN)).thenReturn(null);
+        when(implants.implantEnabled()).thenReturn(true);
+
+        assertRejected(
+                request(MRN, NAME).withDept(7L).withoutHospitalStay().build(),
+                "请同时填写首条植入记录（C-PAT-001）");
+        assertRejected(
+                request(MRN, NAME)
+                        .withDept(7L)
+                        .withoutHospitalStay()
+                        .withBirth(null)
+                        .withImplant(implantPayload())
+                        .build(),
+                "请填写出生日期");
+        assertRejected(
+                request(MRN, NAME).withoutHospitalStay().withImplant(implantPayload()).build(),
+                "请选择科室");
+        verify(mapper, never()).insertPatient(any());
+    }
+
+    @Test
+    void aModeRegistrationRejectsImplantPayload() {
+        wardEnabled();
+        when(gateway.liveIdByMrnBlind("BLIND:" + MRN)).thenReturn(null);
+        // A / B 租户（implant 关闭）：携带植入记录 → 40001，A 登记口径不受影响
+        assertRejected(
+                request(MRN, NAME).withImplant(implantPayload()).build(), "植入记录功能未开通，不能携带植入记录");
     }
 
     @Test
@@ -495,6 +589,7 @@ class PatientRegistrationServiceTest {
         private LocalDate admission = ADMISSION;
         private LocalDate discharge = DISCHARGE;
         private Integer dischargeStatus = 1;
+        private com.crdp.followup.implant.app.ImplantService.ImplantPayload implant;
 
         private RequestBuilder(String mrn, String name) {
             this.mrn = mrn;
@@ -541,6 +636,21 @@ class PatientRegistrationServiceTest {
             return this;
         }
 
+        RequestBuilder withImplant(
+                com.crdp.followup.implant.app.ImplantService.ImplantPayload value) {
+            this.implant = value;
+            return this;
+        }
+
+        /** C 登记口径：不带住院 / 出院字段（附录 A 患者 #1–#21 无此三项）。 */
+        RequestBuilder withoutHospitalStay() {
+            this.surgery = null;
+            this.admission = null;
+            this.discharge = null;
+            this.dischargeStatus = null;
+            return this;
+        }
+
         PatientRegistrationService.CreateRequest build() {
             return new PatientRegistrationService.CreateRequest(
                     mrn,
@@ -553,7 +663,8 @@ class PatientRegistrationServiceTest {
                     admission,
                     discharge,
                     dischargeStatus,
-                    null);
+                    null,
+                    implant);
         }
     }
 

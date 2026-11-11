@@ -6,6 +6,8 @@
  * 登记接口重复返回 40902 阻止；姓名 + 出生日期相同为可能重复提示（C-PAT-002，不阻止）。
  */
 
+import type { ImplantPayload } from './implant';
+
 /** 已有患者脱敏摘要（后端只返回脱敏值，不暴露明文）。 */
 export interface DuplicatePatientSummary {
   dischargeDate?: null | string;
@@ -36,7 +38,10 @@ export interface PatientRegistrationForm {
   wardId?: null | number;
 }
 
-/** 登记请求体（日期 YYYY-MM-DD，编号语义见 docs/api/patient.md §2）。 */
+/**
+ * 登记请求体（日期 YYYY-MM-DD，编号语义见 docs/api/patient.md §2）。
+ * implant 为医院 C 首条植入记录（C-PAT-001：implant 开关开启时必填，OQ-71①；结构见 implant.ts）。
+ */
 export interface PatientRegistrationPayload {
   admissionDate?: null | string;
   birthDate?: null | string;
@@ -44,6 +49,7 @@ export interface PatientRegistrationPayload {
   dischargeDate?: null | string;
   dischargeStatus?: null | number;
   gender?: null | string;
+  implant?: ImplantPayload | null;
   legacyNo?: null | string;
   medicalRecordNo: string;
   name: string;

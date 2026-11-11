@@ -3,21 +3,24 @@
 > 仅医院 C 使用，功能开关 `implant`（ERI 循环另有 `eri_cycle`）。后端：`crdp-followup`；表 `pt_implant`、`pt_lead`、`pt_implant_lead`、`fu_plan_mapping`、`fu_switch_rule`。
 > 页面：`docs/design/pages.md` §4（C 基线资料页签内的植入记录区，C“植入记录”已并入“基线资料”）、§8（计划页“器械→计划映射”）。
 > 需求：C-PAT-004..008、C-PAT-010、C-FU-003、C-FU-005..007、C-FU-009。规格原文见 `docs/requirements/hospital-c-spec.md` 第 4、5 章。
-> 全部路径 **推断，待确认**。
+> §1 的 GET / POST / PUT / options 已随 E21-T01 落地（下表不再标推断）；§1 其余端点与 §2、§3 随后续任务，**推断，待确认**。
 
 ## 1. 植入记录与电极
 
 | 方法 | 路径 | 权限 | 说明 | 需求 |
 |---|---|---|---|---|
-| GET | `/api/hospital/followup/patients/{id}/implants` | `followup:patient:view` | 全部植入记录（当前器械置顶）及其电极 | C-PAT-004、005、007 |
-| POST | `/api/hospital/followup/patients/{id}/implants` | `followup:implant:edit` | 新建（首次植入 / 历史建档允许过去日期）；保存后触发自动入组（§3） | C-PAT-004、008、C-FU-003 |
-| PUT | `/api/hospital/followup/implants/{implantId}` | `followup:implant:edit` | 编辑；`{ version, ... }`，写字段历史；器械类型更正会触发 §3 切换 | C-PAT-011、C-FU-007 |
-| POST | `/api/hospital/followup/implants/{implantId}/replace` | `followup:implant:edit` | 更换 / 升级：`{ type: REPLACE|UPGRADE|BATTERY, newImplant{...}, leads: [{ leadId, action: KEEP|ABANDON|EXTRACT }], newLeads[] }`；原器械标“已更换”，沿用电极保留原植入日期 | C-PAT-006 |
-| POST | `/api/hospital/followup/implants/{implantId}/leads/revise` | `followup:implant:edit` | 电极修正 | C-PAT-006 |
-| POST | `/api/hospital/followup/implants/{implantId}/explant` | `followup:implant:edit` | 取出 `{ date, reason }` | C-FU-007 |
-| POST | `/api/hospital/followup/implants/{implantId}/eri` | `followup:record:edit` | 标记 / 取消接近 ERI（一般由程控记录提交时带出，也允许单独设置） | C-FU-006 |
+| GET | `/api/hospital/followup/patients/{id}/implants` | `followup:patient:view` | 全部植入记录（当前器械置顶，其余按植入日期新在前；每条含 `implantNo` 按日期升序编号与电极清单、编码 + 显示名一并下发） | C-PAT-004、005 |
+| POST | `/api/hospital/followup/patients/{id}/implants` | `followup:implant:edit` | 新建（首次植入 / 历史建档允许过去日期，不能晚于今天）；新器械接替在用时旧记录自动结束为已更换（结束日期 = 新植入日期），补录早于在用的历史器械直接落已更换；一位患者仅一条在用（库层生成列唯一约束兜底，并发 40900）。自动入组（§3）随 E21-T05 | C-PAT-004、008 |
+| PUT | `/api/hospital/followup/implants/{implantId}` | `followup:implant:edit` | 编辑；`{ baseVersion, implant{...} }`（乐观锁 40900）；状态与结束信息系统维护；`implant.leads` 为 null 不动电极、非 null 整组替换（无 id 新植、带 id 更新、缺席解链并删行）；写 IMPLANT_CREATE / IMPLANT_UPDATE 操作审计（字段级历史随 E21-T04） | C-PAT-004、005 |
+| GET | `/api/hospital/followup/implants/options` | `followup:patient:view` | 选项清单（植入类型 / 起搏器类型 / 品牌 / 起搏模式 / 植入指征 / 电极部位按 RA / RV / LV 分组 / 电极状态）。暂行预置，字典值随 E21-T04 录入 cfg_dict（OQ-69①、OQ-129） | C-PAT-004、005 |
+| POST | `/api/hospital/followup/implants/{implantId}/replace` | `followup:implant:edit` | 更换 / 升级：`{ type: REPLACE|UPGRADE|BATTERY, newImplant{...}, leads: [{ leadId, action: KEEP|ABANDON|EXTRACT }], newLeads[] }`；原器械标“已更换”，沿用电极保留原植入日期（随 E21-T02） | C-PAT-006 |
+| POST | `/api/hospital/followup/implants/{implantId}/leads/revise` | `followup:implant:edit` | 电极修正（随 E21-T02） | C-PAT-006 |
+| POST | `/api/hospital/followup/implants/{implantId}/explant` | `followup:implant:edit` | 取出 `{ date, reason }`（随 E21-T02） | C-FU-007 |
+| POST | `/api/hospital/followup/implants/{implantId}/eri` | `followup:record:edit` | 标记 / 取消接近 ERI（一般由程控记录提交时带出，也允许单独设置；随 E21-T07） | C-FU-006 |
 
-植入记录字段（C-PAT-004，表单 `C_IMPLANT` 驱动）：植入类型、日期、起搏器类型、品牌、型号、序列号、起搏模式（统一字典 C-FLD-003）、植入医院、医生、指征、状态。电极（C-PAT-005）：RA / RV / LV、部位、型号、日期、状态；无导线起搏器不录电极。
+植入记录字段（C-PAT-004）：植入类型（FIRST / REPLACE / UPGRADE / LEAD_REVISION / OTHER）、日期、起搏器类型（SSI / DDD / CRT_P / ICD / CRT_D / HBP_LBBP / LEADLESS）、品牌、型号、序列号、起搏模式、植入医院、医生、指征（+ 说明）、状态（ACTIVE / REPLACED / EXPLANTED，系统维护）。电极（C-PAT-005）：RA / RV / LV、部位（按腔室过滤）、型号、日期（缺省同植入记录）、状态（ACTIVE / ABANDONED / EXTRACTED）；无导线起搏器（LEADLESS）不录电极（40001）。
+
+患者登记（C-PAT-001 / OQ-71①）：`implant` 开关开启时 `POST /patients` 切 C 最小必填（姓名、性别、出生日期、病历号、科室、病区）且请求体须携带 `implant`（首条植入记录，同事务落库）；关闭时 A 出院登记口径不变、携带 `implant` 40001。
 
 当前器械（C-PAT-007）：状态为“在用”的植入记录；随访记录按**随访日期**关联当时在用的器械（补录同样按日期匹配），参数对比只与同一器械 / 同一电极的上一次比较。
 

@@ -346,6 +346,35 @@ export type {
   FormSummary,
   FormUsage,
 } from './form';
+// E21-T01 植入记录与电极（C-PAT-004、C-PAT-005，医院 C 功能开关 implant）
+export {
+  buildImplantPayload,
+  buildImplantUpdatePayload,
+  emptyImplantForm,
+  IMPLANT_DEVICE_LEADLESS,
+  IMPLANT_INDICATION_OTHER,
+  IMPLANT_LEAD_STATUS_ACTIVE,
+  implantCardLines,
+  implantFormOf,
+  leadPositionOptions,
+  leadsAllowedForDevice,
+  leadSummary,
+  validateCRegistration,
+  validateImplantForm,
+} from './implant';
+export type {
+  ImplantForm,
+  ImplantFormErrors,
+  ImplantLeadForm,
+  ImplantLeadPositionGroup,
+  ImplantLeadView,
+  ImplantListResult,
+  ImplantOptionItem,
+  ImplantOptions,
+  ImplantPayload,
+  ImplantRecordView,
+  ImplantUpdatePayload,
+} from './implant';
 export {
   errorBody,
   lockedMessage,

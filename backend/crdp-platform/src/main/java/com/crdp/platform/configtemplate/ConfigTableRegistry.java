@@ -121,6 +121,10 @@ public final class ConfigTableRegistry {
                     "pt_status_history",
                     "pt_ward_history",
                     "pt_patient_summary",
+                    // 植入记录与电极（医院 C 患者数据，E21-T01；绝不随配置模板导出）
+                    "pt_implant",
+                    "pt_lead",
+                    "pt_implant_lead",
                     // 随访业务数据
                     "fu_enrollment",
                     "fu_task",

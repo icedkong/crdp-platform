@@ -8,6 +8,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.constraints.Size;
 import java.time.LocalDate;
+import java.util.List;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -69,7 +70,8 @@ public class PatientRegistrationController {
                                 request.admissionDate(),
                                 request.dischargeDate(),
                                 request.dischargeStatus(),
-                                request.legacyNo())));
+                                request.legacyNo(),
+                                request.implant() == null ? null : request.implant().toPayload())));
     }
 
     @Operation(
@@ -89,7 +91,7 @@ public class PatientRegistrationController {
             @Size(max = 64) String name,
             LocalDate birthDate) {}
 
-    /** 登记请求体（字段即 pt_patient 实体列；A 出院登记最小必填集由服务端校验）。 */
+    /** 登记请求体（字段即 pt_patient 实体列；A 出院登记最小必填集由服务端校验；implant 为医院 C 首条植入记录，implant 开关开启时必填）。 */
     public record CreateRequest(
             @Size(max = 64) String medicalRecordNo,
             @Size(max = 64) String name,
@@ -101,5 +103,60 @@ public class PatientRegistrationController {
             LocalDate admissionDate,
             LocalDate dischargeDate,
             Integer dischargeStatus,
-            @Size(max = 64) String legacyNo) {}
+            @Size(max = 64) String legacyNo,
+            ImplantPayloadRequest implant) {}
+
+    /** C 首条植入记录载荷（结构同 implant 域 POST /patients/{id}/implants 请求体，C-PAT-001）。 */
+    public record ImplantPayloadRequest(
+            @Size(max = 16) String implantType,
+            LocalDate implantDate,
+            @Size(max = 16) String deviceType,
+            @Size(max = 32) String brand,
+            @Size(max = 128) String model,
+            @Size(max = 64) String serialNo,
+            @Size(max = 16) String pacingMode,
+            @Size(max = 128) String hospital,
+            @Size(max = 64) String doctor,
+            @Size(max = 32) String indication,
+            @Size(max = 255) String indicationNote,
+            List<LeadPayloadRequest> leads) {
+
+        com.crdp.followup.implant.app.ImplantService.ImplantPayload toPayload() {
+            return new com.crdp.followup.implant.app.ImplantService.ImplantPayload(
+                    implantType,
+                    implantDate,
+                    deviceType,
+                    brand,
+                    model,
+                    serialNo,
+                    pacingMode,
+                    hospital,
+                    doctor,
+                    indication,
+                    indicationNote,
+                    leads == null
+                            ? null
+                            : leads.stream()
+                                    .map(
+                                            lead ->
+                                                    new com.crdp.followup.implant.app.ImplantService
+                                                            .LeadPayload(
+                                                            lead.id(),
+                                                            lead.chamber(),
+                                                            lead.position(),
+                                                            lead.model(),
+                                                            lead.implantDate(),
+                                                            lead.status()))
+                                    .toList());
+        }
+    }
+
+    /** 电极载荷（结构同 implant 域 LeadPayloadRequest）。 */
+    public record LeadPayloadRequest(
+            @Size(max = 20) String id,
+            @Size(max = 4) String chamber,
+            @Size(max = 32) String position,
+            @Size(max = 128) String model,
+            LocalDate implantDate,
+            @Size(max = 16) String status) {}
 }

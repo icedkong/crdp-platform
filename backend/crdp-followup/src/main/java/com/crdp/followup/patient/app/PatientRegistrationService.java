@@ -1,5 +1,6 @@
 package com.crdp.followup.patient.app;
 
+import com.crdp.followup.implant.app.ImplantService;
 import com.crdp.followup.patient.infra.mapper.PatientInsert;
 import com.crdp.followup.patient.infra.mapper.PatientMapper;
 import com.crdp.followup.plan.app.PlanEnrollmentService;
@@ -62,6 +63,7 @@ public class PatientRegistrationService {
     private final PatientStatusHistoryService statusHistory;
     private final PatientSummaryService summary;
     private final PlanEnrollmentService enrollments;
+    private final ImplantService implants;
 
     public PatientRegistrationService(
             PatientMapper mapper,
@@ -70,7 +72,8 @@ public class PatientRegistrationService {
             AuditLogger audit,
             PatientStatusHistoryService statusHistory,
             PatientSummaryService summary,
-            PlanEnrollmentService enrollments) {
+            PlanEnrollmentService enrollments,
+            ImplantService implants) {
         this.mapper = mapper;
         this.gateway = gateway;
         this.crypto = crypto;
@@ -78,6 +81,7 @@ public class PatientRegistrationService {
         this.statusHistory = statusHistory;
         this.summary = summary;
         this.enrollments = enrollments;
+        this.implants = implants;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -95,7 +99,7 @@ public class PatientRegistrationService {
             DuplicatePatientView patient,
             List<DuplicatePatientView> possibleMatches) {}
 
-    /** 登记请求：字段即 pt_patient 实体列（A 出院登记口径的最小必填集见 {@link #validate}）。 */
+    /** 登记请求：字段即 pt_patient 实体列（A 出院登记口径的最小必填集见 {@link #create}）。 */
     public record CreateRequest(
             String medicalRecordNo,
             String name,
@@ -107,7 +111,8 @@ public class PatientRegistrationService {
             LocalDate admissionDate,
             LocalDate dischargeDate,
             Integer dischargeStatus,
-            String legacyNo) {}
+            String legacyNo,
+            ImplantService.ImplantPayload implant) {}
 
     /** 登记结果（敏感值脱敏；进入详情 / 基线补录由后续任务页面承接）。 */
     public record CreatedView(
@@ -161,9 +166,25 @@ public class PatientRegistrationService {
      */
     @Transactional
     public CreatedView create(CreateRequest request) {
+        // E21-T01 / OQ-71①：implant 功能开关开启 → 医院 C 登记口径（C-PAT-001 最小必填：
+        // 姓名、性别、出生日期、病历号、科室、病区，须同时建立第一条植入记录；住院 / 出院
+        // 字段不适用）；关闭 → A 出院登记口径不变（A / B 租户不受影响）。
+        boolean cMode = implants.implantEnabled();
+        if (!cMode && request.implant() != null) {
+            throw new ApiException(400, 40001, "植入记录功能未开通，不能携带植入记录");
+        }
         String mrn = requireText(request.medicalRecordNo(), "请填写病案号");
         String name = requireText(request.name(), "请填写姓名");
         String gender = normalizeGender(request.gender());
+        if (cMode && request.birthDate() == null) {
+            throw new ApiException(400, 40001, "请填写出生日期");
+        }
+        if (cMode && request.deptId() == null) {
+            throw new ApiException(400, 40001, "请选择科室");
+        }
+        if (cMode && request.implant() == null) {
+            throw new ApiException(400, 40001, "请同时填写首条植入记录（C-PAT-001）");
+        }
         Long wardId = request.wardId();
         if (wardId == null || wardId <= 0) {
             throw new ApiException(400, 40001, "请选择病区");
@@ -172,11 +193,26 @@ public class PatientRegistrationService {
         if (request.deptId() != null) {
             validateDept(request.deptId());
         }
-        LocalDate surgeryDate = requireDate(request.surgeryDate(), "请填写手术日期");
-        LocalDate admissionDate = requireDate(request.admissionDate(), "请填写入院日期");
-        LocalDate dischargeDate = requireDate(request.dischargeDate(), "请填写出院日期");
-        Integer dischargeStatus = normalizeDischargeStatus(request.dischargeStatus());
-        validateDateOrder(admissionDate, surgeryDate, dischargeDate);
+        LocalDate surgeryDate;
+        LocalDate admissionDate;
+        LocalDate dischargeDate;
+        Integer dischargeStatus;
+        if (cMode) {
+            // C 登记：住院 / 出院字段非最小必填（附录 A 患者 #1–#21 无此三项）；填了才校验先后
+            surgeryDate = request.surgeryDate();
+            admissionDate = request.admissionDate();
+            dischargeDate = request.dischargeDate();
+            dischargeStatus = optionalDischargeStatus(request.dischargeStatus());
+            if (admissionDate != null && surgeryDate != null && dischargeDate != null) {
+                validateDateOrder(admissionDate, surgeryDate, dischargeDate);
+            }
+        } else {
+            surgeryDate = requireDate(request.surgeryDate(), "请填写手术日期");
+            admissionDate = requireDate(request.admissionDate(), "请填写入院日期");
+            dischargeDate = requireDate(request.dischargeDate(), "请填写出院日期");
+            dischargeStatus = normalizeDischargeStatus(request.dischargeStatus());
+            validateDateOrder(admissionDate, surgeryDate, dischargeDate);
+        }
         if (request.birthDate() != null && request.birthDate().isAfter(LocalDate.now())) {
             throw new ApiException(400, 40001, "出生日期不能晚于今天");
         }
@@ -206,7 +242,8 @@ public class PatientRegistrationService {
         row.setCreatedBy(CurrentSession.requireHospital().userId());
         // E23-T09 / UAT-SELF-05：出院状态 = 3 死亡 → 登记即「已死亡」（A 规格 §10 状态规则表），
         // 批量入组凭 followup_status 守卫跳过（§5）；此前依赖列默认 ACTIVE，死亡患者可被入组并创建随访任务
-        boolean dischargedDead = dischargeStatus == DISCHARGE_STATUS_DEAD;
+        boolean dischargedDead =
+                dischargeStatus != null && dischargeStatus == DISCHARGE_STATUS_DEAD;
         row.setFollowupStatus(dischargedDead ? "DEAD" : "ACTIVE");
         try {
             mapper.insertPatient(row);
@@ -227,26 +264,41 @@ public class PatientRegistrationService {
         summary.recompute(row.getId(), CurrentSession.requireHospital().userId());
 
         // E14-T05 / Q35 自动入组：出院登记后自动加入预置计划（auto_enroll 的已发布计划），
-        // 出院状态为死亡由 plan 侧判定不加入；登记是主操作，自动入组故障不回滚登记（记 FAIL 审计提示人工入组）
-        autoEnrollQuietly(row.getId(), dischargeStatus);
+        // 出院状态为死亡由 plan 侧判定不加入；登记是主操作，自动入组故障不回滚登记（记 FAIL 审计提示人工入组）。
+        // 医院 C 的入组按器械类型映射（C-FU-003）随 E21-T05，此处不套用 A 预置计划
+        if (!cMode) {
+            autoEnrollQuietly(row.getId(), dischargeStatus);
+        } else {
+            // C-PAT-001「须同时建立第一条植入记录」：同一事务落首条植入记录与电极（E21-T01）
+            implants.createForRegistration(
+                    row.getId(), request.implant(), CurrentSession.requireHospital().userId());
+        }
 
         audit.append(
                 AuditEntry.operation("followup", "PATIENT_CREATE")
                         .objectType("PATIENT")
                         .objectId(String.valueOf(row.getId()))
                         .description(
-                                "出院登记新建患者：病区 "
-                                        + wardId
-                                        + "，出院日期 "
-                                        + dischargeDate
-                                        + "（姓名与病案号为敏感字段，审计只记摘要）")
+                                cMode
+                                        ? "患者登记（医院 C 口径）：病区 "
+                                                + wardId
+                                                + "，出生日期 "
+                                                + request.birthDate()
+                                                + "，同建首条植入记录（姓名与病历号为敏感字段，审计只记摘要）"
+                                        : "出院登记新建患者：病区 "
+                                                + wardId
+                                                + "，出院日期 "
+                                                + dischargeDate
+                                                + "（姓名与病案号为敏感字段，审计只记摘要）")
                         .afterJson(
                                 writeJson(
                                         new AuditSummary(
                                                 SensitiveValueMasker.mask("medicalRecordNo", mrn),
                                                 SensitiveValueMasker.mask("name", name),
                                                 wardId,
-                                                dischargeDate.toString())))
+                                                dischargeDate == null
+                                                        ? request.birthDate().toString()
+                                                        : dischargeDate.toString())))
                         .result(AuditResult.SUCCESS)
                         .build());
         return new CreatedView(
@@ -373,6 +425,15 @@ public class PatientRegistrationService {
         if (status == null) {
             throw new ApiException(400, 40001, "请选择出院状态");
         }
+        return checkDischargeStatus(status);
+    }
+
+    /** C 登记口径：出院状态非必填（缺省存活，不入死亡分支）。 */
+    private static Integer optionalDischargeStatus(Integer status) {
+        return status == null ? null : checkDischargeStatus(status);
+    }
+
+    private static Integer checkDischargeStatus(Integer status) {
         if (status < 1 || status > 3) {
             throw new ApiException(400, 40001, "出院状态取值不正确");
         }
