@@ -1,3 +1,4 @@
+export * from './announcement';
 export * from './audit';
 export * from './auth';
 export * from './baseline';

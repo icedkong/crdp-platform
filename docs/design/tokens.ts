@@ -290,6 +290,9 @@ export const statusTone: Record<string, StatusTone> = {
   维护中: 'warning',
   已关闭: 'default',
   未开通: 'default',
+  // 系统公告（PLT-CFG-009，E05-T11）：发布即生效、撤下对医院端即刻不可见
+  发布中: 'success',
+  已撤下: 'default',
 };
 
 /**
