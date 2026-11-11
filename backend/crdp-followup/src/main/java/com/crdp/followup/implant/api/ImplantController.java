@@ -59,7 +59,7 @@ public class ImplantController {
     @Operation(
             summary =
                     "编辑植入记录与电极（baseVersion 乐观锁；状态系统维护；leads 为 null 不动电极）。"
-                            + "写 IMPLANT_UPDATE 审计；字段级历史随 E21-T04 C_IMPLANT 模板")
+                            + "写 IMPLANT_UPDATE 审计；字段级历史随 C 字段字典录入（E23-T20）C_IMPLANT 模板")
     @PutMapping("/implants/{implantId}")
     @RequireModule("followup")
     @RequiresPermission("followup:implant:edit")
@@ -70,8 +70,9 @@ public class ImplantController {
 
     @Operation(
             summary =
-                    "植入记录选项（植入类型 / 起搏器类型 / 品牌 / 起搏模式 / 植入指征 / 电极部位按腔室 /"
-                            + " 电极状态）。暂行预置，业务字典值随 E21-T04 录入 cfg_dict（OQ-69①）")
+                    "植入记录选项（植入类型 / 起搏器类型 / 品牌 / 起搏模式（统一字典 C-FLD-003）/ 植入指征 /"
+                            + " 电极部位按腔室 / 电极状态）。业务字典（平台库 V70 预置 + 本院覆盖）现读生效项，"
+                            + "停用项不进下拉、历史值照常显示（C-FLD-009，E21-T04）")
     @GetMapping("/implants/options")
     @RequireModule("followup")
     @RequiresPermission("followup:patient:view")

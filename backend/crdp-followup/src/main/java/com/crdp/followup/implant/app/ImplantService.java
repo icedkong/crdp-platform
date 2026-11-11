@@ -36,6 +36,11 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>C 规格 §2 / §4：器械信息从患者登记拆出，患者 → 植入记录（1:N）→ 电极（可多根、可跨器械沿用）。本任务（T01）覆盖新建与编辑；更换 / 升级 / 电极修正 /
  * 取出的专用流程与计划切换（C-PAT-006、C-FU-007）随 E21-T02 及后续任务。
  *
+ * <p>E21-T04（C-FLD-002、C-FLD-003）：起搏器类型、品牌、<b>统一起搏模式</b>（患者登记表与程控记录表两套
+ * 选项合并为一个字典，植入记录与程控记录共用，Q08）、植入指征、电极植入部位（按腔室）改读业务字典 （平台库 V70 预置，租户经 cfg_dict 停用平台项 /
+ * 新增本院项，PLT-CFG-002）：options 只下发生效项 （停用项不进下拉），保存校验接受全部已知项（停用项的历史值可原样保存，与 FormDataValidator 同向），
+ * 显示名随字典解析（含停用项，历史记录照常显示，C-FLD-009）。库列不动（仍存稳定字符串编码）。
+ *
  * <ul>
  *   <li>一位患者同一时间只有一条「在用」植入记录（C 规格 §4 业务规则）：新建晚于 / 等于当前在用植入日期的记录时，旧记录自动结束（已更换，结束日期 =
  *       新植入日期）；补录早于当前在用的历史器械时新记录直接落「已更换」；并发双开在用由 uk_pt_implant_active 生成列唯一约束兜底 → 40900；
@@ -43,7 +48,7 @@ import org.springframework.transaction.annotation.Transactional;
  *   <li>电极植入日期缺省同植入记录日期（附录 A 电极 #5）；电极沿用（保留原日期跨器械挂接）随 E21-T02；
  *   <li>植入记录状态（在用 / 已更换 / 已取出）系统维护，不接受请求体直改（附录 A 植入 #12「枚举·系统」）；
  *   <li>功能开关 {@code implant}（cfg_feature）关闭 → 40301（无行视为关闭，与 useFeature「未配置＝默认关闭」同向）；写入
- *       IMPLANT_CREATE / IMPLANT_UPDATE 操作审计；字段级历史（C-PAT-011）随 E21-T04 C_IMPLANT
+ *       IMPLANT_CREATE / IMPLANT_UPDATE 操作审计；字段级历史（C-PAT-011）随 C 字段字典录入 （E23-T20）C_IMPLANT
  *       表单模板落地（docs/open-questions.md）。
  * </ul>
  *
@@ -62,16 +67,19 @@ public class ImplantService {
     private final ImplantGateway gateway;
     private final ImplantMapper mapper;
     private final ImplantFeatureMapper features;
+    private final ImplantDictPort dicts;
     private final AuditLogger audit;
 
     public ImplantService(
             ImplantGateway gateway,
             ImplantMapper mapper,
             ImplantFeatureMapper features,
+            ImplantDictPort dicts,
             AuditLogger audit) {
         this.gateway = gateway;
         this.mapper = mapper;
         this.features = features;
+        this.dicts = dicts;
         this.audit = audit;
     }
 
@@ -171,51 +179,32 @@ public class ImplantService {
     public ImplantListView list(long patientId) {
         requireFeatureEnabled();
         requirePatientInScope(patientId);
-        List<ImplantRow> rows = gateway.implantsOf(patientId);
-        if (rows.isEmpty()) {
-            return new ImplantListView(List.of());
-        }
-        Map<Long, List<LeadRow>> leadsByImplant = leadsGroupedByImplant(rows);
-
-        // 植入序号：按植入日期升序 1..N（附录 A 植入 #1「第 1 次、第 2 次……」）
-        List<ImplantRow> byDateAsc = new ArrayList<>(rows);
-        byDateAsc.sort(Comparator.comparing(ImplantRow::implantDate).thenComparing(ImplantRow::id));
-        Map<Long, Integer> implantNoById = new HashMap<>();
-        for (int i = 0; i < byDateAsc.size(); i++) {
-            implantNoById.put(byDateAsc.get(i).id(), i + 1);
-        }
-
-        // 当前器械置顶（在用在前），其余按日期新在前（gateway 已按日期倒序返回）
-        List<ImplantView> items = new ArrayList<>();
-        for (ImplantRow row : rows.stream().sorted(ImplantService::currentFirst).toList()) {
-            items.add(
-                    toView(
-                            row,
-                            implantNoById.get(row.id()),
-                            leadsByImplant.getOrDefault(row.id(), List.of())));
-        }
-        return new ImplantListView(List.copyOf(items));
+        return listUnchecked(patientId);
     }
 
-    /** 选项清单（新建 / 编辑表单与登记页 C 模式共用；暂行预置，字典值随 E21-T04）。 */
+    /**
+     * 选项清单（新建 / 编辑表单与登记页 C 模式共用）。起搏器类型 / 品牌 / 起搏模式（统一字典 C-FLD-003）/ 植入指征 / 电极部位（按腔室）现读业务字典（平台库 V70
+     * 预置 + 本院覆盖，E21-T04）：只下发生效项（本院停用的平台项不进下拉）， 顺序按字典 sortNo；植入类型与状态为系统枚举。
+     */
     public OptionsView options() {
         requireFeatureEnabled();
+        DictTables t = loadDicts();
         return new OptionsView(
                 toItems(ImplantCodes.IMPLANT_TYPES),
-                toItems(ImplantCodes.DEVICE_TYPES),
-                toItems(ImplantCodes.BRANDS),
-                toItems(ImplantCodes.PACING_MODES),
-                toItems(ImplantCodes.INDICATIONS),
+                t.deviceTypes().enabledItems(),
+                t.brands().enabledItems(),
+                t.pacingModes().enabledItems(),
+                t.indications().enabledItems(),
                 List.of(
                         new LeadPositionGroup(
                                 ImplantCodes.CHAMBER_RA,
-                                toItems(ImplantCodes.LEAD_POSITIONS.get(ImplantCodes.CHAMBER_RA))),
+                                t.leadPositions(ImplantCodes.CHAMBER_RA).enabledItems()),
                         new LeadPositionGroup(
                                 ImplantCodes.CHAMBER_RV,
-                                toItems(ImplantCodes.LEAD_POSITIONS.get(ImplantCodes.CHAMBER_RV))),
+                                t.leadPositions(ImplantCodes.CHAMBER_RV).enabledItems()),
                         new LeadPositionGroup(
                                 ImplantCodes.CHAMBER_LV,
-                                toItems(ImplantCodes.LEAD_POSITIONS.get(ImplantCodes.CHAMBER_LV)))),
+                                t.leadPositions(ImplantCodes.CHAMBER_LV).enabledItems())),
                 toItems(ImplantCodes.LEAD_STATUSES));
     }
 
@@ -246,7 +235,8 @@ public class ImplantService {
 
     private ImplantRow doCreate(
             long patientId, ImplantPayload payload, long userId, boolean fromRegistration) {
-        Normalized normalized = normalize(payload);
+        DictTables dicts = loadDicts();
+        Normalized normalized = normalize(payload, dicts);
         ImplantRow active = gateway.activeImplantOf(patientId);
 
         ImplantInsert row = new ImplantInsert();
@@ -272,7 +262,7 @@ public class ImplantService {
             mapper.supersedeActive(
                     active.id(),
                     normalized.implantDate(),
-                    "更换 / 升级：新植入记录（" + deviceLabel(normalized.deviceType()) + "）接替在用",
+                    "更换 / 升级：新植入记录（" + dicts.deviceTypes().label(normalized.deviceType()) + "）接替在用",
                     userId);
             row.setStatus(ImplantCodes.STATUS_ACTIVE);
             supersededNote = "；原在用器械（" + active.id() + "，" + active.implantDate() + "）自动结束为已更换";
@@ -298,7 +288,7 @@ public class ImplantService {
                         .objectId(String.valueOf(patientId))
                         .description(
                                 (fromRegistration ? "登记新建首条植入记录：" : "新建植入记录：")
-                                        + deviceLabel(normalized.deviceType())
+                                        + dicts.deviceTypes().label(normalized.deviceType())
                                         + " · "
                                         + normalized.implantDate()
                                         + " · 电极 "
@@ -335,7 +325,8 @@ public class ImplantService {
         if (request.baseVersion() != existing.version()) {
             throw new ApiException(409, 40900, "该植入记录已被他人修改，请刷新后重试");
         }
-        Normalized normalized = normalize(request.implant());
+        DictTables dicts = loadDicts();
+        Normalized normalized = normalize(request.implant(), dicts);
         long userId = CurrentSession.requireHospital().userId();
 
         List<LeadRow> currentLeads = gateway.leadsOfImplant(implantId);
@@ -375,9 +366,9 @@ public class ImplantService {
                                 "编辑植入记录："
                                         + implantId
                                         + "（"
-                                        + deviceLabel(existing.deviceType())
+                                        + dicts.deviceTypes().label(existing.deviceType())
                                         + " → "
-                                        + deviceLabel(normalized.deviceType())
+                                        + dicts.deviceTypes().label(normalized.deviceType())
                                         + (leadsProvided
                                                 ? "，电极 "
                                                         + currentLeads.size()
@@ -515,20 +506,29 @@ public class ImplantService {
 
     private ImplantListView listUnchecked(long patientId) {
         List<ImplantRow> rows = gateway.implantsOf(patientId);
+        if (rows.isEmpty()) {
+            return new ImplantListView(List.of());
+        }
         Map<Long, List<LeadRow>> leadsByImplant = leadsGroupedByImplant(rows);
+        DictTables dicts = loadDicts();
+
+        // 植入序号：按植入日期升序 1..N（附录 A 植入 #1「第 1 次、第 2 次……」）
         List<ImplantRow> byDateAsc = new ArrayList<>(rows);
         byDateAsc.sort(Comparator.comparing(ImplantRow::implantDate).thenComparing(ImplantRow::id));
         Map<Long, Integer> implantNoById = new HashMap<>();
         for (int i = 0; i < byDateAsc.size(); i++) {
             implantNoById.put(byDateAsc.get(i).id(), i + 1);
         }
+
+        // 当前器械置顶（在用在前），其余按日期新在前（gateway 已按日期倒序返回）
         List<ImplantView> items = new ArrayList<>();
         for (ImplantRow row : rows.stream().sorted(ImplantService::currentFirst).toList()) {
             items.add(
                     toView(
                             row,
                             implantNoById.get(row.id()),
-                            leadsByImplant.getOrDefault(row.id(), List.of())));
+                            leadsByImplant.getOrDefault(row.id(), List.of()),
+                            dicts));
         }
         return new ImplantListView(List.copyOf(items));
     }
@@ -542,7 +542,8 @@ public class ImplantService {
         return 0;
     }
 
-    private ImplantView toView(ImplantRow row, Integer implantNo, List<LeadRow> leads) {
+    private ImplantView toView(
+            ImplantRow row, Integer implantNo, List<LeadRow> leads, DictTables dicts) {
         List<LeadView> leadViews =
                 leads.stream()
                         .map(
@@ -552,7 +553,8 @@ public class ImplantService {
                                                 lead.chamber(),
                                                 chamberLabel(lead.chamber()),
                                                 lead.position(),
-                                                positionLabel(lead.chamber(), lead.position()),
+                                                dicts.leadPositions(lead.chamber())
+                                                        .label(lead.position()),
                                                 lead.model(),
                                                 lead.implantDate(),
                                                 lead.status(),
@@ -567,17 +569,17 @@ public class ImplantService {
                 labelOf(ImplantCodes.IMPLANT_TYPES, row.implantType()),
                 row.implantDate(),
                 row.deviceType(),
-                labelOf(ImplantCodes.DEVICE_TYPES, row.deviceType()),
+                dicts.deviceTypes().label(row.deviceType()),
                 row.brand(),
-                labelOf(ImplantCodes.BRANDS, row.brand()),
+                dicts.brands().label(row.brand()),
                 row.model(),
                 row.serialNo(),
                 row.pacingMode(),
-                labelOf(ImplantCodes.PACING_MODES, row.pacingMode()),
+                dicts.pacingModes().label(row.pacingMode()),
                 row.hospital(),
                 row.doctor(),
                 row.indication(),
-                labelOf(ImplantCodes.INDICATIONS, row.indication()),
+                dicts.indications().label(row.indication()),
                 row.indicationNote(),
                 row.status(),
                 labelOf(ImplantCodes.IMPLANT_STATUSES, row.status()),
@@ -603,7 +605,7 @@ public class ImplantService {
             String indicationNote,
             List<LeadPayload> leads) {}
 
-    private Normalized normalize(ImplantPayload payload) {
+    private Normalized normalize(ImplantPayload payload, DictTables dicts) {
         if (payload == null) {
             throw new ApiException(400, 40001, "请填写植入记录信息");
         }
@@ -612,18 +614,18 @@ public class ImplantService {
         if (implantDate.isAfter(LocalDate.now())) {
             throw new ApiException(400, 40001, "植入日期不能晚于今天");
         }
-        String deviceType = normalizeDeviceType(payload.deviceType());
-        String brand = normalizeOptionalCode(ImplantCodes.BRANDS, payload.brand(), "品牌");
+        String deviceType = normalizeDeviceType(payload.deviceType(), dicts.deviceTypes());
+        String brand = normalizeOptionalCode(dicts.brands(), payload.brand(), "品牌");
         String pacingMode =
-                normalizeOptionalCode(ImplantCodes.PACING_MODES, payload.pacingMode(), "起搏模式");
+                normalizeOptionalCode(dicts.pacingModes(), payload.pacingMode(), "起搏模式");
         String indication =
-                normalizeOptionalCode(ImplantCodes.INDICATIONS, payload.indication(), "植入指征");
+                normalizeOptionalCode(dicts.indications(), payload.indication(), "植入指征");
         String indicationNote = trimToNull(payload.indicationNote(), 255, "植入指征补充说明");
         if (ImplantCodes.INDICATION_OTHER.equals(indication)
                 && (indicationNote == null || indicationNote.isBlank())) {
             throw new ApiException(400, 40001, "植入指征选「其他」时须填写补充说明");
         }
-        List<LeadPayload> leads = normalizeLeads(payload.leads(), deviceType, implantDate);
+        List<LeadPayload> leads = normalizeLeads(payload.leads(), deviceType, implantDate, dicts);
         return new Normalized(
                 implantType,
                 implantDate,
@@ -640,7 +642,7 @@ public class ImplantService {
     }
 
     private List<LeadPayload> normalizeLeads(
-            List<LeadPayload> leads, String deviceType, LocalDate implantDate) {
+            List<LeadPayload> leads, String deviceType, LocalDate implantDate, DictTables dicts) {
         if (leads == null || leads.isEmpty()) {
             return List.of();
         }
@@ -650,7 +652,7 @@ public class ImplantService {
         List<LeadPayload> normalized = new ArrayList<>();
         for (LeadPayload lead : leads) {
             String chamber = normalizeChamber(lead.chamber());
-            String position = normalizePosition(chamber, lead.position());
+            String position = normalizePosition(chamber, lead.position(), dicts);
             String status = normalizeLeadStatus(lead.status());
             normalized.add(
                     new LeadPayload(
@@ -693,9 +695,9 @@ public class ImplantService {
         return normalized;
     }
 
-    private String normalizeDeviceType(String value) {
+    private String normalizeDeviceType(String value, DictTable deviceTypes) {
         String normalized = requireCode(value, "请选择起搏器类型");
-        if (!ImplantCodes.DEVICE_TYPES.containsKey(normalized)) {
+        if (!deviceTypes.contains(normalized)) {
             throw new ApiException(400, 40001, "起搏器类型不正确：" + value);
         }
         return normalized;
@@ -703,19 +705,18 @@ public class ImplantService {
 
     private String normalizeChamber(String value) {
         String normalized = requireCode(value, "请选择电极腔室");
-        if (!ImplantCodes.LEAD_POSITIONS.containsKey(normalized)) {
+        if (!ImplantCodes.LEAD_POSITION_DICTS.containsKey(normalized)) {
             throw new ApiException(400, 40001, "电极腔室只支持 RA / RV / LV");
         }
         return normalized;
     }
 
-    private String normalizePosition(String chamber, String value) {
+    private String normalizePosition(String chamber, String value, DictTables dicts) {
         if (value == null || value.isBlank()) {
             return null;
         }
         String normalized = value.trim();
-        Map<String, String> positions = ImplantCodes.LEAD_POSITIONS.get(chamber);
-        if (!positions.containsKey(normalized)) {
+        if (!dicts.leadPositions(chamber).contains(normalized)) {
             throw new ApiException(400, 40001, chamber + " 电极植入部位不正确：" + value);
         }
         return normalized;
@@ -732,12 +733,12 @@ public class ImplantService {
         return normalized;
     }
 
-    private String normalizeOptionalCode(Map<String, String> table, String value, String field) {
+    private String normalizeOptionalCode(DictTable table, String value, String field) {
         if (value == null || value.isBlank()) {
             return null;
         }
         String normalized = value.trim();
-        if (!table.containsKey(normalized)) {
+        if (!table.contains(normalized)) {
             throw new ApiException(400, 40001, field + "取值不正确：" + value);
         }
         return normalized;
@@ -795,18 +796,6 @@ public class ImplantService {
         };
     }
 
-    private static String positionLabel(String chamber, String position) {
-        if (chamber == null || position == null) {
-            return null;
-        }
-        Map<String, String> positions = ImplantCodes.LEAD_POSITIONS.get(chamber);
-        return positions == null ? null : positions.get(position);
-    }
-
-    private static String deviceLabel(String deviceType) {
-        return labelOf(ImplantCodes.DEVICE_TYPES, deviceType);
-    }
-
     private static String nullSafe(String value) {
         return value == null ? "" : value;
     }
@@ -815,6 +804,78 @@ public class ImplantService {
         return ImplantCodes.sorted(table).stream()
                 .map(entry -> new OptionItem(entry.getKey(), entry.getValue()))
                 .toList();
+    }
+
+    // ---------------------------------------------------------------- 业务字典（E21-T04 /
+    // C-FLD-002、C-FLD-003）
+
+    /** 一次用例调用所需的字典快照（平台预置 + 本院覆盖的合并结果；平台缓存 60 秒，量级小）。 */
+    private record DictTables(
+            DictTable deviceTypes,
+            DictTable brands,
+            DictTable pacingModes,
+            DictTable indications,
+            Map<String, DictTable> leadPositionsByChamber) {
+
+        DictTable leadPositions(String chamber) {
+            // 未知腔室（理论不可达，normalizeChamber 已拦）返回空表，显示名退化为编码本身
+            return leadPositionsByChamber.getOrDefault(chamber, DictTable.EMPTY);
+        }
+    }
+
+    /** 单个字典：含停用项（历史值照常显示与保存，C-FLD-009），生效项才进 options 下拉。 */
+    private static final class DictTable {
+
+        private static final DictTable EMPTY = new DictTable(List.of());
+
+        private final List<ImplantDictPort.DictItem> items;
+
+        private DictTable(List<ImplantDictPort.DictItem> items) {
+            this.items = items;
+        }
+
+        static DictTable of(List<ImplantDictPort.DictItem> items) {
+            return new DictTable(List.copyOf(items));
+        }
+
+        /** 编码是否为字典已知项（含本院停用的平台项——停用项的历史值可原样保存，C-FLD-009）。 */
+        boolean contains(String itemCode) {
+            return items.stream().anyMatch(item -> item.itemCode().equals(itemCode));
+        }
+
+        /** 显示名（含停用项；未知编码返回 null，与 E21-T01 静态表同口径）。 */
+        String label(String itemCode) {
+            return itemCode == null
+                    ? null
+                    : items.stream()
+                            .filter(item -> item.itemCode().equals(itemCode))
+                            .map(ImplantDictPort.DictItem::label)
+                            .findFirst()
+                            .orElse(null);
+        }
+
+        /** 生效项 → 选项清单（停用项不进下拉；顺序按字典 sortNo、itemCode）。 */
+        List<OptionItem> enabledItems() {
+            return items.stream()
+                    .filter(ImplantDictPort.DictItem::enabled)
+                    .map(item -> new OptionItem(item.itemCode(), item.label()))
+                    .toList();
+        }
+    }
+
+    /** 读全部植入相关字典（顺序由端口保证：sortNo、itemCode 升序）。 */
+    private DictTables loadDicts() {
+        Map<String, DictTable> leadPositions = new HashMap<>();
+        for (Map.Entry<String, String> chamberDict : ImplantCodes.LEAD_POSITION_DICTS.entrySet()) {
+            leadPositions.put(
+                    chamberDict.getKey(), DictTable.of(dicts.items(chamberDict.getValue())));
+        }
+        return new DictTables(
+                DictTable.of(dicts.items(ImplantDictPort.DICT_DEVICE_TYPE)),
+                DictTable.of(dicts.items(ImplantDictPort.DICT_BRAND)),
+                DictTable.of(dicts.items(ImplantDictPort.DICT_PACING_MODE)),
+                DictTable.of(dicts.items(ImplantDictPort.DICT_INDICATION)),
+                Map.copyOf(leadPositions));
     }
 
     private static String writeJson(Object value) {
