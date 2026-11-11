@@ -46,9 +46,10 @@
 | `ops/hospital-b-plan-preset.md` | 医院 B 预置计划配置与激活 runbook（W37）：第 14 章 Q42 节点 / 提醒 / 窗口表的载体与核对（followup V80 未发布草稿随包，行级 `BPresetPlanSqlTest` CI 恒跑）、B 侧激活手册（停用 A 预置 + 发布 B 预置 + 虚构患者抽查；激活须在 config-template 之后）、回滚（停用终态与复制新版本）、首页节点随访率卡片衔接（dash_role_layout 与 node_follow_rate 开关，随 E23-T17）；激活路径演练 IT `BPresetPlanVerifyIT`（demob 化身，门控恒跑） | B 预置计划按 Q42 配出（E23-T16；E23-T17 验收的输入） |
 | `ops/hospital-b-user-ward-role.md` | 医院 B 用户、病区与角色配置 runbook（W38）：第 14 章「用户、角色取值」的载体与核对（tenant/seed V136 与 A 预置 V123 同构并存、命名空间隔离，行级 `BPresetWardUserSqlTest` CI 恒跑；生产不执行种子，按交接单录入）、生产配置手册（病区字典 → 从模板复制角色配病区范围 → 用户录入 / 批量导入 → 按病区分配 → 默认随访负责人 → 抽查）、回滚与人员 / 病区处置、敏感项按需分配口径；落库与行为演练 IT `BPresetWardUserVerifyIT`（demob 化身，门控恒跑：本病区可见 / 他病区 40400 / 跨病区并集 / 权限预览） | B 用户按病区分配（E23-T18；E23-T17 验收 / E23-T19 上线的输入） |
 | `ops/hospital-a-hypercare-fullstack2.md` | 医院 A 上线后运行保障手册 · 全栈 2 分担面另册（W36–W37 观察期，与全栈 1 册同窗同构：值班 / SLA / 台账 HYPC- 编号段 / 退出判据共用不另立）：分担面明细（H 报告单与资料 / I 统计与首页 / J 历史数据导入核对 / M 审计与平台视角）、分担面巡检（机器侧六项 HC-H1~HC-M2 只读 SQL：附件断链 / 上传滞留 / 统计停更 / 导入批次卡死 / 审计断写 / 视角会话超时，含平台库项 + 人工清单）、台账判定（`scripts/hypercare_verify_fullstack2.py`：`--ledger` 默认只判 owner=全栈2、`--all` 全量与全栈 1 工具互证 + `--host` 生产巡检 + `--drill` 双隔离库异常注入自验；复用 `hypercare_verify.py` 同一套 SLA / 台账校验，双册互锁防漂移）、分担面 playbook、退出判据补充分担面证据 | 上线问题按时响应（E23-T14；E23-T19/T26 复用口径） |
-| `open-questions.md` | 待确认问题 OQ-01…OQ-33 与暂行做法 | 遇到不确定时先查 |
+| `open-questions.md` | 待确认问题 OQ-01…OQ-131（顺延）与暂行做法 | 遇到不确定时先查 |
 | `adr/` | 仓库已有架构决定（如 M0 骨架） | 改架构前 |
 | `reviews/m3-code-review.md` | M0–M3 代码审查报告（2026-11-10，对照 tasks.csv 与验收标准）。B1 的演示绕过见 PR #205；B1 与 B2 暂缓 | 看完成度、上线缺口和已知缺陷 |
+| `reviews/hospital-c-acceptance-review.md` | 医院 C 需求澄清与验收用例评审（产品，W38 · E21-T31）：澄清记录 12 条（CL-01…12，两项新增暂行口径回写 OQ-131）、验收用例集 45 条（C-ACC-01…45，算例取自规格各章验收标准与 tasks.csv 验收列）、计划切换十行子表、任务覆盖核对 37 行与 UAT 复核清单；机器面防漂移 `scripts/check_hospital_c_acceptance_review.py` | C 侧测试任务（E21-T25…T29）与 UAT（E23-T23）的用例口径基准 |
 
 ## 编号规则
 
