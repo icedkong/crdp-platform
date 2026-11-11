@@ -1,18 +1,26 @@
-import type { ImplantForm, ImplantOptions } from './implant';
+import type { ImplantForm, ImplantOptions, ImplantRecordView } from './implant';
 
 import { describe, expect, it } from 'vitest';
 
 import {
+  activeLeadsOf,
+  buildExplantPayload,
   buildImplantPayload,
   buildImplantUpdatePayload,
+  buildReplacePayload,
+  emptyExplantForm,
   emptyImplantForm,
+  emptyReplaceForm,
+  generatorUnchanged,
   implantCardLines,
   implantFormOf,
   leadPositionOptions,
   leadsAllowedForDevice,
   leadSummary,
   validateCRegistration,
+  validateExplantForm,
   validateImplantForm,
+  validateReplaceForm,
 } from './implant';
 
 /** 植入选项夹具（虚构示例；结构同 GET /implants/options，Q15 按腔室过滤）。 */
@@ -272,5 +280,162 @@ describe('e21-T01 手机卡片行（pages.md §4.10 植入记录表格转卡片�
     const rv = lines.find(([key]) => key === '电极 RV')?.[1] ?? '';
     expect(rv).toContain('右室心尖');
     expect(rv).toContain('2018-05-10');
+  });
+});
+
+/** 目标（当前器械）夹具：DDD 2026-01-05 在用，RA 在用 + RV 已拔除电极。 */
+function targetRecord() {
+  return {
+    id: '501',
+    patientId: '101',
+    implantNo: 1,
+    implantType: 'FIRST',
+    implantTypeLabel: '首次植入',
+    implantDate: '2026-01-05',
+    deviceType: 'DDD',
+    deviceTypeLabel: '双腔起搏器(DDD)',
+    brand: 'MEDTRONIC',
+    brandLabel: '美敦力',
+    model: '示例型号 S-01',
+    serialNo: 'DEMO-SN-0001',
+    pacingMode: 'DDD',
+    pacingModeLabel: 'DDD',
+    status: 'ACTIVE',
+    statusLabel: '在用',
+    endDate: null,
+    endReason: null,
+    current: true,
+    version: 3,
+    leads: [
+      {
+        id: '601',
+        chamber: 'RA',
+        chamberLabel: '右心房（RA）',
+        position: 'RA_APPENDAGE',
+        positionLabel: '右心耳',
+        model: null,
+        implantDate: '2026-01-05',
+        status: 'ACTIVE',
+        statusLabel: '在用',
+        version: 0,
+      },
+      {
+        id: '602',
+        chamber: 'RV',
+        chamberLabel: '右心室（RV）',
+        position: 'RV_APEX',
+        positionLabel: '右室心尖',
+        model: null,
+        implantDate: '2025-11-01',
+        status: 'EXTRACTED',
+        statusLabel: '已拔除',
+        version: 1,
+      },
+    ],
+  } satisfies ImplantRecordView;
+}
+
+describe('e21-T02 更换、升级与电极修正（C-PAT-006）', () => {
+  it('表单初值：器械字段预填目标、在用电极缺省沿用（历史电极不进处置清单）', () => {
+    const form = emptyReplaceForm(targetRecord(), 'REPLACE');
+    expect(form.device.deviceType).toBe('DDD');
+    expect(form.leadActions).toEqual([{ leadId: '601', action: 'KEEP' }]);
+    expect(activeLeadsOf(targetRecord())).toHaveLength(1);
+
+    const revision = emptyReplaceForm(targetRecord(), 'LEAD_REVISION');
+    expect(revision.device.model).toBe('示例型号 S-01');
+    expect(revision.device.serialNo).toBe('DEMO-SN-0001');
+  });
+
+  it('「其他」类型须填说明；日期不能早于原植入日期、不能晚于今天', () => {
+    const form = emptyReplaceForm(targetRecord(), 'OTHER');
+    form.date = '2026-03-10';
+    expect(validateReplaceForm(form, options()).note).toContain('须填写说明');
+
+    form.note = '电极脱位再次手术（示例）';
+    expect(validateReplaceForm(form, options())).toEqual({});
+
+    const early = emptyReplaceForm(targetRecord(), 'REPLACE');
+    early.date = '2025-12-31';
+    expect(validateReplaceForm(early, options()).date).toContain(
+      '不能早于原植入日期',
+    );
+
+    const future = emptyReplaceForm(targetRecord(), 'REPLACE');
+    future.date = '2999-01-01';
+    expect(validateReplaceForm(future, options()).date).toBe('不能晚于今天');
+  });
+
+  it('电极修正锁定脉冲发生器：改类型被拦，同器械放行', () => {
+    const form = emptyReplaceForm(targetRecord(), 'LEAD_REVISION');
+    form.date = '2026-04-01';
+    form.newLeads = [{ chamber: 'RV', position: 'HIS' }];
+    expect(generatorUnchanged(form)).toBe(true);
+    expect(validateReplaceForm(form, options())).toEqual({});
+
+    form.device.deviceType = 'CRT_D';
+    expect(generatorUnchanged(form)).toBe(false);
+    expect(validateReplaceForm(form, options()).deviceType).toContain(
+      '电极修正不改变脉冲发生器',
+    );
+  });
+
+  it('在用电极逐根显式处置；无导线新器械不可携带电极', () => {
+    const missing = emptyReplaceForm(targetRecord(), 'REPLACE');
+    missing.date = '2026-03-10';
+    missing.leadActions = [{ leadId: '601', action: null }];
+    expect(validateReplaceForm(missing, options())['leadActions.0']).toBe(
+      '请选择处置',
+    );
+
+    const leadless = emptyReplaceForm(targetRecord(), 'REPLACE');
+    leadless.date = '2026-03-10';
+    leadless.device.deviceType = 'LEADLESS';
+    expect(validateReplaceForm(leadless, options()).leadActions).toContain(
+      '无导线起搏器',
+    );
+  });
+
+  it('组装更换请求体：baseVersion、说明归一与新电极日期缺省手术日期', () => {
+    const form = emptyReplaceForm(targetRecord(), 'UPGRADE');
+    form.date = '2026-03-10';
+    form.device.deviceType = 'CRT_D';
+    form.note = '  ';
+    form.leadActions = [{ leadId: '601', action: 'KEEP' }];
+    form.newLeads = [{ chamber: 'LV', position: 'CS' }];
+    const payload = buildReplacePayload(form);
+    expect(payload.baseVersion).toBe(3);
+    expect(payload.type).toBe('UPGRADE');
+    expect(payload.note).toBeNull();
+    expect(payload.implant.implantDate).toBe('2026-03-10');
+    expect(payload.leadActions).toEqual([{ leadId: '601', action: 'KEEP' }]);
+    expect(payload.newLeads?.[0]?.implantDate).toBe('2026-03-10');
+  });
+
+  it('取出表单：在用电极须选废弃留置 / 已拔除，KEEP 不属于取出', () => {
+    const form = emptyExplantForm(targetRecord());
+    expect(form.leadActions).toEqual([{ leadId: '601', action: null }]);
+
+    form.date = '2026-05-01';
+    expect(validateExplantForm(form, targetRecord())['leadActions.0']).toBe(
+      '请选择废弃留置或已拔除',
+    );
+
+    form.date = '2025-12-01';
+    expect(validateExplantForm(form, targetRecord()).date).toContain(
+      '不能早于植入日期',
+    );
+
+    form.date = '2026-05-01';
+    form.leadActions = [{ leadId: '601', action: 'KEEP' }];
+    expect(validateExplantForm(form, targetRecord())['leadActions.0']).toBe(
+      '请选择废弃留置或已拔除',
+    );
+
+    form.leadActions = [{ leadId: '601', action: 'EXTRACT' }];
+    const payload = buildExplantPayload(form, targetRecord());
+    expect(payload.baseVersion).toBe(3);
+    expect(payload.date).toBe('2026-05-01');
+    expect(payload.leadActions).toEqual([{ leadId: '601', action: 'EXTRACT' }]);
   });
 });

@@ -15,7 +15,7 @@ import {
   implantFormOf,
   validateImplantForm,
 } from '@crdp/api';
-import { message, Modal, Tooltip } from 'ant-design-vue';
+import { message, Modal } from 'ant-design-vue';
 
 import {
   createPatientImplant,
@@ -25,10 +25,10 @@ import {
 import ImplantFields from '#/components/followup/implant-fields.vue';
 
 /**
- * E21-T01 / C-PAT-004、C-PAT-005 · 植入记录新建 / 编辑弹窗（pages.md §4.4
- * 「操作：更换 / 升级、电极修正、编辑」中的「编辑」与再次植入入口；更换 / 升级与
- * 电极修正专用流程随 E21-T02）。字段组见 implant-fields.vue。保存带 baseVersion
- * 乐观锁（40900 提示刷新重试）。
+ * E21-T01 / C-PAT-004、C-PAT-005 · 植入记录新建 / 编辑弹窗（pages.md §4.4「操作：
+ * …编辑」；新建承载首条植入与补录历史器械，在用器械的更换 / 升级 / 电极修正走
+ * implant-replace-modal.vue，E21-T02）。字段组见 implant-fields.vue。保存带
+ * baseVersion 乐观锁（40900 提示刷新重试）。
  */
 const props = defineProps<{
   open: boolean;
@@ -114,16 +114,5 @@ async function handleSave() {
     @cancel="emit('update:open', false)"
   >
     <ImplantFields v-model:form="form" :errors="errors" :options="options" />
-    <Tooltip title="更换 / 升级与电极修正流程随 E21-T02 开放">
-      <div class="footnote">更换 / 升级、电极修正入口随后续版本开放</div>
-    </Tooltip>
   </Modal>
 </template>
-
-<style scoped>
-.footnote {
-  margin-top: 12px;
-  font-size: 12px;
-  color: rgb(0 0 0 / 45%);
-}
-</style>

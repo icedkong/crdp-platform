@@ -3,20 +3,35 @@ import type { ImplantRecordView } from '@crdp/api';
 
 import { computed, onMounted, ref } from 'vue';
 
-import { implantCardLines } from '@crdp/api';
-import { Button, Empty, message, Spin, Table, Tag } from 'ant-design-vue';
+import {
+  IMPLANT_TYPE_LEAD_REVISION,
+  IMPLANT_TYPE_REPLACE,
+  implantCardLines,
+} from '@crdp/api';
+import {
+  Button,
+  Empty,
+  message,
+  Spin,
+  Table,
+  Tag,
+  Tooltip,
+} from 'ant-design-vue';
 
 import { fetchPatientImplants } from '#/api/core/implant';
+import ImplantExplantModal from '#/components/followup/implant-explant-modal.vue';
 import ImplantFormModal from '#/components/followup/implant-form-modal.vue';
+import ImplantReplaceModal from '#/components/followup/implant-replace-modal.vue';
 import { useBreakpoint } from '#/reference/use-breakpoint';
 import { usePermission } from '#/reference/use-permission';
 
 /**
  * E21-T01 / C-PAT-004、C-PAT-005 · 基线资料页签「植入记录」区块（pages.md §4.4）：
- * 按时间列出全部植入记录与电极，当前器械置顶；操作：新建（首条 / 再次植入）与编辑
- * —— 更换 / 升级、电极修正专用流程随 E21-T02。手机表格转卡片（pages.md §4.10，
- * OQ-114① 植入记录随 C 接入时按原文做卡片）。写入按钮 followup:implant:edit
- * （无权限隐藏，AGENTS §7）；区块由 useFeature('implant') 控制显隐（components.md §1.3）。
+ * 按时间列出全部植入记录与电极，当前器械置顶。E21-T02 / C-PAT-006 · 操作：新建（首条 /
+ * 补录历史器械）、更换 / 升级、电极修正（同一弹窗，目标 = 当前器械，旧器械自动结束为
+ * 已更换、电极逐根沿用 / 废弃留置 / 已拔除或新植）、取出、编辑。手机表格转卡片
+ * （pages.md §4.10，OQ-114①）。写入按钮 followup:implant:edit（无权限隐藏，AGENTS §7）；
+ * 区块由 useFeature('implant') 控制显隐（components.md §1.3）。
  */
 const props = defineProps<{
   patientId: string;
@@ -34,6 +49,14 @@ const loading = ref(false);
 const records = ref<ImplantRecordView[]>([]);
 const modalOpen = ref(false);
 const editing = ref<ImplantRecordView | null>(null);
+const replaceOpen = ref(false);
+const replaceInitialType = ref<string>(IMPLANT_TYPE_REPLACE);
+const explantOpen = ref(false);
+
+/** 当前（在用）器械：更换 / 升级、电极修正、取出的目标（C-PAT-007）。 */
+const currentRecord = computed(
+  () => records.value.find((record) => record.current) ?? null,
+);
 
 async function load() {
   loading.value = true;
@@ -59,6 +82,11 @@ function openEdit(record: ImplantRecordView) {
   modalOpen.value = true;
 }
 
+function openReplace(initialType: string) {
+  replaceInitialType.value = initialType;
+  replaceOpen.value = true;
+}
+
 function handleSaved() {
   void load();
   emit('changed');
@@ -71,7 +99,7 @@ const columns = computed(() => [
   { title: '器械（类型 · 品牌 · 型号）', key: 'device' },
   { title: '序列号', dataIndex: 'serialNo', width: 140 },
   { title: '状态', key: 'status', width: 90 },
-  { title: '操作', key: 'action', width: 80 },
+  { title: '操作', key: 'action', width: 130 },
 ]);
 
 const leadColumns = [
@@ -105,16 +133,39 @@ function rowKey(record: ImplantRecordView) {
     <h3 class="section-title">
       植入记录
       <span class="section-meta">当前器械置顶 · 电极挂在各植入记录下</span>
-      <Button
-        v-if="canEdit"
-        class="section-action"
-        size="small"
-        type="primary"
-        data-testid="implant-create"
-        @click="openCreate"
-      >
-        新建植入记录
-      </Button>
+      <template v-if="canEdit">
+        <Tooltip
+          :title="currentRecord ? '' : '无在用器械，无法更换 / 升级或电极修正'"
+        >
+          <Button
+            class="section-action"
+            size="small"
+            :disabled="!currentRecord"
+            data-testid="implant-replace"
+            @click="openReplace(IMPLANT_TYPE_REPLACE)"
+          >
+            更换 / 升级
+          </Button>
+        </Tooltip>
+        <Button
+          class="section-action"
+          size="small"
+          :disabled="!currentRecord"
+          data-testid="implant-lead-revision"
+          @click="openReplace(IMPLANT_TYPE_LEAD_REVISION)"
+        >
+          电极修正
+        </Button>
+        <Button
+          class="section-action"
+          size="small"
+          type="primary"
+          data-testid="implant-create"
+          @click="openCreate"
+        >
+          新建植入记录
+        </Button>
+      </template>
     </h3>
     <Spin :spinning="loading">
       <Empty v-if="records.length === 0" description="暂无植入记录" />
@@ -135,6 +186,13 @@ function rowKey(record: ImplantRecordView) {
             <span>{{ value || '—' }}</span>
           </div>
           <div v-if="canEdit" class="card-actions">
+            <Button
+              v-if="record.current"
+              size="small"
+              @click="explantOpen = true"
+            >
+              取出
+            </Button>
             <Button size="small" @click="openEdit(record)">编辑</Button>
           </div>
         </div>
@@ -168,14 +226,24 @@ function rowKey(record: ImplantRecordView) {
               <Tag v-else>{{ (record as ImplantRecordView).statusLabel }}</Tag>
             </template>
             <template v-else-if="column.key === 'action'">
-              <Button
-                v-if="canEdit"
-                size="small"
-                type="link"
-                @click="openEdit(record as ImplantRecordView)"
-              >
-                编辑
-              </Button>
+              <template v-if="canEdit">
+                <Button
+                  v-if="(record as ImplantRecordView).current"
+                  size="small"
+                  type="link"
+                  data-testid="implant-explant"
+                  @click="explantOpen = true"
+                >
+                  取出
+                </Button>
+                <Button
+                  size="small"
+                  type="link"
+                  @click="openEdit(record as ImplantRecordView)"
+                >
+                  编辑
+                </Button>
+              </template>
             </template>
           </template>
           <!-- 电极挂在每条植入记录下（展开行；无电极的记录显示「无导线 / 未录」） -->
@@ -218,6 +286,17 @@ function rowKey(record: ImplantRecordView) {
       v-model:open="modalOpen"
       :patient-id="props.patientId"
       :record="editing"
+      @saved="handleSaved"
+    />
+    <ImplantReplaceModal
+      v-model:open="replaceOpen"
+      :initial-type="replaceInitialType"
+      :record="currentRecord"
+      @saved="handleSaved"
+    />
+    <ImplantExplantModal
+      v-model:open="explantOpen"
+      :record="currentRecord"
       @saved="handleSaved"
     />
   </section>
