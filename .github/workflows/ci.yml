@@ -130,6 +130,11 @@ jobs:
           python3 scripts/hypercare_verify_fullstack2.py --selftest
           python3 scripts/hypercare_verify_fullstack2.py
           python3 scripts/hypercare_verify_fullstack2.py --drill
+      # E23-T12：医院 A 上线核对与冒烟测试。冒烟手册 / GoliveSmokeIT 用例锚点（S-x）/
+      # runbook §8 互引 / 索引 / CI 接线防漂移校验（机器侧冒烟 IT 随上方 mvn test 门控
+      # CRDP_IT_MYSQL_PORT 运行；生产冒烟由测试按手册在场执行，W36 切换后立即）。
+      - name: 上线核对与冒烟校验（E23-T12）
+        run: python3 scripts/check_golive_smoke.py
       - name: 关闭依赖容器
         if: always()
         run: docker compose down -v
