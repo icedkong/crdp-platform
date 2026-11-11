@@ -183,3 +183,81 @@ export const API_SOURCE_TEXT: Record<string, string> = {
 export function apiSourceText(source: string): string {
   return API_SOURCE_TEXT[source] ?? source;
 }
+
+/** 资源变更记录（E05-T10 / PLT-PERM-012，P2）：菜单、接口资源变更历史与导出。 */
+export type ResourceChangeType = 'API' | 'FIELD' | 'MENU';
+
+export type ResourceChangeAction =
+  | 'CREATE'
+  | 'DELETE'
+  | 'OFFLINE'
+  | 'REGISTER'
+  | 'UPDATE';
+
+export type ResourceChangeChannel = 'PAGE' | 'SYNC';
+
+export interface ResourceChangeLogItem {
+  action: ResourceChangeAction;
+  channel: ResourceChangeChannel;
+  /** ISO-8601 带时区（北京时间）。 */
+  createdAt: string;
+  detail: string;
+  id: number;
+  operatorId: null | number;
+  /** 操作人快照「姓名（账号）」；启动扫描等系统触发为 null → 显示「系统」。 */
+  operatorName: null | string;
+  resourceId: null | number;
+  resourceIdent: null | string;
+  resourceName: string;
+  resourceType: ResourceChangeType;
+}
+
+export interface ResourceChangeLogQuery {
+  action?: ResourceChangeAction;
+  channel?: ResourceChangeChannel;
+  keyword?: string;
+  pageNo?: number;
+  pageSize?: number;
+  resourceType?: ResourceChangeType;
+}
+
+export interface ResourceChangeLogPage {
+  items: ResourceChangeLogItem[];
+  pageNo: number;
+  pageSize: number;
+  total: number;
+}
+
+/** 资源类型文案（FIELD 随字段资源管理接口落地后写入）。 */
+export const RESOURCE_CHANGE_TYPE_TEXT: Record<string, string> = {
+  MENU: '菜单',
+  API: '接口',
+  FIELD: '字段',
+};
+
+export function resourceChangeTypeText(type: string): string {
+  return RESOURCE_CHANGE_TYPE_TEXT[type] ?? type;
+}
+
+/** 动作文案：CREATE 新建 / UPDATE 维护或登记变化 / DELETE 删除或清除 / OFFLINE 清单下线 / REGISTER 首次登记。 */
+export const RESOURCE_CHANGE_ACTION_TEXT: Record<string, string> = {
+  CREATE: '新建',
+  UPDATE: '变更',
+  DELETE: '删除',
+  OFFLINE: '下线',
+  REGISTER: '登记',
+};
+
+export function resourceChangeActionText(action: string): string {
+  return RESOURCE_CHANGE_ACTION_TEXT[action] ?? action;
+}
+
+/** 渠道文案：PAGE 平台端页面操作；SYNC 清单同步或接口扫描。 */
+export const RESOURCE_CHANGE_CHANNEL_TEXT: Record<string, string> = {
+  PAGE: '页面操作',
+  SYNC: '同步 / 扫描',
+};
+
+export function resourceChangeChannelText(channel: string): string {
+  return RESOURCE_CHANGE_CHANNEL_TEXT[channel] ?? channel;
+}

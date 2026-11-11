@@ -57,16 +57,19 @@ public class ApiResourceScanner implements ApplicationRunner {
     private final PlatformMapper platformMapper;
     private final ApiResourceRegistry registry;
     private final AuditLogger audit;
+    private final ResourceChangeRecorder resourceChanges;
 
     public ApiResourceScanner(
             @Qualifier("requestMappingHandlerMapping") RequestMappingHandlerMapping handlerMapping,
             PlatformMapper platformMapper,
             ApiResourceRegistry registry,
-            AuditLogger audit) {
+            AuditLogger audit,
+            ResourceChangeRecorder resourceChanges) {
         this.handlerMapping = handlerMapping;
         this.platformMapper = platformMapper;
         this.registry = registry;
         this.audit = audit;
+        this.resourceChanges = resourceChanges;
     }
 
     /** 登记结果：动作 REGISTERED / UPDATED / UNCHANGED / REMOVED。 */
@@ -111,11 +114,48 @@ public class ApiResourceScanner implements ApplicationRunner {
                         if (row == null) {
                             platformMapper.insertApiResource(derived);
                             outcomes.add(outcome("REGISTERED", derived));
+                            recordScanChange(
+                                    derived,
+                                    ResourceChangeRecorder.ACTION_REGISTER,
+                                    "接口首次登记：权限码 "
+                                            + (derived.getPermCode() == null
+                                                    ? "（无）"
+                                                    : derived.getPermCode())
+                                            + "，模块 "
+                                            + derived.getModuleCode()
+                                            + (Boolean.TRUE.equals(derived.getPublicAccess())
+                                                    ? "，公共接口"
+                                                    : ""));
                             changed = true;
                         } else if (registrationChanged(row, derived)) {
                             derived.setId(row.getId());
                             platformMapper.updateApiResourceRegistration(derived);
                             outcomes.add(outcome("UPDATED", derived));
+                            recordScanChange(
+                                    derived,
+                                    ResourceChangeRecorder.ACTION_UPDATE,
+                                    "登记随代码更新：权限码 "
+                                            + (nullable(row.getPermCode()) == null
+                                                    ? "（无）"
+                                                    : row.getPermCode())
+                                            + " → "
+                                            + (derived.getPermCode() == null
+                                                    ? "（无）"
+                                                    : derived.getPermCode())
+                                            + "，模块 "
+                                            + (nullable(row.getModuleCode()) == null
+                                                    ? "（无）"
+                                                    : row.getModuleCode())
+                                            + " → "
+                                            + derived.getModuleCode()
+                                            + "，公共 "
+                                            + (Boolean.TRUE.equals(row.getPublicAccess())
+                                                    ? "是"
+                                                    : "否")
+                                            + " → "
+                                            + (Boolean.TRUE.equals(derived.getPublicAccess())
+                                                    ? "是"
+                                                    : "否"));
                             changed = true;
                         } else {
                             platformMapper.touchApiResource(row.getId());
@@ -127,6 +167,14 @@ public class ApiResourceScanner implements ApplicationRunner {
                                 && "SCAN".equals(row.getSource())) {
                             platformMapper.deleteScannedApiResource(row.getId());
                             outcomes.add(outcome("REMOVED", row));
+                            recordScanChange(
+                                    row,
+                                    ResourceChangeRecorder.ACTION_DELETE,
+                                    "接口已从代码消失，清除登记（权限码 "
+                                            + (row.getPermCode() == null
+                                                    ? "（无）"
+                                                    : row.getPermCode())
+                                            + "）");
                             changed = true;
                         }
                     }
@@ -282,6 +330,18 @@ public class ApiResourceScanner implements ApplicationRunner {
     private static ScanOutcome outcome(String action, ApiResourceRow row) {
         return new ScanOutcome(
                 action, row.getHttpMethod(), row.getPathPattern(), row.getPermCode());
+    }
+
+    /** 扫描登记变化 → 资源变更记录（PLT-PERM-012）；操作者取当前会话（启动扫描为空 → 页面显示「系统」）。 */
+    private void recordScanChange(ApiResourceRow row, String action, String detail) {
+        resourceChanges.record(
+                ResourceChangeRecorder.TYPE_API,
+                row.getId(),
+                row.getHttpMethod() + " " + row.getPathPattern(),
+                row.getPathPattern(),
+                action,
+                ResourceChangeRecorder.CHANNEL_SYNC,
+                detail);
     }
 
     private static String key(String httpMethod, String pathPattern) {

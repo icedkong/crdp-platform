@@ -33,16 +33,19 @@ public class MenuSyncService {
     private final PlatformMapper platformMapper;
     private final PermissionVersionStore permissionVersions;
     private final AuditLogger audit;
+    private final ResourceChangeRecorder resourceChanges;
 
     public MenuSyncService(
             MenuManifest manifest,
             PlatformMapper platformMapper,
             PermissionVersionStore permissionVersions,
-            AuditLogger audit) {
+            AuditLogger audit,
+            ResourceChangeRecorder resourceChanges) {
         this.manifest = manifest;
         this.platformMapper = platformMapper;
         this.permissionVersions = permissionVersions;
         this.audit = audit;
+        this.resourceChanges = resourceChanges;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -181,19 +184,24 @@ public class MenuSyncService {
         for (DiffItem item : diff.items()) {
             switch (item.action()) {
                 case "ADDED" -> {
-                    insertManifestRow(item);
+                    long menuId = insertManifestRow(item);
                     added++;
                     lines.add("新增 " + item.side() + " " + item.key());
+                    recordSyncChange(item, menuId, ResourceChangeRecorder.ACTION_CREATE, "清单同步新增");
                 }
                 case "CHANGED" -> {
                     updateStructuralFields(item);
                     changed++;
                     lines.add("变更 " + item.side() + " " + item.key());
+                    recordSyncChange(
+                            item, null, ResourceChangeRecorder.ACTION_UPDATE, "清单同步变更结构字段");
                 }
                 case "OFFLINE" -> {
                     offlineRow(item);
                     offline++;
                     lines.add("下线 " + item.side() + " " + item.key());
+                    recordSyncChange(
+                            item, null, ResourceChangeRecorder.ACTION_OFFLINE, "清单同步下线（停用）");
                 }
                 default -> throw new IllegalStateException("未知差异类型：" + item.action());
             }
@@ -213,7 +221,8 @@ public class MenuSyncService {
         return new ApplyResult(added, changed, offline);
     }
 
-    private void insertManifestRow(DiffItem item) {
+    /** 插入（或复活）清单行；返回行 id（供资源变更记录追溯）。 */
+    private long insertManifestRow(DiffItem item) {
         MenuManifestItem manifestItem = findManifestItem(item);
         // 复活停用 / 软删的原行（按钮权限码唯一键挂在原行上），否则插入新行
         if (item.current() != null) {
@@ -225,7 +234,7 @@ public class MenuSyncService {
             revived.setParentId(parentRowId(item.side(), manifestItem.parentKey()));
             revived.setStatus("ENABLED");
             platformMapper.updateMenu(revived);
-            return;
+            return revived.getId();
         }
         MenuRow row = new MenuRow();
         // 上级在应用时按 key 解析：父项同批新增时先插父、后插子（apply 按差异顺序逐项执行）
@@ -244,6 +253,46 @@ public class MenuSyncService {
         row.setStatus("ENABLED");
         row.setSource("MANIFEST");
         platformMapper.insertMenu(row);
+        return row.getId() == null ? 0L : row.getId();
+    }
+
+    /** 清单同步差异项 → 资源变更记录（PLT-PERM-012）。 */
+    private void recordSyncChange(DiffItem item, Long menuId, String action, String summary) {
+        Long id = menuId;
+        if (id == null
+                && item.current() != null
+                && item.current().get("id") instanceof Long rowId) {
+            id = rowId;
+        }
+        String title =
+                item.current() != null && item.current().get("title") instanceof String currentTitle
+                        ? currentTitle
+                        : incomingTitle(item);
+        resourceChanges.record(
+                ResourceChangeRecorder.TYPE_MENU,
+                id,
+                title,
+                item.key(),
+                action,
+                ResourceChangeRecorder.CHANNEL_SYNC,
+                summary
+                        + "："
+                        + sideText(item.side())
+                        + " "
+                        + item.key()
+                        + "，模块 "
+                        + item.moduleCode()
+                        + (title == null ? "" : "（" + title + "）"));
+    }
+
+    private static String incomingTitle(DiffItem item) {
+        return item.incoming() != null && item.incoming().get("title") instanceof String title
+                ? title
+                : null;
+    }
+
+    private static String sideText(String side) {
+        return "PLATFORM".equals(side) ? "平台端" : "医院端";
     }
 
     private void updateStructuralFields(DiffItem item) {

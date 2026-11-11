@@ -32,6 +32,7 @@ import {
 import { listModules } from '#/api/core/module';
 import { usePermission } from '#/reference/use-permission';
 
+import ResourceLogDrawer from '../components/resource-log-drawer.vue';
 import EditDialog from './edit-dialog.vue';
 import {
   applyResultText,
@@ -54,6 +55,9 @@ const errorMessage = ref('');
 const side = ref<'HOSPITAL' | 'PLATFORM'>('PLATFORM');
 const tree = ref<MenuResourceNode[]>([]);
 const modules = ref<string[]>([]);
+
+// 资源变更记录（E05-T10 / PLT-PERM-012）
+const logOpen = ref(false);
 
 // 新建 / 维护对话框
 const editOpen = ref(false);
@@ -212,6 +216,9 @@ onUnmounted(() => window.removeEventListener('resize', read));
           </RadioButton>
         </RadioGroup>
         <Space>
+          <Button data-testid="menu-resource-log" @click="logOpen = true">
+            变更记录
+          </Button>
           <Button
             data-testid="menu-sync-diff"
             :disabled="!canEdit"
@@ -362,6 +369,12 @@ onUnmounted(() => window.removeEventListener('resize', read));
         </ul>
       </template>
     </Modal>
+
+    <ResourceLogDrawer
+      :open="logOpen"
+      default-resource-type="MENU"
+      @close="logOpen = false"
+    />
   </Page>
 </template>
 

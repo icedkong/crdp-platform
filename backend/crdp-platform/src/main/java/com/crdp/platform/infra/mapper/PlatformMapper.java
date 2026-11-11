@@ -2,6 +2,7 @@ package com.crdp.platform.infra.mapper;
 
 import com.crdp.platform.apires.ApiResourceRow;
 import com.crdp.platform.menu.MenuRow;
+import com.crdp.platform.resource.ResourceChangeRow;
 import com.crdp.platform.tenant.TenantRecord;
 import java.util.List;
 import org.apache.ibatis.annotations.Delete;
@@ -302,4 +303,16 @@ public interface PlatformMapper {
 
     @Delete("DELETE FROM plt_api_resource WHERE id = #{id} AND source = 'SCAN'")
     int deleteScannedApiResource(@Param("id") long id);
+
+    /** 资源变更记录只追加（PLT-PERM-012 / E05-T10），无修改与删除。 */
+    @Insert(
+            """
+            INSERT INTO plt_resource_change_log
+              (resource_type, resource_id, resource_name, resource_ident, action, channel,
+               detail, operator_id, operator_name)
+            VALUES (#{resourceType}, #{resourceId}, #{resourceName}, #{resourceIdent}, #{action},
+                    #{channel}, #{detail}, #{operatorId}, #{operatorName})
+            """)
+    @Options(useGeneratedKeys = true, keyProperty = "id")
+    int insertResourceChange(ResourceChangeRow row);
 }

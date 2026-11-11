@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -32,6 +34,7 @@ class ApiResourceServiceTest {
     @Mock private PlatformMapper platformMapper;
     @Mock private ApiResourceScanner scanner;
     @Mock private AuditLogger audit;
+    @Mock private ResourceChangeRecorder resourceChanges;
 
     private ApiResourceService service;
 
@@ -53,7 +56,7 @@ class ApiResourceServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new ApiResourceService(platformMapper, scanner, audit);
+        service = new ApiResourceService(platformMapper, scanner, audit, resourceChanges);
         lenient()
                 .when(platformMapper.listApiResources())
                 .thenReturn(
@@ -178,5 +181,38 @@ class ApiResourceServiceTest {
                                                 "Bad_Code", null, null, null, null)));
         assertEquals(40001, error.code());
         verify(platformMapper, never()).updateApiResourceMarks(any());
+    }
+
+    // ---------------------------------------------------------------- 资源变更记录（PLT-PERM-012）
+
+    @Test
+    void markWritesResourceChangeLogWithFieldDiff() {
+        ApiResourceRow before = row(3L, "POST", "/api/hospital/auth/login", null, false);
+        before.setAuditLevel("NONE");
+        before.setSensitiveLevel("NORMAL");
+        before.setActionType("WRITE");
+        ApiResourceRow after = row(3L, "POST", "/api/hospital/auth/login", null, true);
+        after.setAuditLevel("OPERATION");
+        after.setActionType("WRITE");
+        when(platformMapper.findApiResourceById(3L)).thenReturn(before, after);
+
+        service.mark(
+                3L,
+                new ApiResourceService.MarkRequest(
+                        "followup:demo:act", true, "OPERATION", "NORMAL", "WRITE"));
+
+        verify(resourceChanges)
+                .record(
+                        eq("API"),
+                        eq(3L),
+                        eq("POST /api/hospital/auth/login"),
+                        eq("/api/hospital/auth/login"),
+                        eq("UPDATE"),
+                        eq("PAGE"),
+                        argThat(
+                                detail ->
+                                        detail.contains("权限码 （无） → followup:demo:act")
+                                                && detail.contains("公共 否 → 是")
+                                                && detail.contains("审计级别 NONE → OPERATION")));
     }
 }

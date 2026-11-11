@@ -91,6 +91,10 @@ public final class AuditExportCsv {
         if (raw instanceof LocalDateTime time) {
             return AuditQuerySupport.format(time);
         }
+        // queryForList 对 DATETIME 列返回 java.sql.Timestamp（资源变更记录导出，E05-T10）
+        if (raw instanceof java.sql.Timestamp time) {
+            return AuditQuerySupport.format(time.toLocalDateTime());
+        }
         if (raw instanceof Boolean flag) {
             return flag ? "1" : "0";
         }

@@ -63,7 +63,10 @@ PLT-MOD-010/011 为后续规划，不实现。
 | PUT | `/api/platform/apis/{id}` | `platform:api:edit` | **已实现（E05-T06）**。标记公共接口、审计级别（NONE/OPERATION/DATA_ACCESS）、敏感级别（NORMAL/SENSITIVE）、动作类型；可给未加注解的接口补绑权限码；未绑定又非公共 40001；写 API_UPDATE 审计并即时刷新默认拒绝闸门 | PLT-PERM-004 |
 | POST | `/api/platform/apis/sync` | `platform:api:edit` | **已实现（E05-T06）**。手动触发登记同步（与启动同一套扫描逻辑），返回每条 REGISTERED / UPDATED / UNCHANGED / REMOVED | PLT-PERM-004 |
 | GET / PUT | `/api/platform/fields` | `platform:field:edit` | 字段资源：敏感分级、默认策略、脱敏规则（E08+） | PLT-PERM-009 |
-| GET | `/api/platform/resource-logs` | `platform:menu:view` | 资源变更记录（E05-T10，P2） | PLT-PERM-012 |
+| GET | `/api/platform/resource-logs` | `platform:menu:view` | **已实现（E05-T10）**。资源变更记录分页（新→旧）：`{items[{id,createdAt(ISO-8601 带时区),resourceType(MENU\|API\|FIELD——FIELD 值预留，随字段资源管理接口落地后写入),resourceId,resourceName,resourceIdent,action(CREATE\|UPDATE\|DELETE\|OFFLINE\|REGISTER),channel(PAGE\|SYNC),detail,operatorId,operatorName(「姓名（账号）」快照，系统触发为 null)}],total,pageNo,pageSize}`；`resourceType` / `action` / `channel` / `keyword`（匹配资源名 / 标识 / 摘要，≤64 字）可选过滤 | PLT-PERM-012 |
+| GET | `/api/platform/resource-logs/export` | `platform:menu:view` | **已实现（E05-T10）**。导出 CSV（条件与查询同口径）：UTF-8 BOM、首列水印（`姓名（账号）· 平台资源变更记录 · 时间（分钟）`，OQ-22 口径）、行数上限 5 万（超出截断并在尾行提示）；每次导出写 DATA_ACCESS 审计（recordCount 与条件摘要） | PLT-PERM-012 |
+
+**资源变更记录写入点（E05-T10 / PLT-PERM-012）**：`plt_resource_change_log` 只追加——菜单维护（新建 / 维护含逐字段前后值 / 删除，channel=PAGE）、菜单清单同步（新增 / 变更 / 下线，channel=SYNC）、接口标记（channel=PAGE，含标记字段前后值）、接口登记扫描（首次登记 / 登记随代码更新 / 消失清除，channel=SYNC；操作人为空 = 系统触发）。与审计（安全追溯、哈希链）互补，是资源维度的可查变更流水；字段资源（FIELD）随 `/api/platform/fields`（E08+）落地时接入。前端入口在「菜单资源」与「接口资源」页的「变更记录」抽屉。
 
 **接口默认拒绝（E05-T06 验收）**：启动扫描把全部 `/api/**` 处理方法按 `@RequiresPermission`（权限码）、`@RequireModule`（模块，否则按权限码前段匹配 plt_module，兜底 base）、`@PublicApi`（公共接口，登录即可；与权限码同标时以权限码为准）登记进 `plt_api_resource`；`ApiResourceGuardFilter` 对 `/api/**` 按「方法 + 路径」核对——未登记或「未绑定权限码且非公共」一律 **40307**，绑定权限码的会话无码 **40300**（与 `@RequiresPermission` 同码同口径），模块未开通放行给 `@RequireModule` 返回 40301（校验链顺序：登录态 → 租户状态 → 模块开通 → 权限码）。同步不覆盖平台端标记的审计级别 / 敏感级别 / 动作类型；SCAN 来源行随接口消失自动清除，SEED / MANUAL 行保留。
 

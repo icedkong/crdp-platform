@@ -8,6 +8,7 @@ export * from './menu-resource';
 export * from './module';
 export * from './param';
 export * from './platform-account';
+export * from './resource-log';
 export * from './role';
 export * from './tenant';
 export * from './tenant-module';

@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
@@ -84,13 +86,18 @@ class ApiResourceScannerTest {
 
     @Mock private PlatformMapper platformMapper;
     @Mock private AuditLogger audit;
+    @Mock private ResourceChangeRecorder resourceChanges;
     private final ApiResourceRegistry registry = new ApiResourceRegistry();
     private ApiResourceScanner scanner;
 
     private void buildScanner() {
         scanner =
                 new ApiResourceScanner(
-                        handlerMappingOf(DemoEndpoints.class), platformMapper, registry, audit);
+                        handlerMappingOf(DemoEndpoints.class),
+                        platformMapper,
+                        registry,
+                        audit,
+                        resourceChanges);
     }
 
     private static RequestMappingHandlerMapping handlerMappingOf(Class<?> beanType) {
@@ -285,5 +292,65 @@ class ApiResourceScannerTest {
         assertEquals(20L, updated.getValue().getId());
         assertTrue(Boolean.TRUE.equals(updated.getValue().getPublicAccess()));
         assertEquals("NONE", existing.getAuditLevel(), "更新注册列时不得动平台端维护的审计级别（断言原行未变）");
+    }
+
+    // ---------------------------------------------------------------- 资源变更记录（PLT-PERM-012）
+
+    @Test
+    void scanWritesResourceChangeLogForRegisterUpdateAndRemove() {
+        buildScanner();
+        when(platformMapper.listModuleCodes()).thenReturn(List.of("base"));
+        // 库内只有 hello（SEED、非公共，与代码推导不一致 → UPDATED）；tree 为新接口（REGISTERED）；
+        // stale 已不在代码里（SCAN → REMOVED）
+        ApiResourceRow existing = new ApiResourceRow();
+        existing.setId(20L);
+        existing.setHttpMethod("GET");
+        existing.setPathPattern("/api/hospital/hello");
+        existing.setPermCode(null);
+        existing.setModuleCode("base");
+        existing.setPublicAccess(false);
+        existing.setSource("SEED");
+        ApiResourceRow stale = new ApiResourceRow();
+        stale.setId(11L);
+        stale.setHttpMethod("GET");
+        stale.setPathPattern("/api/hospital/gone");
+        stale.setPermCode(null);
+        stale.setModuleCode("base");
+        stale.setPublicAccess(false);
+        stale.setSource("SCAN");
+        when(platformMapper.listApiResources()).thenReturn(List.of(existing, stale));
+
+        scanner.scan();
+
+        // 新接口 → REGISTER / SYNC
+        verify(resourceChanges)
+                .record(
+                        eq("API"),
+                        eq(null),
+                        eq("GET /api/platform/menus/tree"),
+                        eq("/api/platform/menus/tree"),
+                        eq("REGISTER"),
+                        eq("SYNC"),
+                        argThat(detail -> detail.contains("接口首次登记")));
+        // 登记变化 → UPDATE / SYNC（权限码以权限码为准：tree 带 @RequiresPermission）
+        verify(resourceChanges)
+                .record(
+                        eq("API"),
+                        eq(20L),
+                        eq("GET /api/hospital/hello"),
+                        eq("/api/hospital/hello"),
+                        eq("UPDATE"),
+                        eq("SYNC"),
+                        argThat(detail -> detail.contains("公共 否 → 是")));
+        // 消失接口 → DELETE / SYNC
+        verify(resourceChanges)
+                .record(
+                        eq("API"),
+                        eq(11L),
+                        eq("GET /api/hospital/gone"),
+                        eq("/api/hospital/gone"),
+                        eq("DELETE"),
+                        eq("SYNC"),
+                        argThat(detail -> detail.contains("清除登记")));
     }
 }

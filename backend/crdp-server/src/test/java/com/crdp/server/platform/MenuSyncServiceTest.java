@@ -3,6 +3,8 @@ package com.crdp.server.platform;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -32,6 +34,7 @@ class MenuSyncServiceTest {
     @Mock private PlatformMapper platformMapper;
     @Mock private PermissionVersionStore permissionVersions;
     @Mock private AuditLogger audit;
+    @Mock private ResourceChangeRecorder resourceChanges;
 
     private MenuSyncService service;
 
@@ -491,7 +494,12 @@ class MenuSyncServiceTest {
     @BeforeEach
     void setUp() {
         service =
-                new MenuSyncService(new MenuManifest(), platformMapper, permissionVersions, audit);
+                new MenuSyncService(
+                        new MenuManifest(),
+                        platformMapper,
+                        permissionVersions,
+                        audit,
+                        resourceChanges);
         lenient()
                 .when(platformMapper.listManifestMenus("followup", "HOSPITAL"))
                 .thenReturn(seedRows());
@@ -712,5 +720,104 @@ class MenuSyncServiceTest {
         verify(platformMapper, never()).insertMenu(any());
         verify(platformMapper, never()).updateMenu(any());
         verify(audit, never()).record(any());
+        verify(resourceChanges, never()).record(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void applyWritesResourceChangeLogPerDiffItem() {
+        List<MenuRow> rows = new java.util.ArrayList<>(seedRows());
+        rows.remove(6); // ADDED：导出患者
+        rows.set(
+                1,
+                manifestRow(
+                        21L,
+                        20L,
+                        "MENU",
+                        "患者档案",
+                        "FollowupPatient",
+                        "/followup/patient",
+                        "followup/patient/v2",
+                        "followup:patient:view",
+                        10,
+                        "ENABLED")); // CHANGED
+        rows.add(
+                manifestRow(
+                        24L,
+                        20L,
+                        "MENU",
+                        "旧版随访日历",
+                        "FollowupCalendar",
+                        "/followup/calendar",
+                        "followup/calendar/index",
+                        "followup:calendar:view",
+                        40,
+                        "ENABLED")); // OFFLINE
+        when(platformMapper.listManifestMenus("followup", "HOSPITAL")).thenReturn(rows);
+        when(platformMapper.findMenu(21L))
+                .thenReturn(
+                        manifestRow(
+                                21L,
+                                20L,
+                                "MENU",
+                                "患者档案",
+                                "FollowupPatient",
+                                "/followup/patient",
+                                "followup/patient/index",
+                                "followup:patient:view",
+                                10,
+                                "ENABLED"));
+        when(platformMapper.findMenu(24L))
+                .thenReturn(
+                        manifestRow(
+                                24L,
+                                20L,
+                                "MENU",
+                                "旧版随访日历",
+                                "FollowupCalendar",
+                                "/followup/calendar",
+                                "followup/calendar/index",
+                                "followup:calendar:view",
+                                40,
+                                "ENABLED"));
+        when(platformMapper.insertMenu(any()))
+                .thenAnswer(
+                        invocation -> {
+                            MenuRow inserted = invocation.getArgument(0);
+                            inserted.setId(500L);
+                            return 1;
+                        });
+
+        service.apply();
+
+        // 新增 → CREATE / SYNC（name 取清单标题，标识取清单 key）
+        verify(resourceChanges)
+                .record(
+                        eq("MENU"),
+                        eq(500L),
+                        eq("导出患者"),
+                        eq("followup:patient:export"),
+                        eq("CREATE"),
+                        eq("SYNC"),
+                        argThat(detail -> detail.contains("清单同步新增")));
+        // 变更 → UPDATE / SYNC
+        verify(resourceChanges)
+                .record(
+                        eq("MENU"),
+                        eq(21L),
+                        eq("患者档案"),
+                        eq("FollowupPatient"),
+                        eq("UPDATE"),
+                        eq("SYNC"),
+                        argThat(detail -> detail.contains("清单同步变更结构字段")));
+        // 下线 → OFFLINE / SYNC
+        verify(resourceChanges)
+                .record(
+                        eq("MENU"),
+                        eq(24L),
+                        eq("旧版随访日历"),
+                        eq("FollowupCalendar"),
+                        eq("OFFLINE"),
+                        eq("SYNC"),
+                        argThat(detail -> detail.contains("清单同步下线")));
     }
 }
