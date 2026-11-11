@@ -135,6 +135,16 @@ jobs:
       # CRDP_IT_MYSQL_PORT 运行；生产冒烟由测试按手册在场执行，W36 切换后立即）。
       - name: 上线核对与冒烟校验（E23-T12）
         run: python3 scripts/check_golive_smoke.py
+      # E23-T15：医院 B 用 A 配置模板初始化。runbook 防漂移校验 + 核对工具自检
+      # （表清单 ↔ ConfigTableRegistry / 只读护栏 / 差异注入判定）+ compose MySQL 演练
+      # （克隆 A 配置为「B 初始化终态」→ 全注册表核对全 PASS、四类差异逐项检出、清场
+      # 归零）；向导路径演练 IT（TenantBOnboardingMySqlIT）随上方 mvn test 门控运行；
+      # 生产开通与一致性核对由运维按 docs/ops/hospital-b-onboarding.md 在场执行（W37）。
+      - name: 医院 B 初始化校验（E23-T15）
+        run: |
+          python3 scripts/check_tenant_b_onboarding.py --selftest
+          python3 scripts/check_tenant_b_onboarding.py
+          python3 scripts/check_tenant_b_onboarding.py --drill
       - name: 关闭依赖容器
         if: always()
         run: docker compose down -v
