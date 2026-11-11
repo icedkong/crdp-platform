@@ -65,6 +65,8 @@ const tenantId = Number(route.params.id);
 const { hasPermission } = usePermission();
 const canEdit = hasPermission('platform:tenant:edit');
 const canRenew = hasPermission('platform:tenant:renew');
+// E05-T08 / PLT-TEN-018..021：注销与数据处理页（发起 / 撤销权限控制入口显隐）
+const canCancel = hasPermission('platform:tenant:cancel');
 // E05-T07 / PLT-SCOPE-001、002：授权范围页签（查看权限控制显隐）
 const canScopeView = hasPermission('platform:tenant:scope:view');
 
@@ -229,6 +231,14 @@ onMounted(load);
         <Tabs v-if="detail" default-active-key="basic">
           <TabPane key="basic" tab="基本信息">
             <div class="toolbar">
+              <Button
+                v-if="canCancel"
+                danger
+                data-testid="goto-cancel"
+                @click="router.push(`/platform/tenant/${tenantId}/cancel`)"
+              >
+                注销与数据处理
+              </Button>
               <Button
                 v-if="canEdit"
                 type="primary"

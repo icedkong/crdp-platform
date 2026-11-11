@@ -45,6 +45,12 @@ public class CryptoConfiguration {
     }
 
     @Bean
+    public ArchiveCipher archiveCipher() {
+        // 整包加密（迁出包 / 封存包）与密钥来源无关（密码由调用方一次性生成），单一实现直接装配
+        return new AesGcmArchiveCipher();
+    }
+
+    @Bean
     public KeyRotationService keyRotationService(
             TenantDataKeyService tenantDataKeyService, AuditLogger auditLogger) {
         return new KeyRotationService(tenantDataKeyService, auditLogger);

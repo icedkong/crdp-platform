@@ -758,6 +758,138 @@ export interface TenantUpdateRequest {
   shortName?: null | string;
 }
 
+// ---------------------------------------------------------------- 租户注销与数据处理（E05-T08 / PLT-TEN-018..021）
+
+/** 注销流程阶段（plt_tenant_cancel.stage）。 */
+export type TenantCancelStage =
+  | 'ACKED'
+  | 'COOLING'
+  | 'DESTROYED'
+  | 'EXPORTED'
+  | 'PENDING_APPROVAL'
+  | 'REJECTED'
+  | 'REVOKED';
+
+/** 注销流程附件（医院书面确认 / 迁出包签收单）。 */
+export interface TenantCancelFileView {
+  fileName: string;
+  id: number;
+  kind: 'ACK' | 'CONFIRMATION';
+  sizeBytes: number;
+  uploadedAt: string;
+}
+
+/** 注销流程主体（阶段、申请、审批、冷静期、撤销）。 */
+export interface TenantCancelFlowView {
+  appliedAt: null | string;
+  appliedByName: null | string;
+  approvedAt: null | string;
+  approvedByName: null | string;
+  approveNote: null | string;
+  confirmationFile: null | TenantCancelFileView;
+  coolingUntil: null | string;
+  reason: null | string;
+  revokedAt: null | string;
+  revokedByName: null | string;
+  revokeReason: null | string;
+  stage: null | TenantCancelStage;
+  tenantCode: string;
+  tenantId: number;
+  tenantName: string;
+  tenantStatus: TenantStatus;
+}
+
+/** 法定保留数据登记 / 封存条目（PLT-TEN-021）。 */
+export interface TenantRetentionView {
+  certificateId: null | number;
+  destroyedAt: null | string;
+  id: number;
+  legalBasis: string;
+  retainUntil: string;
+  scope: string;
+  sealedAt: null | string;
+  sealedSha256: null | string;
+  status: 'DESTROYED' | 'REGISTERED' | 'SEALED';
+  tables: string[];
+}
+
+/** 标准迁出包行（PLT-TEN-019）。 */
+export interface TenantExportView {
+  ackedAt: null | string;
+  ackFileName: null | string;
+  ackNote: null | string;
+  downloadCount: number;
+  expiresAt: string;
+  fileCount: number;
+  generatedAt: string;
+  id: number;
+  maxDownloads: number;
+  packageNo: string;
+  sha256: string;
+  sizeBytes: number;
+  tableCount: number;
+  totalRows: number;
+}
+
+/** 数据销毁证明行（PLT-TEN-020；TENANT 整体销毁 / RETENTION 保留期满销毁）。 */
+export interface TenantCertificateView {
+  certNo: string;
+  executedAt: string;
+  executedByName: string;
+  id: number;
+  kind: 'RETENTION' | 'TENANT';
+  reviewedByName: string;
+  tenantCode: string;
+  tenantName: string;
+}
+
+/** 注销与数据处理页总览。 */
+export interface TenantCancelOverview {
+  certificates: TenantCertificateView[];
+  exports: TenantExportView[];
+  flow: TenantCancelFlowView;
+  retentionItems: TenantRetentionView[];
+}
+
+/** 发起注销申请（PLT-TEN-018）：原因 + 医院书面确认 + 法定保留清单。 */
+export interface TenantCancelApplyRequest {
+  confirmationFileId: number;
+  reason: string;
+  retentionItems: TenantRetentionItemInput[];
+}
+
+/** 法定保留清单条目（登记输入）。 */
+export interface TenantRetentionItemInput {
+  legalBasis: string;
+  retainUntil: string;
+  scope: string;
+}
+
+/** 审批注销：APPROVE 通过（注销中 + 冷静期）/ REJECT 驳回。 */
+export interface TenantCancelApproveRequest {
+  decision: 'APPROVE' | 'REJECT';
+  note?: string;
+}
+
+/** 保存法定保留清单（整体替换未封存项）。 */
+export interface TenantRetentionSaveRequest {
+  items: TenantRetentionSaveItem[];
+}
+
+/** 保留项保存条目（可带封存时导出的租户库表，逗号分隔）。 */
+export interface TenantRetentionSaveItem {
+  legalBasis: string;
+  retainUntil: string;
+  scope: string;
+  tablesCsv?: string;
+}
+
+/** 执行销毁 / 保留期满销毁：复核人（另一名平台管理员）+ 原因。 */
+export interface TenantDestroyRequest {
+  reason: string;
+  reviewerId: number;
+}
+
 /** 列表检索条件（keyword 命中医名名称或编码）。 */
 export interface TenantListQuery {
   expireBefore?: string;
