@@ -189,6 +189,14 @@ public final class TaskCreationPlanner {
         if (subplan == null) {
             return null;
         }
+        // FIXED 固定次数排完即无该次（E23-T17 B 验收发现）：次数外的 occurrence 不存在——否则周期回落
+        // 节点偏移会凭空算出「下一次」开启日，把 FIXED 子计划（如医院 B 术后早期随访 ×1）的补录任务
+        // 提交误拦在直接录入期之外（§14「可直接录入」；CYCLE 持续循环不设界，不受影响）
+        if ("FIXED".equals(subplan.repeatMode())
+                && subplan.repeatCount() != null
+                && occurrence > subplan.repeatCount()) {
+            return null;
+        }
         int cycleValue =
                 subplan.cycleValue() != null
                         ? subplan.cycleValue()
