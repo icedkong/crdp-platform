@@ -60,8 +60,22 @@ class ImplantServiceTest {
     private final com.crdp.followup.plan.app.DevicePlanMappingService planMappings =
             mock(com.crdp.followup.plan.app.DevicePlanMappingService.class);
 
+    private final com.crdp.followup.plan.app.PlanSwitchService planSwitch =
+            mock(com.crdp.followup.plan.app.PlanSwitchService.class);
+
+    private final com.crdp.followup.task.app.StartDateRecalculationService startDateRecalc =
+            mock(com.crdp.followup.task.app.StartDateRecalculationService.class);
+
     private final ImplantService service =
-            new ImplantService(gateway, mapper, features, dicts, audit, planMappings);
+            new ImplantService(
+                    gateway,
+                    mapper,
+                    features,
+                    dicts,
+                    audit,
+                    planMappings,
+                    planSwitch,
+                    startDateRecalc);
 
     private final AtomicLong idSeq = new AtomicLong(500);
 
@@ -90,6 +104,17 @@ class ImplantServiceTest {
                             return 1;
                         });
         when(mapper.updateImplant(any())).thenReturn(1);
+        // E21-T06 切换钩子默认「未切换」（回落 E21-T05 自动入组路径），切换场景由 PlanSwitchServiceTest 锁定
+        org.mockito.Mockito.lenient()
+                .when(planSwitch.onActiveImplantAdded(anyLong(), anyLong(), any(), any(), any()))
+                .thenReturn(
+                        new com.crdp.followup.plan.app.PlanSwitchService.ImplantSwitchView(
+                                PATIENT_ID, false, 0, 0, false, null));
+        org.mockito.Mockito.lenient()
+                .when(planSwitch.onDeviceTypeCorrected(anyLong(), anyLong(), any(), any(), any()))
+                .thenReturn(
+                        new com.crdp.followup.plan.app.PlanSwitchService.ImplantSwitchView(
+                                PATIENT_ID, false, 0, 0, false, null));
         when(mapper.updateLead(any())).thenReturn(1);
     }
 
@@ -730,6 +755,60 @@ class ImplantServiceTest {
     /** 本院停用标记（cfg_dict_item 平台项停用行）。 */
     private static ImplantDictPort.DictItem disabled(String code, String label, int sortNo) {
         return new ImplantDictPort.DictItem(code, label, sortNo, false);
+    }
+
+    // ---------------------------------------------------------------- 计划切换挂钩（E21-T06 / C-FU-007）
+
+    @Test
+    void updateCorrectingDeviceTypeHooksPlanSwitch() {
+        ImplantRow existing = implant(501L, "ACTIVE", "2026-01-05");
+        when(gateway.implantInScope(501L)).thenReturn(existing);
+        when(gateway.leadsOfImplant(501L)).thenReturn(List.of());
+        when(gateway.implantsOf(PATIENT_ID)).thenReturn(List.of(existing));
+
+        service.update(
+                501L,
+                new ImplantService.UpdateRequest(3, payload("FIRST", "2026-01-05", "ICD", null)));
+
+        // SW-6 器械类型更正（录入纠错）：按新类型重新入组，起算仍按原植入日期（切换服务内部锁定）
+        verify(planSwitch)
+                .onDeviceTypeCorrected(
+                        PATIENT_ID, 501L, "DDD", "ICD", LocalDate.parse("2026-01-05"));
+        verify(startDateRecalc, never()).recalculateOnBaseDateChange(anyLong(), any());
+    }
+
+    @Test
+    void updateChangingImplantDateHooksStartDateRecalculation() {
+        ImplantRow existing = implant(501L, "ACTIVE", "2026-01-05");
+        when(gateway.implantInScope(501L)).thenReturn(existing);
+        when(gateway.leadsOfImplant(501L)).thenReturn(List.of());
+        when(gateway.implantsOf(PATIENT_ID)).thenReturn(List.of(existing));
+
+        service.update(
+                501L,
+                new ImplantService.UpdateRequest(3, payload("FIRST", "2026-02-10", "DDD", null)));
+
+        // 类型未改、仅改植入日期：接入 E14-T07 起算重算（未开始任务按新日期重算，C 规格 §4 / OQ-135③）
+        verify(startDateRecalc).recalculateOnBaseDateChange(PATIENT_ID, OPERATOR_ID);
+        verify(planSwitch, never())
+                .onDeviceTypeCorrected(anyLong(), anyLong(), any(), any(), any());
+    }
+
+    @Test
+    void updateOnReplacedHistoryRecordDoesNotTouchPlans() {
+        ImplantRow existing = implant(501L, "REPLACED", "2026-01-05");
+        when(gateway.implantInScope(501L)).thenReturn(existing);
+        when(gateway.leadsOfImplant(501L)).thenReturn(List.of());
+        when(gateway.implantsOf(PATIENT_ID)).thenReturn(List.of(existing));
+
+        service.update(
+                501L,
+                new ImplantService.UpdateRequest(3, payload("FIRST", "2026-01-05", "ICD", null)));
+
+        // 只针对在用记录（当前器械）：历史（已更换）记录的类型 / 日期改动不触发切换与重算
+        verify(planSwitch, never())
+                .onDeviceTypeCorrected(anyLong(), anyLong(), any(), any(), any());
+        verify(startDateRecalc, never()).recalculateOnBaseDateChange(anyLong(), any());
     }
 
     private static ImplantService.ImplantPayload payload(

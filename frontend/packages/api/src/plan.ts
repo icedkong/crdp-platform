@@ -242,13 +242,14 @@ export interface PlanSaveNodesRequest {
 
 // ---------------------------------------------------------------- 计划患者列表（E14-T08 / A-FU-022）
 
-/** 入组状态（fu_enrollment.status：已启动 / 已暂停 / 已移除）。 */
-export type PlanEnrollmentStatus = 'ACTIVE' | 'PAUSED' | 'REMOVED';
+/** 入组状态（fu_enrollment.status：已启动 / 已暂停 / 已移除 / 已切换〔C-FU-007 计划切换结束〕）。 */
+export type PlanEnrollmentStatus = 'ACTIVE' | 'PAUSED' | 'REMOVED' | 'SWITCHED';
 
 export const PLAN_ENROLLMENT_STATUS_TEXT: Record<string, string> = {
   ACTIVE: '已启动',
   PAUSED: '已暂停',
   REMOVED: '已移除',
+  SWITCHED: '已切换',
 };
 
 export function planEnrollmentStatusText(

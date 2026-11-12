@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -60,8 +61,22 @@ class ImplantReplaceServiceTest {
     private final com.crdp.followup.plan.app.DevicePlanMappingService planMappings =
             mock(com.crdp.followup.plan.app.DevicePlanMappingService.class);
 
+    private final com.crdp.followup.plan.app.PlanSwitchService planSwitch =
+            mock(com.crdp.followup.plan.app.PlanSwitchService.class);
+
+    private final com.crdp.followup.task.app.StartDateRecalculationService startDateRecalc =
+            mock(com.crdp.followup.task.app.StartDateRecalculationService.class);
+
     private final ImplantService service =
-            new ImplantService(gateway, mapper, features, dicts, audit, planMappings);
+            new ImplantService(
+                    gateway,
+                    mapper,
+                    features,
+                    dicts,
+                    audit,
+                    planMappings,
+                    planSwitch,
+                    startDateRecalc);
 
     private final AtomicLong idSeq = new AtomicLong(700);
 
@@ -96,6 +111,17 @@ class ImplantReplaceServiceTest {
                         });
         when(mapper.updateLead(any())).thenReturn(1);
         when(mapper.supersedeActive(anyLong(), any(), anyString(), anyLong())).thenReturn(1);
+        // E21-T06 切换钩子默认「未切换」（回落 E21-T05 自动入组路径），切换场景由 PlanSwitchServiceTest 锁定
+        lenient()
+                .when(planSwitch.onActiveImplantAdded(anyLong(), anyLong(), any(), any(), any()))
+                .thenReturn(
+                        new com.crdp.followup.plan.app.PlanSwitchService.ImplantSwitchView(
+                                PATIENT_ID, false, 0, 0, false, null));
+        lenient()
+                .when(planSwitch.onImplantExplanted(anyLong(), anyLong(), any()))
+                .thenReturn(
+                        new com.crdp.followup.plan.app.PlanSwitchService.ImplantSwitchView(
+                                PATIENT_ID, false, 0, 0, false, null));
 
         active = implantRow(501L, "FIRST", "ACTIVE", "2024-06-01", "DDD", "DDD", "MEDTRONIC");
         when(gateway.implantInScope(501L)).thenReturn(active);
@@ -824,6 +850,122 @@ class ImplantReplaceServiceTest {
     // ---------------------------------------------------------------- 夹具
 
     /** 更换请求快捷组装（无说明、无新电极）。 */
+
+    // ---------------------------------------------------------------- 计划切换挂钩（E21-T06 / C-FU-007）
+
+    @Test
+    void replaceHooksPlanSwitchForUpgradeAndReplacement() {
+        when(gateway.implantsOf(PATIENT_ID))
+                .thenReturn(
+                        List.of(
+                                implantRow(
+                                        NEW_IMPLANT_ID,
+                                        "UPGRADE",
+                                        "ACTIVE",
+                                        "2026-03-10",
+                                        "CRT_D",
+                                        "CRT_D",
+                                        "MEDTRONIC"),
+                                active));
+        when(gateway.leadsOf(PATIENT_ID))
+                .thenReturn(
+                        List.of(
+                                lead(601L, "RA", "RA_APPENDAGE", "2024-06-01", "ACTIVE"),
+                                lead(602L, "RV", "RV_APEX", "2024-06-01", "ACTIVE")));
+        when(mapper.findLinksOfPatient(PATIENT_ID))
+                .thenReturn(
+                        List.of(
+                                new ImplantMapper.ImplantLinkRow(NEW_IMPLANT_ID, 601L),
+                                new ImplantMapper.ImplantLinkRow(NEW_IMPLANT_ID, 602L),
+                                new ImplantMapper.ImplantLinkRow(501L, 601L),
+                                new ImplantMapper.ImplantLinkRow(501L, 602L)));
+
+        service.replace(
+                501L,
+                new ImplantService.ReplaceRequest(
+                        3,
+                        "UPGRADE",
+                        null,
+                        implantPayload("2026-03-10", "CRT_D"),
+                        actionsKeepBoth(),
+                        List.of(newLead("LV", "CS"))));
+
+        // 升级产生新在用器械：同一事务先走计划切换判定（SW-2；未切换时回落 E21-T05 自动入组）
+        verify(planSwitch)
+                .onActiveImplantAdded(
+                        PATIENT_ID,
+                        NEW_IMPLANT_ID,
+                        "UPGRADE",
+                        "CRT_D",
+                        LocalDate.parse("2026-03-10"));
+        verify(planMappings)
+                .autoEnrollByDeviceType(PATIENT_ID, "CRT_D", LocalDate.parse("2026-03-10"));
+    }
+
+    @Test
+    void leadRevisionDoesNotHookPlanSwitchOrAutoEnroll() {
+        when(gateway.implantsOf(PATIENT_ID))
+                .thenReturn(
+                        List.of(
+                                implantRow(
+                                        NEW_IMPLANT_ID,
+                                        "LEAD_REVISION",
+                                        "ACTIVE",
+                                        "2026-03-10",
+                                        "DDD",
+                                        "DDD",
+                                        "MEDTRONIC"),
+                                active));
+        when(gateway.leadsOf(PATIENT_ID))
+                .thenReturn(
+                        List.of(
+                                lead(601L, "RA", "RA_APPENDAGE", "2024-06-01", "ACTIVE"),
+                                lead(602L, "RV", "RV_APEX", "2024-06-01", "ACTIVE"),
+                                lead(702L, "RV", "RV_SEPTUM", "2026-03-10", "ACTIVE")));
+        when(mapper.findLinksOfPatient(PATIENT_ID))
+                .thenReturn(
+                        List.of(
+                                new ImplantMapper.ImplantLinkRow(NEW_IMPLANT_ID, 601L),
+                                new ImplantMapper.ImplantLinkRow(NEW_IMPLANT_ID, 702L),
+                                new ImplantMapper.ImplantLinkRow(501L, 601L),
+                                new ImplantMapper.ImplantLinkRow(501L, 602L)));
+
+        service.replace(
+                501L,
+                new ImplantService.ReplaceRequest(
+                        3,
+                        "LEAD_REVISION",
+                        null,
+                        sameGeneratorPayload("2026-03-10"),
+                        actionsKeepBoth(),
+                        List.of(newLead("RV", "RV_SEPTUM"))));
+
+        // SW-5 电极修正：脉冲发生器不变，不切换计划、不触发自动入组
+        verify(planSwitch, never()).onActiveImplantAdded(anyLong(), anyLong(), any(), any(), any());
+        verify(planMappings, never()).autoEnrollByDeviceType(anyLong(), any(), any());
+    }
+
+    @Test
+    void explantHooksPlanSwitchToEndEnrollments() {
+        ImplantRow explanted =
+                implantRow(501L, "FIRST", "EXPLANTED", "2024-06-01", "DDD", "DDD", "MEDTRONIC");
+        when(gateway.implantsOf(PATIENT_ID)).thenReturn(List.of(explanted));
+        when(mapper.explantActive(anyLong(), any(), anyString(), anyLong())).thenReturn(1);
+
+        service.explant(
+                501L,
+                new ImplantService.ExplantRequest(
+                        3,
+                        LocalDate.parse("2026-05-01"),
+                        "感染取出（示例）",
+                        List.of(
+                                new ImplantService.LeadAction("601", "EXTRACT"),
+                                new ImplantService.LeadAction("602", "ABANDON"))));
+
+        // SW-9 取出且未再植入：结束全部在组入组并终止未完成任务（切换服务内部锁定）
+        verify(planSwitch).onImplantExplanted(PATIENT_ID, 501L, LocalDate.parse("2026-05-01"));
+    }
+
     private static ImplantService.ReplaceRequest replaceRequest(
             String type,
             ImplantService.ImplantPayload implant,

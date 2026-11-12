@@ -269,4 +269,81 @@ public interface PlanEnrollmentMapper {
     int countOtherPaused(
             @Param("patientId") long patientId,
             @Param("excludeEnrollmentId") long excludeEnrollmentId);
+
+    // ---------------------------------------------------------------- 计划切换（E21-T06 / C-FU-007、
+    // Q01、Q03）
+
+    /**
+     * 在组（ACTIVE / PAUSED）入组行（E21-T06 / C-FU-007 计划切换的处置对象）：只取入组状态位与计划族编码， 不输出患者明细——切换由植入记录保存 / 取出 /
+     * 记录提交入口在同事务触发，操作者的患者数据范围校验已由入口承担（ImplantService / RecordEntryService，40400）。
+     */
+    record SwitchableEnrollmentRow(
+            long id, long planId, String planCode, String mode, String status) {}
+
+    /** 患者全部在组（ACTIVE / PAUSED）入组（含已暂停——切换 / 取出同样结束，避免 uk 与「在组无任务」残留）。 */
+    @IgnoreScope(
+            reason =
+                    "计划切换（C-FU-007）的处置对象定位：只取入组状态位与计划族编码，不输出患者数据；"
+                            + "触发入口（植入保存 / 取出 / 记录提交）已做患者数据范围校验（40400）")
+    @Select(
+            """
+            SELECT id, plan_id AS planId, plan_code AS planCode, mode, status
+            FROM fu_enrollment
+            WHERE patient_id = #{patientId} AND status IN ('ACTIVE', 'PAUSED')
+            ORDER BY id
+            """)
+    List<SwitchableEnrollmentRow> findSwitchableEnrollments(long patientId);
+
+    /**
+     * 计划切换结束原入组（C-FU-007：升级 / 更换 / 器械类型更正 / 取出）：在组（ACTIVE / PAUSED）→ SWITCHED（终态， active_key 置空释放
+     * uk_fu_enrollment_active，同族可重新入组），switch_reason 记原因（V88）； 返回 0 = 已不在组（并发状态变化，调用方跳过）。
+     */
+    @IgnoreScope(
+            reason =
+                    "计划切换结束原入组（C-FU-007）：按入组 id 定向 UPDATE（状态守卫在组），触发入口已做"
+                            + "患者数据范围校验（40400）；无 SELECT 输出")
+    @Update(
+            """
+            UPDATE fu_enrollment
+            SET status = 'SWITCHED', switch_reason = #{reason}
+            WHERE id = #{enrollmentId} AND status IN ('ACTIVE', 'PAUSED')
+            """)
+    int switchEndEnrollment(
+            @Param("enrollmentId") long enrollmentId, @Param("reason") String reason);
+
+    /**
+     * ERI 模式切换（C-FU-006 / 切换表「接近 ERI / ERI 标记解除」行）：翻 fu_enrollment.mode（NORMAL ↔ ERI）， 进入 ERI 期时
+     * eri_since = 触发那次的随访日期（「从该次随访日期起算」），解除时清空；状态守卫在组（已结束入组不翻）。
+     */
+    @IgnoreScope(
+            reason =
+                    "ERI 模式切换（C-FU-006）：按入组 id 定向 UPDATE（状态守卫在组），触发入口（记录提交）"
+                            + "已做患者数据范围校验（40400）；无 SELECT 输出")
+    @Update(
+            """
+            UPDATE fu_enrollment
+            SET mode = #{mode}, eri_since = #{eriSince}
+            WHERE id = #{enrollmentId} AND status IN ('ACTIVE', 'PAUSED')
+            """)
+    int switchEnrollmentMode(
+            @Param("enrollmentId") long enrollmentId,
+            @Param("mode") String mode,
+            @Param("eriSince") LocalDate eriSince);
+
+    /**
+     * 医生指定下次随访日期（C-FU-005 / 切换表末行「只覆盖下一次任务的计划日期」）：该患者在组入组统一登记 doctor_next_date（V88， 每次提交覆盖）；
+     * 窗口围绕展开与任务创建消费随 E21-T08。定向 UPDATE，无 SELECT 输出。
+     */
+    @IgnoreScope(
+            reason =
+                    "医生指定下次随访日期（C-FU-005）：按患者定向 UPDATE 在组入组，触发入口（记录提交）"
+                            + "已做患者数据范围校验（40400）；无 SELECT 输出")
+    @Update(
+            """
+            UPDATE fu_enrollment
+            SET doctor_next_date = #{nextDate}
+            WHERE patient_id = #{patientId} AND status IN ('ACTIVE', 'PAUSED')
+            """)
+    int setDoctorNextDate(
+            @Param("patientId") long patientId, @Param("nextDate") LocalDate nextDate);
 }

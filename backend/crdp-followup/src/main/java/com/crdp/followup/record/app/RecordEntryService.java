@@ -71,6 +71,7 @@ public class RecordEntryService {
     private final RecordEntryAssistService entryAssist;
     private final com.crdp.followup.record.infra.mapper.FollowupRecordMapper recordMapper;
     private final com.crdp.followup.record.infra.mapper.RecordFeatureMapper features;
+    private final com.crdp.followup.plan.app.PlanSwitchService planSwitch;
 
     public RecordEntryService(
             FollowupRecordService recordService,
@@ -87,7 +88,8 @@ public class RecordEntryService {
             AuditLogger audit,
             RecordEntryAssistService entryAssist,
             com.crdp.followup.record.infra.mapper.FollowupRecordMapper recordMapper,
-            com.crdp.followup.record.infra.mapper.RecordFeatureMapper features) {
+            com.crdp.followup.record.infra.mapper.RecordFeatureMapper features,
+            com.crdp.followup.plan.app.PlanSwitchService planSwitch) {
         this.recordService = recordService;
         this.formService = formService;
         this.fieldHistory = fieldHistory;
@@ -103,6 +105,7 @@ public class RecordEntryService {
         this.entryAssist = entryAssist;
         this.recordMapper = recordMapper;
         this.features = features;
+        this.planSwitch = planSwitch;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -284,6 +287,13 @@ public class RecordEntryService {
         if (isDeathRecorded(outcome.view()) && patientIdForDeath != null) {
             terminationService.terminateOnDeath(patientIdForDeath, "随访记录提交：是否死亡 = 是", operator);
         }
+        // 计划切换联动（E21-T06 / C-FU-007 切换表「接近 ERI / ERI 标记解除 / 医生指定」行）：ERI 标记翻入组模式、
+        // 医生指定下次随访时间登记 doctor_next_date（SW-7 / SW-8 / SW-10）；A / B 表单无 f323 / f324 / f333 键，天然不触发
+        planSwitch.onRecordSubmitted(
+                outcome.view().patientId(),
+                recordId,
+                effectiveVisitDate(outcome.view()),
+                outcome.view().data());
         audit.append(
                 AuditEntry.operation("followup", "RECORD_SUBMIT")
                         .objectType("FU_RECORD")
@@ -390,6 +400,13 @@ public class RecordEntryService {
                                         + "}")
                         .result(AuditResult.SUCCESS)
                         .build());
+        // 计划切换联动（E21-T06）：修改已提交记录更正 ERI 状态（如接近 → 正常）同样翻入组模式（SW-8 的「更正」路径）；
+        // 下次随访时间修改同样覆盖 doctor_next_date（SW-10）。修改不动任务（完成状态不回退），模式切换照常终止未完成任务
+        planSwitch.onRecordSubmitted(
+                outcome.view().patientId(),
+                recordId,
+                effectiveVisitDate(outcome.view()),
+                outcome.view().data());
         return new UpdateResultView(
                 String.valueOf(recordId),
                 outcome.view().version(),
@@ -533,6 +550,41 @@ public class RecordEntryService {
         }
         Object value = submitted.data().get(deathKey);
         return value instanceof Number number && number.intValue() == DEATH_YES;
+    }
+
+    /**
+     * 该次记录的有效随访日期（计划切换联动的 ERI 起算基准，E21-T06）：fu_record.visit_date（补录 / 计划外落列） ?? 表单随访日期字段（模板字段编码
+     * followup_date 定位稳定键，与 RecordEntryAssistService 重复提示同口径）?? null（切换服务回落今天）。
+     */
+    private LocalDate effectiveVisitDate(FollowupRecordService.RecordView record) {
+        if (record.visitDate() != null) {
+            return record.visitDate();
+        }
+        FormService.SchemaView schema =
+                formService.schema(record.formCode(), record.templateVersion());
+        if (schema == null) {
+            return null;
+        }
+        String dateKey = null;
+        for (FormService.CategoryView category : schema.categories()) {
+            for (FormService.FieldView field : category.fields()) {
+                if (RecordEntryAssistService.FIELD_CODE_FOLLOWUP_DATE.equals(field.code())) {
+                    dateKey = field.key();
+                }
+            }
+        }
+        if (dateKey == null) {
+            return null;
+        }
+        Object value = record.data().get(dateKey);
+        if (!(value instanceof String text) || text.isBlank()) {
+            return null;
+        }
+        try {
+            return LocalDate.parse(text.trim());
+        } catch (RuntimeException invalid) {
+            return null;
+        }
     }
 
     private String decrypt(String cipher) {

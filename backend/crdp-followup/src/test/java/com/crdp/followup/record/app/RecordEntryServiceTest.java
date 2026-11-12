@@ -69,6 +69,8 @@ class RecordEntryServiceTest {
             mock(com.crdp.followup.record.infra.mapper.FollowupRecordMapper.class);
     private final com.crdp.followup.record.infra.mapper.RecordFeatureMapper features =
             mock(com.crdp.followup.record.infra.mapper.RecordFeatureMapper.class);
+    private final com.crdp.followup.plan.app.PlanSwitchService planSwitch =
+            mock(com.crdp.followup.plan.app.PlanSwitchService.class);
 
     private final RecordEntryService service =
             new RecordEntryService(
@@ -86,7 +88,8 @@ class RecordEntryServiceTest {
                     audit,
                     entryAssist,
                     recordMapper,
-                    features);
+                    features,
+                    planSwitch);
 
     private static FollowupTaskQueryMapper.TaskRowRaw taskRow(String status) {
         return new FollowupTaskQueryMapper.TaskRowRaw(
@@ -425,6 +428,109 @@ class RecordEntryServiceTest {
         assertNull(view.taskId());
         verify(statusService, never()).complete(anyLong(), any());
         verify(audit).append(any());
+    }
+
+    @Test
+    void submitHooksPlanSwitchWithEffectiveVisitDate() {
+        Map<String, Object> data = Map.of("f214", "2026-11-05");
+        // 补录记录：visit_date 落列（fu_record.visit_date），ERI 起算基准取它
+        FollowupRecordService.RecordView view =
+                new FollowupRecordService.RecordView(
+                        701L,
+                        301L,
+                        null,
+                        "BACKFILL",
+                        LocalDate.of(2026, 11, 5),
+                        null,
+                        "C_PROGRAM_FU",
+                        1,
+                        "SUBMITTED",
+                        3,
+                        data,
+                        Map.of(),
+                        null,
+                        null);
+        when(recordService.submit(eq(701L), eq(2), eq(data), any()))
+                .thenReturn(
+                        new FollowupRecordService.SubmitOutcome(
+                                view, Map.of(), List.of(), List.of()));
+        when(taskQueryMapper.taskContextByRecordId(701L)).thenReturn(null);
+        when(fieldHistory.logChanges(any(), anyLong(), any(), eq(1), any(), any(), any(), any()))
+                .thenReturn(List.of());
+
+        service.submit(701L, new RecordEntryService.SubmitCommand(2, data, null));
+
+        // E21-T06 / C-FU-007：提交后同事务触发计划切换判定（ERI 标记 / 医生指定），随访日期取 visit_date
+        verify(planSwitch).onRecordSubmitted(301L, 701L, LocalDate.of(2026, 11, 5), data);
+    }
+
+    @Test
+    void submitResolvesVisitDateFromFormFollowupDateFieldWhenColumnEmpty() {
+        Map<String, Object> data = Map.of("f214", "2026-11-06");
+        // 任务录入记录：fu_record.visit_date 为 NULL，随访日期在表单字段（编码 followup_date → 稳定键 f214）
+        FollowupRecordService.RecordView view =
+                new FollowupRecordService.RecordView(
+                        701L,
+                        301L,
+                        9001L,
+                        "TASK",
+                        null,
+                        null,
+                        "C_PROGRAM_FU",
+                        1,
+                        "SUBMITTED",
+                        3,
+                        data,
+                        Map.of(),
+                        null,
+                        null);
+        when(recordService.submit(eq(701L), eq(2), eq(data), any()))
+                .thenReturn(
+                        new FollowupRecordService.SubmitOutcome(
+                                view, Map.of(), List.of(), List.of()));
+        when(taskQueryMapper.taskContextByRecordId(701L)).thenReturn(taskRow("IN_PROGRESS"));
+        when(fieldHistory.logChanges(any(), anyLong(), any(), eq(1), any(), any(), any(), any()))
+                .thenReturn(List.of());
+        when(statusService.complete(eq(9001L), any()))
+                .thenReturn(
+                        new FollowupTaskStatusService.CompletionView(
+                                "9001", "COMPLETED", "ON_TIME"));
+        when(formService.schema("C_PROGRAM_FU", 1))
+                .thenReturn(
+                        new FormService.SchemaView(
+                                "C_PROGRAM_FU",
+                                "程控随访（示例）",
+                                "FOLLOWUP",
+                                1,
+                                List.of(
+                                        new FormService.CategoryView(
+                                                "fu_overview",
+                                                "随访概况",
+                                                10,
+                                                List.of(
+                                                        new FormService.FieldView(
+                                                                "f214",
+                                                                "followup_date",
+                                                                "随访日期",
+                                                                "date",
+                                                                null,
+                                                                null,
+                                                                null,
+                                                                null,
+                                                                List.of(),
+                                                                true,
+                                                                null,
+                                                                null,
+                                                                null,
+                                                                false,
+                                                                "json",
+                                                                null)))),
+                                List.of()));
+
+        service.submit(701L, new RecordEntryService.SubmitCommand(2, data, null));
+
+        // 有效随访日期回落表单字段值（与重复提示口径一致，OQ-136⑤）
+        verify(planSwitch).onRecordSubmitted(301L, 701L, LocalDate.of(2026, 11, 6), data);
     }
 
     @Test
