@@ -169,6 +169,12 @@ jobs:
       # docs/testing/hospital-b-regression-a.md 在场执行（W38，B 上线切换后立即）。
       - name: 医院B回归校验（E23-T28）
         run: python3 scripts/check_hospital_b_regression.py
+      # E22-T13：等保测评资料。资料清单（制度 / 拓扑 / 安全设计 / 自查记录四类草稿 +
+      # 前置材料与由人补齐项）防漂移校验：清单条目与计数一致、控制点分类齐全、
+      # 自查「部分符合」行带整改口径、引用的仓库路径真实存在；盖章签署与真实 ID
+      # 版由人按 W39 前补齐（OQ-133）。
+      - name: 等保测评资料校验（E22-T13）
+        run: python3 scripts/check_mlps_docs.py
       - name: 关闭依赖容器
         if: always()
         run: docker compose down -v
