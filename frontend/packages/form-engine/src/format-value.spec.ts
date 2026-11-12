@@ -32,6 +32,20 @@ describe('e11-t07 值显示格式（上次值 / 只读视图）', () => {
     expect(formatFieldValue(field, 7)).toBe('7');
   });
 
+  it('业务字典来源的字符串编码同样显示显示名（E23-T20 / OQ-69④ number | string）', () => {
+    const field: FormSchemaField = {
+      ...base,
+      type: 'select',
+      optionSet: [
+        { code: 'SSI', label: '单腔起搏器(SSI)' },
+        { code: 'CRT_D', label: 'CRT-D' },
+      ],
+    };
+    expect(formatFieldValue(field, 'SSI')).toBe('单腔起搏器(SSI)');
+    // 未知编码回落编码本身（停用项的历史值）
+    expect(formatFieldValue(field, 'XXX')).toBe('XXX');
+  });
+
   it('是否显示 是 / 否；多选用「、」连接显示名', () => {
     expect(formatFieldValue({ ...base, type: 'boolean' }, true)).toBe('是');
     expect(formatFieldValue({ ...base, type: 'boolean' }, false)).toBe('否');

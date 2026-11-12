@@ -1,6 +1,7 @@
 package com.crdp.form.record.app;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -16,6 +17,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.crdp.form.field.app.FormDictPort;
 import com.crdp.form.field.infra.mapper.FieldRow;
 import com.crdp.form.field.infra.mapper.FormFieldMapper;
 import com.crdp.form.field.infra.mapper.FormRow;
@@ -62,6 +64,9 @@ import org.springframework.security.core.context.SecurityContextHolder;
 @ExtendWith(MockitoExtension.class)
 class FormServiceTest {
 
+    /** 字典端口桩：不绑字典（本测试无 dict_code 字段）。 */
+    private static final FormDictPort dictPort = code -> List.of();
+
     private static final String CATEGORIES =
             "[{\"key\":\"basic_info\",\"label\":\"病例基本信息\",\"sortNo\":10},"
                     + "{\"key\":\"surgery\",\"label\":\"手术信息\",\"sortNo\":20}]";
@@ -74,7 +79,8 @@ class FormServiceTest {
             new FormService(
                     fieldMapper,
                     recordMapper,
-                    new FormDataValidator(fieldMapper),
+                    dictPort,
+                    new FormDataValidator(fieldMapper, dictPort),
                     ruleMapper,
                     new FormRuleEngine(new FormConditionEngine()),
                     new FormConditionEngine(),
@@ -1620,5 +1626,124 @@ class FormServiceTest {
                 0L,
                 0L,
                 null);
+    }
+
+    // ---------------------------- 字典绑定与带入上次值（E23-T20 / OQ-69④、OQ-67①）
+
+    @Test
+    void schemaExpandsDictBoundOptionsAndCarryOverFlag() {
+        // dictPort 桩：返回 pacemaker_type 字典项（含停用项，带停用标记）
+        FormDictPort types =
+                code ->
+                        List.of(
+                                new FormDictPort.DictItem("SSI", "单腔起搏器(SSI)", 10, true),
+                                new FormDictPort.DictItem("CRT_D", "CRT-D", 20, true),
+                                new FormDictPort.DictItem("LEADLESS", "无导线起搏器", 30, false));
+        FormService dictService =
+                new FormService(
+                        fieldMapper,
+                        recordMapper,
+                        types,
+                        new FormDataValidator(fieldMapper, types),
+                        ruleMapper,
+                        new FormRuleEngine(new FormConditionEngine()),
+                        new FormConditionEngine(),
+                        new FormDerivedEngine(),
+                        new FormProgressEngine(new FormConditionEngine()),
+                        audit);
+        FormRow form =
+                new FormRow(
+                        9L,
+                        "C_PROGRAM_FU",
+                        "随访程控记录（医院 C）",
+                        "FOLLOWUP",
+                        1,
+                        "[{\"key\":\"pacing\",\"label\":\"起搏比例与程控参数\",\"sortNo\":60}]",
+                        "ENABLED");
+        when(fieldMapper.findForm("C_PROGRAM_FU")).thenReturn(form);
+        when(recordMapper.findVersion("C_PROGRAM_FU", 1))
+                .thenReturn(
+                        new FormVersionRow(
+                                9L,
+                                "C_PROGRAM_FU",
+                                1,
+                                "[{\"key\":\"pacing\",\"label\":\"起搏比例与程控参数\",\"sortNo\":60}]",
+                                2,
+                                null,
+                                null));
+        when(recordMapper.findVersionFields("C_PROGRAM_FU", 1))
+                .thenReturn(
+                        List.of(
+                                new VersionFieldRow(
+                                        10L,
+                                        9L,
+                                        "C_PROGRAM_FU",
+                                        1,
+                                        "f318",
+                                        "programmed_mode",
+                                        "程控起搏模式",
+                                        "pacing",
+                                        "select",
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        "pacing_mode",
+                                        true,
+                                        false,
+                                        null,
+                                        null,
+                                        null,
+                                        false,
+                                        "json",
+                                        null,
+                                        180),
+                                new VersionFieldRow(
+                                        11L,
+                                        9L,
+                                        "C_PROGRAM_FU",
+                                        1,
+                                        "f312",
+                                        "ra_pacing_ratio",
+                                        "心房起搏比例(%)",
+                                        "pacing",
+                                        "number",
+                                        "%",
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        false,
+                                        false,
+                                        null,
+                                        null,
+                                        null,
+                                        false,
+                                        "json",
+                                        null,
+                                        120)));
+
+        FormService.SchemaView schema = dictService.schema("C_PROGRAM_FU", null);
+        FormService.FieldView mode =
+                schema.categories().get(0).fields().stream()
+                        .filter(f -> "f318".equals(f.key()))
+                        .findFirst()
+                        .orElseThrow();
+        assertEquals(
+                List.of("SSI", "CRT_D", "LEADLESS"),
+                mode.optionSet().stream().map(FormService.OptionItemView::code).toList(),
+                "选项经字典展开（字符串编码，components.md §10.1 number | string；停用项一并下发，C-FLD-009）");
+        assertTrue(mode.optionSet().get(2).disabled(), "停用项标记 disabled（不进下拉、历史值照常显示）");
+        assertTrue(mode.carryOver(), "带入上次设置项随 FormSchema 下发（C-FU-016 / OQ-67①）");
+        FormService.FieldView ratio =
+                schema.categories().get(0).fields().stream()
+                        .filter(f -> "f312".equals(f.key()))
+                        .findFirst()
+                        .orElseThrow();
+        assertFalse(ratio.carryOver(), "测量值缺省不带入（C-FU-016）");
+        org.mockito.Mockito.verify(fieldMapper, org.mockito.Mockito.never())
+                .findOptionsBySetCodes(org.mockito.ArgumentMatchers.any());
     }
 }

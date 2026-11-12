@@ -1,5 +1,6 @@
 package com.crdp.form.record.app;
 
+import com.crdp.form.field.app.FormDictPort;
 import com.crdp.form.field.infra.mapper.FieldRow;
 import com.crdp.form.field.infra.mapper.FormFieldMapper;
 import com.crdp.form.field.infra.mapper.FormRow;
@@ -65,6 +66,7 @@ public class FormService {
 
     private final FormFieldMapper fieldMapper;
     private final FormRecordMapper recordMapper;
+    private final FormDictPort dictPort;
     private final FormDataValidator validator;
     private final FormRuleMapper ruleMapper;
     private final FormRuleEngine ruleEngine;
@@ -77,6 +79,7 @@ public class FormService {
     public FormService(
             FormFieldMapper fieldMapper,
             FormRecordMapper recordMapper,
+            FormDictPort dictPort,
             FormDataValidator validator,
             FormRuleMapper ruleMapper,
             FormRuleEngine ruleEngine,
@@ -86,6 +89,7 @@ public class FormService {
             AuditLogger audit) {
         this.fieldMapper = fieldMapper;
         this.recordMapper = recordMapper;
+        this.dictPort = dictPort;
         this.validator = validator;
         this.ruleMapper = ruleMapper;
         this.ruleEngine = ruleEngine;
@@ -126,16 +130,27 @@ public class FormService {
     /** 数值范围（components.md §10.1 hardRange / softRange）。 */
     public record RangeView(Double min, Double max) {}
 
-    /** 选项（编码 + 显示名 + 停用标记；显示名读取时现取，见类注释）。 */
+    /**
+     * 选项（编码 + 显示名 + 停用标记；显示名读取时现取，见类注释）。
+     *
+     * <p>编码类型（E23-T20 / OQ-69④ 定稿，components.md §10.1）：选项集来源为整数（fe_option.option_code）；
+     * 业务字典来源（fe_field.dict_code 绑定，如 pacemaker_type）为字符串（cfg_dict 稳定编码，库列与 JSON 同向）—— 前端
+     * FormSchemaOption.code 为 {@code number | string}。
+     */
     public record OptionItemView(
-            int code,
+            Object code,
             String label,
             Integer ordinal,
             boolean exclusive,
             boolean needsDetail,
             boolean disabled) {}
 
-    /** FormField（§10.1）：key = 稳定键、code = 字段编码（导入导出名）、label = 显示名。 */
+    /**
+     * FormField（§10.1）：key = 稳定键、code = 字段编码（导入导出名）、label = 显示名。
+     *
+     * <p>{@code carryOver}（E23-T20 / OQ-67①，fe_field.carry_over 落地后随 FormSchema 下发）：
+     * 带入上次值的适用字段标记（C-FU-016 程控设置项），缺省 false。
+     */
     public record FieldView(
             String key,
             String code,
@@ -147,12 +162,52 @@ public class FormService {
             RangeView softRange,
             List<OptionItemView> optionSet,
             boolean required,
+            boolean carryOver,
             Object visibleWhen,
             Object requiredWhen,
             Object derived,
             boolean sensitive,
             String storage,
-            String help) {}
+            String help) {
+
+        /** 兼容构造（dict_code / carry_over 落地前形态）：不绑字典、不可带入。 */
+        public FieldView(
+                String key,
+                String code,
+                String label,
+                String type,
+                String unit,
+                Integer decimals,
+                RangeView hardRange,
+                RangeView softRange,
+                List<OptionItemView> optionSet,
+                boolean required,
+                Object visibleWhen,
+                Object requiredWhen,
+                Object derived,
+                boolean sensitive,
+                String storage,
+                String help) {
+            this(
+                    key,
+                    code,
+                    label,
+                    type,
+                    unit,
+                    decimals,
+                    hardRange,
+                    softRange,
+                    optionSet,
+                    required,
+                    false,
+                    visibleWhen,
+                    requiredWhen,
+                    derived,
+                    sensitive,
+                    storage,
+                    help);
+        }
+    }
 
     /** 发布结果。 */
     public record PublishView(
@@ -746,11 +801,12 @@ public class FormService {
         // G8（M3 审查）：选项集按编码集合一次批量查出再组装——医院 A 基线约 266 个字段，
         // 打开一次表单只查一轮（此前每个带选项集的字段单独查一次 fe_option）
         Map<String, List<OptionItemView>> optionsBySet = loadOptionsBySet(fields);
+        Map<String, List<OptionItemView>> optionsByDict = loadOptionsByDict(fields);
         Map<String, List<FieldView>> byCategory = new LinkedHashMap<>();
         for (VersionFieldRow field : fields) {
             byCategory
                     .computeIfAbsent(field.categoryKey(), key -> new ArrayList<>())
-                    .add(toFieldView(field, optionsBySet));
+                    .add(toFieldView(field, optionsBySet, optionsByDict));
         }
         List<CategoryView> categories = new ArrayList<>();
         List<Map.Entry<String, Integer>> declared = declaredCategories(snapshot.categories());
@@ -876,11 +932,17 @@ public class FormService {
     }
 
     private FieldView toFieldView(
-            VersionFieldRow field, Map<String, List<OptionItemView>> optionsBySet) {
+            VersionFieldRow field,
+            Map<String, List<OptionItemView>> optionsBySet,
+            Map<String, List<OptionItemView>> optionsByDict) {
+        // 绑定业务字典的字段选项经字典展开（字符串编码，OQ-69④）；字典空（未预置）时下发空选项列表，
+        // 前端表现为无可选项，不回退选项集（绑定与选项集互斥：dict_code 非空即以字典为准）
         List<OptionItemView> options =
-                field.optionSetCode() != null
-                        ? optionsBySet.getOrDefault(field.optionSetCode(), List.of())
-                        : null;
+                field.dictCode() != null
+                        ? optionsByDict.getOrDefault(field.dictCode(), List.of())
+                        : field.optionSetCode() != null
+                                ? optionsBySet.getOrDefault(field.optionSetCode(), List.of())
+                                : null;
         return new FieldView(
                 field.fieldKey(),
                 field.fieldCode(),
@@ -892,12 +954,44 @@ public class FormService {
                 readRange(field.softRange()),
                 options,
                 field.required(),
+                field.carryOver(),
                 readTree(field.visibleWhen()),
                 readTree(field.requiredWhen()),
                 readTree(field.derivedDef()),
                 field.sensitiveFlag(),
                 field.storageType(),
                 field.helpText());
+    }
+
+    /**
+     * 字典绑定字段的选项展开（E23-T20 / OQ-69④）：字典编码去重后逐个读全量项（含停用， 带停用标记——停用项不进下拉、历史值照常显示，C-FLD-009）；无绑定字段时零查询。
+     */
+    private Map<String, List<OptionItemView>> loadOptionsByDict(List<VersionFieldRow> fields) {
+        LinkedHashSet<String> dictCodes = new LinkedHashSet<>();
+        for (VersionFieldRow field : fields) {
+            if (field.dictCode() != null) {
+                dictCodes.add(field.dictCode());
+            }
+        }
+        if (dictCodes.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, List<OptionItemView>> byDict = new LinkedHashMap<>();
+        for (String dictCode : dictCodes) {
+            List<OptionItemView> items = new ArrayList<>();
+            for (FormDictPort.DictItem item : dictPort.items(dictCode)) {
+                items.add(
+                        new OptionItemView(
+                                item.itemCode(),
+                                item.label(),
+                                null,
+                                false,
+                                false,
+                                !item.enabled()));
+            }
+            byDict.put(dictCode, List.copyOf(items));
+        }
+        return byDict;
     }
 
     private RecordView toView(FormRecordRow row) {

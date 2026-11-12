@@ -536,7 +536,10 @@ interface FormField {
   decimals?: number;
   hardRange?: { min?: number; max?: number };   // 取值校验范围：超出不能保存
   softRange?: { min?: number; max?: number };   // 提示范围：超出提示，也用于标红“超出提示范围”
-  optionSet?: Array<{ code: number; label: string; ordinal?: number; exclusive?: boolean; needsDetail?: boolean; disabled?: boolean }>;
+  optionSet?: Array<{ code: number | string; label: string; ordinal?: number; exclusive?: boolean; needsDetail?: boolean; disabled?: boolean }>;
+                               // 编码类型（E23-T20 / OQ-69④ 定稿）：选项集来源为整数（fe_option.option_code）；
+                               // 业务字典来源（fe_field.dict_code 绑定，如 pacemaker_type、pacing_mode）为字符串
+                               //（cfg_dict 稳定编码，库列与 JSON 同向），停用项一并下发、带 disabled 标记（C-FLD-009）
   required?: boolean;
   visibleWhen?: ConditionTree;   // { all: [...] } / { any: [...] }
   requiredWhen?: ConditionTree;

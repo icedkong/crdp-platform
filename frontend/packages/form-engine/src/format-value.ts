@@ -9,10 +9,10 @@ import type { FormSchemaField } from '@crdp/api';
 
 import { isEmptyFormValue } from '@crdp/rules';
 
-/** 选项显示名（未知编码回落编码本身，与 @crdp/api schemaOptionLabel 同口径）。 */
+/** 选项显示名（未知编码回落编码本身，与 @crdp/api schemaOptionLabel 同口径；字典来源编码为字符串，OQ-69④）。 */
 function optionLabel(
   field: Pick<FormSchemaField, 'optionSet'>,
-  code: number,
+  code: number | string,
 ): string {
   const option = (field.optionSet ?? []).find((item) => item.code === code);
   return option ? option.label : String(code);
@@ -35,7 +35,9 @@ export function formatFieldValue(
     }
     case 'multiselect': {
       const codes = Array.isArray(value) ? value : [];
-      return codes.map((code) => optionLabel(field, Number(code))).join('、');
+      return codes
+        .map((code) => optionLabel(field, code as number | string))
+        .join('、');
     }
     case 'number': {
       return joinUnit(String(value), field.unit);
@@ -50,7 +52,7 @@ export function formatFieldValue(
     }
     case 'radio':
     case 'select': {
-      return optionLabel(field, Number(value));
+      return optionLabel(field, value as number | string);
     }
     default: {
       return String(value);

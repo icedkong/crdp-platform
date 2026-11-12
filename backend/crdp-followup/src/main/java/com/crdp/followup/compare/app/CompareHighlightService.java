@@ -277,8 +277,9 @@ public class CompareHighlightService {
                 }
                 Map<Integer, Integer> codes = new LinkedHashMap<>();
                 for (FormService.OptionItemView option : field.optionSet()) {
-                    if (option.ordinal() != null) {
-                        codes.put(option.code(), option.ordinal());
+                    // 序数只有选项集来源（a_mr_reflux 等）配置；字典来源（dict_code，字符串编码）无序数
+                    if (option.ordinal() != null && option.code() instanceof Integer code) {
+                        codes.put(code, option.ordinal());
                     }
                 }
                 if (!codes.isEmpty()) {

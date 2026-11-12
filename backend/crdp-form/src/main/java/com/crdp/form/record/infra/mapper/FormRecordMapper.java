@@ -54,12 +54,14 @@ public interface FormRecordMapper {
             """
             INSERT INTO fe_form_version_field
               (version_id, form_code, version, field_key, field_code, label, category_key, type,
-               unit, decimals, hard_range, soft_range, option_set_code, required,
+               unit, decimals, hard_range, soft_range, option_set_code, dict_code, carry_over,
+               required,
                visible_when, required_when, derived_def, sensitive_flag, storage_type,
                help_text, sort_no)
             SELECT v.id, f.form_code, v.version, f.field_key, f.field_code, f.label,
                    f.category_key, f.type, f.unit, f.decimals, f.hard_range, f.soft_range,
-                   f.option_set_code, f.required, f.visible_when, f.required_when, f.derived_def,
+                   f.option_set_code, f.dict_code, f.carry_over, f.required, f.visible_when,
+                   f.required_when, f.derived_def,
                    f.sensitive_flag, f.storage_type, f.help_text, f.sort_no
             FROM fe_field f
             JOIN fe_form_version v
@@ -75,7 +77,8 @@ public interface FormRecordMapper {
                    field_key AS fieldKey, field_code AS fieldCode, label,
                    category_key AS categoryKey, type, unit, decimals,
                    hard_range AS hardRange, soft_range AS softRange,
-                   option_set_code AS optionSetCode, required,
+                   option_set_code AS optionSetCode, dict_code AS dictCode,
+                   carry_over AS carryOver, required,
                    visible_when AS visibleWhen, required_when AS requiredWhen,
                    derived_def AS derivedDef, sensitive_flag AS sensitiveFlag,
                    storage_type AS storageType, help_text AS helpText, sort_no AS sortNo

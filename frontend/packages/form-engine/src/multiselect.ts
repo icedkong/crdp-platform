@@ -80,7 +80,7 @@ export function applyMultiselectChange(
 export function isOptionLocked(
   field: Pick<FormSchemaField, 'optionSet'>,
   value: unknown,
-  code: number,
+  code: number | string,
 ): boolean {
   const option = (field.optionSet ?? []).find((item) => item.code === code);
   if (!option || option.disabled) return true;

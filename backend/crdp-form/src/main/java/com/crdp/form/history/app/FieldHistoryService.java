@@ -54,6 +54,9 @@ public class FieldHistoryService {
     /** 基线分节（pt_baseline_section，E13-T02 / A-PAT-005、C-PAT-011 字段级留痕）的记录类型常量。 */
     public static final String PT_BASELINE_SECTION = "PT_BASELINE_SECTION";
 
+    /** 植入记录（pt_implant，E23-T20 / OQ-129②：C-PAT-011 编辑植入记录的字段级留痕，键 = C_IMPLANT 稳定键）。 */
+    public static final String PT_IMPLANT = "PT_IMPLANT";
+
     /** 查询默认条数（变更记录页单页口径，超长历史按 id 倒序取最近一段）。 */
     public static final int DEFAULT_LIMIT = 200;
 

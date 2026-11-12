@@ -1,5 +1,6 @@
 package com.crdp.form.record.app;
 
+import com.crdp.form.field.app.FormDictPort;
 import com.crdp.form.field.domain.FieldType;
 import com.crdp.form.field.infra.mapper.FormFieldMapper;
 import com.crdp.form.field.infra.mapper.OptionRow;
@@ -22,7 +23,7 @@ import org.springframework.stereotype.Component;
  *
  * <p>值编码口径（tech-plan §6「混合存储」）：单选 / 下拉存选项编码（整数），多选存编码数组，数值存数字， 日期 YYYY-MM-DD，日期时间
  * YYYY-MM-DDTHH:mm，是否存 true/false，数值 × 2 存 {length,width} 对象（键为 稳定键 f0xx）。派生字段不查类型（E11-T05
- * 按定义重算，来源缺失时允许手工录入）。
+ * 按定义重算，来源缺失时允许手工录入）。绑定业务字典的字段（fe_field.dict_code，E23-T20 / OQ-69④）编码为<b>字符串</b>（cfg_dict 稳定编码）。
  */
 @Component
 public class FormDataValidator {
@@ -35,9 +36,11 @@ public class FormDataValidator {
             Pattern.compile("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2})?");
 
     private final FormFieldMapper fieldMapper;
+    private final FormDictPort dictPort;
 
-    public FormDataValidator(FormFieldMapper fieldMapper) {
+    public FormDataValidator(FormFieldMapper fieldMapper, FormDictPort dictPort) {
         this.fieldMapper = fieldMapper;
+        this.dictPort = dictPort;
     }
 
     /**
@@ -152,8 +155,15 @@ public class FormDataValidator {
         }
     }
 
-    /** 单选存编码整数、多选存编码数组；编码必须在选项集内（停用选项的旧值可保存，不删除即不失效）。 */
+    /**
+     * 单选存编码整数、多选存编码数组；编码必须在选项集内（停用选项的旧值可保存，不删除即不失效）。 绑定业务字典的字段（dictCode
+     * 非空，OQ-69④）编码为字符串：单选存字符串、多选存字符串数组，编码须在字典全量项内（含停用项，C-FLD-009）。
+     */
     private void checkOption(VersionFieldRow field, Object value, boolean multi) {
+        if (field.dictCode() != null) {
+            checkDictOption(field, value, multi);
+            return;
+        }
         Set<Integer> codes = optionCodes(field);
         if (!multi) {
             Integer code = asInteger(value);
@@ -182,6 +192,32 @@ public class FormDataValidator {
             }
             if (!seen.add(code)) {
                 throw bad(typeError(field, "选项编码数组（编码 " + code + " 重复）"));
+            }
+        }
+    }
+
+    /** 字典绑定字段的选项检查（字符串编码；停用项的历史值可保存，C-FLD-009；无停用标记区分，全量项都收）。 */
+    private void checkDictOption(VersionFieldRow field, Object value, boolean multi) {
+        Set<String> codes = new HashSet<>();
+        for (FormDictPort.DictItem item : dictPort.items(field.dictCode())) {
+            codes.add(item.itemCode());
+        }
+        if (!multi) {
+            if (!(value instanceof String code) || !codes.contains(code)) {
+                throw bad(typeError(field, "字典编码（" + String.join(" / ", codes) + "）"));
+            }
+            return;
+        }
+        if (!(value instanceof List<?> list)) {
+            throw bad(typeError(field, "字典编码数组"));
+        }
+        Set<String> seen = new HashSet<>();
+        for (Object item : list) {
+            if (!(item instanceof String code) || !codes.contains(code)) {
+                throw bad(typeError(field, "字典编码数组（编码须在字典项内）"));
+            }
+            if (!seen.add(code)) {
+                throw bad(typeError(field, "字典编码数组（编码 " + code + " 重复）"));
             }
         }
     }
