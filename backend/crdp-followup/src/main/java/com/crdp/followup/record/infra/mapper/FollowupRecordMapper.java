@@ -17,6 +17,12 @@ import org.apache.ibatis.annotations.Update;
  * patient_id} EXISTS 锚点出行（越范围返回 null / 空列表，AGENTS §5.2）；data / data_meta 为 JSON 文本，
  * 应用层解析。写入闸门与版本口径经 {@link com.crdp.form.record.app.FormService}（writeGateData / validateForSubmit /
  * stripHiddenFields），本 mapper 只做持久化。
+ *
+ * <p>E21-T11 / C-FU-026：软删除列（deleted / delete_reason / deleted_by / deleted_at，followup
+ * V87）——读取语句一律 {@code deleted = 0}，软删行对读取侧等同不存在（40400，不暴露存在）；删除只置标记与原因，数据长期保留。
+ *
+ * <p>E21-T11 / C-FU-008（OQ-130③、OQ-134②）：器械维度列 implant_id（按随访日期匹配当时在用的器械，创建 /
+ * 提交时解析落列），对比标红「上一次」按同一器械过滤（CompareSourceMapper 候选行随行带出）。
  */
 @Mapper
 public interface FollowupRecordMapper {
@@ -28,6 +34,7 @@ public interface FollowupRecordMapper {
             Long taskId,
             String source,
             LocalDate visitDate,
+            Long implantId,
             String formCode,
             int templateVersion,
             String status,
@@ -39,26 +46,26 @@ public interface FollowupRecordMapper {
             Long updatedBy,
             LocalDateTime updatedAt) {}
 
-    /** 单条记录（越范围 / 不存在 null——40400 由服务层抛，不暴露存在）。 */
+    /** 单条记录（越范围 / 不存在 / 已软删 null——40400 由服务层抛，不暴露存在）。 */
     @com.crdp.framework.datascope.DataScope(resource = "patient")
     @Select(
             """
             SELECT id, patient_id AS patientId, task_id AS taskId, source,
-                   visit_date AS visitDate, form_code AS formCode,
-                   template_version AS templateVersion, status, version,
-                   data, data_meta AS dataMeta,
+                   visit_date AS visitDate, implant_id AS implantId,
+                   form_code AS formCode, template_version AS templateVersion,
+                   status, version, data, data_meta AS dataMeta,
                    created_by AS createdBy, created_at AS createdAt,
                    updated_by AS updatedBy, updated_at AS updatedAt
-            FROM fu_record WHERE id = #{id}
+            FROM fu_record WHERE id = #{id} AND deleted = 0
             """)
     RecordRowRaw findRecord(@Param("id") long id);
 
-    /** 新建 DRAFT 记录（template_version 创建时固化 = 当时发布版）。 */
+    /** 新建 DRAFT 记录（template_version 创建时固化 = 当时发布版；implant_id 按随访日期解析，开关关闭为 NULL）。 */
     @Insert(
             """
-            INSERT INTO fu_record (patient_id, task_id, source, visit_date, form_code,
+            INSERT INTO fu_record (patient_id, task_id, source, visit_date, implant_id, form_code,
                                    template_version, status, version, data, data_meta, created_by)
-            VALUES (#{patientId}, #{taskId}, #{source}, #{visitDate}, #{formCode},
+            VALUES (#{patientId}, #{taskId}, #{source}, #{visitDate}, #{implantId}, #{formCode},
                     #{templateVersion}, 'DRAFT', 0, #{data}, #{dataMeta}, #{createdBy})
             """)
     @Options(useGeneratedKeys = true, keyProperty = "id", keyColumn = "id")
@@ -69,7 +76,7 @@ public interface FollowupRecordMapper {
             """
             UPDATE fu_record
             SET data = #{data}, version = version + 1, updated_by = #{updatedBy}
-            WHERE id = #{id} AND version = #{baseVersion} AND status = 'DRAFT'
+            WHERE id = #{id} AND version = #{baseVersion} AND status = 'DRAFT' AND deleted = 0
             """)
     int updateDraft(
             @Param("id") long id,
@@ -82,25 +89,60 @@ public interface FollowupRecordMapper {
             """
             UPDATE fu_record
             SET data = #{data}, data_meta = #{dataMeta}, version = version + 1,
-                status = 'SUBMITTED', updated_by = #{updatedBy}
-            WHERE id = #{id} AND version = #{baseVersion} AND status = 'DRAFT'
+                status = 'SUBMITTED', implant_id = #{implantId}, updated_by = #{updatedBy}
+            WHERE id = #{id} AND version = #{baseVersion} AND status = 'DRAFT' AND deleted = 0
             """)
     int submitRecord(
             @Param("id") long id,
             @Param("baseVersion") int baseVersion,
             @Param("data") String data,
             @Param("dataMeta") String dataMeta,
+            @Param("implantId") Long implantId,
             @Param("updatedBy") long updatedBy);
 
     /**
+     * 保存修改已提交记录（E21-T11 / C-FU-026）：SUBMITTED 原地更新并 version + 1（「保存后生成 v2」）；并发版本前进 0 行（服务层
+     * 40900），DRAFT / 已软删 0 行（服务层 40901 / 40400）。
+     */
+    @Update(
+            """
+            UPDATE fu_record
+            SET data = #{data}, data_meta = #{dataMeta}, version = version + 1, updated_by = #{updatedBy}
+            WHERE id = #{id} AND version = #{baseVersion} AND status = 'SUBMITTED' AND deleted = 0
+            """)
+    int updateSubmittedRecord(
+            @Param("id") long id,
+            @Param("baseVersion") int baseVersion,
+            @Param("data") String data,
+            @Param("dataMeta") String dataMeta,
+            @Param("updatedBy") long updatedBy);
+
+    /** 软删除（E21-T11 / C-FU-026）：置 deleted / 原因 / 删除人 / 时间，数据长期保留；已删 0 行（服务层 40400）。 */
+    @Update(
+            """
+            UPDATE fu_record
+            SET deleted = 1, delete_reason = #{reason}, deleted_by = #{deletedBy},
+                deleted_at = CURRENT_TIMESTAMP(3), updated_by = #{deletedBy}
+            WHERE id = #{id} AND deleted = 0
+            """)
+    int softDelete(
+            @Param("id") long id,
+            @Param("reason") String reason,
+            @Param("deletedBy") long deletedBy);
+
+    /** 删除记录后断开任务链接（任务终态不动：删除不重开任务，重录走补录 / 计划外入口）。 */
+    @Update("UPDATE fu_task SET record_id = NULL WHERE record_id = #{recordId}")
+    int clearTaskRecordLink(@Param("recordId") long recordId);
+
+    /**
      * 报告单映射写入（E16-T07 / C-SCAN-005「录入即写入」）：把映射合并值经写入闸门后写回， 状态不变（DRAFT 仍是 DRAFT、SUBMITTED 仍是
-     * SUBMITTED——修改已提交记录的专门流程随 E21-T11），乐观锁 version + 1； 0 行 = 版本已前进（服务层 40900）。
+     * SUBMITTED——修改已提交记录走 E21-T11 的 updateSubmittedRecord），乐观锁 version + 1；0 行 = 版本已前进（服务层 40900）。
      */
     @Update(
             """
             UPDATE fu_record
             SET data = #{data}, version = version + 1, updated_by = #{updatedBy}
-            WHERE id = #{id} AND version = #{baseVersion}
+            WHERE id = #{id} AND version = #{baseVersion} AND deleted = 0
             """)
     int applyMappingWrite(
             @Param("id") long id,
@@ -113,24 +155,53 @@ public interface FollowupRecordMapper {
     @Select(
             """
             SELECT id, patient_id AS patientId, task_id AS taskId, source,
-                   visit_date AS visitDate, form_code AS formCode,
-                   template_version AS templateVersion, status, version,
-                   data, data_meta AS dataMeta,
+                   visit_date AS visitDate, implant_id AS implantId,
+                   form_code AS formCode, template_version AS templateVersion,
+                   status, version, data, data_meta AS dataMeta,
                    created_by AS createdBy, created_at AS createdAt,
                    updated_by AS updatedBy, updated_at AS updatedAt
             FROM fu_record
-            WHERE patient_id = #{patientId} AND task_id IS NULL
+            WHERE patient_id = #{patientId} AND task_id IS NULL AND deleted = 0
             ORDER BY visit_date ASC, id ASC
             """)
     List<RecordRowRaw> findTasklessByPatient(@Param("patientId") long patientId);
+
+    /** 患者随访记录元信息行（E21-T11：重复提示 C-FU-024 与随访序号 C-FU-008 的派生口径；data 供表单随访日期回退）。 */
+    record PatientRecordMetaRow(
+            long id,
+            Long taskId,
+            String source,
+            LocalDate visitDate,
+            String formCode,
+            int templateVersion,
+            String status,
+            String data) {}
+
+    /** 患者的在册记录元信息（DRAFT + SUBMITTED，软删行排除；重复提示含草稿——同一日期已有草稿同样提示）。 */
+    @com.crdp.framework.datascope.DataScope(resource = "patient")
+    @Select(
+            """
+            SELECT id, task_id AS taskId, source, visit_date AS visitDate,
+                   form_code AS formCode, template_version AS templateVersion,
+                   status, data
+            FROM fu_record
+            WHERE patient_id = #{patientId} AND deleted = 0
+            ORDER BY visit_date ASC, id ASC
+            """)
+    List<PatientRecordMetaRow> findPatientRecordMeta(@Param("patientId") long patientId);
+
+    /** 患者随访编号（C-PAT-003 / E21-T10；A / B 租户与历史患者未生成时 null）。 */
+    @com.crdp.framework.datascope.DataScope(resource = "patient")
+    @Select("SELECT visit_no FROM pt_patient WHERE id = #{patientId} AND deleted = 0")
+    String findPatientVisitNo(@Param("patientId") long patientId);
 
     /** 更新人显示名（40900 冲突详情「附更新人」，与 fe_record 同口径；取不到 null）。 */
     @Select("SELECT display_name FROM sys_user WHERE id = #{userId}")
     String findDisplayName(@Param("userId") Long userId);
 
     /**
-     * 患者随访状态（计划外随访「患者在随访中」校验，E15-T06 / C-FU-022；pages.md §4.10 已终止〔死亡 / 停止 / 失访〕置灰「患者不在随访中」）：
-     * 只取状态位；调用方（RecordBackfillService）已做患者数据范围校验（40400）。
+     * 患者随访状态（计划外随访「患者在随访中」校验，E15-T06 / C-FU-022；pages.md §4.10 已终止〔死亡 / 停止 /
+     * 失访〕置灰「患者不在随访中」）：只取状态位；调用方（RecordBackfillService）已做患者数据范围校验（40400）。
      */
     @com.crdp.framework.datascope.IgnoreScope(
             reason =
@@ -140,7 +211,7 @@ public interface FollowupRecordMapper {
     String findPatientFollowupStatus(@Param("patientId") long patientId);
 
     /**
-     * 患者在组计划的首个 FORM 节点表单（历史补录缺省表单解析，E15-T07 / A-FU-014）：入组按创建时间、节点按 sort_no / id 取第一个 FORM
+     * 患者在组计划的首个 FORM 节点表单（历史补录缺省表单解析，E15-T07 / A-FU-014）：入组按创建时间、 节点按 sort_no / id 取第一个 FORM
      * 节点；无在组入组或无表单节点 null。
      */
     @com.crdp.framework.datascope.DataScope(resource = "patient")

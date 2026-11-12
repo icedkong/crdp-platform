@@ -44,6 +44,10 @@ class CompareSourceServiceTest {
     @BeforeEach
     void featureDefaultsOn() {
         lenient().when(features.findEnabled("compare_highlight")).thenReturn(null);
+        // E21-T11：器械维度默认无（Mockito 对 Long 缺省返回 0，会误当「器械 0」过滤候选）
+        lenient()
+                .when(source.findRecordImplant(org.mockito.ArgumentMatchers.anyLong()))
+                .thenReturn(null);
     }
 
     /** 种子规则行（迁移 V67 同形）：EF 下降（回落基线 f102）/ LVDd 增加（回落基线 f103）。 */
@@ -77,7 +81,7 @@ class CompareSourceServiceTest {
     /** 已提交随访候选行（TASK 候选带 taskId，计划日期走批量补查）。 */
     private static CompareSourceMapper.CandidateRow candidate(
             long id, String source, LocalDate visitDate, Long taskId, String data) {
-        return new CompareSourceMapper.CandidateRow(id, source, visitDate, taskId, data);
+        return new CompareSourceMapper.CandidateRow(id, source, visitDate, taskId, null, data);
     }
 
     /** 基线分节行（出院前超声分类 echo，键 = 稳定键）。 */
@@ -304,5 +308,62 @@ class CompareSourceServiceTest {
         assertNull(
                 service.resolve(RECORD, PATIENT, FORM, LocalDate.of(2026, 11, 5)),
                 "无上一次随访且规则无基线回落 → previous 为空");
+    }
+
+    // ------------------------------------------------------- 同一器械过滤（E21-T11 / OQ-130③）
+
+    /**
+     * E21-T11 / C-FU-010：当前记录带器械维度（fu_record.implant_id）时候选按「同一器械」过滤——
+     * 更早的跨器械记录不作「上一次」，回落到再前一条同器械记录。
+     */
+    @Test
+    void resolvesPreviousWithinSameImplantOnly() {
+        when(rules.findAll(FORM)).thenReturn(List.of(rule("ef_drop", "f248", true)));
+        when(source.findRecordImplant(RECORD)).thenReturn(501L);
+        when(source.findSubmittedCandidates(PATIENT, RECORD, FORM))
+                .thenReturn(
+                        List.of(
+                                // 更近但属于旧器械（更换前）的记录：不作「上一次」
+                                new CompareSourceMapper.CandidateRow(
+                                        702L,
+                                        "BACKFILL",
+                                        LocalDate.of(2026, 5, 1),
+                                        null,
+                                        500L,
+                                        "{\"f248\":50}"),
+                                // 同器械里早于本次、最近的一条
+                                new CompareSourceMapper.CandidateRow(
+                                        701L,
+                                        "BACKFILL",
+                                        LocalDate.of(2025, 11, 5),
+                                        null,
+                                        501L,
+                                        "{\"f248\":44}")));
+
+        CompareSourceService.PreviousView previous =
+                service.resolve(RECORD, PATIENT, FORM, LocalDate.of(2026, 11, 5));
+
+        assertEquals("FOLLOWUP", previous.kind());
+        assertEquals("701", previous.recordId(), "跨器械候选被过滤，取同一器械的上一次");
+    }
+
+    /** 无器械维度（A / B 租户、植入前 / 取出后、历史空行）不过滤，与 E17 既有行为一致。 */
+    @Test
+    void withoutImplantDimensionCandidatesStayUnfiltered() {
+        assertEquals(List.of(), CompareSourceService.sameImplantOnly(List.of(), null));
+
+        List<CompareSourceMapper.CandidateRow> candidates =
+                List.of(
+                        new CompareSourceMapper.CandidateRow(701L, "TASK", null, 900L, null, "{}"),
+                        new CompareSourceMapper.CandidateRow(
+                                702L, "BACKFILL", LocalDate.of(2025, 11, 5), null, 500L, "{}"));
+        assertEquals(
+                candidates,
+                CompareSourceService.sameImplantOnly(candidates, null),
+                "implantId 为 null 时候选原样返回");
+        assertEquals(
+                List.of(candidates.get(1)),
+                CompareSourceService.sameImplantOnly(candidates, 500L),
+                "有维度时只留同一器械（维度缺失的候选一并滤除）");
     }
 }

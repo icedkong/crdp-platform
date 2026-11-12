@@ -22,17 +22,18 @@ import org.apache.ibatis.annotations.Update;
 @Mapper
 public interface CompareHighlightMapper {
 
-    /** 已提交记录行（重算对象；data 为 JSON 文本，应用层解析）。 */
+    /** 已提交记录行（重算对象；data 为 JSON 文本，应用层解析；implantId 供 E21-T11 同一器械过滤）。 */
     record SubmittedRow(
             long id,
             long patientId,
             String source,
             LocalDate visitDate,
             Long taskId,
+            Long implantId,
             int templateVersion,
             String data) {}
 
-    /** 患者的已提交同表单记录（全部来源：TASK / BACKFILL / UNPLANNED / REMOTE——重算对象含计划外，候选过滤在应用层）。 */
+    /** 患者的已提交同表单记录（全部来源：TASK / BACKFILL / UNPLANNED / REMOTE——重算对象含计划外，候选过滤在应用层；软删行不算，E21-T11）。 */
     @com.crdp.framework.datascope.IgnoreScope(
             reason =
                     "对比标重重算（E17-T04）遍历同患者已提交记录：highlight 为规则派生数据、不输出患者行；"
@@ -40,9 +41,11 @@ public interface CompareHighlightMapper {
     @Select(
             """
             SELECT id, patient_id AS patientId, source, visit_date AS visitDate,
-                   task_id AS taskId, template_version AS templateVersion, data
+                   task_id AS taskId, implant_id AS implantId,
+                   template_version AS templateVersion, data
             FROM fu_record
             WHERE patient_id = #{patientId} AND form_code = #{formCode} AND status = 'SUBMITTED'
+              AND deleted = 0
             ORDER BY visit_date, id
             """)
     List<SubmittedRow> findSubmittedByPatient(
@@ -57,7 +60,8 @@ public interface CompareHighlightMapper {
             """
             SELECT DISTINCT patient_id
             FROM fu_record
-            WHERE form_code = #{formCode} AND status = 'SUBMITTED' AND patient_id > #{afterPatient}
+            WHERE form_code = #{formCode} AND status = 'SUBMITTED' AND deleted = 0
+              AND patient_id > #{afterPatient}
             ORDER BY patient_id
             LIMIT #{limit}
             """)

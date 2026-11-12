@@ -180,7 +180,13 @@ public class CompareHighlightService {
                 row.visitDate() != null ? row.visitDate() : planDates.get(row.taskId());
         CompareSourceService.PreviousView previous =
                 sourceService.previousOf(
-                        enabled, candidates, planDates, row.id(), currentEffective, patientId);
+                        enabled,
+                        candidates,
+                        planDates,
+                        row.id(),
+                        currentEffective,
+                        patientId,
+                        row.implantId());
         EvalPrevious evalPrevious =
                 previous == null
                         ? EvalPrevious.none()
@@ -212,14 +218,19 @@ public class CompareHighlightService {
         return enabled;
     }
 
-    /** 计划外随访不作对比对象（A-FU-027 候选口径）；其余已提交记录全部进链。 */
+    /** 计划外随访不作对比对象（A-FU-027 候选口径）；其余已提交记录全部进链（implantId 随行，E21-T11 同一器械过滤）。 */
     private static List<CandidateRow> candidatesOf(List<SubmittedRow> rows) {
         List<CandidateRow> candidates = new ArrayList<>();
         for (SubmittedRow row : rows) {
             if (!"UNPLANNED".equals(row.source())) {
                 candidates.add(
                         new CandidateRow(
-                                row.id(), row.source(), row.visitDate(), row.taskId(), row.data()));
+                                row.id(),
+                                row.source(),
+                                row.visitDate(),
+                                row.taskId(),
+                                row.implantId(),
+                                row.data()));
             }
         }
         return candidates;

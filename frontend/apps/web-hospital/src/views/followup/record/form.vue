@@ -55,18 +55,24 @@ import ConflictBanner from '#/components/followup/conflict-banner.vue';
 import { downloadFileById } from '#/components/followup/file-download';
 import FormStatusBar from '#/components/followup/form-status-bar.vue';
 import MobileUploadQrModal from '#/components/followup/mobile-upload-qr.vue';
+import ReasonModal from '#/components/followup/reason-modal.vue';
 import UploadReportDialog from '#/components/followup/upload-report-dialog.vue';
 import WatermarkPreview from '#/components/followup/watermark-preview.vue';
 import { useBreakpoint } from '#/reference/use-breakpoint';
+import { useFeature } from '#/reference/use-feature';
 import { usePermission } from '#/reference/use-permission';
 import { useWatermarkViewer } from '#/reference/use-watermark-viewer';
 
 import { queueFilterOfQuery } from '../task/logic';
 import {
+  applyEntryDefaults,
   bannersOf,
+  canEditSubmittedRecord,
   deathFieldKey,
   diffChanges,
   draftRecordKey,
+  duplicateRecordConfirmText,
+  entrySummaryText,
   hasChanges,
   headerSummary,
   headerTitle,
@@ -115,6 +121,21 @@ const router = useRouter();
 const userStore = useUserStore();
 const { hasPermission } = usePermission();
 const canEdit = computed(() => hasPermission('followup:record:edit'));
+// E21-T11 / C-FU-026（Q17）：修改已提交的权限——开关开启（医院 C）必须
+// followup:record:edit-submitted，关闭（A / B）followup:record:edit 即可；
+// 删除随访记录两院同码 followup:record:delete（未分配隐藏，components.md §6）。
+const { isEnabled } = useFeature();
+const hasEditSubmitted = computed(() =>
+  hasPermission('followup:record:edit-submitted'),
+);
+const canEditSubmitted = computed(() =>
+  canEditSubmittedRecord({
+    editSubmittedFeatureOn: isEnabled('record_edit_submitted'),
+    hasEdit: canEdit.value,
+    hasEditSubmitted: hasEditSubmitted.value,
+  }),
+);
+const canDeleteRecord = computed(() => hasPermission('followup:record:delete'));
 // E16-T02 / A-ATT-001：随访表单「上传」（pages.md §6.1 入口），预选本记录整条
 const canUploadReport = computed(() => hasPermission('followup:scan:upload'));
 const reportDialogOpen = ref(false);
@@ -143,6 +164,24 @@ const keyboardSafeBottom = useKeyboardSafeBottom();
 
 const recordId = computed(() => String(route.params.recordId ?? ''));
 const loading = ref(true);
+/**
+ * 修改已提交记录（E21-T11 / C-FU-026）：ReasonModal「开始修改」→ edit-session →
+ * 编辑态（横幅「修改中 · 保存后生成 v2」、底部按钮变「保存修改」）；保存走
+ * PUT /records/{id}（reason 必填、字段级历史）；删除走 DELETE（软删除、填原因）。
+ */
+const editing = ref(false);
+/** 修改原因（ReasonModal「开始修改」带入，PUT 保存修改随请求提交，OQ-14 必填）。 */
+let editSessionReason = '';
+const editReasonModalOpen = ref(false);
+const deleteReasonModalOpen = ref(false);
+const savingEdit = ref(false);
+/** C-FU-008 自动带入（详情下发）：随访编号 / 随访序号 / 录入缺省（随访医生 = 当前用户）。 */
+const visitNo = ref<null | string>(null);
+const sequenceNo = ref<null | number>(null);
+const entryDefaults = ref<null | {
+  doctorId: string;
+  doctorName: string;
+}>(null);
 const schema = ref<FormSchema | null>(null);
 const data = ref<Record<string, unknown>>({});
 const meta = ref<Record<string, unknown>>({});
@@ -201,19 +240,40 @@ const leaveConfirm = ref<{ open: boolean; taskId: null | string }>({
 });
 
 const filter = queueFilterOfQuery(route.query);
-const readonly = computed(() => !canEdit.value || status.value === 'SUBMITTED');
+// 已提交记录整体只读；编辑态（edit-session 进入）放开工单（C-FU-026）
+const readonly = computed(
+  () => !canEdit.value || (status.value === 'SUBMITTED' && !editing.value),
+);
 // bannersOf(context, visitDate, today?, source?)——today 走默认时钟，别把
 // source 顶进 today 形参位（E24-T09 走查 W-0 连带修复：此前 `today is not a
 // function` 使横幅 computed 崩掉，逾期 / 窗口外横幅不显示）
-const banners = computed(() =>
-  readonly.value
+const banners = computed(() => {
+  if (editing.value) {
+    return [
+      {
+        key: 'editing',
+        text: '修改中 · 保存后生成 v2',
+        tone: 'warning',
+      } as const,
+      ...bannersOf(context.value, visitDate(), undefined, source.value),
+    ];
+  }
+  return readonly.value
     ? [
         readonlyBanner(status.value),
         ...bannersOf(context.value, visitDate(), undefined, source.value),
       ]
-    : bannersOf(context.value, visitDate(), undefined, source.value),
-);
+    : bannersOf(context.value, visitDate(), undefined, source.value);
+});
 const dirty = computed(() => hasChanges(savedData.value, data.value));
+/** C 头幅自动带入行（C-FU-008）：各段缺省整段省略、全空不渲染。 */
+const entrySummary = computed(() =>
+  entrySummaryText({
+    device: device.value,
+    sequenceNo: sequenceNo.value,
+    visitNo: visitNo.value,
+  }),
+);
 
 // ---------------------------------------------------------------- 对照报告单分屏（E16-T11 / A-ATT-019、C-FU-017）
 
@@ -309,7 +369,10 @@ async function saveDraftToServer(body: {
 }
 
 const autosave = useAutoSave({
-  enabled: computed(() => !readonly.value && !submitted.value),
+  // 编辑已提交记录不走草稿自动保存（PUT /draft 对 SUBMITTED 40901）——保存统一走「保存修改」
+  enabled: computed(
+    () => !readonly.value && !submitted.value && !editing.value,
+  ),
   getBaseVersion: () => version.value,
   getChanges: () => diffChanges(savedData.value, data.value),
   getSnapshot: () => ({
@@ -394,6 +457,7 @@ const deathSelected = computed(() => {
 
 async function load() {
   loading.value = true;
+  editing.value = false;
   try {
     const detail = await fetchRecordDetail(recordId.value);
     // E17-T03：对比规则由记录详情下发（followup 域 fu_compare_rule），并入渲染器模板契约
@@ -419,6 +483,29 @@ async function load() {
     source.value = detail.source ?? null;
     recordVisitDate.value = detail.visitDate ?? null;
     device.value = detail.device ?? null;
+    visitNo.value = detail.visitNo ?? null;
+    sequenceNo.value = detail.sequenceNo ?? null;
+    entryDefaults.value = detail.entryDefaults ?? null;
+    // C-FU-008 自动带入：随访医生默认当前用户（模板含 visit_doctor 字段时写入，字段字典随 E23-T20）
+    if (detail.status === 'DRAFT' && detail.entryDefaults) {
+      const prefilled = applyEntryDefaults(
+        schema.value,
+        data.value,
+        detail.entryDefaults,
+      );
+      data.value = prefilled;
+    }
+    // ?edit=1（患者详情时间轴「修改」带入）：已提交且有权限直接弹「修改原因」（E21-T11）
+    if (
+      route.query.edit === '1' &&
+      detail.status === 'SUBMITTED' &&
+      canEditSubmitted.value
+    ) {
+      editReasonModalOpen.value = true;
+      const query = { ...route.query };
+      delete query.edit;
+      void router.replace({ query });
+    }
     if (detail.context) {
       const queueView = await fetchTaskQueue(detail.context.taskId, {
         scope: filter.scope,
@@ -520,6 +607,18 @@ async function handleSubmit() {
     renderer.value?.focusFirstError();
     return;
   }
+  // C-FU-024 重复记录提示：同一患者同一随访日期已有记录时先确认「确定继续？」再提交
+  const duplicate = await checkDuplicateOfCurrent();
+  if (duplicate) {
+    Modal.confirm({
+      title: '重复记录提示',
+      content: duplicateRecordConfirmText(effectiveVisitDate() ?? ''),
+      okText: '继续保存',
+      cancelText: '取消',
+      onOk: () => doSubmit(),
+    });
+    return;
+  }
   Modal.confirm({
     title: '确认提交',
     content: submitConfirmText(context.value !== null, source.value),
@@ -527,6 +626,27 @@ async function handleSubmit() {
     cancelText: '取消',
     onOk: () => doSubmit(),
   });
+}
+
+/** 本次记录的有效随访日期（重复提示口径：表单随访日期 ?? 记录 visit_date ?? 任务计划日期）。 */
+function effectiveVisitDate(): null | string {
+  return (
+    visitDate() ?? recordVisitDate.value ?? context.value?.planDate ?? null
+  );
+}
+
+/** 重复记录检查（C-FU-024）：接口失败不拦截提交（后端保存复算与提示各自兜底）。 */
+async function checkDuplicateOfCurrent(): Promise<boolean> {
+  const patientId =
+    context.value?.patientId ?? patient.value?.patientId ?? null;
+  const date = effectiveVisitDate();
+  if (!patientId || !date) return false;
+  try {
+    const view = await checkRecordDuplicate(patientId, date, recordId.value);
+    return view.duplicate;
+  } catch {
+    return false;
+  }
 }
 
 async function doSubmit() {
@@ -553,6 +673,98 @@ async function doSubmit() {
     console.error(error);
   } finally {
     submitting.value = false;
+  }
+}
+
+// ----------------------------------------------- 修改 / 删除已提交（E21-T11 / C-FU-026）
+
+/** 开始修改（ReasonModal「修改原因」必填 → edit-session → 编辑态，pages.md §5.1）。 */
+async function handleStartEdit(reason: string) {
+  try {
+    const view = await startRecordEditSession(recordId.value, { reason });
+    version.value = view.version;
+    savedData.value = { ...data.value };
+    editing.value = true;
+    editReasonModalOpen.value = false;
+    message.info('进入修改：保存后生成 v2，字段级历史记下原因');
+  } catch (error) {
+    message.error('开始修改失败，请稍后重试');
+    console.error(error);
+  }
+}
+
+/** 保存修改（PUT /records/{id}，reason 必填；成功提示新版本号）。 */
+async function handleSaveEdit() {
+  if (!editing.value || savingEdit.value) return;
+  const result: RendererValidateResult | undefined =
+    await renderer.value?.validate();
+  if (result && !result.ok) {
+    showErrors.value = true;
+    message.warning(missingRequiredText(result.missingRequired.length));
+    renderer.value?.focusFirstError();
+    return;
+  }
+  if (savedData.value && !hasChanges(savedData.value, data.value)) {
+    message.info('没有需要保存的修改');
+    return;
+  }
+  Modal.confirm({
+    title: '保存修改',
+    content: '保存后生成新版本，字段级历史将记下本次修改的原因。',
+    okText: '保存修改',
+    cancelText: '取消',
+    onOk: () => doSaveEdit(),
+  });
+}
+
+async function doSaveEdit() {
+  savingEdit.value = true;
+  try {
+    const result = await updateSubmittedRecord(recordId.value, {
+      baseVersion: version.value,
+      data: data.value,
+      dataMeta: meta.value,
+      reason: editSessionReason,
+    });
+    version.value = result.version;
+    savedData.value = { ...data.value };
+    editing.value = false;
+    message.success(
+      `已保存修改（v${result.version}），字段级历史已记录（${result.fieldChanges} 项）`,
+    );
+  } catch (error) {
+    message.error('保存修改失败，请稍后重试');
+    console.error(error);
+  } finally {
+    savingEdit.value = false;
+  }
+}
+
+/** 取消修改：放弃本地改动回到只读（pages.md §5.1 底部按钮「取消」）。 */
+function handleCancelEdit() {
+  if (hasChanges(savedData.value, data.value)) {
+    Modal.confirm({
+      title: '放弃修改？',
+      content: '未保存的修改将丢失，记录回到服务器版本。',
+      okText: '放弃修改',
+      cancelText: '继续编辑',
+      onOk: () => void load(),
+    });
+    return;
+  }
+  void load();
+}
+
+/** 删除记录（ReasonModal 删除原因必填 → DELETE 软删除 → 返回任务列表）。 */
+async function handleDelete(reason: string) {
+  try {
+    await deleteRecord(recordId.value, { reason });
+    deleteReasonModalOpen.value = false;
+    message.success('已删除随访记录（软删除，原因已记入审计）');
+    void router.push('/followup/task');
+  } catch (error) {
+    message.error('删除失败，请稍后重试');
+    console.error(error);
   }
 }
 
@@ -677,6 +889,14 @@ function handleJump(key: string) {
           </h1>
           <div class="sub-text">
             {{ headerSummary(context, recordVisitDate, source) }}
+          </div>
+          <!-- C-FU-008 自动带入行：随访编号 · 第 N 次 · 当前器械 · 植入时长（A / B 无值不渲染） -->
+          <div
+            v-if="entrySummary"
+            class="sub-text"
+            data-testid="record-entry-summary"
+          >
+            {{ entrySummary }}
           </div>
         </div>
         <!-- 平板 / 手机：对照报告单改为全屏切换（pages.md §5.1；桌面走右侧分屏） -->
@@ -805,7 +1025,49 @@ function handleJump(key: string) {
             手机拍照
           </Button>
         </Space>
-        <Space v-if="!readonly">
+        <!-- 已提交（非编辑态）：修改（未分配权限也置灰显示，tooltip 说明）与删除（未分配隐藏），
+             components.md §6 例外规则 / C-FU-026 -->
+        <Space v-if="readonly && status === 'SUBMITTED'">
+          <Tooltip
+            :title="
+              canEditSubmitted
+                ? ''
+                : '需要“修改已提交记录”权限（C Q17 / C-FU-026）'
+            "
+            :trigger="isTouch ? 'click' : 'hover'"
+          >
+            <Button
+              :disabled="!canEditSubmitted"
+              data-testid="record-edit-submitted"
+              @click="editReasonModalOpen = true"
+            >
+              修改
+            </Button>
+          </Tooltip>
+          <Button
+            v-if="canDeleteRecord"
+            danger
+            data-testid="record-delete"
+            @click="deleteReasonModalOpen = true"
+          >
+            删除
+          </Button>
+        </Space>
+        <!-- 编辑已提交（edit-session 进入）：保存修改 / 取消（pages.md §5.1「底部按钮变为保存修改」） -->
+        <Space v-else-if="editing">
+          <Button
+            :loading="savingEdit"
+            data-testid="record-save-edit"
+            type="primary"
+            @click="handleSaveEdit"
+          >
+            保存修改
+          </Button>
+          <Button data-testid="record-cancel-edit" @click="handleCancelEdit">
+            取消
+          </Button>
+        </Space>
+        <Space v-else-if="!readonly">
           <Button
             :loading="saving"
             data-testid="record-save-draft"
@@ -873,7 +1135,37 @@ function handleJump(key: string) {
       <Button :disabled="!queue.nextId" @click="gotoNeighbor(queue.nextId)">
         下一条 →
       </Button>
-      <template v-if="!readonly">
+      <template v-if="editing">
+        <Button
+          :loading="savingEdit"
+          data-testid="record-save-edit"
+          type="primary"
+          @click="handleSaveEdit"
+        >
+          保存修改
+        </Button>
+        <Button data-testid="record-cancel-edit" @click="handleCancelEdit">
+          取消
+        </Button>
+      </template>
+      <template v-else-if="readonly && status === 'SUBMITTED'">
+        <Button
+          :disabled="!canEditSubmitted"
+          data-testid="record-edit-submitted"
+          @click="editReasonModalOpen = true"
+        >
+          修改
+        </Button>
+        <Button
+          v-if="canDeleteRecord"
+          danger
+          data-testid="record-delete"
+          @click="deleteReasonModalOpen = true"
+        >
+          删除
+        </Button>
+      </template>
+      <template v-else-if="!readonly">
         <Button
           :loading="saving"
           data-testid="record-save-draft"
@@ -897,6 +1189,26 @@ function handleJump(key: string) {
         </Tooltip>
       </template>
     </div>
+
+    <!-- E21-T11 / C-FU-026：修改已提交（修改原因必填，按钮「开始修改」）与删除（删除原因必填） -->
+    <ReasonModal
+      confirm-text="开始修改"
+      label="修改已提交记录"
+      note="进入修改：保存后生成 v2，字段级历史记下原因"
+      :open="editReasonModalOpen"
+      placeholder="必填，如：抄录错误"
+      @confirm="handleStartEdit"
+      @update:open="editReasonModalOpen = $event"
+    />
+    <ReasonModal
+      confirm-text="删除"
+      label="删除随访记录"
+      note="删除为软删除：数据长期保留，原因记入审计；关联任务不重开（重录走补录 / 计划外入口）"
+      :open="deleteReasonModalOpen"
+      placeholder="必填，如：重复录入"
+      @confirm="handleDelete"
+      @update:open="deleteReasonModalOpen = $event"
+    />
 
     <Modal
       v-model:open="leaveConfirm.open"

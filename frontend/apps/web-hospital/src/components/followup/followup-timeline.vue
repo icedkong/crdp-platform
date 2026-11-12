@@ -31,6 +31,7 @@ import {
   Table,
   Timeline,
   TimelineItem,
+  Tooltip,
 } from 'ant-design-vue';
 
 import { fetchFormSchema } from '#/api/core/form';
@@ -61,6 +62,9 @@ import InlineAttachmentStrip from './inline-attachment-strip.vue';
 const props = defineProps<{
   /** E16-T14：所在位置附件（分组 / 整条记录末尾缩略图条；空数组不渲染）。 */
   attachments?: AttachmentNavItem[];
+  canDeleteSubmitted?: boolean;
+  /** E21-T11 / C-FU-026：展开记录「修改」可用（无权限也显示但置灰，components.md §6 例外）。 */
+  canEditSubmitted?: boolean;
   canUpload?: boolean;
   entries: PatientTimelineEntry[];
   /** v-model：当前展开的记录（一次只展开一条；null = 全部收起）。 */
@@ -69,6 +73,8 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
+  (event: 'deleteSubmitted', recordId: string): void;
+  (event: 'editSubmitted', recordId: string): void;
   (event: 'open', entry: PatientTimelineEntry): void;
   (event: 'openAttachment', reportId: string): void;
   (event: 'update:expandedRecordId', id: null | string): void;
@@ -528,6 +534,35 @@ const tableRows = computed(() =>
               </template>
             </Alert>
             <template v-else-if="recordSchema">
+              <!-- E21-T11 / C-FU-026：已提交记录的「修改」（无权限置灰 + tooltip）与
+                   「删除」（未分配权限隐藏），pages.md §4.5 -->
+              <div class="record-actions">
+                <Tooltip
+                  :title="
+                    props.canEditSubmitted
+                      ? ''
+                      : '需要“修改已提交记录”权限（C Q17 / C-FU-026）'
+                  "
+                >
+                  <Button
+                    :disabled="!props.canEditSubmitted"
+                    data-testid="timeline-edit-submitted"
+                    size="small"
+                    @click="emit('editSubmitted', entry.recordId ?? '')"
+                  >
+                    修改
+                  </Button>
+                </Tooltip>
+                <Button
+                  v-if="props.canDeleteSubmitted"
+                  danger
+                  data-testid="timeline-delete-record"
+                  size="small"
+                  @click="emit('deleteSubmitted', entry.recordId ?? '')"
+                >
+                  删除
+                </Button>
+              </div>
               <CategoryBar
                 v-model:active-key="recordActiveKey"
                 :items="recordProgress"
@@ -639,6 +674,13 @@ const tableRows = computed(() =>
   background: #fafafa;
   border: 1px solid #f0f0f0;
   border-radius: 6px;
+}
+
+.record-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-bottom: 8px;
 }
 
 .record-loading {

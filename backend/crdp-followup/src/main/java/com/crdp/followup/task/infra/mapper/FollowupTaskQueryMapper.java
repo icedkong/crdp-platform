@@ -362,6 +362,26 @@ public interface FollowupTaskQueryMapper {
             """)
     PatientBriefRow patientBrief(@Param("patientId") long patientId);
 
+    /**
+     * 任务计划日期行（E21-T11 / C-FU-024、C-FU-008：重复提示与随访序号按「有效随访日期」派生—— visit_date
+     * 为空的任务录入记录回落计划日期；越范围任务的行不可见）。
+     */
+    record TaskPlanDateRow(long taskId, LocalDate planDate) {}
+
+    /** 批量取任务计划日期（visit_date 为空的记录补查；@DataScope 出行）。 */
+    @com.crdp.framework.datascope.DataScope(resource = "patient")
+    @Select(
+            """
+            <script>
+            SELECT t.id AS taskId, t.plan_date AS planDate
+            FROM fu_task t
+            JOIN pt_patient pt ON pt.id = t.patient_id AND pt.deleted = 0
+            WHERE t.id IN
+            <foreach collection="taskIds" item="item" open="(" separator="," close=")">#{item}</foreach>
+            </script>
+            """)
+    List<TaskPlanDateRow> findPlanDatesByIds(@Param("taskIds") List<Long> taskIds);
+
     // ---------------------------------------------------------------- 患者时间轴（E15-T07 /
     // A-FU-023、C-FU-023）
 

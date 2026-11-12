@@ -38,7 +38,8 @@ import org.springframework.stereotype.Service;
  *
  * <p>求值已随 E17-T03 落地（{@link com.crdp.followup.compare.domain.CompareEvaluator} 与前端 packages/rules
  * 共享用例锁定一致）；结果持久化与补录后重算已随 E17-T04 落地（{@link CompareHighlightService} 批量重算经 {@link #previousOf}
- * 复用本类同一份链定序与基线回落）；C 的「同一器械 / 电极」取法随 E21。
+ * 复用本类同一份链定序与基线回落）；E21-T11 起候选按「同一器械」过滤（fu_record.implant_id，OQ-130③——C
+ * 规格电池类参数与同一器械比；电极级沿用跨器械口径随后续电极维度细化）。
  */
 @Service
 public class CompareSourceService {
@@ -101,15 +102,42 @@ public class CompareSourceService {
             return null;
         }
         LocalDate effectiveDate = visitDate != null ? visitDate : source.findTaskPlanDate(recordId);
+        // E21-T11 / C-FU-010（OQ-130③）：当前记录带器械维度时候选按「同一器械」过滤（电池类参数与同一器械比；
+        // 阈值 / 感知 / 阻抗的电极级「沿用跨器械」口径随后续在电极维度细化，先同一器械口径）；无维度（implant
+        // 开关关闭的 A / B 租户、植入前 / 取出后）不过滤，与 E17 既有行为一致。
+        Long currentImplant = source.findRecordImplant(recordId);
         List<CandidateRow> candidates =
                 source.findSubmittedCandidates(patientId, recordId, formCode);
         return previousOf(
-                enabled, candidates, planDatesOf(candidates), recordId, effectiveDate, patientId);
+                enabled,
+                candidates,
+                planDatesOf(candidates),
+                recordId,
+                effectiveDate,
+                patientId,
+                currentImplant);
+    }
+
+    /**
+     * 同一器械过滤（E21-T11 / OQ-130③）：当前记录器械维度为 null → 不过滤；有维度 → 只留关联同一器械的候选
+     * （器械维度缺失的候选一并滤除——关联不上器械的记录不作「同一器械的上一次」）。
+     */
+    static List<CandidateRow> sameImplantOnly(List<CandidateRow> candidates, Long implantId) {
+        if (implantId == null) {
+            return candidates;
+        }
+        List<CandidateRow> filtered = new ArrayList<>();
+        for (CandidateRow row : candidates) {
+            if (implantId.equals(row.implantId())) {
+                filtered.add(row);
+            }
+        }
+        return filtered;
     }
 
     /**
      * 链上取「当前记录的上一次」（E17-T04 批量重算与 {@link #resolve} 共用同一份定序与回落逻辑， 不再各写一份）： 候选里取对比时点早于本次、最近的一条（同点按 id
-     * 小者）；无候选回落基线分节。 不做功能开关与规则存在性检查（调用方先判）。
+     * 小者）；无候选回落基线分节。 不做功能开关与规则存在性检查（调用方先判）。 E21-T11：currentImplantId 非空时候选先按同一器械过滤（OQ-130③）。
      *
      * @param enabled 启用规则（白名单键与基线回落列都来自它）
      * @param candidates 对比候选（已排除计划外；含当前记录自身时由 id 排除）
@@ -117,6 +145,7 @@ public class CompareSourceService {
      * @param recordId 当前记录（链定序排除自身）
      * @param currentEffective 当前记录对比时点（visit_date ?? 任务计划日期）
      * @param patientId 当前患者（基线回落查询）
+     * @param currentImplantId 当前记录器械维度（fu_record.implant_id；null 不过滤——A / B 与植入前 / 取出后）
      */
     PreviousView previousOf(
             List<CompareRuleRow> enabled,
@@ -124,9 +153,15 @@ public class CompareSourceService {
             Map<Long, LocalDate> planDates,
             long recordId,
             LocalDate currentEffective,
-            long patientId) {
+            long patientId,
+            Long currentImplantId) {
         Set<String> referencedKeys = referencedKeys(enabled);
-        CandidateRow previous = nearestEarlier(candidates, recordId, currentEffective, planDates);
+        CandidateRow previous =
+                nearestEarlier(
+                        sameImplantOnly(candidates, currentImplantId),
+                        recordId,
+                        currentEffective,
+                        planDates);
         if (previous != null) {
             Map<String, Object> values = pickKeys(readMap(previous.data()), referencedKeys);
             return PreviousView.followup(

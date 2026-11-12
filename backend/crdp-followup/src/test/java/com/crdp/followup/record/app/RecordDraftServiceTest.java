@@ -50,6 +50,7 @@ class RecordDraftServiceTest {
                 9001L,
                 "TASK",
                 null,
+                null,
                 "A_ANNUAL_FU",
                 1,
                 "DRAFT",

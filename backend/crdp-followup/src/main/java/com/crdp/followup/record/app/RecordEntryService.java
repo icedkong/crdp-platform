@@ -68,6 +68,9 @@ public class RecordEntryService {
     private final DeviceContextService deviceContext;
     private final CryptoService crypto;
     private final AuditLogger audit;
+    private final RecordEntryAssistService entryAssist;
+    private final com.crdp.followup.record.infra.mapper.FollowupRecordMapper recordMapper;
+    private final com.crdp.followup.record.infra.mapper.RecordFeatureMapper features;
 
     public RecordEntryService(
             FollowupRecordService recordService,
@@ -81,7 +84,10 @@ public class RecordEntryService {
             CompareHighlightService compareHighlights,
             DeviceContextService deviceContext,
             CryptoService crypto,
-            AuditLogger audit) {
+            AuditLogger audit,
+            RecordEntryAssistService entryAssist,
+            com.crdp.followup.record.infra.mapper.FollowupRecordMapper recordMapper,
+            com.crdp.followup.record.infra.mapper.RecordFeatureMapper features) {
         this.recordService = recordService;
         this.formService = formService;
         this.fieldHistory = fieldHistory;
@@ -94,6 +100,9 @@ public class RecordEntryService {
         this.deviceContext = deviceContext;
         this.crypto = crypto;
         this.audit = audit;
+        this.entryAssist = entryAssist;
+        this.recordMapper = recordMapper;
+        this.features = features;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -124,7 +133,8 @@ public class RecordEntryService {
      * previous（A-FU-027 上一次记录解析：上一次已提交随访，无则基线回落；功能关闭或无启用规则为 null）； E17-T03 起附
      * compareRules（该表单启用规则，前端实时标红与后端保存复算共用同一组规则，tech-plan §11）；E21-T03 起附 device （器械上下文：按 visitDate
      * 匹配当时在用的器械，任务录入回落当前器械；页面以 {@code { device: … }}} 传入 FormRenderer 的 context
-     * 驱动按器械条件显示，C-FU-009）。
+     * 驱动按器械条件显示，C-FU-009）；E21-T11 起附 visitNo（患者随访编号）、sequenceNo（随访序号派生，C-FU-008 自动带入——完整重排随
+     * E21-T09）与 entryDefaults（录入缺省：随访医生 = 当前用户；随访方式缺省取患者默认随访方式，患者表单字段随 E23-T20 字典落地后接入）。
      */
     public record RecordDetailView(
             String id,
@@ -140,11 +150,18 @@ public class RecordEntryService {
             TaskContextView context,
             DeviceContextService.DeviceView device,
             CompareSourceService.PreviousView previous,
-            List<CompareRuleService.RuleView> compareRules) {}
+            List<CompareRuleService.RuleView> compareRules,
+            String visitNo,
+            Integer sequenceNo,
+            EntryDefaultsView entryDefaults) {}
 
     /** 患者摘要（补录记录的表单页头幅；姓名 / 病案号只输出脱敏值）。 */
     public record PatientBriefView(
             String patientId, String patientName, String mrn, String wardName) {}
+
+    /** 录入缺省（C-FU-008「随访医生默认当前用户」；无会话〔定时作业〕为 null 项）。 */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record EntryDefaultsView(String doctorId, String doctorName) {}
 
     /** 提交结果：任务终态与完成方式（「提交后任务完成」验收位）+ 字段历史条数与软校验警告。 */
     public record SubmitResultView(
@@ -158,12 +175,26 @@ public class RecordEntryService {
     /** 软校验警告（不拦截提交，前端 yellow 提示口径，A-FLD-003「提示但可保存」）。 */
     public record WarningView(String key, String message) {}
 
+    /** 开始修改已提交记录（edit-session）结果：记录当前 version（PUT 的 baseVersion）。 */
+    public record EditSessionView(String recordId, int version, String status) {}
+
+    /** 保存修改已提交记录（PUT）结果：新 version + 字段历史条数与软校验警告（与提交同形，去任务联动位）。 */
+    public record UpdateResultView(
+            String recordId, int version, int fieldChanges, List<WarningView> warnings) {}
+
+    /** 保存修改请求（followup.md §3：baseVersion 乐观锁、data 全量、reason 必填——OQ-14 暂定 A / C 都必填）。 */
+    public record UpdateCommand(
+            Integer baseVersion,
+            Map<String, Object> data,
+            Map<String, Object> dataMeta,
+            String reason) {}
+
     // ---------------------------------------------------------------- 详情（表单页装配）
 
     /**
      * 记录详情（40400：记录不存在；context 为 null = 记录未关联任务或越范围不可见，此时附 patient 摘要）。 E17-T03：previous +
      * compareRules 成对下发（功能开关关闭或无启用规则均为 null，记录页正常返回）； E21-T03：device 随记录下发（implant 开关关闭或无匹配器械为
-     * null，提交侧用同一上下文清空隐藏字段）。
+     * null，提交侧用同一上下文清空隐藏字段）；E21-T11：visitNo / sequenceNo / entryDefaults（C-FU-008 自动带入）。
      */
     public RecordDetailView detail(long recordId) {
         FollowupRecordService.RecordView record = recordService.record(recordId);
@@ -185,7 +216,25 @@ public class RecordEntryService {
                 deviceContext.resolve(record.patientId(), record.visitDate()),
                 compareSource.resolve(
                         record.id(), record.patientId(), record.formCode(), record.visitDate()),
-                enabledRules.isEmpty() ? null : enabledRules);
+                enabledRules.isEmpty() ? null : enabledRules,
+                entryAssist.visitNoOf(record.patientId()),
+                entryAssist.sequenceNoOf(
+                        record.patientId(),
+                        record.id(),
+                        record.visitDate() != null
+                                ? record.visitDate()
+                                : (context == null ? null : context.planDate())),
+                entryDefaultsOf());
+    }
+
+    /** 录入缺省（C-FU-008：随访医生 = 当前用户；无医院会话〔定时作业旁路〕null）。 */
+    private EntryDefaultsView entryDefaultsOf() {
+        return CurrentSession.current()
+                .map(
+                        session ->
+                                new EntryDefaultsView(
+                                        String.valueOf(session.userId()), session.displayName()))
+                .orElse(null);
     }
 
     // ---------------------------------------------------------------- 提交（A-FU-005「提交后任务完成」）
@@ -268,6 +317,152 @@ public class RecordEntryService {
     /** 提交请求（data 全量、baseVersion 乐观锁——与草稿 / 已提交修改同口径）。 */
     public record SubmitCommand(
             Integer baseVersion, Map<String, Object> data, Map<String, Object> dataMeta) {}
+
+    // ------------------------------------------------------- 修改 / 删除已提交记录（E21-T11 / C-FU-026、Q17）
+
+    /**
+     * 开始修改已提交记录（followup.md §3 {@code POST /records/{id}/edit-session}）：权限闸门（开关开启的租户必须 {@code
+     * followup:record:edit-submitted}，关闭的租户〔A / B〕沿用 {@code followup:record:edit}——OQ-14「各用各的码」，
+     * AGENTS §5.7 医院差异走功能开关）→ 只允许 SUBMITTED（草稿直接编辑，40901）→ 写 RECORD_EDIT_SESSION 审计（reason 随
+     * ReasonModal「开始修改」带入）→ 返回当前 version（PUT 的 baseVersion）。
+     */
+    @Transactional
+    public EditSessionView editSession(long recordId, String reason) {
+        requireSubmittedEditPermission();
+        FollowupRecordService.RecordView record = recordService.record(recordId);
+        if (!"SUBMITTED".equals(record.status())) {
+            throw new ApiException(409, 40901, "只有已提交记录走修改流程（草稿直接编辑，无需开始修改）");
+        }
+        audit.append(
+                AuditEntry.operation("followup", "RECORD_EDIT_SESSION")
+                        .objectType("FU_RECORD")
+                        .objectId(String.valueOf(recordId))
+                        .description(
+                                "开始修改已提交随访记录（C-FU-026 / Q17）"
+                                        + (reason == null || reason.isBlank() ? "" : "：" + reason))
+                        .afterJson("{\"version\":" + record.version() + "}")
+                        .result(AuditResult.SUCCESS)
+                        .build());
+        return new EditSessionView(String.valueOf(recordId), record.version(), record.status());
+    }
+
+    /**
+     * 保存修改已提交记录（followup.md §3 {@code PUT /records/{id}}）：权限闸门同 edit-session；reason 必填（OQ-14 暂定 A /
+     * C 都必填）；完整校验（42200）→ 隐藏字段清空 → 写入闸门 → SUBMITTED 原地更新 + version + 1（「保存后生成 v2」）→ 字段级历史（含原因） →
+     * 对比标红复算（E17-T04）→ RECORD_UPDATE 审计。修改不动任务（任务完成状态不回退）。
+     */
+    @Transactional
+    public UpdateResultView updateSubmitted(long recordId, UpdateCommand command) {
+        if (command == null || command.baseVersion() == null) {
+            throw new ApiException(400, 40001, "保存修改必须携带 baseVersion（乐观锁）");
+        }
+        if (command.reason() == null || command.reason().isBlank()) {
+            throw new ApiException(400, 40001, "修改已提交记录必须填写修改原因（OQ-14）");
+        }
+        requireSubmittedEditPermission();
+        FollowupRecordService.SubmitOutcome outcome =
+                recordService.updateSubmitted(
+                        recordId, command.baseVersion(), command.data(), command.dataMeta());
+        // 对比标红复算（修改参数后重新计算，E17-T04 同一事务；RECORD_UPDATE 审计已含修改事实）
+        compareHighlights.refreshSubmittedRecords(
+                outcome.view().patientId(), outcome.view().formCode());
+        // 字段级历史（C-FU-026「修改留字段级历史」：提交前值 → 修改后值，原因入留痕行）
+        List<FieldHistoryService.FieldChange> changes =
+                fieldHistory.logChanges(
+                        FieldHistoryService.FU_RECORD,
+                        recordId,
+                        outcome.view().formCode(),
+                        outcome.view().templateVersion(),
+                        outcome.before(),
+                        outcome.view().data(),
+                        ChangeSource.USER,
+                        "修改已提交随访记录：" + command.reason());
+        audit.append(
+                AuditEntry.operation("followup", "RECORD_UPDATE")
+                        .objectType("FU_RECORD")
+                        .objectId(String.valueOf(recordId))
+                        .description("修改已提交随访记录：" + command.reason())
+                        .afterJson(
+                                "{\"version\":"
+                                        + outcome.view().version()
+                                        + ",\"fieldChanges\":"
+                                        + changes.size()
+                                        + "}")
+                        .result(AuditResult.SUCCESS)
+                        .build());
+        return new UpdateResultView(
+                String.valueOf(recordId),
+                outcome.view().version(),
+                changes.size(),
+                outcome.warnings().stream()
+                        .map(item -> new WarningView(item.key(), item.message()))
+                        .toList());
+    }
+
+    /**
+     * 删除随访记录（followup.md §3 {@code DELETE /records/{id}}，C-FU-026 / PLT-AUD-001）：reason
+     * 必填；软删除（deleted = 1 + 原因 / 删除人 / 时间，数据长期保留）；断开关联任务链接（任务终态不动——删除不重开任务，重录走补录 / 计划外入口）； 写
+     * RECORD_DELETE 审计。权限由控制层 {@code @RequiresPermission("followup:record:delete")}
+     * 把守（敏感码，平台按租户放开后由 租户管理员分配，Q17）。
+     */
+    @Transactional
+    public void deleteRecord(long recordId, String reason) {
+        if (reason == null || reason.isBlank()) {
+            throw new ApiException(400, 40001, "删除随访记录必须填写删除原因（C-FU-026）");
+        }
+        FollowupRecordService.RecordView record = recordService.record(recordId);
+        int updated =
+                recordMapper.softDelete(
+                        recordId, reason, CurrentSession.requireHospital().userId());
+        if (updated != 1) {
+            throw new ApiException(404, 40400, "随访记录不存在（或已被删除）");
+        }
+        recordMapper.clearTaskRecordLink(recordId);
+        audit.append(
+                AuditEntry.operation("followup", "RECORD_DELETE")
+                        .objectType("FU_RECORD")
+                        .objectId(String.valueOf(recordId))
+                        .description("删除随访记录（软删除）：" + reason)
+                        .afterJson(
+                                "{\"patientId\":"
+                                        + record.patientId()
+                                        + ",\"formCode\":\""
+                                        + record.formCode()
+                                        + "\",\"status\":\""
+                                        + record.status()
+                                        + "\",\"visitDate\":"
+                                        + (record.visitDate() == null
+                                                ? "null"
+                                                : "\"" + record.visitDate() + "\"")
+                                        + "}")
+                        .result(AuditResult.SUCCESS)
+                        .build());
+    }
+
+    /**
+     * 修改已提交权限闸门（C-FU-026 验收「修改已提交记录需单独权限」）：功能开关 {@code record_edit_submitted} 开启（医院 C） 时必须持 {@code
+     * followup:record:edit-submitted}（仅有录入权限 record:edit 不够，40300）；关闭（A / B，无行默认）由控制层多值注解按 {@code
+     * followup:record:edit} 放行（followup.md §6「A 用户有 record:edit 即可」）。
+     */
+    private void requireSubmittedEditPermission() {
+        if (!Boolean.TRUE.equals(features.findEnabled(FEATURE_RECORD_EDIT_SUBMITTED))) {
+            return; // A / B：控制层 @RequiresPermission({"record:edit","record:edit-submitted"})
+            // 已按任一码放行
+        }
+        boolean granted =
+                CurrentSession.current()
+                        .map(session -> session.permissionCodes().contains(PERM_EDIT_SUBMITTED))
+                        .orElse(false);
+        if (!granted) {
+            throw new ApiException(403, 40300, "修改已提交记录需要“修改已提交记录”权限（C-FU-026 / Q17）");
+        }
+    }
+
+    /** 功能开关：修改已提交记录单独权限（医院差异走开关，AGENTS §5.7；无行 = 关闭 = A / B 行为）。 */
+    static final String FEATURE_RECORD_EDIT_SUBMITTED = "record_edit_submitted";
+
+    /** C 规格权限码：修改已提交记录（敏感，平台库 V72 按钮 229）。 */
+    static final String PERM_EDIT_SUBMITTED = "followup:record:edit-submitted";
 
     // ---------------------------------------------------------------- 内部
 

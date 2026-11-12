@@ -67,6 +67,7 @@ public class FollowupRecordService {
             Long taskId,
             String source,
             LocalDate visitDate,
+            Long implantId,
             String formCode,
             int templateVersion,
             String status,
@@ -121,6 +122,9 @@ public class FollowupRecordService {
                         command.taskId(),
                         command.source(),
                         command.visitDate(),
+                        // 器械维度（E21-T11 / C-FU-008，OQ-130③）：创建时按随访日期解析落列
+                        // （visit_date 为空的任务录入回落当前器械，与提交校验同一判定）；开关关闭为 NULL。
+                        resolveImplantId(command.patientId(), command.visitDate()),
                         command.formCode(),
                         templateVersion,
                         writeJson(persisted),
@@ -212,11 +216,73 @@ public class FollowupRecordService {
                         baseVersion,
                         writeJson(persisted),
                         writeJson(meta),
+                        // 器械维度以提交时解析为准（E21-T11：开始录入与提交之间器械可能更换 / 取出）
+                        resolveImplantId(row.patientId(), row.visitDate()),
                         CurrentSession.requireHospital().userId());
         if (updated != 1) {
             throw draftConflict(requireRecord(id), data);
         }
         return new SubmitOutcome(record(id), readMap(row.data()), stripped.clearedKeys(), warnings);
+    }
+
+    // ---------------------------------------------------------------- 修改已提交记录（E21-T11 / C-FU-026）
+
+    /**
+     * 保存修改已提交记录（SUBMITTED 原地更新、version + 1——「保存后生成 v2」；权限闸门与字段历史由 {@link RecordEntryService}
+     * 接线）：完整校验（42200）→ 隐藏字段清空 → 写入闸门 → 乐观锁更新； DRAFT 记录 40901（草稿直接编辑，不走修改流程）、 版本前进 40900；implant_id
+     * 不动（随访日期未变、器械关联随创建 / 提交口径）。
+     */
+    @Transactional
+    public SubmitOutcome updateSubmitted(
+            long id, Integer baseVersion, Map<String, Object> data, Map<String, Object> dataMeta) {
+        if (baseVersion == null) {
+            throw new ApiException(400, 40001, "保存修改必须携带 baseVersion（乐观锁）");
+        }
+        FollowupRecordMapper.RecordRowRaw row = requireRecord(id);
+        if (!"SUBMITTED".equals(row.status())) {
+            throw new ApiException(409, 40901, "只有已提交记录走修改流程（草稿直接编辑，无需开始修改）");
+        }
+        if (row.version() != baseVersion) {
+            throw draftConflict(row, data);
+        }
+        Map<String, Object> values = data == null ? new LinkedHashMap<>() : data;
+        // 器械上下文与提交同口径（E21-T03）：修改后字段可见性可能变化，隐藏字段照常清空
+        Map<String, Object> conditionContext =
+                deviceContext.conditionContext(row.patientId(), row.visitDate());
+        List<com.crdp.form.rule.app.FieldIssue> warnings =
+                formService.validateForSubmit(
+                        row.formCode(), row.templateVersion(), values, conditionContext);
+        FormService.StrippedData stripped =
+                formService.stripHiddenFields(
+                        row.formCode(), row.templateVersion(), values, conditionContext);
+        Map<String, Object> persisted =
+                formService.writeGateData(row.formCode(), row.templateVersion(), stripped.data());
+        Map<String, Object> meta =
+                dataMeta == null ? readMap(row.dataMeta()) : new LinkedHashMap<>(dataMeta);
+        int updated =
+                recordMapper.updateSubmittedRecord(
+                        id,
+                        baseVersion,
+                        writeJson(persisted),
+                        writeJson(meta),
+                        CurrentSession.requireHospital().userId());
+        if (updated != 1) {
+            throw draftConflict(requireRecord(id), data);
+        }
+        return new SubmitOutcome(record(id), readMap(row.data()), stripped.clearedKeys(), warnings);
+    }
+
+    /** 器械维度解析（E21-T11 / C-FU-008）：按随访日期匹配当时在用的器械 id；开关关闭 / 无匹配 null。 */
+    private Long resolveImplantId(long patientId, LocalDate visitDate) {
+        DeviceContextService.DeviceView view = deviceContext.resolve(patientId, visitDate);
+        if (view == null || view.implantId() == null) {
+            return null;
+        }
+        try {
+            return Long.valueOf(view.implantId());
+        } catch (NumberFormatException invalid) {
+            return null;
+        }
     }
 
     // ---------------------------------------------------------------- 报告单映射写入（E16-T07 /
@@ -297,6 +363,7 @@ public class FollowupRecordService {
                 row.taskId(),
                 row.source(),
                 row.visitDate(),
+                row.implantId(),
                 row.formCode(),
                 row.templateVersion(),
                 row.status(),

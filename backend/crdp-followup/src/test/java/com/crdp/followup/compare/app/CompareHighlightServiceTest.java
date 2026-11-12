@@ -93,7 +93,7 @@ class CompareHighlightServiceTest {
     /** 已提交记录行（TASK 行 visitDate 空由任务计划日期定序）。 */
     private static SubmittedRow row(
             long id, String source, LocalDate visitDate, Long taskId, String data) {
-        return new SubmittedRow(id, PATIENT, source, visitDate, taskId, 1, data);
+        return new SubmittedRow(id, PATIENT, source, visitDate, taskId, null, 1, data);
     }
 
     private static SubmittedRow backfill(long id, LocalDate visitDate, String data) {

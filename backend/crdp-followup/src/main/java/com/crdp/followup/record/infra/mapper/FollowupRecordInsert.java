@@ -8,6 +8,7 @@ public class FollowupRecordInsert {
     private Long taskId;
     private String source;
     private java.time.LocalDate visitDate;
+    private Long implantId;
     private String formCode;
     private int templateVersion;
     private String data;
@@ -21,6 +22,7 @@ public class FollowupRecordInsert {
             Long taskId,
             String source,
             java.time.LocalDate visitDate,
+            Long implantId,
             String formCode,
             int templateVersion,
             String data,
@@ -30,6 +32,7 @@ public class FollowupRecordInsert {
         this.taskId = taskId;
         this.source = source;
         this.visitDate = visitDate;
+        this.implantId = implantId;
         this.formCode = formCode;
         this.templateVersion = templateVersion;
         this.data = data;
@@ -75,6 +78,14 @@ public class FollowupRecordInsert {
 
     public void setVisitDate(java.time.LocalDate visitDate) {
         this.visitDate = visitDate;
+    }
+
+    public Long getImplantId() {
+        return implantId;
+    }
+
+    public void setImplantId(Long implantId) {
+        this.implantId = implantId;
     }
 
     public String getFormCode() {

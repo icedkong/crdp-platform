@@ -214,3 +214,101 @@ export function draftRecordKey(
 ): string {
   return `${tenantCode ?? ''}:${userId ?? ''}:followup:${recordId}`;
 }
+
+// ------------------------------------------------------- E21-T11 / C-FU-008、C-FU-024、C-FU-026
+
+/**
+ * 修改已提交记录的按钮权限（pages.md §4.5 / §5、C-FU-026 / Q17）：开关
+ * `record_edit_submitted` 开启（医院 C）→ 必须 `followup:record:edit-submitted`
+ * （未分配也置灰显示，tooltip「需要“修改已提交记录”权限」）；关闭（A / B）→
+ * `followup:record:edit` 即可。与后端 RecordEntryService 的闸门同口径。
+ */
+export function canEditSubmittedRecord(input: {
+  editSubmittedFeatureOn: boolean;
+  hasEdit: boolean;
+  hasEditSubmitted: boolean;
+}): boolean {
+  return input.editSubmittedFeatureOn ? input.hasEditSubmitted : input.hasEdit;
+}
+
+/** 重复记录提示文案（C-FU-024，pages.md §5.1「推断，待确认」照抄）。 */
+export function duplicateRecordConfirmText(visitDate: string): string {
+  return `该患者在 ${visitDate} 已有一条随访记录，确定继续？`;
+}
+
+/** 植入时长文案（C 头幅「植入时长 1 年 5 个月」；不足 1 月只显示天数）。 */
+export function implantDurationText(
+  implantDate: null | string | undefined,
+  today: () => string = () => new Date().toISOString().slice(0, 10),
+): string {
+  if (!implantDate) return '';
+  const from = new Date(`${implantDate}T00:00:00Z`);
+  const to = new Date(`${today()}T00:00:00Z`);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return '';
+  let months =
+    (to.getUTCFullYear() - from.getUTCFullYear()) * 12 +
+    (to.getUTCMonth() - from.getUTCMonth());
+  if (to.getUTCDate() < from.getUTCDate()) months -= 1;
+  if (months < 0) return '';
+  const years = Math.floor(months / 12);
+  const rest = months % 12;
+  if (years <= 0 && rest <= 0) return '不足 1 个月';
+  const parts: string[] = [];
+  if (years > 0) parts.push(`${years} 年`);
+  if (rest > 0) parts.push(`${rest} 个月`);
+  return parts.join(' ');
+}
+
+/**
+ * C 录入头幅自动带入行（C-FU-008）：「随访编号 105-2026-001 · 第 3 次 · 当前器械
+ * 双腔(DDD) · 植入时长 1 年 5 个月」——各段缺省（A / B 租户、未生成编号）整段省略，
+ * 全空返回 ''（不渲染该行）。
+ */
+export function entrySummaryText(input: {
+  device?: null | RecordDeviceContext;
+  sequenceNo?: null | number;
+  today?: () => string;
+  visitNo?: null | string;
+}): string {
+  const parts: string[] = [];
+  if (input.visitNo) parts.push(`随访编号 ${input.visitNo}`);
+  if (input.sequenceNo && input.sequenceNo > 0) {
+    parts.push(`第 ${input.sequenceNo} 次`);
+  }
+  if (input.device?.typeLabel) {
+    const duration = implantDurationText(input.device.implantDate, input.today);
+    parts.push(
+      duration
+        ? `当前器械 ${input.device.typeLabel} · 植入时长 ${duration}`
+        : `当前器械 ${input.device.typeLabel}`,
+    );
+  }
+  return parts.join(' · ');
+}
+
+/**
+ * 录入缺省写入（C-FU-008「随访医生默认当前用户」）：模板含编码 `visit_doctor`
+ * 的字段（C 随访 #5，字段字典随 E23-T20——编码落地前无此字段即无操作）且当前无值时
+ * 写入缺省值；返回写入后的 data（不修改原对象）。
+ */
+export function applyEntryDefaults(
+  schema: FormSchema | null,
+  data: Record<string, unknown>,
+  defaults?: null | { doctorId: string; doctorName: string },
+): Record<string, unknown> {
+  if (!schema || !defaults?.doctorId) return data;
+  const next = { ...data };
+  for (const category of schema.categories) {
+    for (const field of category.fields) {
+      if (
+        field.code === 'visit_doctor' &&
+        (next[field.key] === undefined ||
+          next[field.key] === null ||
+          next[field.key] === '')
+      ) {
+        next[field.key] = defaults.doctorId;
+      }
+    }
+  }
+  return next;
+}

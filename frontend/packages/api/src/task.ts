@@ -193,7 +193,7 @@ export interface RecordDeviceContext {
   typeLabel?: null | string;
 }
 
-/** 记录详情（followup.md §3；E15-T07 起附 source 与 visitDate，taskless 记录附 patient 摘要；E17-T02 起附 previous、E17-T03 起附 compareRules、E21-T03 起附 device）。 */
+/** 记录详情（followup.md §3；E15-T07 起附 source 与 visitDate，taskless 记录附 patient 摘要；E17-T02 起附 previous、E17-T03 起附 compareRules、E21-T03 起附 device、E21-T11 起附 visitNo / sequenceNo / entryDefaults）。 */
 export interface RecordDetailView {
   /** 该表单启用对比规则（E17-T03）：前端实时标红与后端保存复算共用；功能关闭 / 无启用规则为 null。 */
   compareRules?: CompareRule[] | null;
@@ -202,16 +202,54 @@ export interface RecordDetailView {
   dataMeta: Record<string, unknown>;
   /** 器械上下文（E21-T03）：implant 开关关闭或无匹配器械为 null。 */
   device?: null | RecordDeviceContext;
+  /** 录入缺省（E21-T11 / C-FU-008）：随访医生 = 当前用户（无医院会话为 null）。 */
+  entryDefaults?: null | RecordEntryDefaults;
   formCode: string;
   formVersion: number;
   id: string;
   patient?: null | RecordPatientBrief;
   /** 上一次记录解析（E17-T02 / A-FU-027）：功能关闭、无启用规则或回落字段全空为 null。 */
   previous?: null | RecordPreviousView;
+  /** 随访序号派生（E21-T11 / C-FU-008 自动带入；完整重排随 E21-T09）：无法定本次日期为 null。 */
+  sequenceNo?: null | number;
   source?: null | string;
   status: 'DRAFT' | 'SUBMITTED';
   version: number;
   visitDate?: null | string;
+  /** 患者随访编号（E21-T11 / C-FU-008；A / B 租户与未生成为 null）。 */
+  visitNo?: null | string;
+}
+
+/** 录入缺省（C-FU-008「随访医生默认当前用户」；随访方式缺省取患者默认随访方式，患者表单字段随 E23-T20）。 */
+export interface RecordEntryDefaults {
+  doctorId: string;
+  doctorName: string;
+}
+
+/** 重复记录提示结果（C-FU-024：同一患者同一有效随访日期已有在册记录〔含草稿，软删不算〕时 duplicate = true）。 */
+export interface RecordDuplicateCheckView {
+  duplicate: boolean;
+  records: Array<{
+    recordId: string;
+    source?: null | string;
+    status: string;
+    visitDate?: null | string;
+  }>;
+}
+
+/** 开始修改已提交记录结果（version 即 PUT 的 baseVersion，C-FU-026）。 */
+export interface RecordEditSessionView {
+  recordId: string;
+  status: string;
+  version: number;
+}
+
+/** 保存修改已提交记录结果（「保存后生成 v2」；与提交同形，去任务联动位，C-FU-026）。 */
+export interface RecordUpdateResult {
+  fieldChanges: number;
+  recordId: string;
+  version: number;
+  warnings: Array<{ key: string; message: string }>;
 }
 
 /** 历史补录创建结果（recordId 即随访表单路由，pages.md §5）。 */
