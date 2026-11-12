@@ -791,4 +791,178 @@ class TaskCreationPlannerTest {
                         nodes, SUBPLAN_ID, 1, LocalDate.of(2026, 1, 1)),
                 "子计划行不是任务节点");
     }
+
+    // ---------------------------------------------------------------- E21-T08 / C-FU-005
+    // 医生指定下次随访时间
+
+    /** 每日调度 + 医生指定日期的便捷入口（其余参数同 {@link TaskCreationPlanner#plan}）。 */
+    private static PlanResult planWithDoctor(
+            NodeDef node,
+            NodeDef subplan,
+            LocalDate logicalDate,
+            TaskCreationPlanner.LoopBasis loopBasis,
+            LocalDate doctorNextDate) {
+        return TaskCreationPlanner.plan(
+                planOf(node, subplan),
+                "NORMAL",
+                LocalDate.of(2024, 6, 1),
+                logicalDate,
+                LocalDate.of(2024, 6, 5),
+                null,
+                loopBasis,
+                doctorNextDate);
+    }
+
+    @Test
+    void doctorDateBecomesPlanDateWithWindowAroundItOnWindowStartDay() {
+        // C 规格第 5 章验收：常规随访（±30 天）医生填 2027-01-15 → 计划日 2027-01-15、窗口
+        // 2026-12-16..2027-02-14、系统在窗口开始日 2026-12-16 创建任务（不按默认的 lastVisit + 12 个月）
+        NodeDef regular = rollingNode(202L, "NORMAL", 12, 30);
+        LocalDate lastVisit = LocalDate.of(2026, 11, 13);
+        // 医生窗口开启日前一天（12-15）：不建任务；next 缓存仍指计划默认（展示侧 COALESCE 医生日期优先）
+        PlanResult before =
+                planWithDoctor(
+                        regular,
+                        subplan("CYCLE", null, 12, "MONTH"),
+                        LocalDate.of(2026, 12, 15),
+                        new TaskCreationPlanner.LoopBasis(lastVisit, Map.of()),
+                        LocalDate.of(2027, 1, 15));
+        assertTrue(before.due().isEmpty(), "医生窗口未开启不建任务");
+        assertEquals(
+                LocalDate.of(2027, 11, 13),
+                before.next().planDate(),
+                "next 缓存保持计划默认（不动 next_plan_date，OQ-138③）");
+
+        // 窗口开始日当天（12-16）：按医生日期创建，窗口按节点宽度（前 30 后 30）围绕展开
+        PlanResult opened =
+                planWithDoctor(
+                        regular,
+                        subplan("CYCLE", null, 12, "MONTH"),
+                        LocalDate.of(2026, 12, 16),
+                        new TaskCreationPlanner.LoopBasis(lastVisit, Map.of()),
+                        LocalDate.of(2027, 1, 15));
+        assertEquals(1, opened.due().size(), "窗口开始日当天创建（验收）");
+        PlannedTask task = opened.due().get(0);
+        assertEquals(LocalDate.of(2027, 1, 15), task.planDate(), "计划日期 = 医生指定日期");
+        assertEquals(LocalDate.of(2026, 12, 16), task.windowStart());
+        assertEquals(LocalDate.of(2027, 2, 14), task.windowEnd());
+        assertEquals(LocalDate.of(2026, 12, 16), task.openDate(), "开启日 = 窗口开始日");
+        assertTrue(task.doctorOverride(), "标记医生覆盖（服务侧据此清理 doctor_next_date）");
+        assertEquals(TaskCreationPlanner.CREATE_NORMAL, task.createType());
+        assertNull(opened.next(), "被覆盖次数进 due 后滚动节点无下一次（缓存清空，下次运行按已建行推进）");
+    }
+
+    @Test
+    void doctorDateDelaysDefaultDueOccurrenceUntilDoctorWindowOpens() {
+        // 默认窗口已开启（本应今天创建）但医生指定更晚 → 不按默认日期创建，等医生窗口开启日再建
+        NodeDef regular = rollingNode(202L, "NORMAL", 12, 30);
+        // 默认下次 = lastVisit(2026-06-01) + 12 个月 = 2027-06-01、窗口 2027-05-02 开启：
+        // 逻辑日 2027-05-10 默认应建，医生指定 2027-08-01（窗口 07-02 开启，未来）→ 不建
+        PlanResult delayed =
+                planWithDoctor(
+                        regular,
+                        subplan("CYCLE", null, 12, "MONTH"),
+                        LocalDate.of(2027, 5, 10),
+                        new TaskCreationPlanner.LoopBasis(LocalDate.of(2026, 6, 1), Map.of()),
+                        LocalDate.of(2027, 8, 1));
+        assertTrue(delayed.due().isEmpty(), "默认开启日已过但医生更晚 → 推迟到医生窗口开启日创建");
+
+        // 医生窗口开始日（07-02）：照建
+        PlanResult opened =
+                planWithDoctor(
+                        regular,
+                        subplan("CYCLE", null, 12, "MONTH"),
+                        LocalDate.of(2027, 7, 2),
+                        new TaskCreationPlanner.LoopBasis(LocalDate.of(2026, 6, 1), Map.of()),
+                        LocalDate.of(2027, 8, 1));
+        assertEquals(1, opened.due().size());
+        assertEquals(LocalDate.of(2027, 8, 1), opened.due().get(0).planDate());
+        assertEquals(LocalDate.of(2027, 7, 2), opened.due().get(0).windowStart());
+    }
+
+    @Test
+    void doctorDateOnlyOverridesEarliestOccurrence() {
+        // 只影响下一次（C-FU-005）：默认排期中开启最早的一次被覆盖，其余节点照默认排
+        // 固定节点 201（术后1年形态，±30）默认开启 2027-05-02；固定节点 203 偏移 14 个月默认开启更晚
+        NodeDef yearNode = fixedPostopNode(201L, 12);
+        NodeDef laterNode = fixedPostopNode(203L, 14);
+        // 医生指定 2027-06-01（窗口 05-02..07-01，05-02 开启）：逻辑日 05-10，203 默认开启 07-02（未来）
+        PlanResult result =
+                TaskCreationPlanner.plan(
+                        List.of(subplan("FIXED", 1, null, null), yearNode, laterNode),
+                        "NORMAL",
+                        LocalDate.of(2026, 5, 20),
+                        LocalDate.of(2027, 5, 10),
+                        LocalDate.of(2026, 5, 25),
+                        null,
+                        TaskCreationPlanner.LoopBasis.none(),
+                        LocalDate.of(2027, 6, 1));
+        assertEquals(1, result.due().size(), "只有开启最早的 201 次被覆盖进 due");
+        assertEquals(201L, result.due().get(0).nodeId());
+        assertEquals(LocalDate.of(2027, 6, 1), result.due().get(0).planDate());
+        assertEquals(
+                LocalDate.of(2027, 6, 20),
+                result.next().openDate(),
+                "203 照默认口径为下次缓存（计划 07-20 −30 天开启）");
+    }
+
+    @Test
+    void doctorDateWinsOverEriLoop() {
+        // 同时满足多项时按「医生指定 → ERI 期循环 → 计划默认」取值（C 规格 §5）：ERI 模式下医生日期
+        // 覆盖 ERI 循环的下一次（第 1 次 = 2027-02-10 + 1 个月 = 03-10），医生指定 05-20（±7 → 05-13 开启）
+        NodeDef eriLoop = rollingNode(203L, "ERI", 1, 7);
+        PlanResult result =
+                TaskCreationPlanner.plan(
+                        planOf(eriLoop, subplan("CYCLE", null, 1, "MONTH")),
+                        "ERI",
+                        LocalDate.of(2024, 6, 1),
+                        LocalDate.of(2027, 5, 13),
+                        LocalDate.of(2024, 6, 5),
+                        null,
+                        new TaskCreationPlanner.LoopBasis(LocalDate.of(2027, 2, 10), Map.of()),
+                        LocalDate.of(2027, 5, 20));
+        assertEquals(1, result.due().size(), "ERI 循环下一次被医生日期覆盖，窗口 ±7 围绕展开");
+        assertEquals(LocalDate.of(2027, 5, 20), result.due().get(0).planDate());
+        assertEquals(LocalDate.of(2027, 5, 13), result.due().get(0).windowStart());
+        assertEquals(LocalDate.of(2027, 5, 27), result.due().get(0).windowEnd());
+        assertTrue(result.due().get(0).doctorOverride());
+    }
+
+    @Test
+    void rollingCycleContinuesFromOverriddenPlanDateAfterConsumption() {
+        // 只影响下一次：覆盖次数已建（latestPlanDate = 医生日期）、doctor_next_date 已清（OQ-138③ 清理已用值）
+        // → 下一次 = max(lastVisit, 已排最新一次计划日期) + 偏移 = 2027-01-15 + 12 个月
+        NodeDef regular = rollingNode(202L, "NORMAL", 12, 30);
+        PlanResult result =
+                planWithDoctor(
+                        regular,
+                        subplan("CYCLE", null, 12, "MONTH"),
+                        LocalDate.of(2027, 2, 1),
+                        new TaskCreationPlanner.LoopBasis(
+                                LocalDate.of(2026, 11, 13),
+                                Map.of(
+                                        202L,
+                                        new TaskCreationPlanner.LoopBasis.NodeLoopState(
+                                                2, LocalDate.of(2027, 1, 15)))),
+                        null);
+        assertEquals(LocalDate.of(2028, 1, 15), result.next().planDate(), "从医生指定日期起滚动");
+        assertTrue(result.due().stream().noneMatch(PlannedTask::doctorOverride), "已消费后不再覆盖");
+    }
+
+    @Test
+    void doctorOverrideOnExistingOccurrenceKeepsDefaultCreateTypeClassification() {
+        // 覆盖后的创建方式沿用 classify：补跑跨过医生窗口结束日（02-14）→ 逻辑日 03-01 时窗口已结束，
+        // 排期仍出 NORMAL、停用补偿改判由服务层 effectiveCreateType 按同口径处理（医生日期不豁免）
+        NodeDef regular = rollingNode(202L, "NORMAL", 12, 30);
+        PlanResult result =
+                planWithDoctor(
+                        regular,
+                        subplan("CYCLE", null, 12, "MONTH"),
+                        LocalDate.of(2027, 3, 1),
+                        new TaskCreationPlanner.LoopBasis(LocalDate.of(2026, 6, 1), Map.of()),
+                        LocalDate.of(2027, 1, 15));
+        assertEquals(1, result.due().size(), "补跑时窗口已结束仍建（医生日期不豁免停用补偿口径）");
+        assertEquals(TaskCreationPlanner.CREATE_NORMAL, result.due().get(0).createType());
+        assertTrue(result.due().get(0).doctorOverride());
+    }
 }

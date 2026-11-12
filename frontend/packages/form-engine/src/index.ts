@@ -72,6 +72,14 @@ export {
   normalizeMultiselectValue,
   selectedNeedsDetailCodes,
 } from './multiselect';
+export {
+  NEXT_VISIT_FIELD_CODE,
+  NEXT_VISIT_PLACEHOLDER,
+  NEXT_VISIT_QUICK_MONTHS,
+  type NextVisitAffordance,
+  nextVisitHintOf,
+  nextVisitQuickOptions,
+} from './next-visit';
 export type { RendererValidateResult } from './types';
 /**
  * E11-T11 / A-PAT-021、C-PAT-018（口径 A-PAT-019）：已填 / 应填进度与分类锚点。

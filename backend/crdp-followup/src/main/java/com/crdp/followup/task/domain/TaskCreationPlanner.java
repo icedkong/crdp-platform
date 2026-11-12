@@ -39,7 +39,10 @@ import java.util.Set;
  *   <li>FIXED 子计划未存周期（配置面只收次数）：周期回落节点偏移，第 N 次 = 基准 + N × 偏移（OQ-78 暂行）； 存了周期 （cycle_value /
  *       cycle_unit 非空）则按 第 N 次 = 基准 + 偏移 +（N − 1）× 周期；
  *   <li>启用条件（C / V91）：ERI 模式下仅 enroll_mode = ERI 的循环节点接管排期（C-FU-006「后续节点切换为 ERI
- *       期随访」、OQ-138⑦——常规与固定节点不再创建新任务）；常规（NORMAL）模式排非 ERI 节点（含未配置，A / B 计划不受影响）。
+ *       期随访」、OQ-138⑦——常规与固定节点不再创建新任务）；常规（NORMAL）模式排非 ERI 节点（含未配置，A / B 计划不受影响）；
+ *   <li><b>医生指定下次随访日期（E21-T08 / C-FU-005，Q05）</b>：doctor_next_date（E21-T06 登记）作为「下一次任务」的
+ *       计划日期（不是窗口开始日），窗口按目标节点的宽度围绕该日期前后展开；优先级 医生指定 → ERI 期循环 → 计划默认， 只影响紧接着的下一次（创建 /
+ *       重排后由服务侧清理已用值，OQ-138③）。
  * </ul>
  *
  * <p>防御上限：单节点最多排 100 000 次（正常计划远达不到：A 长期年度 10 年也只有 11 次）， 防止退化配置（如 FIXED 周期回落 0 天 × 超大次数）把调度拖死。
@@ -99,7 +102,10 @@ public final class TaskCreationPlanner {
             int windowAfterValue,
             String windowAfterUnit) {}
 
-    /** 一个排期结果：应创建（或已由唯一键判存在）的任务与其完整日期组（createType 见本类常量）。 */
+    /**
+     * 一个排期结果：应创建（或已由唯一键判存在）的任务与其完整日期组（createType 见本类常量）； doctorOverride =
+     * 计划日期来自医生指定（E21-T08，服务侧据此清理 doctor_next_date）。
+     */
     public record PlannedTask(
             long nodeId,
             int occurrence,
@@ -108,7 +114,8 @@ public final class TaskCreationPlanner {
             LocalDate windowStart,
             LocalDate windowEnd,
             LocalDate openDate,
-            String createType) {}
+            String createType,
+            boolean doctorOverride) {}
 
     /** 一次入组的排期结果：due 按开启日、计划日期、节点 id 稳定排序；next 为空 = 该计划已排完（缓存清空）。 */
     public record PlanResult(List<PlannedTask> due, PlannedTask next) {}
@@ -200,6 +207,33 @@ public final class TaskCreationPlanner {
             LocalDate enrolledOn,
             LocalDate planEnd,
             LoopBasis loopBasis) {
+        return plan(
+                nodes,
+                enrollmentMode,
+                basisDate,
+                logicalDate,
+                enrolledOn,
+                planEnd,
+                loopBasis,
+                null);
+    }
+
+    /**
+     * 每日调度的排期（E21-T08 / C-FU-005 起带医生指定下次随访日期；其余参数同上）。
+     *
+     * <p>医生指定日期覆盖「下一次任务」的计划日期（优先级 医生指定 → ERI 期循环 → 计划默认，C 规格 §5）： 取默认排期中开启最早的一次（due ∪
+     * next），窗口按<b>该节点</b>的宽度围绕医生日期前后展开、开启日 = 提醒开始日与窗口开始日较早一天； 只影响这一次——next 缓存保持计划默认口径 （不动
+     * next_plan_date，展示侧 COALESCE(doctor_next_date) 医生日期优先，OQ-138③）， 创建 / 重排由服务侧消费并清理已用值。
+     */
+    public static PlanResult plan(
+            List<NodeDef> nodes,
+            String enrollmentMode,
+            LocalDate basisDate,
+            LocalDate logicalDate,
+            LocalDate enrolledOn,
+            LocalDate planEnd,
+            LoopBasis loopBasis,
+            LocalDate doctorNextDate) {
         return schedule(
                 nodes,
                 enrollmentMode,
@@ -209,7 +243,8 @@ public final class TaskCreationPlanner {
                 planEnd,
                 false,
                 null,
-                loopBasis);
+                loopBasis,
+                doctorNextDate);
     }
 
     /**
@@ -243,7 +278,8 @@ public final class TaskCreationPlanner {
                 planEnd,
                 true,
                 null,
-                loopBasis);
+                loopBasis,
+                null); // 新入组行 doctor_next_date 恒 NULL（E21-T06 登记只落在既有入组）
     }
 
     /**
@@ -278,6 +314,27 @@ public final class TaskCreationPlanner {
             LocalDate pausedFrom,
             LocalDate planEnd,
             LoopBasis loopBasis) {
+        return planForResume(
+                nodes,
+                enrollmentMode,
+                basisDate,
+                logicalDate,
+                pausedFrom,
+                planEnd,
+                loopBasis,
+                null);
+    }
+
+    /** 恢复当天的排期（E21-T08 起带医生指定下次随访日期；暂停期内医生登记照常生效——恢复后下一次按医生日期）。 */
+    public static PlanResult planForResume(
+            List<NodeDef> nodes,
+            String enrollmentMode,
+            LocalDate basisDate,
+            LocalDate logicalDate,
+            LocalDate pausedFrom,
+            LocalDate planEnd,
+            LoopBasis loopBasis,
+            LocalDate doctorNextDate) {
         return schedule(
                 nodes,
                 enrollmentMode,
@@ -287,7 +344,8 @@ public final class TaskCreationPlanner {
                 planEnd,
                 false,
                 pausedFrom,
-                loopBasis);
+                loopBasis,
+                doctorNextDate);
     }
 
     /**
@@ -359,7 +417,10 @@ public final class TaskCreationPlanner {
                 node.windowAfterUnit().toUpperCase());
     }
 
-    /** 入口共用的排期主干（atEnrollment = true 按入组即建口径；pausedFrom 非空按恢复补偿口径；loopBasis = 滚动循环输入，E21-T07）。 */
+    /**
+     * 入口共用的排期主干（atEnrollment = true 按入组即建口径；pausedFrom 非空按恢复补偿口径；loopBasis = 滚动循环输入，E21-T07；
+     * doctorNextDate 非空 = 医生指定下次随访日期，E21-T08 后置覆盖「下一次」）。
+     */
     private static PlanResult schedule(
             List<NodeDef> nodes,
             String enrollmentMode,
@@ -369,11 +430,15 @@ public final class TaskCreationPlanner {
             LocalDate planEnd,
             boolean atEnrollment,
             LocalDate pausedFrom,
-            LoopBasis loopBasis) {
+            LoopBasis loopBasis,
+            LocalDate doctorNextDate) {
         Map<Long, NodeDef> subplans = new LinkedHashMap<>();
+        Map<Long, NodeDef> nodesById = new LinkedHashMap<>();
         for (NodeDef node : nodes) {
             if ("SUBPLAN".equals(node.nodeType())) {
                 subplans.put(node.id(), node);
+            } else {
+                nodesById.put(node.id(), node);
             }
         }
         // 首次抑制的比对集（OQ-139②）：当前模式下生效的非滚动节点的计划日期（FIXED 取全部次数，其余取第 1 次——A / B 年度 CYCLE 节点无穷次，只比对首次已覆盖
@@ -453,7 +518,107 @@ public final class TaskCreationPlanner {
                 Comparator.comparing(PlannedTask::openDate)
                         .thenComparing(PlannedTask::planDate)
                         .thenComparing(PlannedTask::nodeId));
+        if (doctorNextDate != null) {
+            next =
+                    applyDoctorNextDate(
+                            nodesById,
+                            due,
+                            next,
+                            doctorNextDate,
+                            logicalDate,
+                            enrolledOn,
+                            atEnrollment,
+                            pausedFrom);
+        }
         return new PlanResult(List.copyOf(due), next);
+    }
+
+    /**
+     * 医生指定下次随访日期的后置覆盖（E21-T08 / C-FU-005，OQ-141 暂行口径）：目标 = 默认排期中开启最早的一次（due ∪ next，与 due 排序同口径 开启日
+     * → 计划日 → 节点），该次的计划日期换成医生日期、窗口按目标节点的宽度围绕展开； 只影响这一次——
+     *
+     * <ul>
+     *   <li>医生窗口已开启（开启日不晚于逻辑日）：按覆盖后日期组建 due（创建方式沿用 classify 口径），目标原本是 next 时缓存清空（滚动一次只排下一次）；
+     *   <li>医生窗口未开启：目标从 due 移除（不按默认日期创建，等医生窗口开启日再建——每日重放同一判定），next 保持计划默认（不动 next_plan_date 缓存， 展示侧
+     *       COALESCE(doctor_next_date) 医生日期优先，OQ-138③）；
+     *   <li>无目标（计划已排完 / 全被抑制）：不动，登记保持（下次配置变化或新次数再消费）。
+     * </ul>
+     */
+    private static PlannedTask applyDoctorNextDate(
+            Map<Long, NodeDef> nodesById,
+            List<PlannedTask> due,
+            PlannedTask next,
+            LocalDate doctorNextDate,
+            LocalDate logicalDate,
+            LocalDate enrolledOn,
+            boolean atEnrollment,
+            LocalDate pausedFrom) {
+        PlannedTask target = null;
+        for (PlannedTask task : due) {
+            if (isEarlier(task, target)) {
+                target = task;
+            }
+        }
+        if (isEarlier(next, target)) {
+            target = next;
+        }
+        if (target == null) {
+            return next; // 无可覆盖次数：登记保持，不消费
+        }
+        NodeDef node = nodesById.get(target.nodeId());
+        if (node == null) {
+            return next; // 防御：节点已不在配置里
+        }
+        PlanDateCalculator.NodeSchedule schedule =
+                PlanDateCalculator.scheduleFromPlanDate(timingOf(node), doctorNextDate);
+        if (schedule.openDate().isAfter(logicalDate)) {
+            // 医生窗口未开启：不按默认日期创建（即使默认窗口已开），等开启日再建
+            due.remove(target);
+            return next;
+        }
+        String createType =
+                classify(node, schedule, logicalDate, enrolledOn, atEnrollment, pausedFrom);
+        if (createType == null) {
+            due.remove(target); // 入组前已结束窗口 + SKIP（Q14）：不建，登记保持（防御路径）
+            return next;
+        }
+        PlannedTask overridden =
+                new PlannedTask(
+                        target.nodeId(),
+                        target.occurrence(),
+                        schedule.planDate(),
+                        schedule.remindStart(),
+                        schedule.windowStart(),
+                        schedule.windowEnd(),
+                        schedule.openDate(),
+                        createType,
+                        true);
+        due.remove(target);
+        due.add(overridden);
+        due.sort(
+                Comparator.comparing(PlannedTask::openDate)
+                        .thenComparing(PlannedTask::planDate)
+                        .thenComparing(PlannedTask::nodeId));
+        return target == next ? null : next; // 目标进 due 后滚动节点无下一次（缓存清空，下次运行按已建行推进）
+    }
+
+    /** 排序口径（与 due 一致）：开启日 → 计划日 → 节点 id；null 恒排最后。 */
+    private static boolean isEarlier(PlannedTask candidate, PlannedTask baseline) {
+        if (candidate == null) {
+            return false;
+        }
+        if (baseline == null) {
+            return true;
+        }
+        int byOpen = candidate.openDate().compareTo(baseline.openDate());
+        if (byOpen != 0) {
+            return byOpen < 0;
+        }
+        int byPlan = candidate.planDate().compareTo(baseline.planDate());
+        if (byPlan != 0) {
+            return byPlan < 0;
+        }
+        return candidate.nodeId() < baseline.nodeId();
     }
 
     /**
@@ -617,6 +782,7 @@ public final class TaskCreationPlanner {
                 schedule.windowStart(),
                 schedule.windowEnd(),
                 schedule.openDate(),
-                createType);
+                createType,
+                false);
     }
 }

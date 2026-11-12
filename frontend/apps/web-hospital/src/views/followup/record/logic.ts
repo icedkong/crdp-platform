@@ -14,6 +14,8 @@ import type {
   RecordTaskContext,
 } from '@crdp/api';
 
+import { addDateUnit } from '@crdp/rules';
+
 /** 顶部横幅（pages.md §5.1，文案照抄）。 */
 export interface WorkbenchBanner {
   key:
@@ -160,6 +162,72 @@ export function missingRequiredText(count: number): string {
 export function nextVisitText(context: null | RecordTaskContext): string {
   if (!context?.nextPlanDate) return '';
   return `下次随访 · 计划 ${context.nextPlanDate}（按计划自动生成）`;
+}
+
+// ------------------------------------------------------- E21-T08 / C-FU-005 医生指定下次随访时间
+
+/** 「下次随访时间」稳定键（模板字段编码 next_visit_date 定位；A / B 模板无该字段 → null）。 */
+export function nextVisitFieldKey(schema: FormSchema | null): null | string {
+  if (!schema) return null;
+  for (const category of schema.categories) {
+    for (const field of category.fields) {
+      if (field.code === 'next_visit_date') {
+        return field.key;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * 提交校验（pages.md §5.1 照抄）：「下次随访时间不能早于或等于本次随访日期」「不能早于今天」；
+ * 返回文案（空 = 通过）。后端登记侧对早于今天的值忽略（OQ-138③ 暂行），前端照设计文档拦截；
+ * 补录的历史记录照填（提示「只保存」，见 nextVisitNote）。
+ */
+export function nextVisitIssueText(
+  value: unknown,
+  visitDate: null | string,
+  today: () => string = () => new Date().toISOString().slice(0, 10),
+): string {
+  if (typeof value !== 'string' || !value) return '';
+  if (visitDate && value <= visitDate) {
+    return '下次随访时间不能早于或等于本次随访日期';
+  }
+  if (value < today()) return '下次随访时间不能早于今天';
+  return '';
+}
+
+/** 两个 ISO 日期的天数差（b − a；解析失败 null）。 */
+function daysBetween(a: string, b: string): null | number {
+  const from = new Date(`${a}T00:00:00Z`).getTime();
+  const to = new Date(`${b}T00:00:00Z`).getTime();
+  if (Number.isNaN(from) || Number.isNaN(to)) return null;
+  return Math.round((to - from) / 86_400_000);
+}
+
+/**
+ * 窗口预览（pages.md §5.1「= 下次计划日期；窗口 …」）：按<b>当前任务节点</b>的窗口宽度
+ * （plan_date 与 window_start / window_end 的前后天数）围绕医生指定日期展开——滚动循环节点
+ * （C 常规 / ERI）的下一次同节点同宽度；跨到不同节点的次数宽度随实际排期（后端调度为准）。
+ * 无任务上下文（补录 / 计划外）或未填返回 null。
+ */
+export function nextVisitWindowPreviewOf(
+  value: unknown,
+  context: null | RecordTaskContext,
+): null | { end: string; start: string } {
+  if (typeof value !== 'string' || !value || !context) return null;
+  const before = daysBetween(context.windowStart, context.planDate);
+  const after = daysBetween(context.planDate, context.windowEnd);
+  if (before === null || after === null) return null;
+  return {
+    start: addDateUnit(value, -before, 'DAY'),
+    end: addDateUnit(value, after, 'DAY'),
+  };
+}
+
+/** 字段旁补充提示（pages.md §5.1）：补录「（补录：只保存）」；常规 / 计划外为空。 */
+export function nextVisitNote(source: null | string): null | string {
+  return source === 'BACKFILL' ? '补录：只保存' : null;
 }
 
 /**

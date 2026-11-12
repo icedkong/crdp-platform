@@ -21,7 +21,7 @@ public interface FollowupTaskMapper {
 
     /**
      * 可调入组（患者与计划版本快照；enrolledOn = 入组日，作为「入组前已过窗口」的下界；pauseFrom / pauseTo =
-     * 最近一次暂停区间，停用补偿归属判定用，E14-T06）。
+     * 最近一次暂停区间，停用补偿归属判定用，E14-T06；doctorNextDate = 医生指定下次随访日期，E21-T08 消费用）。
      */
     record EnrollmentRow(
             long id,
@@ -31,7 +31,8 @@ public interface FollowupTaskMapper {
             String mode,
             LocalDate enrolledOn,
             LocalDate pauseFrom,
-            LocalDate pauseTo) {}
+            LocalDate pauseTo,
+            LocalDate doctorNextDate) {}
 
     /** 负责人解析上下文（A-FU-009 回落链：责任医生 → 病区默认负责人 → 待认领池）。 */
     record PatientOwnerRow(Long responsibleUserId, Long wardDefaultOwnerId) {}
@@ -50,7 +51,8 @@ public interface FollowupTaskMapper {
             """
             SELECT e.id, e.patient_id AS patientId, e.plan_id AS planId,
                    e.start_date AS startDate, e.mode, DATE(e.created_at) AS enrolledOn,
-                   DATE(e.pause_from) AS pauseFrom, DATE(e.pause_to) AS pauseTo
+                   DATE(e.pause_from) AS pauseFrom, DATE(e.pause_to) AS pauseTo,
+                   e.doctor_next_date AS doctorNextDate
             FROM fu_enrollment e
             JOIN fu_plan p ON p.id = e.plan_id
             JOIN pt_patient pt ON pt.id = e.patient_id
@@ -104,6 +106,22 @@ public interface FollowupTaskMapper {
     @IgnoreScope(reason = "滚动循环排期（E21-T07）读取入组快照列：只取日期值，不输出患者数据；" + "与 next_plan_date 缓存同口径")
     @Select("SELECT last_visit_date FROM fu_enrollment WHERE id = #{id}")
     LocalDate findLastVisitDate(@Param("id") long id);
+
+    /**
+     * 入组的医生指定下次随访日期（E21-T08 / C-FU-005 消费输入；恢复补偿等同步入口读取—— doctor_next_date 不进 EnrollmentRow
+     * 的入口单独取）。 只取单列日期，无患者数据输出。
+     */
+    @IgnoreScope(reason = "医生指定下次随访日期消费（E21-T08）读取入组登记列：只取日期值，不输出患者数据；" + "与 last_visit_date 快照同口径")
+    @Select("SELECT doctor_next_date FROM fu_enrollment WHERE id = #{id}")
+    LocalDate findDoctorNextDate(@Param("id") long id);
+
+    /**
+     * 清理已用的医生指定下次随访日期（E21-T08 / OQ-138③「清理已用值」——只影响下一次）： 覆盖任务创建（insert）或既有 PENDING
+     * 任务按医生日期重排（reschedule）后调用。定向 UPDATE，无 SELECT 输出；reason 进日志。
+     */
+    @IgnoreScope(reason = "医生指定下次随访日期消费（E21-T08）：按入组 id 定向 UPDATE 清理已用值（调度事务内），" + "无 SELECT 输出")
+    @Update("UPDATE fu_enrollment SET doctor_next_date = NULL WHERE id = #{id}")
+    int clearDoctorNextDate(@Param("id") long id);
 
     /** 入组已排任务行的节点 / 次数 / 计划日期（E21-T07 滚动循环推进状态：按节点、次数升序）。只取排期依据列，无患者数据输出。 */
     record TaskOccurrenceRow(long nodeId, int occurrence, LocalDate planDate) {}

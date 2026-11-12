@@ -5,7 +5,11 @@ import type {
   RecordPatientBrief,
   RecordTaskContext,
 } from '@crdp/api';
-import type { AutoSaveTrigger, PreviousRecord } from '@crdp/form-engine';
+import type {
+  AutoSaveTrigger,
+  NextVisitAffordance,
+  PreviousRecord,
+} from '@crdp/form-engine';
 import type { CategoryProgress, CompareHit } from '@crdp/rules';
 
 import type { CompareReportPaneReport } from '#/components/followup/compare-report-pane.vue';
@@ -77,7 +81,11 @@ import {
   headerSummary,
   headerTitle,
   missingRequiredText,
+  nextVisitFieldKey,
+  nextVisitIssueText,
+  nextVisitNote,
   nextVisitText,
+  nextVisitWindowPreviewOf,
   readonlyBanner,
   rendererContextOf,
   submitConfirmText,
@@ -274,6 +282,31 @@ const entrySummary = computed(() =>
     visitNo: visitNo.value,
   }),
 );
+
+/**
+ * 「下次随访时间」字段的录入辅助（E21-T08 / C-FU-005，Q05）：C 程控表单（f333）专用，
+ * A / B 模板无该字段编码 → null 整体不生效。基准 = 本次随访日期（表单 ?? 记录；缺省由
+ * 渲染器回落今天）；窗口预览按当前任务节点的窗口宽度围绕已填日期展开；补录提示「只保存」。
+ */
+const hasNextVisitField = computed(
+  () => nextVisitFieldKey(schema.value) !== null,
+);
+
+const nextVisitAffordance = computed<NextVisitAffordance | null>(() => {
+  const key = nextVisitFieldKey(schema.value);
+  if (!key || readonly.value) return null;
+  return {
+    baseDate: visitDate() ?? recordVisitDate.value ?? null,
+    note: nextVisitNote(source.value),
+    windowPreview: nextVisitWindowPreviewOf(data.value[key], context.value),
+  };
+});
+
+/** 提交 / 保存修改前的「下次随访时间」校验（pages.md §5.1 照抄）；空 = 通过。 */
+function nextVisitBlocked(): string {
+  const key = nextVisitFieldKey(schema.value);
+  return key ? nextVisitIssueText(data.value[key], effectiveVisitDate()) : '';
+}
 
 // ---------------------------------------------------------------- 对照报告单分屏（E16-T11 / A-ATT-019、C-FU-017）
 
@@ -607,6 +640,12 @@ async function handleSubmit() {
     renderer.value?.focusFirstError();
     return;
   }
+  // C-FU-005（pages.md §5.1 照抄）：下次随访时间不能早于或等于本次随访日期、不能早于今天
+  const nextVisitIssue = nextVisitBlocked();
+  if (nextVisitIssue) {
+    message.warning(nextVisitIssue);
+    return;
+  }
   // C-FU-024 重复记录提示：同一患者同一随访日期已有记录时先确认「确定继续？」再提交
   const duplicate = await checkDuplicateOfCurrent();
   if (duplicate) {
@@ -702,6 +741,12 @@ async function handleSaveEdit() {
     showErrors.value = true;
     message.warning(missingRequiredText(result.missingRequired.length));
     renderer.value?.focusFirstError();
+    return;
+  }
+  // 修改同样覆盖 doctor_next_date（E21-T06 / SW-10）：校验口径与提交一致（C-FU-005）
+  const editNextVisitIssue = nextVisitBlocked();
+  if (editNextVisitIssue) {
+    message.warning(editNextVisitIssue);
     return;
   }
   if (savedData.value && !hasChanges(savedData.value, data.value)) {
@@ -974,6 +1019,7 @@ function handleJump(key: string) {
               :highlight-enabled="highlightEnabled"
               :meta="meta"
               :mode="readonly ? 'readonly' : 'edit'"
+              :next-visit="nextVisitAffordance"
               :previous="previousRecord"
               :schema="schema"
               :show-errors="showErrors"
@@ -981,7 +1027,12 @@ function handleJump(key: string) {
               @highlight="onHighlight"
               @progress="progressItems = $event"
             />
-            <div v-if="nextVisitText(context)" class="next-visit">
+            <!-- A / B：只读行（按计划自动生成）；C（模板含下次随访时间字段）由表单字段 +
+                 间隔快捷 / 窗口预览承载（E21-T08 / C-FU-005），不再重复只读行 -->
+            <div
+              v-if="!hasNextVisitField && nextVisitText(context)"
+              class="next-visit"
+            >
               {{ nextVisitText(context) }}
             </div>
           </div>
