@@ -53,6 +53,7 @@ import CategoryBar from '#/components/followup/category-bar.vue';
 import {
   COMPARE_QUERY_KEY,
   compareReportIdOf,
+  transcribeActiveOf,
 } from '#/components/followup/compare-entry-logic';
 import CompareReportPane from '#/components/followup/compare-report-pane.vue';
 import ConflictBanner from '#/components/followup/conflict-banner.vue';
@@ -90,6 +91,7 @@ import {
   rendererContextOf,
   submitConfirmText,
   submitSuccessMessage,
+  transcribeAppendedText,
 } from './logic';
 
 defineOptions({ name: 'FollowupRecordForm' });
@@ -360,6 +362,13 @@ async function loadCompareReport() {
     message.error('对照报告单加载失败，请稍后重试');
   }
 }
+
+/**
+ * 转录态（E21-T17 / C-SCAN-012：?compare= 报告单 id &transcribe=1）：提交 / 保存修改
+ * 带 transcribeReportId，同一事务把报告单自动加入该记录位置并置「已电子化」；普通
+ * 对照录入（只带 compare）不改电子化状态（如对照心脏超声报告录随访）。
+ */
+const transcribing = computed(() => transcribeActiveOf(route.query));
 
 watch(compareReportId, () => void loadCompareReport());
 
@@ -691,10 +700,14 @@ async function checkDuplicateOfCurrent(): Promise<boolean> {
 async function doSubmit() {
   submitting.value = true;
   try {
-    await submitRecord(recordId.value, {
+    const result = await submitRecord(recordId.value, {
       baseVersion: version.value,
       data: data.value,
       dataMeta: meta.value,
+      // 转录态提交（E21-T17）：同事务完成转录（报告单自动置「已电子化」）
+      transcribeReportId: transcribing.value
+        ? (compareReportId.value ?? undefined)
+        : undefined,
     });
     submitted.value = true;
     status.value = 'SUBMITTED';
@@ -705,7 +718,7 @@ async function doSubmit() {
         deathSelected.value,
         context.value !== null,
         source.value,
-      ),
+      ) + transcribeAppendedText(result.transcribedReportId),
     );
   } catch (error) {
     message.error('提交失败，请稍后重试');
@@ -770,12 +783,18 @@ async function doSaveEdit() {
       data: data.value,
       dataMeta: meta.value,
       reason: editSessionReason,
+      // 转录态保存修改（E21-T17）：位置中已有已提交记录的对照录入同样完成转录
+      transcribeReportId: transcribing.value
+        ? (compareReportId.value ?? undefined)
+        : undefined,
     });
     version.value = result.version;
     savedData.value = { ...data.value };
     editing.value = false;
     message.success(
-      `已保存修改（v${result.version}），字段级历史已记录（${result.fieldChanges} 项）`,
+      `已保存修改（v${result.version}），字段级历史已记录（${result.fieldChanges} 项）${transcribeAppendedText(
+        result.transcribedReportId,
+      )}`,
     );
   } catch (error) {
     message.error('保存修改失败，请稍后重试');

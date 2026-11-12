@@ -56,7 +56,9 @@ public class RecordEntryController {
             summary =
                     "提交（A-FU-005「提交后任务完成」）：完整校验（42200）→ SUBMITTED（baseVersion "
                             + "过期 40900、已提交 40901）→ 字段历史 → 任务完成（完成方式按窗口派生，"
-                            + "已过直接录入期 40901 只能历史补录）→ 是否死亡 = 是时终止该患者未开始任务")
+                            + "已过直接录入期 40901 只能历史补录）→ 是否死亡 = 是时终止该患者未开始任务；"
+                            + "E21-T17 / C-SCAN-012：transcribeReportId 非空 = 转录态提交，同一事务把报告单"
+                            + "自动加入该记录位置并置「已电子化」（scan_progress 关闭 40301），结果附 transcribedReportId")
     @PostMapping("/{id}/submit")
     @RequireModule("followup")
     @RequiresPermission("followup:record:edit")
@@ -68,7 +70,10 @@ public class RecordEntryController {
                         body == null
                                 ? null
                                 : new RecordEntryService.SubmitCommand(
-                                        body.baseVersion(), body.data(), body.dataMeta())));
+                                        body.baseVersion(),
+                                        body.data(),
+                                        body.dataMeta(),
+                                        body.transcribeReportId())));
     }
 
     @Operation(
@@ -103,7 +108,8 @@ public class RecordEntryController {
                                         body.baseVersion(),
                                         body.data(),
                                         body.dataMeta(),
-                                        body.reason())));
+                                        body.reason(),
+                                        body.transcribeReportId())));
     }
 
     @Operation(
@@ -119,19 +125,29 @@ public class RecordEntryController {
         return ApiResponse.ok(null);
     }
 
-    /** 提交请求体：data 全量、baseVersion 乐观锁（与草稿同口径）。 */
+    /**
+     * 提交请求体：data 全量、baseVersion 乐观锁（与草稿同口径）；transcribeReportId 非空 = 转录态 （E21-T17 / C-SCAN-012：表单页
+     * ?compare= 报告单 id &transcribe=1 带入，提交后报告单自动置「已电子化」）。
+     */
     public record SubmitBody(
-            Integer baseVersion, Map<String, Object> data, Map<String, Object> dataMeta) {}
+            Integer baseVersion,
+            Map<String, Object> data,
+            Map<String, Object> dataMeta,
+            Long transcribeReportId) {}
 
     /** 开始修改请求体（ReasonModal「开始修改」带入的原因，写入审计）。 */
     public record EditSessionBody(String reason) {}
 
-    /** 保存修改请求体（followup.md §3：baseVersion / data / dataMeta / reason 必填）。 */
+    /**
+     * 保存修改请求体（followup.md §3：baseVersion / data / dataMeta / reason 必填；transcribeReportId 同
+     * SubmitBody）。
+     */
     public record UpdateBody(
             Integer baseVersion,
             Map<String, Object> data,
             Map<String, Object> dataMeta,
-            String reason) {}
+            String reason,
+            Long transcribeReportId) {}
 
     /** 删除请求体（reason 必填，C-FU-026）。 */
     public record DeleteBody(String reason) {}

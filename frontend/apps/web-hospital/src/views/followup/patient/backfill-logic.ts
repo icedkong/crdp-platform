@@ -36,6 +36,22 @@ export function backfillDateError(
 }
 
 /**
+ * 转录预填日期（E21-T17 / C-SCAN-012「没有时新建补录记录」）：preset（报告单的报告时间）
+ * 是合法的过去日期时用它，否则（空 / 当天及以后 / 解析失败）回落默认补录日期。
+ */
+export function resolvePresetVisitDate(
+  preset: null | string,
+  today = new Date(),
+): string {
+  const sliced = preset ? preset.slice(0, 10) : '';
+  const parsed = dayjs(sliced);
+  if (sliced && parsed.isValid() && !backfillDateError(sliced, today)) {
+    return sliced;
+  }
+  return defaultBackfillDate(today);
+}
+
+/**
  * 时间轴节点打开路由（components.md §9 open 事件）：已关联记录直达表单页；
  * 未开始的任务（PENDING 等）先经 /tasks/{id}/start 换 recordId（detail 页处理，
  * 本函数只给出路由形态）；计划中（canOpen=false）返回 null。

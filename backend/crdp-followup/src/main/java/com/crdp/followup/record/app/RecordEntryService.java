@@ -73,6 +73,7 @@ public class RecordEntryService {
     private final com.crdp.followup.record.infra.mapper.RecordFeatureMapper features;
     private final com.crdp.followup.plan.app.PlanSwitchService planSwitch;
     private final FollowupSequenceService sequences;
+    private final com.crdp.followup.report.app.ReportTranscribeService reportTranscribe;
 
     public RecordEntryService(
             FollowupRecordService recordService,
@@ -91,7 +92,8 @@ public class RecordEntryService {
             com.crdp.followup.record.infra.mapper.FollowupRecordMapper recordMapper,
             com.crdp.followup.record.infra.mapper.RecordFeatureMapper features,
             com.crdp.followup.plan.app.PlanSwitchService planSwitch,
-            FollowupSequenceService sequences) {
+            FollowupSequenceService sequences,
+            com.crdp.followup.report.app.ReportTranscribeService reportTranscribe) {
         this.recordService = recordService;
         this.formService = formService;
         this.fieldHistory = fieldHistory;
@@ -109,6 +111,7 @@ public class RecordEntryService {
         this.features = features;
         this.planSwitch = planSwitch;
         this.sequences = sequences;
+        this.reportTranscribe = reportTranscribe;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -171,14 +174,15 @@ public class RecordEntryService {
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record EntryDefaultsView(String doctorId, String doctorName) {}
 
-    /** 提交结果：任务终态与完成方式（「提交后任务完成」验收位）+ 字段历史条数与软校验警告。 */
+    /** 提交结果：任务终态与完成方式（「提交后任务完成」验收位）+ 字段历史条数与软校验警告；E21-T17 起转录态附 transcribedReportId。 */
     public record SubmitResultView(
             String recordId,
             String taskId,
             String taskStatus,
             String completeKind,
             int fieldChanges,
-            List<WarningView> warnings) {}
+            List<WarningView> warnings,
+            String transcribedReportId) {}
 
     /** 软校验警告（不拦截提交，前端 yellow 提示口径，A-FLD-003「提示但可保存」）。 */
     public record WarningView(String key, String message) {}
@@ -186,16 +190,26 @@ public class RecordEntryService {
     /** 开始修改已提交记录（edit-session）结果：记录当前 version（PUT 的 baseVersion）。 */
     public record EditSessionView(String recordId, int version, String status) {}
 
-    /** 保存修改已提交记录（PUT）结果：新 version + 字段历史条数与软校验警告（与提交同形，去任务联动位）。 */
+    /**
+     * 保存修改已提交记录（PUT）结果：新 version + 字段历史条数与软校验警告（与提交同形，去任务联动位）；E21-T17 起转录态附 transcribedReportId。
+     */
     public record UpdateResultView(
-            String recordId, int version, int fieldChanges, List<WarningView> warnings) {}
+            String recordId,
+            int version,
+            int fieldChanges,
+            List<WarningView> warnings,
+            String transcribedReportId) {}
 
-    /** 保存修改请求（followup.md §3：baseVersion 乐观锁、data 全量、reason 必填——OQ-14 暂定 A / C 都必填）。 */
+    /**
+     * 保存修改请求（followup.md §3：baseVersion 乐观锁、data 全量、reason 必填——OQ-14 暂定 A / C
+     * 都必填；transcribeReportId 同 SubmitCommand，E21-T17）。
+     */
     public record UpdateCommand(
             Integer baseVersion,
             Map<String, Object> data,
             Map<String, Object> dataMeta,
-            String reason) {}
+            String reason,
+            Long transcribeReportId) {}
 
     // ---------------------------------------------------------------- 详情（表单页装配）
 
@@ -304,6 +318,14 @@ public class RecordEntryService {
                 recordId,
                 effectiveVisitDate(outcome.view()),
                 outcome.view().data());
+        // 转录完成联动（E21-T17 / C-SCAN-012：转录态提交同一事务）——报告单自动加入该记录位置并置「已电子化」
+        if (command.transcribeReportId() != null) {
+            reportTranscribe.completeTranscription(
+                    command.transcribeReportId(),
+                    recordId,
+                    outcome.view().patientId(),
+                    outcome.view().templateVersion());
+        }
         audit.append(
                 AuditEntry.operation("followup", "RECORD_SUBMIT")
                         .objectType("FU_RECORD")
@@ -331,12 +353,21 @@ public class RecordEntryService {
                 changes.size(),
                 outcome.warnings().stream()
                         .map(item -> new WarningView(item.key(), item.message()))
-                        .toList());
+                        .toList(),
+                command.transcribeReportId() == null
+                        ? null
+                        : String.valueOf(command.transcribeReportId()));
     }
 
-    /** 提交请求（data 全量、baseVersion 乐观锁——与草稿 / 已提交修改同口径）。 */
+    /**
+     * 提交请求（data 全量、baseVersion 乐观锁——与草稿 / 已提交修改同口径）。{@code transcribeReportId} 非空 = 转录态提交（E21-T17 /
+     * C-SCAN-012：表单页 {@code ?compare=<报告单 id>&transcribe=1} 带入）， 同一事务完成转录——报告单自动加入该记录位置并置「已电子化」。
+     */
     public record SubmitCommand(
-            Integer baseVersion, Map<String, Object> data, Map<String, Object> dataMeta) {}
+            Integer baseVersion,
+            Map<String, Object> data,
+            Map<String, Object> dataMeta,
+            Long transcribeReportId) {}
 
     // ------------------------------------------------------- 修改 / 删除已提交记录（E21-T11 / C-FU-026、Q17）
 
@@ -420,13 +451,24 @@ public class RecordEntryService {
                 recordId,
                 effectiveVisitDate(outcome.view()),
                 outcome.view().data());
+        // 转录完成联动（E21-T17 / C-SCAN-012：位置中已有已提交记录的对照录入，保存修改同一事务完成转录）
+        if (command.transcribeReportId() != null) {
+            reportTranscribe.completeTranscription(
+                    command.transcribeReportId(),
+                    recordId,
+                    outcome.view().patientId(),
+                    outcome.view().templateVersion());
+        }
         return new UpdateResultView(
                 String.valueOf(recordId),
                 outcome.view().version(),
                 changes.size(),
                 outcome.warnings().stream()
                         .map(item -> new WarningView(item.key(), item.message()))
-                        .toList());
+                        .toList(),
+                command.transcribeReportId() == null
+                        ? null
+                        : String.valueOf(command.transcribeReportId()));
     }
 
     /**

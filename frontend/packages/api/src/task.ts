@@ -248,6 +248,8 @@ export interface RecordEditSessionView {
 export interface RecordUpdateResult {
   fieldChanges: number;
   recordId: string;
+  /** E21-T17 / C-SCAN-012：转录态保存修改完成的报告单 id（非转录态为空）。 */
+  transcribedReportId?: null | string;
   version: number;
   warnings: Array<{ key: string; message: string }>;
 }
@@ -276,6 +278,8 @@ export interface RecordSubmitResult {
   recordId: string;
   taskId?: null | string;
   taskStatus?: null | TaskStatus;
+  /** E21-T17 / C-SCAN-012：转录态提交完成的报告单 id（提交后自动置「已电子化」；非转录态为空）。 */
+  transcribedReportId?: null | string;
   warnings: Array<{ key: string; message: string }>;
 }
 

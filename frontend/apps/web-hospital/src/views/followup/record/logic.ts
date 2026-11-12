@@ -142,6 +142,16 @@ export function submitSuccessMessage(
     : '已提交；按计划生成下次任务';
 }
 
+/**
+ * 转录态提交成功追加文案（E21-T17 / C-SCAN-012「保存后变为已电子化」）：
+ * 报告单已自动置「已电子化」；非转录态（transcribedReportId 为空）原样返回。
+ */
+export function transcribeAppendedText(
+  transcribedReportId: null | string | undefined,
+): string {
+  return transcribedReportId ? '；报告单已标记为「已电子化」' : '';
+}
+
 /** 提交确认弹窗文案（补录 / 计划外记录不联动任务完成）。 */
 export function submitConfirmText(
   hasTask: boolean,

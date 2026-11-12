@@ -9,8 +9,8 @@ import dayjs from 'dayjs';
 import { checkRecordDuplicate, createBackfillRecord } from '#/api/core/task';
 import {
   backfillDateError,
-  defaultBackfillDate,
   isBackfillDateDisabled,
+  resolvePresetVisitDate,
 } from '#/views/followup/patient/backfill-logic';
 
 /**
@@ -23,6 +23,10 @@ import {
 const props = defineProps<{
   open: boolean;
   patientId: string;
+  /** 预填随访日期（E21-T17 转录：取报告单的报告时间；无效 / 当天及以后回落默认值）。 */
+  presetVisitDate?: null | string;
+  /** 转录模式（E21-T17 / C-SCAN-012：位置中没有随访记录 → 新建补录记录并加入位置）。 */
+  transcribe?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -36,7 +40,13 @@ const submitting = ref(false);
 watch(
   () => props.open,
   (open) => {
-    if (open) visitDate.value = dayjs(defaultBackfillDate());
+    if (!open) return;
+    // 转录模式优先预填报告单的报告时间（E21-T17；非法 / 当天及以后回落默认补录日期）
+    visitDate.value = dayjs(
+      resolvePresetVisitDate(
+        props.transcribe ? (props.presetVisitDate ?? null) : null,
+      ),
+    );
   },
 );
 
@@ -99,13 +109,17 @@ function handleCancel() {
     :confirm-loading="submitting"
     :open="open"
     ok-text="创建并录入"
-    title="历史补录（A-FU-014）"
+    :title="transcribe ? '新建补录记录（转录）' : '历史补录（A-FU-014）'"
     :width="480"
     @cancel="handleCancel"
     @ok="handleOk"
   >
     <p class="hint">
-      为过去日期补录随访记录：不需要任务、不受窗口限制，记录标记为补录。创建后在新标签页打开随访表单填写并提交。
+      {{
+        transcribe
+          ? '位置中没有随访记录：先新建一条补录记录，创建后在新标签页分屏对照扫描件录入；提交后记录自动加入报告单位置，报告单置为「已电子化」。'
+          : '为过去日期补录随访记录：不需要任务、不受窗口限制，记录标记为补录。创建后在新标签页打开随访表单填写并提交。'
+      }}
     </p>
     <a-form-item
       :validate-status="dateError ? 'error' : ''"

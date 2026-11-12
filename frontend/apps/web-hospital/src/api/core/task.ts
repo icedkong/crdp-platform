@@ -110,13 +110,18 @@ export function saveRecordDraft(
   );
 }
 
-/** 提交（完整校验 42200；成功后任务完成、写字段历史与审计）。 */
+/**
+ * 提交（完整校验 42200；成功后任务完成、写字段历史与审计）。E21-T17 / C-SCAN-012：
+ * 转录态表单页（?compare= 报告单 id &transcribe=1）带 transcribeReportId——同一事务把
+ * 报告单自动加入该记录位置并置「已电子化」，结果附 transcribedReportId。
+ */
 export function submitRecord(
   recordId: string,
   body: {
     baseVersion: number;
     data: Record<string, unknown>;
     dataMeta?: Record<string, unknown>;
+    transcribeReportId?: string;
   },
 ) {
   return requestClient.post<RecordSubmitResult>(
@@ -167,6 +172,8 @@ export function updateSubmittedRecord(
     data: Record<string, unknown>;
     dataMeta?: Record<string, unknown>;
     reason: string;
+    /** E21-T17 / C-SCAN-012：转录态保存修改同样完成转录（位置中已有已提交记录的对照录入）。 */
+    transcribeReportId?: string;
   },
 ) {
   return requestClient.put<RecordUpdateResult>(

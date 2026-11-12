@@ -31,6 +31,7 @@ import {
   contactSourceText,
   PATIENT_STATUS_TEXT,
   reportLocationText,
+  reportRowDigitizeStatusText,
   sectionDisplaySchema,
   showBaselineLock,
   showBaselineUnlock,
@@ -90,7 +91,11 @@ import AudioPlayer from '#/components/followup/audio-player.vue';
 import BackfillRecordModal from '#/components/followup/backfill-record-modal.vue';
 import BatchUploadDialog from '#/components/followup/batch-upload-dialog.vue';
 import CategoryBar from '#/components/followup/category-bar.vue';
-import { compareTargetsOf } from '#/components/followup/compare-entry-logic';
+import {
+  compareTargetsOf,
+  transcribableStatus,
+  transcribeTargetsOf,
+} from '#/components/followup/compare-entry-logic';
 import ContactLogModal from '#/components/followup/contact-log-modal.vue';
 import { downloadFileById } from '#/components/followup/file-download';
 import FollowupTimeline from '#/components/followup/followup-timeline.vue';
@@ -754,15 +759,24 @@ watch([reportTreeKey, reports], () => {
   reportsCardPage.value = 1;
 });
 
-const reportColumns = [
-  { dataIndex: 'typeName', title: '类型', width: 110 },
-  { dataIndex: 'name', title: '名称' },
-  { dataIndex: 'reportDate', title: '报告时间', width: 110 },
-  { dataIndex: 'locations', title: '位置' },
-  { dataIndex: 'creatorName', title: '上传人', width: 110 },
-  { dataIndex: 'createdAt', title: '上传时间', width: 150 },
-  { dataIndex: 'action', title: '操作', width: 140 },
-];
+// E21-T17：医院 C（scan_progress 开启）加「状态」列（pages.md §4.6 电子化状态；A / B 不显示）
+const reportColumns = computed(() => {
+  const columns = [
+    { dataIndex: 'typeName', title: '类型', width: 110 },
+    { dataIndex: 'name', title: '名称' },
+    { dataIndex: 'reportDate', title: '报告时间', width: 110 },
+    { dataIndex: 'locations', title: '位置' },
+  ];
+  if (scanProgressEnabled.value) {
+    columns.push({ dataIndex: 'digitizeStatus', title: '状态', width: 96 });
+  }
+  columns.push(
+    { dataIndex: 'creatorName', title: '上传人', width: 110 },
+    { dataIndex: 'createdAt', title: '上传时间', width: 150 },
+    { dataIndex: 'action', title: '操作', width: 170 },
+  );
+  return columns;
+});
 
 /** 位置列：标签「基线 · 病例基本信息」，超过 2 个折叠 +N，悬停看全部（pages.md §4.6）。 */
 function locationTags(row: ReportRow) {
@@ -838,6 +852,70 @@ function confirmCompareEntry() {
   compareChooseOpen.value = false;
   compareChooseTargets.value = [];
   if (target) window.open(target.route, '_blank');
+}
+
+// -------------- E21-T17 转录到结构化记录（C-SCAN-012 / C-FU-017：保存后自动「已电子化」）
+
+/** 电子化状态入口门槛：scan_progress 开关（A / B 不启用，A-ATT-018；后端 40301 兜底）。 */
+const scanProgressEnabled = computed(() => isFeatureEnabled('scan_progress'));
+
+/** 行内「转录到结构化记录」入口：开关 + 记录编辑权限 + 待录入 / 未设置（已电子化、无需录入不再给）。 */
+function rowTranscribable(row: ReportRow): boolean {
+  return (
+    scanProgressEnabled.value &&
+    hasPermission('followup:record:edit') &&
+    transcribableStatus(row.digitizeStatus)
+  );
+}
+
+/** 转录目标选择弹窗（位置中多条随访记录时选择，C-SCAN-012「多个时选择」）。 */
+const transcribeChooseOpen = ref(false);
+const transcribeChooseTargets = ref<CompareTarget[]>([]);
+const transcribeChooseKey = ref('');
+
+/** 转录新建补录上下文（位置中没有随访记录 → 新建补录记录并加入位置，OQ-131②）。 */
+const transcribeBackfillOpen = ref(false);
+const transcribeReport = ref<null | ReportRow>(null);
+
+function openTranscribeEntry(row: ReportRow) {
+  if (!rowTranscribable(row)) return;
+  const targets = transcribeTargetsOf(row);
+  const first = targets[0];
+  if (targets.length === 1 && first) {
+    window.open(first.route, '_blank'); // 一侧扫描件、一侧表单（CompareReportPane）
+    return;
+  }
+  if (targets.length > 1 && first) {
+    transcribeChooseKey.value = first.key;
+    transcribeChooseTargets.value = targets;
+    transcribeChooseOpen.value = true;
+    return;
+  }
+  // 位置中没有随访记录：新建补录记录（日期预填报告时间），提交后自动加入位置（C-FU-017）
+  transcribeReport.value = row;
+  transcribeBackfillOpen.value = true;
+}
+
+function confirmTranscribeEntry() {
+  const target = transcribeChooseTargets.value.find(
+    (item) => item.key === transcribeChooseKey.value,
+  );
+  transcribeChooseOpen.value = false;
+  transcribeChooseTargets.value = [];
+  if (target) window.open(target.route, '_blank');
+}
+
+/** 转录补录记录创建成功：新标签页打开转录态表单（?compare= 报告单 id &transcribe=1）。 */
+async function onTranscribeRecordCreated(recordId: string) {
+  const report = transcribeReport.value;
+  transcribeReport.value = null;
+  if (report) {
+    window.open(
+      `/followup/record/${recordId}?compare=${encodeURIComponent(report.id)}&transcribe=1`,
+      '_blank',
+    );
+  }
+  await loadReports();
 }
 
 // ---------------------------------------------------------------- E15-T04 沟通记录页签（pages.md §4.8）
@@ -1453,6 +1531,16 @@ const timelineLegendNote =
                   >
                     关联沟通记录
                   </Tag>
+                  <!-- E21-T17 / C-SCAN-011：手机卡片同口径的电子化状态 -->
+                  <StatusTag
+                    v-if="
+                      scanProgressEnabled &&
+                      reportRowDigitizeStatusText(row.digitizeStatus)
+                    "
+                    :status="
+                      reportRowDigitizeStatusText(row.digitizeStatus) ?? ''
+                    "
+                  />
                 </div>
                 <div
                   v-for="line in reportCardLines(row)"
@@ -1483,7 +1571,11 @@ const timelineLegendNote =
                   </template>
                 </div>
                 <div
-                  v-if="canDeleteReport || rowCompareTargets(row).length > 0"
+                  v-if="
+                    canDeleteReport ||
+                    rowCompareTargets(row).length > 0 ||
+                    rowTranscribable(row)
+                  "
                   class="card-line card-actions"
                 >
                   <!-- E16-T11 / A-ATT-019：手机卡片同口径的「对照录入」入口 -->
@@ -1494,6 +1586,15 @@ const timelineLegendNote =
                     @click.stop="openCompareEntry(row)"
                   >
                     对照录入
+                  </a>
+                  <!-- E21-T17 / C-SCAN-012：手机卡片同口径的「转录到结构化记录」入口 -->
+                  <a
+                    v-if="rowTranscribable(row)"
+                    class="report-transcribe"
+                    data-testid="report-card-transcribe"
+                    @click.stop="openTranscribeEntry(row)"
+                  >
+                    转录
                   </a>
                   <a
                     v-if="canDeleteReport"
@@ -1561,6 +1662,16 @@ const timelineLegendNote =
                   </Tooltip>
                 </template>
               </template>
+              <template v-else-if="column.dataIndex === 'digitizeStatus'">
+                <!-- E21-T17 / C-SCAN-011：电子化状态（待录入 / 已电子化 / 无需录入；未设置 —） -->
+                <StatusTag
+                  v-if="reportRowDigitizeStatusText(record.digitizeStatus)"
+                  :status="
+                    reportRowDigitizeStatusText(record.digitizeStatus) ?? ''
+                  "
+                />
+                <span v-else class="dim">—</span>
+              </template>
               <template v-else-if="column.dataIndex === 'creatorName'">
                 {{ record.creatorName ?? '—' }}
               </template>
@@ -1578,6 +1689,16 @@ const timelineLegendNote =
                 >
                   对照录入
                 </a>
+                <!-- E21-T17 / C-SCAN-012：转录到结构化记录（待录入 / 未设置才显示；
+                     位置中多条随访记录时先选择，没有时新建补录记录并加入位置） -->
+                <a
+                  v-if="rowTranscribable(record)"
+                  class="report-transcribe"
+                  data-testid="report-row-transcribe"
+                  @click.prevent="openTranscribeEntry(record)"
+                >
+                  转录
+                </a>
                 <!-- E16-T09 / A-ATT-007：删除（followup:scan:delete；无权限不显示，软删除须填原因） -->
                 <a
                   v-if="canDeleteReport"
@@ -1594,7 +1715,9 @@ const timelineLegendNote =
           <p class="hint">
             位置标签「基线 · 分类」「第N年随访 ·
             分组」；「未指定位置」的报告单在基线 /
-            随访页签左栏的「未指定位置」组补指定位置（E16-T14）；「对照录入」在新标签页打开该位置的表单并右侧分屏显示本报告单（E16-T11，多个位置时先选择）；行内「删除」为软删除、须填原因（E16-T09），逐文件预览与删除需报告单文件清单接口（随后续任务）。
+            随访页签左栏的「未指定位置」组补指定位置（E16-T14）；「对照录入」在新标签页打开该位置的表单并右侧分屏显示本报告单（E16-T11，多个位置时先选择）；医院
+            C
+            的「转录」打开同一分屏并在保存后把报告单自动置为「已电子化」、记录自动加入报告单位置（E21-T17，位置中没有随访记录时先新建补录记录）；行内「删除」为软删除、须填原因（E16-T09）。
           </p>
         </div>
       </div>
@@ -1934,6 +2057,35 @@ const timelineLegendNote =
       @update:open="previewOpen = $event"
     />
 
+    <!-- E21-T17 / C-SCAN-012：转录目标选择（位置中多条随访记录时选择；同记录整条 / 分组已去重） -->
+    <Modal
+      v-model:open="transcribeChooseOpen"
+      :ok-button-props="{ disabled: !transcribeChooseKey }"
+      ok-text="打开转录录入"
+      title="选择转录到的随访记录"
+      @ok="confirmTranscribeEntry"
+    >
+      <RadioGroup v-model:value="transcribeChooseKey" class="compare-choose">
+        <Radio
+          v-for="target in transcribeChooseTargets"
+          :key="target.key"
+          :value="target.key"
+        >
+          {{ target.label }}
+        </Radio>
+      </RadioGroup>
+      <p class="compare-choose-note">
+        将在新标签页打开该表单分屏对照扫描件录入；保存后报告单自动置为「已电子化」。
+      </p>
+    </Modal>
+    <!-- E21-T17 / C-SCAN-012：位置中没有随访记录 → 新建补录记录并加入位置（OQ-131②） -->
+    <BackfillRecordModal
+      v-model:open="transcribeBackfillOpen"
+      :patient-id="overview.id"
+      :preset-visit-date="transcribeReport?.reportDate ?? null"
+      transcribe
+      @created="onTranscribeRecordCreated"
+    />
     <!-- E16-T11 / A-ATT-019：报告单挂多个位置时选择要对照录入的表单（同一表单已去重） -->
     <Modal
       v-model:open="compareChooseOpen"
@@ -2000,6 +2152,11 @@ const timelineLegendNote =
 
 .unassigned {
   color: #fa8c16;
+}
+
+/* E21-T17 报告单行「转录」：与「对照录入」「删除」并排留 8px 间距 */
+.report-transcribe {
+  margin-right: 8px;
 }
 
 /* E16-T11 报告单行「对照录入」：与「删除」并排留 8px 间距 */

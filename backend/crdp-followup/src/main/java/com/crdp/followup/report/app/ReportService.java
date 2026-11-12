@@ -73,6 +73,11 @@ public class ReportService {
     private static final Map<String, String> DIGITIZE_LABEL =
             Map.of("PENDING", "待录入", "DONE", "已电子化", "NO_ENTRY", "无需录入");
 
+    /** 电子化状态显示名（同包转录服务复用；未知值原样返回，null 由调用方处理）。 */
+    static String digitizeStatusLabel(String status) {
+        return DIGITIZE_LABEL.getOrDefault(status, status);
+    }
+
     /** 来源标签（与患者时间轴同口径：历史补录 / 计划外随访，E15-T06 / T07）。 */
     private static final Map<String, String> SOURCE_LABEL =
             Map.of("BACKFILL", "历史补录", "UNPLANNED", "计划外随访", "TASK", "随访", "REMOTE", "远程监测");
