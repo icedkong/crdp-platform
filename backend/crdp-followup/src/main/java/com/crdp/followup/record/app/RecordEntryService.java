@@ -3,6 +3,7 @@ package com.crdp.followup.record.app;
 import com.crdp.followup.compare.app.CompareHighlightService;
 import com.crdp.followup.compare.app.CompareRuleService;
 import com.crdp.followup.compare.app.CompareSourceService;
+import com.crdp.followup.implant.app.DeviceContextService;
 import com.crdp.followup.plan.app.FollowupTerminationService;
 import com.crdp.followup.task.app.FollowupTaskStatusService;
 import com.crdp.followup.task.infra.mapper.FollowupTaskQueryMapper;
@@ -64,6 +65,7 @@ public class RecordEntryService {
     private final CompareSourceService compareSource;
     private final CompareRuleService compareRules;
     private final CompareHighlightService compareHighlights;
+    private final DeviceContextService deviceContext;
     private final CryptoService crypto;
     private final AuditLogger audit;
 
@@ -77,6 +79,7 @@ public class RecordEntryService {
             CompareSourceService compareSource,
             CompareRuleService compareRules,
             CompareHighlightService compareHighlights,
+            DeviceContextService deviceContext,
             CryptoService crypto,
             AuditLogger audit) {
         this.recordService = recordService;
@@ -88,6 +91,7 @@ public class RecordEntryService {
         this.compareSource = compareSource;
         this.compareRules = compareRules;
         this.compareHighlights = compareHighlights;
+        this.deviceContext = deviceContext;
         this.crypto = crypto;
         this.audit = audit;
     }
@@ -118,7 +122,9 @@ public class RecordEntryService {
      * 记录详情（followup.md §3；E15-T07 起附 source（TASK / BACKFILL）与 visitDate（补录的实际随访日期，A-FU-014）。
      * taskless 记录（补录）context 为 null、附 patient 摘要（表单页头幅：脱敏姓名 / 病案号 / 病区）。 E17-T02 起附
      * previous（A-FU-027 上一次记录解析：上一次已提交随访，无则基线回落；功能关闭或无启用规则为 null）； E17-T03 起附
-     * compareRules（该表单启用规则，前端实时标红与后端保存复算共用同一组规则，tech-plan §11）。
+     * compareRules（该表单启用规则，前端实时标红与后端保存复算共用同一组规则，tech-plan §11）；E21-T03 起附 device （器械上下文：按 visitDate
+     * 匹配当时在用的器械，任务录入回落当前器械；页面以 {@code { device: … }}} 传入 FormRenderer 的 context
+     * 驱动按器械条件显示，C-FU-009）。
      */
     public record RecordDetailView(
             String id,
@@ -132,6 +138,7 @@ public class RecordEntryService {
             Map<String, Object> data,
             Map<String, Object> dataMeta,
             TaskContextView context,
+            DeviceContextService.DeviceView device,
             CompareSourceService.PreviousView previous,
             List<CompareRuleService.RuleView> compareRules) {}
 
@@ -155,7 +162,8 @@ public class RecordEntryService {
 
     /**
      * 记录详情（40400：记录不存在；context 为 null = 记录未关联任务或越范围不可见，此时附 patient 摘要）。 E17-T03：previous +
-     * compareRules 成对下发（功能开关关闭或无启用规则均为 null，记录页正常返回）。
+     * compareRules 成对下发（功能开关关闭或无启用规则均为 null，记录页正常返回）； E21-T03：device 随记录下发（implant 开关关闭或无匹配器械为
+     * null，提交侧用同一上下文清空隐藏字段）。
      */
     public RecordDetailView detail(long recordId) {
         FollowupRecordService.RecordView record = recordService.record(recordId);
@@ -174,6 +182,7 @@ public class RecordEntryService {
                 record.data(),
                 record.dataMeta(),
                 context,
+                deviceContext.resolve(record.patientId(), record.visitDate()),
                 compareSource.resolve(
                         record.id(), record.patientId(), record.formCode(), record.visitDate()),
                 enabledRules.isEmpty() ? null : enabledRules);

@@ -8,7 +8,11 @@
  * - 「是否死亡」按模板字段编码 death 定位稳定键（与后端 RecordEntryService 同口径，不硬编码键名）；
  * - 下次随访只读行「下次随访 · 计划 …（按计划自动生成）」（fu_enrollment.next_plan_date 缓存）。
  */
-import type { FormSchema, RecordTaskContext } from '@crdp/api';
+import type {
+  FormSchema,
+  RecordDeviceContext,
+  RecordTaskContext,
+} from '@crdp/api';
 
 /** 顶部横幅（pages.md §5.1，文案照抄）。 */
 export interface WorkbenchBanner {
@@ -156,6 +160,18 @@ export function missingRequiredText(count: number): string {
 export function nextVisitText(context: null | RecordTaskContext): string {
   if (!context?.nextPlanDate) return '';
   return `下次随访 · 计划 ${context.nextPlanDate}（按计划自动生成）`;
+}
+
+/**
+ * 渲染器条件上下文（E21-T03 / C-FU-009）：记录详情下发的器械上下文包成
+ * `{ device }`（条件 DSL 按 ctx 点路径 device.type / device.hasRaLead / device.chambers
+ * 取值，components.md §10.2）；A / B 租户（implant 开关关闭）与无匹配器械为 null——
+ * ctx 断链 → 条件不成立 → 字段隐藏，与后端提交清空同一上下文。
+ */
+export function rendererContextOf(
+  device: null | RecordDeviceContext,
+): null | Record<string, unknown> {
+  return device ? { device } : null;
 }
 
 /** 顶栏标题：随访录入 · 患者（脱敏）；补录 / 计划外记录（无任务上下文）显示来源。 */

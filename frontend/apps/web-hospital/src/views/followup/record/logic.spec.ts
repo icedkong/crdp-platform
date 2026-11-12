@@ -5,7 +5,11 @@
  * 暂存差异只带变更键（null = 清空）；「是否死亡」按字段编码 death 定位；
  * 提交成功文案两态；下次随访只读行；顶栏标题与摘要。
  */
-import type { FormSchema, RecordTaskContext } from '@crdp/api';
+import type {
+  FormSchema,
+  RecordDeviceContext,
+  RecordTaskContext,
+} from '@crdp/api';
 
 import { describe, expect, it } from 'vitest';
 
@@ -20,6 +24,7 @@ import {
   missingRequiredText,
   nextVisitText,
   readonlyBanner,
+  rendererContextOf,
   submitConfirmText,
   submitSuccessMessage,
 } from './logic';
@@ -265,5 +270,25 @@ describe('draftRecordKey（E25-T02 本地草稿键：租户 + 用户 + 记录隔
   it('会话信息缺失时各段为空串，仍保持四段结构', () => {
     expect(draftRecordKey(undefined, undefined, '701')).toBe('::followup:701');
     expect(draftRecordKey('hosp-a', 2024, '9')).toBe('hosp-a:2024:followup:9');
+  });
+});
+
+describe('rendererContextOf（E21-T03 器械上下文：按器械条件显示的 ctx）', () => {
+  const crtD: RecordDeviceContext = {
+    chambers: 3,
+    current: true,
+    hasRaLead: true,
+    implantDate: '2026-03-10',
+    implantId: '701',
+    type: 'CRT_D',
+    typeLabel: 'CRT-D',
+  };
+
+  it('器械上下文包成 { device }（ctx 点路径 device.* 取值）', () => {
+    expect(rendererContextOf(crtD)).toEqual({ device: crtD });
+  });
+
+  it('无器械（A / B 租户、取出后）为 null——ctx 断链，条件字段隐藏', () => {
+    expect(rendererContextOf(null)).toBeNull();
   });
 });

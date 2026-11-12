@@ -3,6 +3,7 @@ package com.crdp.followup.implant.app;
 import com.crdp.followup.implant.infra.mapper.ImplantMapper;
 import com.crdp.followup.patient.infra.mapper.PatientMapper;
 import com.crdp.framework.datascope.DataScope;
+import java.time.LocalDate;
 import java.util.List;
 import org.springframework.stereotype.Component;
 
@@ -45,6 +46,12 @@ public class ImplantGateway {
     @DataScope(resource = "patient")
     public ImplantMapper.ImplantRow activeImplantOf(long patientId) {
         return implantMapper.findActiveImplant(patientId);
+    }
+
+    /** 日期当时在用的植入记录（E21-T03 / C-PAT-007；范围内无匹配 null）。 */
+    @DataScope(resource = "patient")
+    public ImplantMapper.ImplantRow implantAt(long patientId, LocalDate date) {
+        return implantMapper.findImplantAt(patientId, date);
     }
 
     /** 患者全部电极（范围内；越范围空清单）。 */

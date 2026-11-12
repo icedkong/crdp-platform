@@ -21,9 +21,9 @@
 
 患者登记（C-PAT-001 / OQ-71①）：`implant` 开关开启时 `POST /patients` 切 C 最小必填（姓名、性别、出生日期、病历号、科室、病区）且请求体须携带 `implant`（首条植入记录，同事务落库）；关闭时 A 出院登记口径不变、携带 `implant` 40001。
 
-当前器械（C-PAT-007）：状态为“在用”的植入记录；随访记录按**随访日期**关联当时在用的器械（补录同样按日期匹配），参数对比只与同一器械 / 同一电极的上一次比较。
+当前器械（C-PAT-007，**E21-T03 已实现**，`DeviceContextService`）：状态为“在用”的植入记录即当前器械；随访记录按**随访日期**关联当时在用的器械（补录同样按日期匹配）——区间 `[implant_date, end_date)`（已结束行的结束日期 = 新植入日期或取出日期，区间右开，**更换当日归新器械**）；`fu_record.visit_date` 为空（任务录入，随访日期在表单字段）回落当前器械。关联随用随算不落列（fu_record 带器械维度与对比过滤随 E21-T11，OQ-130③ / OQ-134③）；参数对比只与同一器械 / 同一电极的上一次比较（同前，随 E21-T11）。
 
-条件显示上下文（C-FU-009）：后端在 `GET /records/{id}` 的 `context` 中返回 `device.type`、`device.hasRaLead`、`device.chambers`，供 FormRenderer `visibleWhen` 使用（components.md §10）。
+条件显示上下文（C-FU-009 / C-FLD-005，**E21-T03 已实现**）：`GET /records/{id}` 附 `device` 字段（按记录随访日期匹配的器械，见上；implant 开关关闭或无匹配器械为 null）：`{ implantId, type, typeLabel, implantDate, hasRaLead, chambers, current }`；页面以 `{ device }` 传入 FormRenderer 的 `context` 供 `visibleWhen` / `requiredWhen` 使用（ctx 点路径 `device.type` / `device.hasRaLead` / `device.chambers`，components.md §10；`chambers` 为在用电极去重腔室数——AV 间期「双腔及以上」用 `gte 2`，形状由共享用例 form-condition-cases.json 锁定）。**提交侧同一上下文**：`POST /records/{id}/submit` 的完整校验（条件必填）与隐藏字段清空按同一匹配结果求值（心房参数仅 `hasRaLead`、ICD 项目仅 `type in [ICD, CRT_D]`），隐藏字段值清空且不必填；无匹配器械（取出后、植入前、开关关闭）ctx 断链 → 条件不成立 → 隐藏（OQ-65①）。
 
 ## 2. 器械 → 计划映射
 

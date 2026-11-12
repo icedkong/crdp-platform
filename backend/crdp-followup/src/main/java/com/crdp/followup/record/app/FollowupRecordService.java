@@ -1,5 +1,6 @@
 package com.crdp.followup.record.app;
 
+import com.crdp.followup.implant.app.DeviceContextService;
 import com.crdp.followup.record.infra.mapper.FollowupRecordInsert;
 import com.crdp.followup.record.infra.mapper.FollowupRecordMapper;
 import com.crdp.form.record.app.FormService;
@@ -46,10 +47,15 @@ public class FollowupRecordService {
 
     private final FollowupRecordMapper recordMapper;
     private final FormService formService;
+    private final DeviceContextService deviceContext;
 
-    public FollowupRecordService(FollowupRecordMapper recordMapper, FormService formService) {
+    public FollowupRecordService(
+            FollowupRecordMapper recordMapper,
+            FormService formService,
+            DeviceContextService deviceContext) {
         this.recordMapper = recordMapper;
         this.formService = formService;
+        this.deviceContext = deviceContext;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -186,11 +192,16 @@ public class FollowupRecordService {
             throw draftConflict(requireRecord(id), data);
         }
         Map<String, Object> values = data == null ? new LinkedHashMap<>() : data;
+        // 器械上下文（E21-T03 / C-FU-009）：提交校验与隐藏字段清空用同一上下文——按记录随访日期匹配当时在用的
+        // 器械（visit_date 为空的任务录入回落当前器械，C-PAT-007）；开关关闭 / 无器械为空 Map（ctx 断链不成立）。
+        Map<String, Object> conditionContext =
+                deviceContext.conditionContext(row.patientId(), row.visitDate());
         List<com.crdp.form.rule.app.FieldIssue> warnings =
-                formService.validateForSubmit(row.formCode(), row.templateVersion(), values);
+                formService.validateForSubmit(
+                        row.formCode(), row.templateVersion(), values, conditionContext);
         FormService.StrippedData stripped =
                 formService.stripHiddenFields(
-                        row.formCode(), row.templateVersion(), values, Map.of());
+                        row.formCode(), row.templateVersion(), values, conditionContext);
         Map<String, Object> persisted =
                 formService.writeGateData(row.formCode(), row.templateVersion(), stripped.data());
         Map<String, Object> meta =

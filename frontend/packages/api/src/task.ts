@@ -173,13 +173,35 @@ export interface RecordPreviousView {
   values: Record<string, unknown>;
 }
 
-/** 记录详情（followup.md §3；E15-T07 起附 source 与 visitDate，taskless 记录附 patient 摘要；E17-T02 起附 previous、E17-T03 起附 compareRules）。 */
+/**
+ * 器械上下文（E21-T03 / C-PAT-007、C-FU-009）：按记录随访日期匹配当时在用的器械（visitDate 为空
+ * 的任务录入回落当前器械）；页面以 `{ device: … }` 传入 FormRenderer 的 `context` 驱动按器械条件
+ * 显示（ctx device.type / device.hasRaLead / device.chambers，components.md §10）。implant 开关
+ * 关闭或无匹配器械为 null。
+ */
+export interface RecordDeviceContext {
+  /** 在用电极去重腔室数（AV 间期「双腔及以上」用 gte 2）；无导线为 0。 */
+  chambers: number;
+  /** 是否当前（在用）器械——按随访日期匹配到历史器械时为 false。 */
+  current: boolean;
+  /** 有在用 RA 电极（心房参数组显示条件，C-FU-009）。 */
+  hasRaLead: boolean;
+  implantDate: string;
+  implantId: string;
+  /** 起搏器类型编码（字典 pacemaker_type）。 */
+  type: string;
+  typeLabel?: null | string;
+}
+
+/** 记录详情（followup.md §3；E15-T07 起附 source 与 visitDate，taskless 记录附 patient 摘要；E17-T02 起附 previous、E17-T03 起附 compareRules、E21-T03 起附 device）。 */
 export interface RecordDetailView {
   /** 该表单启用对比规则（E17-T03）：前端实时标红与后端保存复算共用；功能关闭 / 无启用规则为 null。 */
   compareRules?: CompareRule[] | null;
   context?: null | RecordTaskContext;
   data: Record<string, unknown>;
   dataMeta: Record<string, unknown>;
+  /** 器械上下文（E21-T03）：implant 开关关闭或无匹配器械为 null。 */
+  device?: null | RecordDeviceContext;
   formCode: string;
   formVersion: number;
   id: string;
