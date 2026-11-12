@@ -174,6 +174,31 @@ public class ReportController {
     /** 修改位置请求体（report.md §2）：add / remove 至少一项非空；remove 按四元组匹配（模板版本不参与）。 */
     record LocationsChangeBody(List<LocationBody> add, List<LocationBody> remove) {}
 
+    // ---------------------------------------------------------------- 电子化状态手工修改（E21-T15 /
+    // C-SCAN-011）
+
+    @Operation(
+            summary =
+                    "手工修改电子化状态（E21-T15 / C-SCAN-011）：{ status: PENDING|DONE|NO_ENTRY, reason? }"
+                            + "——改为「无需录入」须填原因（40001）；状态未变化 40001；每次修改写"
+                            + " RPT_DIGITIZE_CHANGE 操作日志（谁、何时、前后值、原因）并推进 version；"
+                            + "开关 scan_progress 关闭 40301（医院 A / B 不启用，A-ATT-018）；"
+                            + "「转录后自动变已电子化」随 E21-T17；越范围 / 已删 40400（写 DENIED 审计）")
+    @PostMapping("/reports/{id}/digitize-status")
+    @RequireModule("followup")
+    @RequiresPermission("followup:scan:upload")
+    public ApiResponse<ReportService.DigitizeChangedView> changeDigitizeStatus(
+            @PathVariable("id") long id, @RequestBody(required = false) DigitizeStatusBody body) {
+        ReportService.DigitizeChangeRequest request =
+                body == null
+                        ? null
+                        : new ReportService.DigitizeChangeRequest(body.status(), body.reason());
+        return ApiResponse.ok(service.changeDigitizeStatus(id, request));
+    }
+
+    /** 电子化状态修改请求体（report.md §3）。 */
+    record DigitizeStatusBody(String status, String reason) {}
+
     // ---------------------------------------------------------------- 历史报告单位置迁移（E18-T08 /
     // A-ATT-002）
 

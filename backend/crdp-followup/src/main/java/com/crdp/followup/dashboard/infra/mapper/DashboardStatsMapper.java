@@ -99,6 +99,24 @@ public interface DashboardStatsMapper {
             @Param("since") LocalDateTime since, @Param("wardId") Long wardId);
 
     /**
+     * 按电子化状态计数的在册报告单数（E21-T15 / C-SCAN-011：C 指标「待录入扫描件数」= status = 'PENDING'）： 条件与全院报告单检索
+     * （E16-T05）同一条件树（NORMAL 在册 + 病区），只统计电子化状态非空的报告单（A 租户行恒 NULL，A-ATT-018）。
+     */
+    @DataScope(resource = "patient")
+    @Select(
+            """
+            <script>
+            SELECT COUNT(*)
+            FROM rpt_report r
+            JOIN pt_patient pt ON pt.id = r.patient_id AND pt.deleted = 0
+            WHERE r.status = 'NORMAL' AND r.digitize_status = #{digitizeStatus}
+            <if test="wardId != null">AND pt.ward_id = #{wardId}</if>
+            </script>
+            """)
+    long countReportsByDigitizeStatus(
+            @Param("digitizeStatus") String digitizeStatus, @Param("wardId") Long wardId);
+
+    /**
      * 趋势图分桶计数（A-DASH-002「按时间维度 × 粒度 × 分组统计患者数」）：一行 = 一个周期 × 一个分组取值。 bucketExpr / groupExpr /
      * dimColumn / joinClause 由服务层从枚举白名单拼装（见类注释），from / to 闭区间。
      */

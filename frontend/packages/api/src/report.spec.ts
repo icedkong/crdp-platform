@@ -3,6 +3,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  digitizeChangeError,
+  digitizeChangeRequiresReason,
   foldReportLocations,
   reportIndicatorFlag,
   reportLocationText,
@@ -144,5 +146,41 @@ describe('e16-t05 reportRowDigitizeStatusText（行电子化状态，C-SCAN-011�
     expect(reportRowDigitizeStatusText('DONE')).toBe('已电子化');
     expect(reportRowDigitizeStatusText('NO_ENTRY')).toBe('无需录入');
     expect(reportRowDigitizeStatusText(null)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------- E21-T15 手工修改（C-SCAN-011）
+
+describe('e21-T15 digitizeChangeError（改为「无需录入」须填原因，前端先拦 / 后端同口径兜底）', () => {
+  it('目标状态必选且与当前不同', () => {
+    expect(digitizeChangeError('PENDING', null, '')).toBe('请选择电子化状态');
+    expect(digitizeChangeError('PENDING', 'PENDING', '')).toBe(
+      '电子化状态未变化',
+    );
+  });
+
+  it('改为「无需录入」必填原因；其余状态选填', () => {
+    expect(digitizeChangeError('PENDING', 'NO_ENTRY', '   ')).toBe(
+      '改为「无需录入」须填写原因',
+    );
+    expect(
+      digitizeChangeError('PENDING', 'NO_ENTRY', '检验类资料（示例）'),
+    ).toBeNull();
+    expect(digitizeChangeError('PENDING', 'DONE', '')).toBeNull();
+  });
+
+  it('当前为 null（未设置）也可手工设定；原因 ≤ 255 字', () => {
+    expect(digitizeChangeError(null, 'PENDING', '')).toBeNull();
+    expect(digitizeChangeError('PENDING', 'DONE', '长'.repeat(256))).toBe(
+      '原因不能超过 255 字',
+    );
+    expect(digitizeChangeError('PENDING', 'DONE', '长'.repeat(255))).toBeNull();
+  });
+
+  it('digitizeChangeRequiresReason：仅无需录入须填原因', () => {
+    expect(digitizeChangeRequiresReason('NO_ENTRY')).toBe(true);
+    expect(digitizeChangeRequiresReason('PENDING')).toBe(false);
+    expect(digitizeChangeRequiresReason('DONE')).toBe(false);
+    expect(digitizeChangeRequiresReason(null)).toBe(false);
   });
 });

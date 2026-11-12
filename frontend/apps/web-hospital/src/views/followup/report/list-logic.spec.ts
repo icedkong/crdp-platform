@@ -14,6 +14,7 @@ import {
   buildSearchPayload,
   EMPTY_FILTERS,
   fileCountText,
+  filtersFromRouteQuery,
   formatUploadedAt,
   LOCATION_SCOPE_OPTIONS,
   patientReportsPath,
@@ -137,5 +138,28 @@ describe('e16-t06 previewFilesOf（缩略图点击 → 全屏查看器文件清�
 
   it('无附件（firstFile=null）返回 null，点击缩略图不打开查看器', () => {
     expect(previewFilesOf(row({ firstFile: null }))).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------- E21-T15 钻取预填（C-DASH-007）
+
+describe('e21-T15 filtersFromRouteQuery（首页「待录入扫描件数」钻取预填）', () => {
+  it('digitizeStatus=PENDING 预填电子化筛选', () => {
+    expect(filtersFromRouteQuery({ digitizeStatus: 'PENDING' })).toEqual({
+      digitizeStatus: 'PENDING',
+    });
+  });
+
+  it('非法取值 / 缺省忽略（不预填，不影响默认筛选）', () => {
+    expect(filtersFromRouteQuery({})).toEqual({ digitizeStatus: null });
+    expect(filtersFromRouteQuery({ digitizeStatus: 'WEIRD' })).toEqual({
+      digitizeStatus: null,
+    });
+    expect(filtersFromRouteQuery({ digitizeStatus: ['PENDING'] })).toEqual({
+      digitizeStatus: null,
+    });
+    expect(filtersFromRouteQuery({ keyword: '张医生（示例）' })).toEqual({
+      digitizeStatus: null,
+    });
   });
 });

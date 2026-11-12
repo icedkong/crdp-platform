@@ -497,3 +497,57 @@ describe('e19-T07 医护负责患者数钻取路由（A-DASH-009 / C-DASH-010）
     expect(doctorDrillOfQuery({ doctorId: '0' })).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------- E21-T15 补录进度（C-DASH-007 / C-SCAN-011）
+
+describe('e21-T15 待录入扫描件数钻取与补录进度卡片区（C-DASH-007）', () => {
+  const card = (code: string, order: number, extra = {}) => ({
+    allowUserHide: true,
+    code,
+    feature: null,
+    order,
+    permission: 'followup:dashboard:view',
+    title: code,
+    userHidden: false,
+    visible: true,
+    ...extra,
+  });
+
+  it('待录入扫描件数 → 全院报告单列表带 digitizeStatus=PENDING 筛选', () => {
+    const route = kpiMetricRoute({
+      available: true,
+      code: 'scanPending',
+      drill: {
+        query: { digitizeStatus: 'PENDING' },
+        target: 'REPORT_LIST',
+      },
+      title: '待录入扫描件数',
+      value: 46,
+    });
+    expect(route).toEqual({
+      path: '/followup/report',
+      query: { digitizeStatus: 'PENDING' },
+    });
+  });
+
+  it('layoutAreas：scan_progress 独立成区（开关关闭时布局不含该卡、不渲染）', () => {
+    const cardOn = {
+      cards: [
+        card('kpi', 1),
+        card('scan_progress', 2),
+        card('device_dist', 3), // E21 其余 C 卡片尚未接入：跳过
+      ],
+      source: 'ROLE_CONFIG' as const,
+    };
+    expect(layoutAreas(cardOn)).toEqual([
+      { codes: ['kpi'], kind: 'kpi' },
+      { codes: ['scan_progress'], kind: 'scan_progress' },
+    ]);
+    const cardOff = {
+      cards: [card('kpi', 1)],
+      source: 'ROLE_CONFIG' as const,
+    };
+    expect(layoutAreas(cardOff)).toEqual([{ codes: ['kpi'], kind: 'kpi' }]);
+    expect(layoutCardVisible(cardOff, 'scan_progress')).toBe(false);
+  });
+});

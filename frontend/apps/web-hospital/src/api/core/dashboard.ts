@@ -24,6 +24,8 @@ import type {
   KpiCardView,
   NodeRateCardView,
   NodeRateParams,
+  ScanProgressParams,
+  ScanProgressView,
   TaskBoardParams,
   TaskBoardView,
   TaskTableParams,
@@ -119,6 +121,18 @@ export function fetchFollowupCompletenessCard(params: CompletenessParams) {
 export function fetchDashboardWards() {
   return requestClient.get<DashboardWardsView>(
     apiPath('/followup/dashboard/wards'),
+  );
+}
+
+/**
+ * 补录进度（scan_progress，E21-T15 / C-DASH-007）：待录入 / 已电子化 / 无需录入份数与
+ * 已电子化比例 + 补录随访记录条数；筛选 uploaderId 上传人、year 文档年份（wardId 页面级）。
+ * 受 scan_progress 开关控制（关闭后端 40301）——布局接口已按开关隐藏卡片，正常不会请求到。
+ */
+export function fetchScanProgressCard(params: ScanProgressParams) {
+  return requestClient.get<ScanProgressView>(
+    apiPath('/followup/dashboard/cards/scan_progress'),
+    { params },
   );
 }
 

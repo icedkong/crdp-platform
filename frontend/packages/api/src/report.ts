@@ -274,6 +274,57 @@ export interface ReportSearchPage {
   wards: Array<{ id: string; name: string }>;
 }
 
+// ---------------------------------------------------------------- E21-T15 电子化状态手工修改（C-SCAN-011）
+
+/** 手工修改请求（POST /followup/reports/{id}/digitize-status）：改为 NO_ENTRY 时 reason 必填（40001）。 */
+export interface ReportDigitizeChangeRequest {
+  reason?: null | string;
+  status: ReportRowDigitizeStatus;
+}
+
+/** 手工修改结果：新状态与推进后的乐观锁版本。 */
+export interface ReportDigitizeChangedView {
+  digitizeStatus: ReportRowDigitizeStatus;
+  id: string;
+  version: number;
+}
+
+/** 手工修改的状态候选（当前状态排前、无需录入置底——改为无需录入须填原因）。 */
+export const DIGITIZE_CHANGE_OPTIONS: Array<{
+  label: string;
+  value: ReportRowDigitizeStatus;
+}> = [
+  { label: '待录入', value: 'PENDING' },
+  { label: '已电子化', value: 'DONE' },
+  { label: '无需录入', value: 'NO_ENTRY' },
+];
+
+/** 改为「无需录入」是否必须填原因（C-SCAN-011「手工改为无需录入须填原因」）。 */
+export function digitizeChangeRequiresReason(
+  status: null | ReportRowDigitizeStatus,
+): boolean {
+  return status === 'NO_ENTRY';
+}
+
+/**
+ * 校验手工修改表单：目标状态必选且与当前不同（无变化 40001 预检）、无需录入必填原因、
+ * 原因 ≤ 255 字；通过返回 null，否则返回错误文案（前端拦截，后端同口径兜底）。
+ */
+export function digitizeChangeError(
+  current: null | ReportRowDigitizeStatus,
+  next: null | ReportRowDigitizeStatus,
+  reason: string,
+): null | string {
+  if (!next) return '请选择电子化状态';
+  if (next === current) return '电子化状态未变化';
+  const trimmed = reason.trim();
+  if (digitizeChangeRequiresReason(next) && trimmed.length === 0) {
+    return '改为「无需录入」须填写原因';
+  }
+  if (trimmed.length > 255) return '原因不能超过 255 字';
+  return null;
+}
+
 /**
  * 位置列折叠（A-ATT-016 / C-SCAN-014「超过 2 个折叠为 +N，悬停显示全部」）：
  * 返回可见标签与折叠计数；空清单由调用方显示「未指定位置」。

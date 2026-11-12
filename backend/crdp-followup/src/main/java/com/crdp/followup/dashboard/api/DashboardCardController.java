@@ -5,6 +5,7 @@ import com.crdp.followup.dashboard.app.DashboardTaskService;
 import com.crdp.followup.dashboard.app.DashboardTrendService;
 import com.crdp.followup.stats.app.CompletenessStatsService;
 import com.crdp.followup.stats.app.NodeOccurrenceStatsService;
+import com.crdp.followup.stats.app.ScanProgressService;
 import com.crdp.framework.security.RequireModule;
 import com.crdp.framework.security.RequiresPermission;
 import com.crdp.framework.web.ApiException;
@@ -44,18 +45,21 @@ public class DashboardCardController {
     private final DashboardTaskService taskService;
     private final NodeOccurrenceStatsService rateService;
     private final CompletenessStatsService completenessService;
+    private final ScanProgressService scanProgressService;
 
     public DashboardCardController(
             DashboardKpiService kpiService,
             DashboardTrendService trendService,
             DashboardTaskService taskService,
             NodeOccurrenceStatsService rateService,
-            CompletenessStatsService completenessService) {
+            CompletenessStatsService completenessService,
+            ScanProgressService scanProgressService) {
         this.kpiService = kpiService;
         this.trendService = trendService;
         this.taskService = taskService;
         this.rateService = rateService;
         this.completenessService = completenessService;
+        this.scanProgressService = scanProgressService;
     }
 
     @Operation(
@@ -76,7 +80,10 @@ public class DashboardCardController {
                             + " 患者类型、from+to 时间范围、timeField 出院 DISCHARGE 默认 / 登记 REGISTERED）、"
                             + "followup_completeness 随访资料完整度（A-DASH-011 / Q40：平均值 / 已统计记录数 / 按随访"
                             + "年度表格 / 最常缺失字段前 10；timeField 实际随访日期 VISIT 默认 / 出院 DISCHARGE、year"
-                            + " 随访年度筛选；最常缺失字段点击钻取患者列表——患者检索 completenessDrill 过滤，同一计算）；wardId"
+                            + " 随访年度筛选；最常缺失字段点击钻取患者列表——患者检索 completenessDrill 过滤，同一计算）、"
+                            + "scan_progress 补录进度（E21-T15 / C-DASH-007：待录入 / 已电子化 / 无需录入份数与"
+                            + " 已电子化比例 + 补录随访记录条数；uploaderId 上传人、year 文档年份筛选；开关"
+                            + " scan_progress 关闭返回 40301）；wardId"
                             + " 病区筛选（A-DASH-005）全部卡片共用；数字与列表钻取共用同一条件树（各列 / 页签响应内联 drill"
                             + " 目标与筛选参数）")
     @GetMapping("/cards/{cardCode}")
@@ -97,7 +104,8 @@ public class DashboardCardController {
             @RequestParam(value = "cohortYear", required = false) Integer cohortYear,
             @RequestParam(value = "patientType", required = false) String patientType,
             @RequestParam(value = "timeField", required = false) String timeField,
-            @RequestParam(value = "year", required = false) Integer year) {
+            @RequestParam(value = "year", required = false) Integer year,
+            @RequestParam(value = "uploaderId", required = false) Long uploaderId) {
         return switch (cardCode) {
             case "kpi" -> ApiResponse.ok(kpiService.kpi(wardId));
             case "trend" ->
@@ -118,12 +126,15 @@ public class DashboardCardController {
                             completenessService.followupCard(
                                     new CompletenessStatsService.Query(
                                             wardId, patientType, from, to, timeField, year)));
+            case "scan_progress" ->
+                    ApiResponse.ok(scanProgressService.scanProgress(wardId, uploaderId, year));
             default ->
                     throw new ApiException(
                             400,
                             40001,
                             "cardCode（kpi / trend / task_board / task_table / yearly_rate /"
-                                    + " node_rate / baseline_completeness / followup_completeness）不合法");
+                                    + " node_rate / baseline_completeness / followup_completeness /"
+                                    + " scan_progress）不合法");
         };
     }
 

@@ -28,7 +28,7 @@
 | GET | `/api/hospital/followup/dashboard/wards` | `followup:dashboard:view` | 病区筛选候选（A-DASH-005 / C-DASH-008「默认本人全部可见病区」，E19-T03 已落地）：`{ wards: [{ id, name }] }`——登录快照带病区清单时按清单交集，全院 / 科室 / 本人快照回落全部启用病区（行级隔离仍由各卡片 `@DataScope` 出行，选到范围外病区结果恒为空） |
 | PUT | `/api/hospital/followup/dashboard/user-pref` | 登录（@PublicApi） | **已实现**（E19-T06，A-DASH-014 P1）。`{ hidden: [cardCode] }` 全量覆盖本人隐藏清单（空 = 恢复角色默认）；只能在角色允许且 allowUserHide 的卡片内隐藏（否则 40001）；用户不能加入角色未允许的卡片、不能调顺序（无顺序字段）；写 `DASHBOARD_USER_PREF` 审计；返回与 GET /layout 同构的新布局 |
 | GET | `/api/hospital/followup/stats/doctor-workload?wardId=` | `followup:dashboard:view` | **已实现**（E19-T07 / E19 统计页，A-DASH-009 + C-DASH-010，P1）。`{ asOfMonth, asOf, rows: [{ doctorId, doctorName, totalPatients 负责患者数, activePatients 在随访, monthDue 本月应随访, overdue 逾期, rateDueCount / rateFollowedCount / followRatePct 每年随访率（Q38 口径，患者 × 年度去重汇总 = 各年度行之和）, totalDrill / activeDrill / monthDueDrill / overdueDrill }] }`——按**患者责任医生**归口（面板口径，行锚点 = 至少负责 1 名在册患者的医生、按负责患者数降序，OQ-118）：患者两列 = 患者列表 `filters.doctorId` 同条件树、本月应随访 = 指标卡「本月应随访」同条件树（常规任务、入组在组）、逾期 = `status=OVERDUE`、随访率来自 `st_node_occurrence`（`asOf` = 最近刷新日，患者 / 任务列实时）；每列内联钻取（患者列表 `doctorId`〔/ `status=ACTIVE`〕带 `doctorName` 供标签展示、任务列表 `doctorId` + `tab=all` + `dueFrom`/`dueTo` / `status=OVERDUE`，列表页按路由 query 解析并显示可关闭的「责任医生」标签）；无责任医生的患者不出行；wardId 病区收窄（范围内无患者 → 空 rows）；统计页菜单 plt_menu 42（平台库 V61，路由 `/followup/stats`，页签：每年随访率 / 节点随访率〔开关〕/ 数据完整度 / 医护负责患者数） |
-| GET | `/api/hospital/followup/stats/scan-progress?wardId=&uploaderId=&year=` | `followup:dashboard:view`；开关 `scan_progress` | C 补录进度（C-DASH-007；E21-T15） |
+| GET | `/api/hospital/followup/dashboard/cards/scan_progress?wardId=&uploaderId=&year=` | `followup:dashboard:view`；开关 `scan_progress` | C 补录进度（C-DASH-007）。**已实现（E21-T15）**：`{ pendingCount, doneCount, noEntryCount, donePct（已电子化 ÷〔待录入 + 已电子化〕百分整数——「无需录入」不进分母，分母 0 为 0）, backfillRecordCount（补录随访记录条数 = 已提交的 source=BACKFILL fu_record，只收病区筛选）, uploaders[]（候选）, years[]（文档年份 = report_date 年份，降序） }`；筛选 wardId 科室病区（页面级）、uploaderId 上传人（rpt_report.created_by）、year 文档年份；计数与全院报告单检索（E16-T05）同一条件树（NORMAL 在册、`digitize_status IS NOT NULL`——A 租户行恒 NULL 不计），数据范围 `@DataScope(resource="patient")` 出行（范围内无扫描件全 0 不报错）；开关关闭（含无行）40301、前端隐藏。原「GET /stats/scan-progress」推断不再单独设接口，与 kpi 等卡片同一 `{cardCode}` 入口（§2 表头口径） |
 
 原「`GET /stats/node-follow-rate`」的推断不再单独设接口（E19-T04 定稿走 `GET /dashboard/cards/node_rate`，与首页同一 `{cardCode}` 入口、「一个口径一个查询」）。
 
@@ -38,7 +38,7 @@
 
 | cardCode | 需求 | 说明 |
 |---|---|---|
-| `kpi`（E19-T02 已落地） | A-DASH-001、C-DASH-001 | 指标卡，A 与 C 指标不同，按租户配置——暂行以 `implant` 开关判定（开 → C 七项、关 → A 七项，OQ-107③），随 E19-T06 卡片目录落库；C 的 `eriNear` / `scanPending` 数据源随 E21，先行 `available=false` 占位 |
+| `kpi`（E19-T02 已落地） | A-DASH-001、C-DASH-001 | 指标卡，A 与 C 指标不同，按租户配置——暂行以 `implant` 开关判定（开 → C 七项、关 → A 七项，OQ-107③），随 E19-T06 卡片目录落库；C 的 `eriNear` 数据源随 E21-T07/T19 仍 `available=false` 占位；`scanPending`（待录入扫描件数）已随 E21-T15 落地——`scan_progress` 开关开启时出数并钻取全院报告单列表 `digitizeStatus=PENDING`（drill target=REPORT_LIST），关闭仍占位 |
 | `trend`（E19-T02 已落地） | A-DASH-002 | 默认按手术日期、按月、不分组、最近 24 个月；时间维度（手术 / 出院 / 入院）× 粒度（月 / 季度 / 年）× 分组（不分组 / 病区 / 性别 / 出院状态 / 患者类型 / 年龄段）可切换；指标暂只有患者数（死亡人数 / 随访完成数与术者 / 手术方式 / 急诊手术分组随后续任务，OQ-107⑤） |
 | `task_board` / `task_table`（E19-T03 已落地） | A-DASH-003/004/008、C-DASH-003/008 | 任务看板（待随访 / 进行中 / 逾期 / 本月已完成〔C 本周完成〕，每列前 20 张卡片）与任务表（今日 / 超时 / 我负责，页签显示数量）；计数与任务列表检索同一条件树（scope / 病区 / 负责人 / 窗口 / 完成时间）；病区筛选候选 `GET /dashboard/wards` |
 | `yearly_rate`（E19-T04 已落地） | A-DASH-006 | 每年随访率 = 年度节点的节点随访率，口径一致（Q38）：按随访年度 N 一行，应随访 / 已随访（含逾期完成、补录及窗口外日期）/ 随访率（主指标）/ 失访率 / 死亡人数 + 窗口内完成率（参考；口径 G2 修正：按**表单实际随访日期**落在窗口内判定，含首尾两天——实际随访日期 = `fu_record.visit_date`，任务录入记录按记录模板版本解析表单字段 `followup_date`〔A 规格 f214〕，补录日期落在原窗口内的计入；不再按完成方式〔提交日〕判定，实际随访日期未知的行不计）；cohortYear 出院年份队列筛选；患者级去重（OQ-109②） |
@@ -47,7 +47,7 @@
 | `device_dist` | C-DASH-002 | 器械类型分布 |
 | `eri_list` | C-DASH-005 | 接近 ERI 器械（开关 `eri_cycle`） |
 | `abnormal_records` | C-DASH-006 | 近 30 天含标红参数的记录，只查看 |
-| `scan_progress` | C-DASH-007 | 补录进度 |
+| `scan_progress`（E21-T15 已落地） | C-DASH-007 | 补录进度：待录入 / 已电子化 / 无需录入份数与已电子化比例 + 补录随访记录条数；上传人 / 文档年份筛选（病区页面级）；目录行随 followup V85 落库（`scan_progress` 开关关闭时布局不含本卡） |
 
 `doctor-workload` 同时满足 A-DASH-009 与 C-DASH-010（医护负责患者数，P1）。
 
