@@ -36,6 +36,7 @@ import {
   rendererContextOf,
   submitConfirmText,
   submitSuccessMessage,
+  transcribeAppendedText,
 } from './logic';
 
 const context = (over: Partial<RecordTaskContext> = {}): RecordTaskContext => ({
@@ -496,5 +497,14 @@ describe('e21-t08 医生指定下次随访时间（C-FU-005 / Q05）', () => {
     expect(nextVisitNote('BACKFILL')).toBe('补录：只保存');
     expect(nextVisitNote('UNPLANNED')).toBeNull();
     expect(nextVisitNote(null)).toBeNull();
+  });
+});
+
+// E21-T17 / C-SCAN-012：转录态提交成功追加文案（保存后报告单自动置「已电子化」）。
+describe('e21-T17 转录完成追加文案（C-SCAN-012）', () => {
+  it('transcribedReportId 非空 → 追加「报告单已标记为已电子化」；空 / null → 原样（不追加）', () => {
+    expect(transcribeAppendedText('900')).toBe('；报告单已标记为「已电子化」');
+    expect(transcribeAppendedText(null)).toBe('');
+    expect(transcribeAppendedText(undefined)).toBe('');
   });
 });

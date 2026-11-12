@@ -12,6 +12,11 @@ import {
   compareReportIdOf,
   compareRouteOf,
   compareTargetsOf,
+  transcribableStatus,
+  TRANSCRIBE_QUERY_KEY,
+  transcribeActiveOf,
+  transcribeRouteOf,
+  transcribeTargetsOf,
 } from './compare-entry-logic';
 
 const ALL = { canEditBaseline: true, canEditRecord: true };
@@ -204,5 +209,136 @@ describe('e16-T11 compareTargetsOf（A-ATT-019 多位置选择清单）', () => 
     expect(
       compareTargetsOf(base, { canEditBaseline: false, canEditRecord: false }),
     ).toEqual([]);
+  });
+});
+
+// E21-T17 / C-SCAN-012、C-FU-017：转录到结构化记录——目标只认随访记录位置，
+// 路由带 transcribe=1（与普通对照录入区分：只有转录态保存才把报告单置「已电子化」）。
+describe('e21-T17 transcribeActiveOf / transcribableStatus（转录态与状态门槛）', () => {
+  it('compare + transcribe=1 齐备才是转录态；缺任一 / 值不是 1 / 数组 → false', () => {
+    expect(transcribeActiveOf({ compare: 'r9', transcribe: '1' })).toBe(true);
+    expect(transcribeActiveOf({ compare: 'r9' })).toBe(false);
+    expect(transcribeActiveOf({ transcribe: '1' })).toBe(false);
+    expect(transcribeActiveOf({ compare: 'r9', transcribe: '0' })).toBe(false);
+    expect(transcribeActiveOf({ compare: 'r9', transcribe: ['1'] })).toBe(
+      false,
+    );
+  });
+
+  it('待录入与未设置可转录；已电子化 / 无需录入不再给入口', () => {
+    expect(transcribableStatus('PENDING')).toBe(true);
+    expect(transcribableStatus(null)).toBe(true);
+    expect(transcribableStatus('DONE')).toBe(false);
+    expect(transcribableStatus('NO_ENTRY')).toBe(false);
+  });
+});
+
+describe('e21-T17 transcribeRouteOf / transcribeTargetsOf（转录目标解析）', () => {
+  it('随访记录位置 → 表单页带 compare 与 transcribe=1；基线 / 植入 / 未指定记录不可达', () => {
+    expect(
+      transcribeRouteOf(
+        '301',
+        tag({
+          anchorType: null,
+          linkRecordId: '7001',
+          recordLabel: '第3年随访',
+        }),
+        'r1',
+      ),
+    ).toBe(
+      `/followup/record/7001?${COMPARE_QUERY_KEY}=r1&${TRANSCRIBE_QUERY_KEY}=1`,
+    );
+    expect(
+      transcribeRouteOf(
+        '301',
+        tag({
+          anchorKey: 'basic_info',
+          anchorType: 'category',
+          linkType: 'baseline',
+        }),
+        'r1',
+      ),
+    ).toBeNull();
+    expect(
+      transcribeRouteOf(
+        '301',
+        tag({ linkRecordId: '7002', linkType: 'implant_record' }),
+        'r1',
+      ),
+    ).toBeNull();
+    expect(transcribeRouteOf('301', tag({}), 'r1')).toBeNull();
+  });
+
+  it('只收随访记录位置：基线位置不出现在转录清单（转录目标是结构化随访记录）', () => {
+    const targets = transcribeTargetsOf(
+      row({
+        id: 'r1',
+        locations: [
+          tag({
+            anchorKey: 'basic_info',
+            anchorLabel: '病例基本信息',
+            anchorType: 'category',
+            linkType: 'baseline',
+          }),
+          tag({
+            anchorType: null,
+            linkRecordId: '7001',
+            recordLabel: '第3年随访',
+          }),
+        ],
+      }),
+    );
+    expect(targets).toHaveLength(1);
+    expect(targets[0]?.route).toBe(
+      `/followup/record/7001?${COMPARE_QUERY_KEY}=r1&${TRANSCRIBE_QUERY_KEY}=1`,
+    );
+  });
+
+  it('同一记录整条 + 分组去重为一项，标签保留带分组的一条；多条记录逐项列出（选择弹窗用）', () => {
+    const targets = transcribeTargetsOf(
+      row({
+        id: 'r1',
+        locations: [
+          tag({
+            anchorType: null,
+            linkRecordId: '7001',
+            recordLabel: '第3年随访',
+          }),
+          tag({
+            anchorKey: 'battery',
+            anchorLabel: '电池',
+            anchorType: 'section',
+            linkRecordId: '7001',
+            recordLabel: '第3年随访',
+          }),
+          tag({
+            anchorType: null,
+            linkRecordId: '7002',
+            recordLabel: '第2年随访',
+          }),
+        ],
+      }),
+    );
+    expect(targets).toHaveLength(2);
+    expect(targets[0]?.label).toBe('第3年随访 · 电池');
+    expect(targets[1]?.label).toBe('第2年随访');
+  });
+
+  it('位置中没有随访记录 → 空清单（调用方走「新建补录记录并加入位置」分支，OQ-131②）', () => {
+    expect(
+      transcribeTargetsOf(
+        row({
+          id: 'r1',
+          locations: [
+            tag({
+              anchorKey: 'basic_info',
+              anchorType: 'category',
+              linkType: 'baseline',
+            }),
+          ],
+        }),
+      ),
+    ).toEqual([]);
+    expect(transcribeTargetsOf(row({ id: 'r1', locations: [] }))).toEqual([]);
   });
 });

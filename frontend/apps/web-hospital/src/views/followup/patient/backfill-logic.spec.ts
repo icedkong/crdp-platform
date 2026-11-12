@@ -6,6 +6,7 @@ import {
   backfillDateError,
   defaultBackfillDate,
   isBackfillDateDisabled,
+  resolvePresetVisitDate,
   timelineOpenNeedsStart,
   timelineOpenRoute,
 } from './backfill-logic';
@@ -69,5 +70,23 @@ describe('时间轴节点打开路由（components.md §9 open 事件）', () =>
     } as PatientTimelineEntry;
     expect(timelineOpenRoute(entry)).toBeNull();
     expect(timelineOpenNeedsStart(entry)).toBe(false);
+  });
+});
+
+// E21-T17 / C-SCAN-012：转录新建补录记录的预填日期（报告时间可用则预填，否则回落默认）。
+describe('e21-T17 resolvePresetVisitDate（转录预填日期）', () => {
+  const today = new Date('2026-11-13T09:00:00+08:00');
+
+  it('合法过去的报告时间 → 预填（截取日期部分，容忍带时间的 ISO 串）', () => {
+    expect(resolvePresetVisitDate('2026-10-28', today)).toBe('2026-10-28');
+    expect(resolvePresetVisitDate('2026-10-28T14:30:00+08:00', today)).toBe(
+      '2026-10-28',
+    );
+  });
+
+  it('空 / 今天及以后 / 解析失败 → 回落默认补录日期（一年前同日）', () => {
+    expect(resolvePresetVisitDate(null, today)).toBe('2025-11-13');
+    expect(resolvePresetVisitDate('2026-11-13', today)).toBe('2025-11-13');
+    expect(resolvePresetVisitDate('not-a-date', today)).toBe('2025-11-13');
   });
 });

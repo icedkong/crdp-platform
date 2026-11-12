@@ -72,6 +72,8 @@ class RecordEntryServiceTest {
     private final com.crdp.followup.plan.app.PlanSwitchService planSwitch =
             mock(com.crdp.followup.plan.app.PlanSwitchService.class);
     private final FollowupSequenceService sequences = mock(FollowupSequenceService.class);
+    private final com.crdp.followup.report.app.ReportTranscribeService reportTranscribe =
+            mock(com.crdp.followup.report.app.ReportTranscribeService.class);
 
     private final RecordEntryService service =
             new RecordEntryService(
@@ -91,7 +93,8 @@ class RecordEntryServiceTest {
                     recordMapper,
                     features,
                     planSwitch,
-                    sequences);
+                    sequences,
+                    reportTranscribe);
 
     private static FollowupTaskQueryMapper.TaskRowRaw taskRow(String status) {
         return new FollowupTaskQueryMapper.TaskRowRaw(
@@ -374,7 +377,7 @@ class RecordEntryServiceTest {
                                 List.of()));
 
         RecordEntryService.SubmitResultView view =
-                service.submit(701L, new RecordEntryService.SubmitCommand(2, data, null));
+                service.submit(701L, new RecordEntryService.SubmitCommand(2, data, null, null));
 
         assertEquals("COMPLETED", view.taskStatus(), "提交后任务完成（A-FU-005 验收位）");
         assertEquals("ON_TIME", view.completeKind());
@@ -386,6 +389,50 @@ class RecordEntryServiceTest {
         verify(compareHighlights).refreshSubmittedRecords(301L, "A_ANNUAL_FU");
         // E21-T09 / C-FU-018：提交后同一事务重排该患者随访序号（任务录入来源的非补录措辞）
         verify(sequences).resequence(301L, "提交随访记录，随访序号自动重排（C-FU-018）");
+    }
+
+    /**
+     * E21-T17 / C-SCAN-012、C-FU-017：转录态提交（transcribeReportId 随提交带入）在同一事务完成转录——
+     * 报告单自动加入该记录位置并置「已电子化」；结果回带 transcribedReportId（前端提示口径）。
+     */
+    @Test
+    void submitWithTranscribeReportIdCompletesTranscription() {
+        Map<String, Object> data = Map.of("f214", "2026-11-05", "f215", 0);
+        when(recordService.submit(eq(701L), eq(2), eq(data), any()))
+                .thenReturn(
+                        new FollowupRecordService.SubmitOutcome(
+                                record("SUBMITTED", data), Map.of(), List.of(), List.of()));
+        when(taskQueryMapper.taskContextByRecordId(701L)).thenReturn(null);
+        when(fieldHistory.logChanges(any(), eq(701L), any(), anyInt(), any(), any(), any(), any()))
+                .thenReturn(List.of());
+        when(formService.schema("A_ANNUAL_FU", 1)).thenReturn(null);
+
+        RecordEntryService.SubmitResultView view =
+                service.submit(701L, new RecordEntryService.SubmitCommand(2, data, null, 900L));
+
+        verify(reportTranscribe).completeTranscription(900L, 701L, 301L, 1);
+        assertEquals("900", view.transcribedReportId(), "转录完成回带报告单 id");
+    }
+
+    /** 非转录态提交（普通任务 / 补录，不带 transcribeReportId）不触发转录联动。 */
+    @Test
+    void submitWithoutTranscribeReportIdSkipsTranscription() {
+        Map<String, Object> data = Map.of("f214", "2026-11-05");
+        when(recordService.submit(eq(701L), eq(2), eq(data), any()))
+                .thenReturn(
+                        new FollowupRecordService.SubmitOutcome(
+                                record("SUBMITTED", data), Map.of(), List.of(), List.of()));
+        when(taskQueryMapper.taskContextByRecordId(701L)).thenReturn(null);
+        when(fieldHistory.logChanges(any(), eq(701L), any(), anyInt(), any(), any(), any(), any()))
+                .thenReturn(List.of());
+        when(formService.schema("A_ANNUAL_FU", 1)).thenReturn(null);
+
+        RecordEntryService.SubmitResultView view =
+                service.submit(701L, new RecordEntryService.SubmitCommand(2, data, null, null));
+
+        verify(reportTranscribe, never())
+                .completeTranscription(anyLong(), anyLong(), anyLong(), anyInt());
+        assertNull(view.transcribedReportId());
     }
 
     @Test
@@ -422,7 +469,7 @@ class RecordEntryServiceTest {
                                                                 "json", null)))),
                                 List.of()));
 
-        service.submit(701L, new RecordEntryService.SubmitCommand(2, data, null));
+        service.submit(701L, new RecordEntryService.SubmitCommand(2, data, null, null));
 
         // OQ-79②：随访记录「是否死亡=是」→ 死亡登记（未开始任务全部终止，幂等入口）
         verify(terminationService).terminateOnDeath(eq(301L), eq("随访记录提交：是否死亡 = 是"), any());
@@ -440,7 +487,7 @@ class RecordEntryServiceTest {
                 .thenReturn(List.of());
 
         RecordEntryService.SubmitResultView view =
-                service.submit(701L, new RecordEntryService.SubmitCommand(2, data, null));
+                service.submit(701L, new RecordEntryService.SubmitCommand(2, data, null, null));
 
         assertNull(view.taskId());
         verify(statusService, never()).complete(anyLong(), any());
@@ -475,7 +522,7 @@ class RecordEntryServiceTest {
         when(fieldHistory.logChanges(any(), anyLong(), any(), eq(1), any(), any(), any(), any()))
                 .thenReturn(List.of());
 
-        service.submit(701L, new RecordEntryService.SubmitCommand(2, data, null));
+        service.submit(701L, new RecordEntryService.SubmitCommand(2, data, null, null));
 
         // E21-T06 / C-FU-007：提交后同事务触发计划切换判定（ERI 标记 / 医生指定），随访日期取 visit_date
         verify(planSwitch).onRecordSubmitted(301L, 701L, LocalDate.of(2026, 11, 5), data);
@@ -546,7 +593,7 @@ class RecordEntryServiceTest {
                                                                 null)))),
                                 List.of()));
 
-        service.submit(701L, new RecordEntryService.SubmitCommand(2, data, null));
+        service.submit(701L, new RecordEntryService.SubmitCommand(2, data, null, null));
 
         // 有效随访日期回落表单字段值（与重复提示口径一致，OQ-136⑤）
         verify(planSwitch).onRecordSubmitted(301L, 701L, LocalDate.of(2026, 11, 6), data);
@@ -562,7 +609,7 @@ class RecordEntryServiceTest {
                                         service.submit(
                                                 701L,
                                                 new RecordEntryService.SubmitCommand(
-                                                        null, Map.of(), null)))
+                                                        null, Map.of(), null, null)))
                         .code(),
                 "baseVersion 必填（乐观锁）");
         verify(recordService, never()).submit(anyLong(), any(), any(), any());
@@ -664,7 +711,7 @@ class RecordEntryServiceTest {
                                         service.updateSubmitted(
                                                 701L,
                                                 new RecordEntryService.UpdateCommand(
-                                                        2, Map.of(), null, " ")))
+                                                        2, Map.of(), null, " ", null)))
                         .code(),
                 "修改原因必填（ReasonModal）");
         verify(recordService, never()).updateSubmitted(anyLong(), any(), any(), any());
@@ -701,7 +748,8 @@ class RecordEntryServiceTest {
         RecordEntryService.UpdateResultView view =
                 service.updateSubmitted(
                         701L,
-                        new RecordEntryService.UpdateCommand(2, Map.of("f308", 1.2), null, "抄录错误"));
+                        new RecordEntryService.UpdateCommand(
+                                2, Map.of("f308", 1.2), null, "抄录错误", null));
 
         assertEquals("701", view.recordId());
         assertEquals(3, view.version(), "保存后生成 v2（version + 1）");
@@ -719,6 +767,43 @@ class RecordEntryServiceTest {
         // E21-T09 / C-FU-018：修改已提交记录后同一事务重排（表单随访日期字段可能改早 / 改晚）
         verify(sequences).resequence(301L, FollowupSequenceService.REASON_UPDATE_SUBMITTED);
         verify(audit).append(any());
+    }
+
+    /** E21-T17 / C-SCAN-012：转录态保存修改（位置中已有已提交记录的对照录入）同样完成转录联动。 */
+    @Test
+    void updateSubmittedWithTranscribeReportIdCompletesTranscription() {
+        loginAs(List.of("followup:record:edit-submitted"));
+        when(features.findEnabled("record_edit_submitted")).thenReturn(true);
+        FollowupRecordService.RecordView updated =
+                new FollowupRecordService.RecordView(
+                        701L,
+                        301L,
+                        null,
+                        "BACKFILL",
+                        LocalDate.of(2025, 6, 1),
+                        null,
+                        "A_ANNUAL_FU",
+                        1,
+                        "SUBMITTED",
+                        3,
+                        Map.of(),
+                        Map.of(),
+                        null,
+                        "2026-11-05T09:00:00+08:00");
+        when(recordService.updateSubmitted(eq(701L), eq(2), any(), any()))
+                .thenReturn(
+                        new FollowupRecordService.SubmitOutcome(
+                                updated, Map.of(), List.of(), List.of()));
+        when(fieldHistory.logChanges(any(), eq(701L), any(), anyInt(), any(), any(), any(), any()))
+                .thenReturn(List.of());
+
+        RecordEntryService.UpdateResultView view =
+                service.updateSubmitted(
+                        701L,
+                        new RecordEntryService.UpdateCommand(2, Map.of(), null, "按扫描件补全参数", 900L));
+
+        verify(reportTranscribe).completeTranscription(900L, 701L, 301L, 1);
+        assertEquals("900", view.transcribedReportId());
     }
 
     /** 删除：reason 必填、软删除 + 断开任务链接 + RECORD_DELETE 审计（C-FU-026 / PLT-AUD-001）。 */
