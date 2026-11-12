@@ -32,7 +32,8 @@ import org.springframework.test.context.ActiveProfiles;
  * <p>覆盖：配置接口返回 10 类预置（编码、名称、名称必填、排序、启用）且可增、改（排序 / 名称 / 启停）、删（有 名称时
  * 40901）；名称字典同类型唯一（40902）、绑定指标模板；指标模板项目全量替换、被绑定时删除 40901；字段集 必须是 REPORT
  * 表单（40001）；运行时目录（report-types / report-names，followup:patient:view）只吐启用 类型、选名称带出指标行；无权限 40300、模块关闭
- * 40301、类型不存在 40400、双租户配置隔离；菜单 39 随 V53/V62/V124 授予 TENANT_ADMIN。全部虚构数据，门控 CRDP_IT_MYSQL_PORT。
+ * 40301、类型不存在 40400、双租户配置隔离；菜单 39 随 V53/V62/V124 授予 TENANT_ADMIN。E23-T21 追加：医院 C 的 8 类预置与程控映射
+ * （C-SCAN-002 / 005）随 V94 落库——配置接口可见（类型停用、映射启用，OQ-142 惰性口径）。全部虚构数据，门控 CRDP_IT_MYSQL_PORT。
  */
 @ActiveProfiles("local")
 @SpringBootTest(
@@ -77,8 +78,10 @@ class ReportConfigIT {
         String token = hospitalToken("demoa");
 
         List<Map<?, ?>> types = itemsOf(get(BASE + "/types", token));
-        assertEquals(10, types.size(), "A 医院预置 10 类资料类型");
-        List<String> codes = types.stream().map(type -> str(type.get("code"))).toList();
+        List<Map<?, ?>> enabled =
+                types.stream().filter(type -> "ENABLED".equals(type.get("status"))).toList();
+        assertEquals(10, enabled.size(), "A 医院预置 10 类资料类型（生效；C 预置随包停用，V94）");
+        List<String> codes = enabled.stream().map(type -> str(type.get("code"))).toList();
         assertEquals(
                 List.of(
                         "ECHO",
@@ -101,6 +104,20 @@ class ReportConfigIT {
         assertEquals(null, echo.get("defaultDigitizeStatus"), "A 不启用电子化状态（A-ATT-018）");
         assertEquals("ENABLED", echo.get("status"));
         assertEquals(3L, ((Number) echo.get("nameCount")).longValue(), "心脏超声 3 个预置名称");
+
+        // E23-T21 / C-SCAN-002（OQ-142）：医院 C 的 8 类本院预置随包停用进所有租户库——配置接口可见但
+        // 不在生效清单（catalogTypes 只吐 ENABLED，A 添加报告单选不到），C 侧按 runbook 激活。
+        Map<?, ?> program =
+                types.stream()
+                        .filter(t -> "C_PROGRAM".equals(t.get("code")))
+                        .findFirst()
+                        .orElseThrow();
+        assertEquals("程控报告单", program.get("name"));
+        assertEquals("RPT_C_PROGRAM", program.get("formCode"), "C 程控报告单字段集（V94）");
+        assertEquals(false, program.get("nameRequired"), "C-SCAN-003：非检查 / 检验类名称选填");
+        assertEquals("PENDING", program.get("defaultDigitizeStatus"), "程控报告单默认待录入");
+        assertEquals("DISABLED", program.get("status"), "随包停用（对 A 惰性，OQ-142）");
+        assertEquals(3L, ((Number) program.get("nameCount")).longValue(), "常规程控 / 术中测试 / ERI 评估");
     }
 
     /** A-ATT-003「租户管理员可增减、停用、排序」：新建 → 编辑（停用）→ 删除，全程留审计。 */
@@ -365,8 +382,10 @@ class ReportConfigIT {
         String token = hospitalToken("demoa");
 
         List<Map<?, ?>> mappings = itemsOf(get(BASE + "/mappings", token));
-        assertEquals(3, mappings.size(), "A 预置三条心脏超声映射");
-        Map<?, ?> preop = mappings.get(0);
+        List<Map<?, ?>> echoMappings =
+                mappings.stream().filter(m -> "ECHO".equals(m.get("typeCode"))).toList();
+        assertEquals(3, echoMappings.size(), "A 预置三条心脏超声映射（清单含停用与 C 预置，按类型过滤）");
+        Map<?, ?> preop = echoMappings.get(0);
         assertEquals("ECHO_PREOP_LAST", preop.get("code"));
         assertEquals("ECHO", preop.get("typeCode"));
         assertEquals("BASELINE", preop.get("targetType"));
@@ -375,12 +394,12 @@ class ReportConfigIT {
         assertEquals("心脏超声指标", preop.get("indicatorTplName"), "绑定的指标模板（一一对应）");
         assertEquals(19, ((List<?>) preop.get("items")).size(), "术前最后一次：报告时间 + 18 个指标项目");
 
-        Map<?, ?> predischarge = mappings.get(1);
+        Map<?, ?> predischarge = echoMappings.get(1);
         assertEquals("ECHO_PREDISCHARGE_LAST", predischarge.get("code"));
         assertEquals("PREDISCHARGE_LAST", predischarge.get("phase"));
         assertEquals(17, ((List<?>) predischarge.get("items")).size(), "无报告时间与 IVS 行（规格「—」）");
 
-        Map<?, ?> followup = mappings.get(2);
+        Map<?, ?> followup = echoMappings.get(2);
         assertEquals("ECHO_FOLLOWUP", followup.get("code"));
         assertEquals("FOLLOWUP_RECORD", followup.get("targetType"));
         assertEquals("A_ANNUAL_FU", followup.get("targetFormCode"));
@@ -415,6 +434,36 @@ class ReportConfigIT {
             assertNotNull(name.get("indicatorTplId"), "心脏超声名称绑定指标模板");
             assertEquals(18, ((List<?>) name.get("items")).size(), "经胸超声心动图等名称带出 18 个项目");
         }
+
+        // E23-T21 / C-SCAN-005（验收「程控报告单可映射字段」）：C 程控映射随 V94 预置——21 个项目与
+        // C_PROGRAM_FU 字段一一对应（V90），目标 = 随访记录；类型停用下 A 无该类型报告单、映射天然惰性。
+        Map<?, ?> programMapping =
+                mappings.stream()
+                        .filter(m -> "C_PROGRAM_TO_FU".equals(m.get("code")))
+                        .findFirst()
+                        .orElseThrow();
+        assertEquals("程控报告单", programMapping.get("typeName"), "来源类型名联查类型表（含停用行）");
+        assertEquals("C_PROGRAM", programMapping.get("typeCode"));
+        assertEquals("FOLLOWUP_RECORD", programMapping.get("targetType"), "目标 = 随访程控记录");
+        assertEquals("C_PROGRAM_FU", programMapping.get("targetFormCode"), "目标表单（V90 字段字典）");
+        assertEquals("程控报告单指标", programMapping.get("indicatorTplName"));
+        assertEquals("ENABLED", programMapping.get("status"), "映射启用（类型停用已保证 A 惰性）");
+        List<Map<?, ?>> programItems = (List<Map<?, ?>>) programMapping.get("items");
+        assertEquals(
+                21, programItems.size(), "映射示例表 21 项（电池 / 阈值脉宽 / 感知 / 阻抗 / 起搏比例 / 程控参数 / ICD）");
+        Map<?, ?> battery =
+                programItems.stream()
+                        .filter(i -> "battery_voltage".equals(i.get("itemCode")))
+                        .findFirst()
+                        .orElseThrow();
+        assertEquals("f322", battery.get("targetFieldKey"), "电池电压 → f322（V90 键位契约）");
+        assertEquals("电池电压(V)", battery.get("targetFieldLabel"), "目标字段显示名联查字段字典");
+        Map<?, ?> icd =
+                programItems.stream()
+                        .filter(i -> "icd_appropriate".equals(i.get("itemCode")))
+                        .findFirst()
+                        .orElseThrow();
+        assertEquals("f329", icd.get("targetFieldKey"), "ICD 恰当治疗（多选字段，E23-T21 起可写入）");
     }
 
     // ---------------------------------------------------------------- 权限 / 模块开关 / 租户隔离
@@ -467,10 +516,20 @@ class ReportConfigIT {
                                         "IT A 院新增（示例）",
                                         "formCode",
                                         "RPT_OTHER"))));
-        assertEquals(11, itemsOf(get(BASE + "/types", tenantA)).size());
+        assertEquals(
+                11,
+                itemsOf(get(BASE + "/types", tenantA)).stream()
+                        .filter(t -> "ENABLED".equals(t.get("status")))
+                        .count(),
+                "demoa 生效类型 = A 预置 10 + 新增 1（C 预置随包停用不计，V94）");
 
         String tenantB = hospitalToken("demob");
-        assertEquals(10, itemsOf(get(BASE + "/types", tenantB)).size(), "demob 不受 demoa 配置影响");
+        assertEquals(
+                10,
+                itemsOf(get(BASE + "/types", tenantB)).stream()
+                        .filter(t -> "ENABLED".equals(t.get("status")))
+                        .count(),
+                "demob 不受 demoa 配置影响（生效类型仍为 A 预置 10 类）");
     }
 
     /** 菜单链：平台库 V53 菜单 39 + followup V62 / 种子 V124 授予，TENANT_ADMIN 下发报告单设置菜单。 */

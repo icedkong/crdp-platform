@@ -70,6 +70,74 @@ class MappingValuesTest {
         assertTrue(bad.error().contains("无 / 微量 / 少量 / 中量 / 大量"), bad.error());
     }
 
+    /**
+     * E23-T21 / C-SCAN-005：多选字段（ICD 恰当 / 不恰当治疗）——顿号 / 逗号 / 分号分隔的选项名或编码 → 编码数组（FormDataValidator
+     * 多选口径），去重保序；任一项不在选项内整行报错。
+     */
+    @Test
+    void convertsMultiSelectByLabelsOrCodes() {
+        List<MappingValues.Option> icdTherapy =
+                List.of(
+                        new MappingValues.Option(0, "无"),
+                        new MappingValues.Option(1, "ATP"),
+                        new MappingValues.Option(2, "SHOCK"));
+        assertEquals(
+                List.of(1, 2),
+                MappingValues.convert("ICD恰当治疗", "multiselect", icdTherapy, "ATP、SHOCK").value());
+        assertEquals(
+                List.of(0),
+                MappingValues.convert("ICD恰当治疗", "multiselect", icdTherapy, "无").value());
+        assertEquals(
+                List.of(1, 2),
+                MappingValues.convert("ICD恰当治疗", "multiselect", icdTherapy, "1,2").value(),
+                "编码原样可写（顿号 / 逗号 / 分号分隔）");
+        assertEquals(
+                List.of(1, 2),
+                MappingValues.convert("ICD恰当治疗", "multiselect", icdTherapy, "ATP， SHOCK；").value(),
+                "分隔符混用与空白容忍");
+        assertEquals(
+                List.of(1),
+                MappingValues.convert("ICD恰当治疗", "multiselect", icdTherapy, "ATP、ATP").value(),
+                "重复取值去重（编码不重复）");
+
+        MappingValues.Converted bad =
+                MappingValues.convert("ICD恰当治疗", "multiselect", icdTherapy, "ATP、放电（示例）");
+        assertNull(bad.value());
+        assertTrue(bad.error().contains("无 / ATP / SHOCK"), bad.error());
+
+        MappingValues.Converted empty =
+                MappingValues.convert("ICD恰当治疗", "multiselect", icdTherapy, "、");
+        assertNull(empty.value());
+        assertTrue(empty.error().contains("不能写入"), empty.error());
+        assertNull(
+                MappingValues.convert("并发症", "multiselect", List.of(), "1").value(), "未配置选项集不能写入");
+        assertTrue(
+                MappingValues.convert("并发症", "multiselect", List.of(), "1")
+                        .error()
+                        .contains("未配置选项集"));
+    }
+
+    /** E23-T20 / OQ-69④：字典绑定单选（程控起搏模式，字符串编码）——选项名或编码原样都可写。 */
+    @Test
+    void convertsDictBoundSelectsByStringCodeOrLabel() {
+        List<MappingValues.Option> modes =
+                List.of(
+                        new MappingValues.Option("DDD", "DDD（双腔起搏）"),
+                        new MappingValues.Option("VVI", "VVI（心室起搏）"));
+        assertEquals(
+                "DDD",
+                MappingValues.convert("程控起搏模式", "select", modes, "DDD（双腔起搏）").value(),
+                "按选项名匹配");
+        assertEquals(
+                "VVI",
+                MappingValues.convert("程控起搏模式", "select", modes, "VVI").value(),
+                "字典编码为字符串、原样可写（与整数码路径同口径）");
+
+        MappingValues.Converted bad = MappingValues.convert("程控起搏模式", "select", modes, "AAI（示例）");
+        assertNull(bad.value());
+        assertTrue(bad.error().contains("DDD（双腔起搏） / VVI（心室起搏）"), bad.error());
+    }
+
     @Test
     void convertsPairNumbersLikeAneurysmSize() {
         Map<?, ?> pair =
@@ -99,8 +167,9 @@ class MappingValuesTest {
 
         assertNull(MappingValues.convert("BMI", "derived", List.of(), "22").value());
         assertTrue(MappingValues.convert("BMI", "derived", List.of(), "22").error().contains("派生"));
-        assertTrue(
-                MappingValues.convert("并发症", "multiselect", List.of(), "1").error().contains("多选"));
+        assertNull(
+                MappingValues.convert("通话时间", "datetime", List.of(), "2026-10-28 10:00").value(),
+                "日期时间仍不支持（与 E16-T07 相同，多选已随 E23-T21 开放）");
     }
 
     @Test
