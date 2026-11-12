@@ -3,10 +3,10 @@ import type { Dayjs } from 'dayjs';
 
 import { computed, ref, watch } from 'vue';
 
-import { message } from 'ant-design-vue';
+import { message, Modal } from 'ant-design-vue';
 import dayjs from 'dayjs';
 
-import { createBackfillRecord } from '#/api/core/task';
+import { checkRecordDuplicate, createBackfillRecord } from '#/api/core/task';
 import {
   backfillDateError,
   defaultBackfillDate,
@@ -17,7 +17,8 @@ import {
  * E15-T07 / A-FU-014、C-FU-013 · 历史补录弹窗（患者详情「随访记录」页签入口）：
  * 填写实际随访日期（过去日期，今天及以后不可选）→ POST /patients/{id}/records
  * （source=BACKFILL）→ 新标签页打开随访表单（recordId 路由，pages.md §5）。
- * 补录建议随访时间点（C-FU-014）与重复记录提示（C-FU-024）随 C 医院接入（E21 / E23）。
+ * 补录建议随访时间点（C-FU-014）随 E23；E21-T11 起创建前查重复记录提示
+ * （C-FU-024）：同一患者同一随访日期已有记录时先确认「确定继续？」再创建。
  */
 const props = defineProps<{
   open: boolean;
@@ -50,11 +51,32 @@ async function handleOk() {
     message.warning(dateError.value || '请填写实际随访日期');
     return;
   }
+  // C-FU-024 重复记录提示：同一患者同一随访日期已有记录（含草稿）先确认
+  const date = visitDate.value.format('YYYY-MM-DD');
+  try {
+    const view = await checkRecordDuplicate(props.patientId, date);
+    if (view.duplicate) {
+      Modal.confirm({
+        title: '重复记录提示',
+        content: `该患者在 ${date} 已有一条随访记录，确定继续？`,
+        okText: '继续创建',
+        cancelText: '取消',
+        onOk: () => createRecord(date),
+      });
+      return;
+    }
+  } catch {
+    // 提示接口失败不拦截创建（后端保存复算与提示各自兜底）
+  }
+  await createRecord(date);
+}
+
+async function createRecord(date: string) {
   submitting.value = true;
   try {
     const created = await createBackfillRecord(props.patientId, {
       source: 'BACKFILL',
-      visitDate: visitDate.value.format('YYYY-MM-DD'),
+      visitDate: date,
     });
     message.success('已创建补录记录，正在打开随访表单');
     emit('created', created.recordId);

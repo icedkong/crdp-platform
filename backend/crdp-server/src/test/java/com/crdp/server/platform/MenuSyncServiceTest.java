@@ -280,6 +280,29 @@ class MenuSyncServiceTest {
                         "followup:record:edit",
                         10,
                         "ENABLED"),
+                // E21-T11 修改已提交 / 删除随访记录按钮：随访任务（22）下（平台库 V72 同构，敏感）
+                manifestRow(
+                        229L,
+                        22L,
+                        "BUTTON",
+                        "修改已提交记录",
+                        null,
+                        null,
+                        null,
+                        "followup:record:edit-submitted",
+                        20,
+                        "ENABLED"),
+                manifestRow(
+                        230L,
+                        22L,
+                        "BUTTON",
+                        "删除随访记录",
+                        null,
+                        null,
+                        null,
+                        "followup:record:delete",
+                        30,
+                        "ENABLED"),
                 // E13-T07 批量指定责任医生按钮与批量入组隐藏路由（平台库 V44 同构）：
                 // 患者档案（21）下；批量入组 perm_code 为 NULL（操作权限沿用按钮 221 plan:enroll）
                 manifestRow(

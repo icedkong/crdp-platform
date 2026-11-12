@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
@@ -21,17 +22,23 @@ import com.crdp.followup.plan.app.FollowupTerminationService;
 import com.crdp.followup.task.app.FollowupTaskStatusService;
 import com.crdp.followup.task.infra.mapper.FollowupTaskQueryMapper;
 import com.crdp.form.history.app.FieldHistoryService;
+import com.crdp.form.history.domain.ChangeSource;
 import com.crdp.form.record.app.FormService;
 import com.crdp.framework.audit.AuditLogger;
 import com.crdp.framework.crypto.CryptoService;
+import com.crdp.framework.security.ScopeSnapshot;
+import com.crdp.framework.security.SessionPrincipal;
 import com.crdp.framework.web.ApiException;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 /**
  * E15-T02 / A-FU-005：随访工作台记录详情与提交的业务层口径。
@@ -57,6 +64,11 @@ class RecordEntryServiceTest {
             mock(com.crdp.followup.implant.app.DeviceContextService.class);
     private final CryptoService crypto = mock(CryptoService.class);
     private final AuditLogger audit = mock(AuditLogger.class);
+    private final RecordEntryAssistService entryAssist = mock(RecordEntryAssistService.class);
+    private final com.crdp.followup.record.infra.mapper.FollowupRecordMapper recordMapper =
+            mock(com.crdp.followup.record.infra.mapper.FollowupRecordMapper.class);
+    private final com.crdp.followup.record.infra.mapper.RecordFeatureMapper features =
+            mock(com.crdp.followup.record.infra.mapper.RecordFeatureMapper.class);
 
     private final RecordEntryService service =
             new RecordEntryService(
@@ -71,7 +83,10 @@ class RecordEntryServiceTest {
                     compareHighlights,
                     deviceContext,
                     crypto,
-                    audit);
+                    audit,
+                    entryAssist,
+                    recordMapper,
+                    features);
 
     private static FollowupTaskQueryMapper.TaskRowRaw taskRow(String status) {
         return new FollowupTaskQueryMapper.TaskRowRaw(
@@ -110,6 +125,7 @@ class RecordEntryServiceTest {
                 patientId,
                 null,
                 "TASK",
+                null,
                 null,
                 "A_ANNUAL_FU",
                 1,
@@ -154,6 +170,7 @@ class RecordEntryServiceTest {
                         null,
                         "BACKFILL",
                         LocalDate.of(2025, 6, 1),
+                        null,
                         "A_ANNUAL_FU",
                         1,
                         "DRAFT",
@@ -204,6 +221,7 @@ class RecordEntryServiceTest {
                         null,
                         "BACKFILL",
                         LocalDate.of(2025, 6, 1),
+                        null,
                         "A_ANNUAL_FU",
                         1,
                         "DRAFT",
@@ -423,5 +441,186 @@ class RecordEntryServiceTest {
                         .code(),
                 "baseVersion 必填（乐观锁）");
         verify(recordService, never()).submit(anyLong(), any(), any(), any());
+    }
+
+    // ------------------------------------------------------- 修改 / 删除已提交（E21-T11 / C-FU-026、Q17）
+
+    /** 登录会话（权限码可注入；E21-T11 权限闸门用）。 */
+    private static void loginAs(List<String> permissionCodes) {
+        SecurityContextHolder.getContext()
+                .setAuthentication(
+                        new UsernamePasswordAuthenticationToken(
+                                new SessionPrincipal(
+                                        "token",
+                                        "HOSPITAL",
+                                        1L,
+                                        "democ",
+                                        "虚构示例医院",
+                                        7L,
+                                        "doctor.demo",
+                                        "张医生（示例）",
+                                        List.of("FOLLOWUP_DOCTOR"),
+                                        List.of(),
+                                        permissionCodes,
+                                        List.of("followup"),
+                                        1L,
+                                        ScopeSnapshot.allowAll(),
+                                        false,
+                                        null),
+                                null,
+                                List.of()));
+    }
+
+    @AfterEach
+    void clearSession() {
+        SecurityContextHolder.clearContext();
+    }
+
+    /** 验收位「修改已提交记录需单独权限」：开关开启（医院 C）时仅有录入码 record:edit → 40300。 */
+    @Test
+    void editSessionRequiresSeparatePermissionWhenFeatureOn() {
+        loginAs(List.of("followup:record:edit"));
+        when(features.findEnabled("record_edit_submitted")).thenReturn(true);
+
+        assertEquals(
+                40300,
+                assertThrows(ApiException.class, () -> service.editSession(701L, "抄录错误")).code(),
+                "C-FU-026：未分配「修改已提交记录」权限只能查看");
+        verify(audit, never()).append(any());
+    }
+
+    /** 开关开启 + edit-submitted → 放行并返回当前 version（PUT 的 baseVersion）。 */
+    @Test
+    void editSessionPassesWithEditSubmittedWhenFeatureOn() {
+        loginAs(List.of("followup:record:edit-submitted"));
+        when(features.findEnabled("record_edit_submitted")).thenReturn(true);
+        when(recordService.record(701L)).thenReturn(record("SUBMITTED", Map.of()));
+
+        RecordEntryService.EditSessionView view = service.editSession(701L, "抄录错误");
+
+        assertEquals("701", view.recordId());
+        assertEquals(2, view.version());
+        assertEquals("SUBMITTED", view.status());
+        verify(audit).append(any());
+    }
+
+    /** 开关关闭（A / B，无行默认）→ record:edit 即可（followup.md §6「A 用户有 record:edit 即可」）。 */
+    @Test
+    void editSessionPassesWithPlainEditWhenFeatureOff() {
+        loginAs(List.of("followup:record:edit"));
+        when(features.findEnabled("record_edit_submitted")).thenReturn(null);
+        when(recordService.record(701L)).thenReturn(record("SUBMITTED", Map.of()));
+
+        assertEquals(2, service.editSession(701L, null).version());
+    }
+
+    /** 只有已提交记录走修改流程：DRAFT 直接编辑（40901）。 */
+    @Test
+    void editSessionRejectsDraft() {
+        loginAs(List.of("followup:record:edit-submitted"));
+        when(features.findEnabled("record_edit_submitted")).thenReturn(true);
+        when(recordService.record(701L)).thenReturn(record("DRAFT", Map.of()));
+
+        assertEquals(
+                40901,
+                assertThrows(ApiException.class, () -> service.editSession(701L, null)).code());
+    }
+
+    /** 保存修改：reason 必填（OQ-14 暂定 A / C 都必填）。 */
+    @Test
+    void updateSubmittedRequiresReason() {
+        loginAs(List.of("followup:record:edit-submitted"));
+
+        assertEquals(
+                40001,
+                assertThrows(
+                                ApiException.class,
+                                () ->
+                                        service.updateSubmitted(
+                                                701L,
+                                                new RecordEntryService.UpdateCommand(
+                                                        2, Map.of(), null, " ")))
+                        .code(),
+                "修改原因必填（ReasonModal）");
+        verify(recordService, never()).updateSubmitted(anyLong(), any(), any(), any());
+    }
+
+    /** 保存修改：字段级历史带原因、对比标红复算、RECORD_UPDATE 审计（C-FU-026「修改留字段级历史」）。 */
+    @Test
+    void updateSubmittedWritesFieldHistoryWithReasonAndRecalculates() {
+        loginAs(List.of("followup:record:edit-submitted"));
+        when(features.findEnabled("record_edit_submitted")).thenReturn(true);
+        FollowupRecordService.RecordView updated =
+                new FollowupRecordService.RecordView(
+                        701L,
+                        301L,
+                        9001L,
+                        "TASK",
+                        null,
+                        null,
+                        "A_ANNUAL_FU",
+                        1,
+                        "SUBMITTED",
+                        3,
+                        Map.of("f308", 1.2),
+                        Map.of(),
+                        null,
+                        "2026-11-05T09:00:00+08:00");
+        when(recordService.updateSubmitted(eq(701L), eq(2), any(), any()))
+                .thenReturn(
+                        new FollowupRecordService.SubmitOutcome(
+                                updated, Map.of("f308", 0.7), List.of(), List.of()));
+        when(fieldHistory.logChanges(any(), eq(701L), any(), anyInt(), any(), any(), any(), any()))
+                .thenReturn(List.of());
+
+        RecordEntryService.UpdateResultView view =
+                service.updateSubmitted(
+                        701L,
+                        new RecordEntryService.UpdateCommand(2, Map.of("f308", 1.2), null, "抄录错误"));
+
+        assertEquals("701", view.recordId());
+        assertEquals(3, view.version(), "保存后生成 v2（version + 1）");
+        verify(fieldHistory)
+                .logChanges(
+                        eq(FieldHistoryService.FU_RECORD),
+                        eq(701L),
+                        eq("A_ANNUAL_FU"),
+                        eq(1),
+                        any(),
+                        any(),
+                        eq(ChangeSource.USER),
+                        eq("修改已提交随访记录：抄录错误"));
+        verify(compareHighlights).refreshSubmittedRecords(301L, "A_ANNUAL_FU");
+        verify(audit).append(any());
+    }
+
+    /** 删除：reason 必填、软删除 + 断开任务链接 + RECORD_DELETE 审计（C-FU-026 / PLT-AUD-001）。 */
+    @Test
+    void deleteSoftDeletesAndUnlinksTaskWithAudit() {
+        loginAs(List.of("followup:record:delete"));
+        when(recordService.record(701L)).thenReturn(record("SUBMITTED", Map.of()));
+        when(recordMapper.softDelete(eq(701L), eq("重复录入"), eq(7L))).thenReturn(1);
+
+        service.deleteRecord(701L, "重复录入");
+
+        verify(recordMapper).softDelete(701L, "重复录入", 7L);
+        verify(recordMapper).clearTaskRecordLink(701L);
+        verify(audit).append(any());
+    }
+
+    /** 删除：原因缺失 40001；软删除 0 行（已被删 / 不存在）40400。 */
+    @Test
+    void deleteRequiresReasonAndMissingRowIs40400() {
+        loginAs(List.of("followup:record:delete"));
+
+        assertEquals(
+                40001,
+                assertThrows(ApiException.class, () -> service.deleteRecord(701L, null)).code());
+
+        when(recordService.record(701L)).thenReturn(record("SUBMITTED", Map.of()));
+        when(recordMapper.softDelete(anyLong(), any(), anyLong())).thenReturn(0);
+        assertEquals(
+                40400,
+                assertThrows(ApiException.class, () -> service.deleteRecord(701L, "重复录入")).code());
     }
 }

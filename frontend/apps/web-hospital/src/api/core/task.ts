@@ -12,7 +12,10 @@ import type {
   BackfillCreateRequest,
   BackfillCreateView,
   RecordDetailView,
+  RecordDuplicateCheckView,
+  RecordEditSessionView,
   RecordSubmitResult,
+  RecordUpdateResult,
   TaskAcknowledgeView,
   TaskAssignRequest,
   TaskAssignResult,
@@ -120,6 +123,63 @@ export function submitRecord(
     apiPath(`/followup/records/${recordId}/submit`),
     body,
   );
+}
+
+/**
+ * 重复记录提示（E21-T11 / C-FU-024）：同一患者同一有效随访日期（visit_date ?? 表单
+ * 随访日期 ?? 任务计划日期）已有在册记录（含草稿，软删不算）时 duplicate = true——
+ * 前端提示「该患者在 {日期} 已有一条随访记录，确定继续？」确认后照常保存。
+ */
+export function checkRecordDuplicate(
+  patientId: number | string,
+  visitDate: string,
+  excludeRecordId?: null | string,
+) {
+  return requestClient.get<RecordDuplicateCheckView>(
+    apiPath(`/followup/patients/${patientId}/records/check-duplicate`),
+    { params: { excludeRecordId: excludeRecordId ?? undefined, visitDate } },
+  );
+}
+
+/**
+ * 开始修改已提交记录（E21-T11 / C-FU-026 / Q17）：reason 来自 ReasonModal「开始修改」；
+ * 开关开启的租户（医院 C）必须 followup:record:edit-submitted（否则 40300），关闭的租户
+ * followup:record:edit 即可；返回当前 version（保存修改的 baseVersion）。
+ */
+export function startRecordEditSession(
+  recordId: string,
+  body: { reason: string },
+) {
+  return requestClient.post<RecordEditSessionView>(
+    apiPath(`/followup/records/${recordId}/edit-session`),
+    body,
+  );
+}
+
+/**
+ * 保存修改已提交记录（E21-T11 / C-FU-026「修改留字段级历史」）：reason 必填
+ * （OQ-14 暂定 A / C 都必填）；SUBMITTED 原地更新 + version + 1（保存后生成 v2）。
+ */
+export function updateSubmittedRecord(
+  recordId: string,
+  body: {
+    baseVersion: number;
+    data: Record<string, unknown>;
+    dataMeta?: Record<string, unknown>;
+    reason: string;
+  },
+) {
+  return requestClient.put<RecordUpdateResult>(
+    apiPath(`/followup/records/${recordId}`),
+    body,
+  );
+}
+
+/** 删除随访记录（E21-T11 / C-FU-026）：软删除、reason 必填、记审计（followup:record:delete）。 */
+export function deleteRecord(recordId: string, body: { reason: string }) {
+  return requestClient.delete<null>(apiPath(`/followup/records/${recordId}`), {
+    data: body,
+  });
 }
 
 /** 历史补录 / 计划外随访（E15-T07 补录；E15-T06 起计划外 UNPLANNED 当天可录）：新建记录返回 recordId 进表单页。 */

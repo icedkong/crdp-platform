@@ -753,6 +753,7 @@ class ReportMappingServiceTest {
                 98L,
                 "TASK",
                 null,
+                null,
                 "A_ANNUAL_FU",
                 2,
                 "SUBMITTED",

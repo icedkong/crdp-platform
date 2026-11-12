@@ -14,13 +14,18 @@ import type {
 import { describe, expect, it } from 'vitest';
 
 import {
+  applyEntryDefaults,
   bannersOf,
+  canEditSubmittedRecord,
   deathFieldKey,
   diffChanges,
   draftRecordKey,
+  duplicateRecordConfirmText,
+  entrySummaryText,
   hasChanges,
   headerSummary,
   headerTitle,
+  implantDurationText,
   missingRequiredText,
   nextVisitText,
   readonlyBanner,
@@ -290,5 +295,131 @@ describe('rendererContextOf（E21-T03 器械上下文：按器械条件显示的
 
   it('无器械（A / B 租户、取出后）为 null——ctx 断链，条件字段隐藏', () => {
     expect(rendererContextOf(null)).toBeNull();
+  });
+});
+
+describe('e21-T11 / C-FU-026：修改已提交记录的按钮权限（与后端闸门同口径）', () => {
+  it('开关开启（医院 C）：必须 followup:record:edit-submitted，仅有录入码不可修改', () => {
+    expect(
+      canEditSubmittedRecord({
+        editSubmittedFeatureOn: true,
+        hasEdit: true,
+        hasEditSubmitted: false,
+      }),
+    ).toBe(false);
+    expect(
+      canEditSubmittedRecord({
+        editSubmittedFeatureOn: true,
+        hasEdit: true,
+        hasEditSubmitted: true,
+      }),
+    ).toBe(true);
+  });
+
+  it('开关关闭（A / B）：followup:record:edit 即可（followup.md §6）', () => {
+    expect(
+      canEditSubmittedRecord({
+        editSubmittedFeatureOn: false,
+        hasEdit: true,
+        hasEditSubmitted: false,
+      }),
+    ).toBe(true);
+  });
+});
+
+describe('e21-T11 / C-FU-024：重复记录提示文案', () => {
+  it('照抄 pages.md §5.1（推断，待确认）：「该患者在 {日期} 已有一条随访记录，确定继续？」', () => {
+    expect(duplicateRecordConfirmText('2026-11-02')).toBe(
+      '该患者在 2026-11-02 已有一条随访记录，确定继续？',
+    );
+  });
+});
+
+describe('e21-T11 / C-FU-008：植入时长与头幅自动带入行', () => {
+  it('植入时长「1 年 5 个月」按自然月差（当日未到扣 1 个月）', () => {
+    expect(implantDurationText('2025-06-10', () => '2026-11-12')).toBe(
+      '1 年 5 个月',
+    );
+    expect(implantDurationText('2026-11-12', () => '2026-11-12')).toBe(
+      '不足 1 个月',
+    );
+    expect(implantDurationText(null)).toBe('');
+  });
+
+  it('头幅行各段缺省省略：随访编号 · 第 N 次 · 当前器械 · 植入时长', () => {
+    expect(
+      entrySummaryText({
+        device: {
+          chambers: 2,
+          current: true,
+          hasRaLead: true,
+          implantDate: '2025-06-10',
+          implantId: '501',
+          type: 'DDD',
+          typeLabel: '双腔起搏器(DDD)',
+        },
+        sequenceNo: 3,
+        today: () => '2026-11-12',
+        visitNo: '105-2026-001',
+      }),
+    ).toBe(
+      '随访编号 105-2026-001 · 第 3 次 · 当前器械 双腔起搏器(DDD) · 植入时长 1 年 5 个月',
+    );
+    expect(entrySummaryText({})).toBe('');
+  });
+});
+
+describe('e21-T11 / C-FU-008：录入缺省（随访医生 = 当前用户）', () => {
+  const schema = {
+    categories: [
+      {
+        fields: [
+          {
+            code: 'visit_doctor',
+            key: 'f305',
+            label: '随访医生',
+            type: 'select',
+          },
+        ],
+        key: 'fu_contact',
+        label: '随访概况',
+        order: 1,
+      },
+    ],
+    code: 'C_PROGRAM_FU',
+    name: '程控随访（示例）',
+    rules: [],
+    usage: 'FOLLOWUP',
+    version: 1,
+  } as unknown as FormSchema;
+
+  it('模板含 visit_doctor 字段且当前无值时写入当前用户', () => {
+    expect(
+      applyEntryDefaults(
+        schema,
+        {},
+        { doctorId: '7', doctorName: '张医生（示例）' },
+      ),
+    ).toEqual({ f305: '7' });
+  });
+
+  it('已有值不覆盖；无该字段（A 表单）原样返回', () => {
+    expect(
+      applyEntryDefaults(
+        schema,
+        { f305: '9' },
+        {
+          doctorId: '7',
+          doctorName: '张医生（示例）',
+        },
+      ),
+    ).toEqual({ f305: '9' });
+    expect(
+      applyEntryDefaults(
+        { ...schema, categories: [] } as unknown as FormSchema,
+        {},
+        { doctorId: '7', doctorName: '张医生（示例）' },
+      ),
+    ).toEqual({});
   });
 });

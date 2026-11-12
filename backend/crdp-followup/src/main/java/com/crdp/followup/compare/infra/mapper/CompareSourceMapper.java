@@ -23,23 +23,31 @@ import org.apache.ibatis.annotations.Select;
 @Mapper
 public interface CompareSourceMapper {
 
-    /** 已提交随访候选行（task_id 供应用层补查任务计划日期）。 */
-    record CandidateRow(long id, String source, LocalDate visitDate, Long taskId, String data) {}
+    /** 已提交随访候选行（task_id 供应用层补查任务计划日期；implantId 供 E21-T11 同一器械过滤）。 */
+    record CandidateRow(
+            long id,
+            String source,
+            LocalDate visitDate,
+            Long taskId,
+            Long implantId,
+            String data) {}
 
     /**
-     * 患者的已提交同表单随访候选（排除自身；含 TASK / BACKFILL 及历史导入，不含 UNPLANNED 与 DRAFT）。 时点定序在应用层完成（对比时点 =
-     * visit_date ?? 任务计划日期）。
+     * 患者的已提交同表单随访候选（排除自身；含 TASK / BACKFILL 及历史导入，不含 UNPLANNED 与 DRAFT；软删行不算，E21-T11）。
+     * 时点定序在应用层完成（对比时点 = visit_date ?? 任务计划日期）。
      */
     @com.crdp.framework.datascope.DataScope(resource = "patient")
     @Select(
             """
-            SELECT r.id, r.source, r.visit_date AS visitDate, r.task_id AS taskId, r.data
+            SELECT r.id, r.source, r.visit_date AS visitDate, r.task_id AS taskId,
+                   r.implant_id AS implantId, r.data
             FROM fu_record r
             JOIN pt_patient pt ON pt.id = r.patient_id AND pt.deleted = 0
             WHERE r.patient_id = #{patientId}
               AND r.id <> #{recordId}
               AND r.form_code = #{formCode}
               AND r.status = 'SUBMITTED'
+              AND r.deleted = 0
               AND IFNULL(r.source, '') <> 'UNPLANNED'
             ORDER BY r.visit_date DESC, r.id DESC
             """)
@@ -47,6 +55,20 @@ public interface CompareSourceMapper {
             @Param("patientId") long patientId,
             @Param("recordId") long recordId,
             @Param("formCode") String formCode);
+
+    /**
+     * 当前记录的器械维度（E21-T11 / C-FU-010、OQ-130③）：fu_record.implant_id（创建 / 提交时按随访日期解析落列， followup
+     * V87）；implant 开关关闭的租户（A / B）与历史空行 null——null 时对比候选不做器械过滤（既有行为）。
+     */
+    @com.crdp.framework.datascope.DataScope(resource = "patient")
+    @Select(
+            """
+            SELECT r.implant_id
+            FROM fu_record r
+            JOIN pt_patient pt ON pt.id = r.patient_id AND pt.deleted = 0
+            WHERE r.id = #{recordId} AND r.deleted = 0
+            """)
+    Long findRecordImplant(@Param("recordId") long recordId);
 
     /** 任务计划日期行（TASK 候选的对比时点）。 */
     record TaskPlanRow(long taskId, LocalDate planDate) {}

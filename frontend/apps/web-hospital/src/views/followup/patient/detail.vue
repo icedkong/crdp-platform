@@ -72,7 +72,7 @@ import {
   markPatientLost,
 } from '#/api/core/patient';
 import { deleteReport, fetchPatientReports } from '#/api/core/report';
-import { startTask } from '#/api/core/task';
+import { deleteRecord, startTask } from '#/api/core/task';
 import {
   categoryHash,
   jumpToAnchor,
@@ -120,6 +120,7 @@ import { useBreakpoint } from '#/reference/use-breakpoint';
 import { useFeature } from '#/reference/use-feature';
 import { usePermission } from '#/reference/use-permission';
 import { useWatermarkViewer } from '#/reference/use-watermark-viewer';
+import { canEditSubmittedRecord as canEditSubmittedRecordLogic } from '#/views/followup/record/logic';
 
 import {
   contactCardLines,
@@ -828,6 +829,15 @@ function confirmCompareEntry() {
 // ---------------------------------------------------------------- E15-T04 沟通记录页签（pages.md §4.8）
 
 const canEditRecord = computed(() => hasPermission('followup:record:edit'));
+// E21-T11 / C-FU-026：修改已提交（开关开启的租户须 edit-submitted）与删除（未分配隐藏）
+const canEditSubmittedRecord = computed(() =>
+  canEditSubmittedRecordLogic({
+    editSubmittedFeatureOn: isFeatureEnabled('record_edit_submitted'),
+    hasEdit: hasPermission('followup:record:edit'),
+    hasEditSubmitted: hasPermission('followup:record:edit-submitted'),
+  }),
+);
+const canDeleteRecord = computed(() => hasPermission('followup:record:delete'));
 const canDownload = computed(() => hasPermission('followup:scan:download'));
 
 const contactLogs = ref<ContactLogRow[]>([]);
@@ -1068,6 +1078,34 @@ async function onTempTaskCreated() {
   await reloadTimeline();
 }
 
+// E21-T11 / C-FU-026：时间轴已提交记录的「修改 / 删除」——修改带 ?edit=1 进表单页
+// （自动弹「修改原因」），删除本页 ReasonModal（软删除、原因必填、审计）。
+const recordDeleteOpen = ref(false);
+const recordDeleteTarget = ref<null | string>(null);
+
+function openRecordEdit(recordId: string) {
+  window.open(`/followup/record/${recordId}?edit=1`, '_blank');
+}
+
+function openRecordDelete(recordId: string) {
+  recordDeleteTarget.value = recordId;
+  recordDeleteOpen.value = true;
+}
+
+async function confirmRecordDelete(reason: string) {
+  if (!recordDeleteTarget.value) return;
+  try {
+    await deleteRecord(recordDeleteTarget.value, { reason });
+    recordDeleteOpen.value = false;
+    recordDeleteTarget.value = null;
+    message.success('已删除随访记录（软删除，原因已记入审计）');
+    await reloadTimeline();
+  } catch (error) {
+    message.error('删除失败，请稍后重试');
+    console.error(error);
+  }
+}
+
 const timelineLegendNote =
   '时间轴含每年随访、历史补录、计划外随访（不影响后续节点）与下次计划日期（计划中）；终点事件随 E17、医院 C 的器械事件随 E21 接入。';
 </script>
@@ -1299,13 +1337,27 @@ const timelineLegendNote =
         <FollowupTimeline
           ref="timelineRef"
           :attachments="navItems"
+          :can-delete-submitted="canDeleteRecord"
+          :can-edit-submitted="canEditSubmittedRecord"
           :can-upload="canUploadReport"
           v-model:expanded-record-id="expandedRecordId"
           :entries="timeline"
           :patient-id="overview.id"
+          @delete-submitted="openRecordDelete"
+          @edit-submitted="openRecordEdit"
           @open="openTimelineNode"
           @open-attachment="openAttachmentPreview"
           @upload-at="(preset) => openReportUpload(preset)"
+        />
+        <!-- E21-T11 / C-FU-026：删除随访记录（软删除、原因必填、审计） -->
+        <ReasonModal
+          confirm-text="删除"
+          label="删除随访记录"
+          note="删除为软删除：数据长期保留，原因记入审计；关联任务不重开（重录走补录 / 计划外入口）"
+          :open="recordDeleteOpen"
+          placeholder="必填，如：重复录入"
+          @confirm="confirmRecordDelete"
+          @update:open="recordDeleteOpen = $event"
         />
         <BackfillRecordModal
           v-model:open="backfillOpen"

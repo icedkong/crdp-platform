@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -54,6 +55,7 @@ class FollowupRecordServiceTest {
                     301L,
                     9001L,
                     "TASK",
+                    null,
                     null,
                     "A_ANNUAL_FU",
                     1,
@@ -126,6 +128,7 @@ class FollowupRecordServiceTest {
                         9001L,
                         "TASK",
                         null,
+                        null,
                         "A_ANNUAL_FU",
                         1,
                         "SUBMITTED",
@@ -142,6 +145,7 @@ class FollowupRecordServiceTest {
                         301L,
                         9001L,
                         "TASK",
+                        null,
                         null,
                         "A_ANNUAL_FU",
                         1,
@@ -219,6 +223,7 @@ class FollowupRecordServiceTest {
                         9001L,
                         "TASK",
                         null,
+                        null,
                         "A_ANNUAL_FU",
                         1,
                         "DRAFT",
@@ -274,6 +279,7 @@ class FollowupRecordServiceTest {
                         9001L,
                         "TASK",
                         null,
+                        null,
                         "A_ANNUAL_FU",
                         1,
                         "SUBMITTED",
@@ -305,7 +311,7 @@ class FollowupRecordServiceTest {
                                 Map.of("f214", "2026-11-05"), List.of("f219")));
         when(formService.writeGateData(eq("A_ANNUAL_FU"), eq(1), any()))
                 .thenReturn(Map.of("f214", "2026-11-05"));
-        when(recordMapper.submitRecord(eq(701L), eq(2), any(), any(), eq(7L))).thenReturn(1);
+        when(recordMapper.submitRecord(eq(701L), eq(2), any(), any(), any(), eq(7L))).thenReturn(1);
 
         FollowupRecordService.SubmitOutcome outcome =
                 service.submit(701L, 2, Map.of("f214", "2026-11-05"), null);
@@ -332,7 +338,7 @@ class FollowupRecordServiceTest {
                 .thenReturn(new FormService.StrippedData(Map.of("f214", "2026-11-05"), List.of()));
         when(formService.writeGateData(eq("A_ANNUAL_FU"), eq(1), any()))
                 .thenReturn(Map.of("f214", "2026-11-05"));
-        when(recordMapper.submitRecord(eq(701L), eq(2), any(), any(), eq(7L))).thenReturn(1);
+        when(recordMapper.submitRecord(eq(701L), eq(2), any(), any(), any(), eq(7L))).thenReturn(1);
 
         service.submit(701L, 2, Map.of("f214", "2026-11-05"), null);
 
@@ -353,7 +359,7 @@ class FollowupRecordServiceTest {
         when(formService.stripHiddenFields(eq("A_ANNUAL_FU"), eq(3), any(), any()))
                 .thenReturn(new FormService.StrippedData(Map.of(), List.of()));
         when(formService.writeGateData(eq("A_ANNUAL_FU"), eq(3), any())).thenReturn(Map.of());
-        when(recordMapper.submitRecord(eq(888L), eq(0), any(), any(), eq(7L))).thenReturn(1);
+        when(recordMapper.submitRecord(eq(888L), eq(0), any(), any(), any(), eq(7L))).thenReturn(1);
 
         service.submit(888L, 0, Map.of(), null);
 
@@ -373,6 +379,7 @@ class FollowupRecordServiceTest {
                         301L,
                         9001L,
                         "TASK",
+                        null,
                         null,
                         "A_ANNUAL_FU",
                         1,
@@ -398,6 +405,7 @@ class FollowupRecordServiceTest {
                 301L,
                 9001L,
                 "TASK",
+                null,
                 null,
                 "A_ANNUAL_FU",
                 1,
@@ -444,6 +452,7 @@ class FollowupRecordServiceTest {
                 null,
                 "BACKFILL",
                 LocalDate.of(2025, 6, 1),
+                null,
                 "A_ANNUAL_FU",
                 3,
                 status,
@@ -454,5 +463,76 @@ class FollowupRecordServiceTest {
                 LocalDateTime.of(2026, 11, 5, 9, 0),
                 7L,
                 LocalDateTime.of(2026, 11, 5, 9, 0));
+    }
+
+    /** 指定 version 的行（更新后重读：version + 1）。 */
+    private static FollowupRecordMapper.RecordRowRaw rowWithStatusAndVersion(
+            String status, int version) {
+        FollowupRecordMapper.RecordRowRaw row = rowWithStatus(status);
+        return new FollowupRecordMapper.RecordRowRaw(
+                row.id(),
+                row.patientId(),
+                row.taskId(),
+                row.source(),
+                row.visitDate(),
+                row.implantId(),
+                row.formCode(),
+                row.templateVersion(),
+                row.status(),
+                version,
+                row.data(),
+                row.dataMeta(),
+                row.createdBy(),
+                row.createdAt(),
+                row.updatedBy(),
+                row.updatedAt());
+    }
+
+    // ------------------------------------------------------- 修改已提交 / 器械维度（E21-T11 /
+    // C-FU-026、C-FU-008）
+
+    /** 保存修改：SUBMITTED 原地更新（version + 1）、返回提交前 data（字段历史 before）。 */
+    @Test
+    void updateSubmittedKeepsSubmittedAndBumpsVersion() {
+        // 第一次读旧行（version 0），更新后重读新行（version 1）
+        when(recordMapper.findRecord(888L))
+                .thenReturn(rowWithStatus("SUBMITTED"), rowWithStatusAndVersion("SUBMITTED", 1));
+        lenient()
+                .when(formService.validateForSubmit(eq("A_ANNUAL_FU"), eq(3), any(), any()))
+                .thenReturn(List.of());
+        when(formService.stripHiddenFields(eq("A_ANNUAL_FU"), eq(3), any(), any()))
+                .thenReturn(new FormService.StrippedData(Map.of("f214", "2026-11-05"), List.of()));
+        when(formService.writeGateData(eq("A_ANNUAL_FU"), eq(3), any()))
+                .thenReturn(Map.of("f214", "2026-11-05"));
+        when(recordMapper.updateSubmittedRecord(eq(888L), eq(0), any(), any(), eq(7L)))
+                .thenReturn(1);
+
+        FollowupRecordService.SubmitOutcome outcome =
+                service.updateSubmitted(888L, 0, Map.of("f214", "2026-11-05"), null);
+
+        assertEquals("SUBMITTED", outcome.view().status(), "修改后仍是已提交（原地更新）");
+        assertEquals(1, outcome.view().version(), "保存后生成 v2（version + 1）");
+    }
+
+    /** 保存修改：DRAFT 40901（草稿直接编辑，不走修改流程）；版本冲突 40900。 */
+    @Test
+    void updateSubmittedRejectsDraftAndStaleVersion() {
+        when(recordMapper.findRecord(701L)).thenReturn(rowWithStatus("DRAFT"));
+
+        assertEquals(
+                40901,
+                assertThrows(
+                                ApiException.class,
+                                () -> service.updateSubmitted(701L, 0, Map.of(), null))
+                        .code());
+
+        when(recordMapper.findRecord(888L)).thenReturn(rowWithStatus("SUBMITTED"));
+        assertEquals(
+                40900,
+                assertThrows(
+                                ApiException.class,
+                                () -> service.updateSubmitted(888L, 5, Map.of(), null))
+                        .code(),
+                "baseVersion 过期 → 40900");
     }
 }

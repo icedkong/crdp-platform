@@ -511,6 +511,36 @@ public class MenuManifest {
                             "followup:record:edit",
                             null,
                             10),
+                    // E21-T11 / C-FU-026（Q17）：随访任务下的「修改已提交记录」按钮（敏感——
+                    // 平台库 V72 同构，plt_sensitive_perm 默认不可分配、平台按租户放开）
+                    new MenuManifestItem(
+                            "followup",
+                            "HOSPITAL",
+                            "BUTTON",
+                            "followup:record:edit-submitted",
+                            "FollowupTask",
+                            "修改已提交记录",
+                            null,
+                            null,
+                            null,
+                            "followup:record:edit-submitted",
+                            null,
+                            20),
+                    // E21-T11 / C-FU-026（Q17）：随访任务下的「删除随访记录」按钮（软删除、
+                    // 敏感——平台库 V72 同构，与 V18 已登记的 followup:record:delete 同码）
+                    new MenuManifestItem(
+                            "followup",
+                            "HOSPITAL",
+                            "BUTTON",
+                            "followup:record:delete",
+                            "FollowupTask",
+                            "删除随访记录",
+                            null,
+                            null,
+                            null,
+                            "followup:record:delete",
+                            null,
+                            30),
                     // E13-T07 / A-PAT-017、C-PAT-016：患者档案下的「批量指定责任医生」按钮
                     // （followup:task:assign，OQ-18 暂行口径；平台库 V44 同构）
                     new MenuManifestItem(
