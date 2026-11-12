@@ -20,7 +20,8 @@ import org.springframework.stereotype.Service;
  * Mapper 语句上的 {@code @DataScope(resource = "patient")} 出行，范围内无患者时全部为 0（stats.md §1，不报错）。
  *
  * <p>指标集按租户差异用功能开关判定（stats.md §3「A 与 C 指标不同，按租户配置」）： {@code implant} 开 → 医院 C 指标集 （C-DASH-001
- * 七项，其中「接近 ERI 器械数」「待录入扫描件数」的数据源随 E21 落地，先行返回 available = false 占位， 与任务列表 C 三列占位同做法）；关 → 医院 A
+ * 七项，其中「接近 ERI 器械数」的数据源随 E21-T07 / T19 落地、先行返回 available = false 占位——与任务列表 C 三列占位同做法； 「待录入扫描件数」已随
+ * E21-T15 落地（rpt_report.digitize_status，随 {@code scan_progress} 开关出数、关闭仍占位））；关 → 医院 A
  * 指标集（A-DASH-001 七项）。随 E19-T06 卡片目录按角色配置时，指标集配置随目录 落库（OQ-107）。
  */
 @Service
@@ -28,6 +29,9 @@ public class DashboardKpiService {
 
     /** C 指标「近 30 天含标红参数的记录数」的窗口天数（C-DASH-001 固定 30；N 可配置随 E21）。 */
     static final int HIGHLIGHT_WINDOW_DAYS = 30;
+
+    /** 电子化状态 / 补录进度的功能开关（E21-T15：关闭时「待录入扫描件数」保持占位，AGENTS §5.7）。 */
+    static final String SCAN_PROGRESS_FEATURE = "scan_progress";
 
     private final DashboardStatsMapper stats;
     private final DashboardFeatureMapper features;
@@ -40,14 +44,15 @@ public class DashboardKpiService {
     // ---------------------------------------------------------------- DTO
 
     /**
-     * 钻取目标（点指标卡进入对应列表，A-DASH-001「点击进入对应列表」）： target = PATIENT_LIST 患者列表 / TASK_LIST 我的任务；query
-     * 为列表页路由 query 参数（前端直接拼进 /followup/patient、/followup/task）。
+     * 钻取目标（点指标卡进入对应列表，A-DASH-001「点击进入对应列表」）： target = PATIENT_LIST 患者列表 / TASK_LIST 我的任务 /
+     * REPORT_LIST 全院报告单（E21-T15「待录入扫描件数」→ 电子化筛选）；query 为列表页路由 query 参数（前端直接拼进
+     * /followup/patient、/followup/task、/followup/report）。
      */
     public record DrillView(String target, Map<String, Object> query) {}
 
     /**
      * 一项指标：value 为 null 且 available = false 表示数据源尚未落地（C 的 ERI / 扫描件随 E21）， 前端隐藏；drill 为 null
-     * 表示暂无对应列表（C 的三张列表卡片随 E21-T19 / E21-T15）。
+     * 表示暂无对应列表（C 的 ERI / 异常标红列表卡片随 E21-T19；「待录入扫描件数」已随 E21-T15 钻取全院报告单列表）。
      */
     public record MetricView(
             String code, String title, Long value, boolean available, DrillView drill) {}
@@ -193,8 +198,20 @@ public class DashboardKpiService {
                         stats.countRecentHighlightRecords(highlightSince, ward),
                         true,
                         null));
-        // 待录入扫描件数：电子化状态与补录进度随 E21-T15（C-SCAN-011 / C-DASH-007）
-        metrics.add(new MetricView("scanPending", "待录入扫描件数", null, false, null));
+        // 待录入扫描件数（C-SCAN-011 / C-DASH-007）：E21-T15 起随 scan_progress 开关出数——
+        // 关闭（含无行）仍占位（available = false，AGENTS §5.7；医院 A / B 不启用，A-ATT-018）
+        if (Boolean.TRUE.equals(features.findEnabled(SCAN_PROGRESS_FEATURE))) {
+            metrics.add(
+                    new MetricView(
+                            "scanPending",
+                            "待录入扫描件数",
+                            stats.countReportsByDigitizeStatus("PENDING", ward),
+                            true,
+                            // 钻取 = 全院报告单列表「电子化 = 待录入」筛选（检索同条件树，C-SCAN-014）
+                            new DrillView("REPORT_LIST", Map.of("digitizeStatus", "PENDING"))));
+        } else {
+            metrics.add(new MetricView("scanPending", "待录入扫描件数", null, false, null));
+        }
         return metrics;
     }
 

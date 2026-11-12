@@ -15,6 +15,8 @@ import type {
   ReportCreatedView,
   ReportCreateRequest,
   ReportDeletedView,
+  ReportDigitizeChangedView,
+  ReportDigitizeChangeRequest,
   ReportLocationInput,
   ReportLocationNode,
   ReportLocationsChangedView,
@@ -156,6 +158,21 @@ export function updateReportLocations(
 ) {
   return requestClient.put<ReportLocationsChangedView>(
     apiPath(`/followup/reports/${reportId}/locations`),
+    payload,
+  );
+}
+
+/**
+ * E21-T15 / C-SCAN-011：手工修改电子化状态（POST，followup:scan:upload）。改为
+ * 「无需录入」reason 必填（40001）；每次修改写 RPT_DIGITIZE_CHANGE 操作日志并推进
+ * version；开关 scan_progress 关闭 40301（前端按 GET /auth/features 判定后隐藏入口）。
+ */
+export function changeReportDigitizeStatus(
+  reportId: number | string,
+  payload: ReportDigitizeChangeRequest,
+) {
+  return requestClient.post<ReportDigitizeChangedView>(
+    apiPath(`/followup/reports/${reportId}/digitize-status`),
     payload,
   );
 }

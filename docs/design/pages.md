@@ -418,7 +418,7 @@
 | 路由 | `/followup/report` |
 | 权限 | 见 §0.1（种子 `followup:report:view` 与规格 `followup:scan:upload` 待统一） |
 | 需求 | A-ATT-016、010、020；C-SCAN-014、013、011、009（待归档区 P1，`report_inbox`） |
-| 接口 | 检索 `POST /api/hospital/followup/reports/search`（**已实现，E16-T05**：患者关键词 / 类型 / 报告时间 / 上传日期 / 上传人 / 位置含 `UNASSIGNED` / 电子化 / 病区，行含位置标签与首附件缩略图，按病区隔离见 docs/api/report.md §2；顶部「添加报告单 / 批量上传」需患者上下文，入口在患者档案报告单页签，随患者选择器一并补）；批量 `POST .../reports/batch`（改类型、修改位置、标为无需录入）（推断，待确认，随 E16-T13 修改位置落地） |
+| 接口 | 检索 `POST /api/hospital/followup/reports/search`（**已实现，E16-T05**：患者关键词 / 类型 / 报告时间 / 上传日期 / 上传人 / 位置含 `UNASSIGNED` / 电子化 / 病区，行含位置标签与首附件缩略图，按病区隔离见 docs/api/report.md §2；顶部「添加报告单 / 批量上传」需患者上下文，入口在患者档案报告单页签，随患者选择器一并补）；行内「改状态」手工修改电子化状态 `POST .../reports/{id}/digitize-status`（**已实现，E21-T15 / C-SCAN-011**：改为「无需录入」须填原因、每次修改记操作日志；`scan_progress` 开关关闭或无 `followup:scan:upload` 权限时隐藏，A 行电子化为空不显示入口）；路由 query `digitizeStatus` 预填筛选（首页「待录入扫描件数」钻取）；批量 `POST .../reports/batch`（改类型、修改位置、标为无需录入）（推断，待确认，随 E16-T13 修改位置落地） |
 
 ```text
 ┌ 报告单与资料 ─────────────────────────────────────────────── [批量上传] [添加报告单] ┐

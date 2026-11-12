@@ -1,7 +1,8 @@
 /**
  * E19-T02 / A-DASH-001、A-DASH-002、C-DASH-001；E19-T03 / A-DASH-003、A-DASH-004、A-DASH-005、A-DASH-008、C-DASH-003、008；
- * E19-T04 / A-DASH-006、A-DASH-012、C-DASH-004；E19-T05 / A-DASH-010、A-DASH-011、C-DASH-009：
- * 首页指标卡、趋势图、任务看板、任务表、随访率卡片与数据完整度两卡的类型与纯逻辑
+ * E19-T04 / A-DASH-006、A-DASH-012、C-DASH-004；E19-T05 / A-DASH-010、A-DASH-011、C-DASH-009；
+ * E21-T15 / C-DASH-007 补录进度（scan_progress 卡片，开关 scan_progress）：
+ * 首页指标卡、趋势图、任务看板、任务表、随访率卡片、数据完整度两卡与补录进度卡的类型与纯逻辑
  * （接口契约 docs/api/stats.md §2、§3，后端 `com.crdp.followup.dashboard.api.DashboardCardController`；
  * 页面 pages.md §2 首页）。
  *
@@ -126,7 +127,8 @@ export const TREND_GROUP_BY_OPTIONS: Array<{
 /**
  * 指标 → 列表页路由（A-DASH-001「点击进入对应列表」）：
  * 患者列表带 status（列表页按随访状态筛选）、任务列表带 tab=all 与 status /
- * dueFrom / dueTo（口径由后端下发，前端只透传）；无钻取目标返回 null。
+ * dueFrom / dueTo、全院报告单列表带 digitizeStatus（E21-T15「待录入扫描件数」）——
+ * 口径由后端下发，前端只透传；无钻取目标返回 null。
  */
 export function kpiMetricRoute(metric: KpiMetric): null | RouteLocationRaw {
   const drill = metric.drill;
@@ -134,10 +136,13 @@ export function kpiMetricRoute(metric: KpiMetric): null | RouteLocationRaw {
   if (drill.target === 'PATIENT_LIST') {
     return { path: '/followup/patient', query: drill.query ?? {} };
   }
+  if (drill.target === 'REPORT_LIST') {
+    return { path: '/followup/report', query: drill.query ?? {} };
+  }
   return { path: '/followup/task', query: drill.query ?? {} };
 }
 
-/** 数据源已落地的指标（C 的 ERI / 扫描件随 E21，available=false 先不展示）。 */
+/** 数据源已落地的指标（C 的 ERI 随 E21；扫描件已随 E21-T15，available=false 先不展示）。 */
 export function visibleKpiMetrics(metrics: KpiMetric[]): KpiMetric[] {
   return metrics.filter((metric) => metric.available);
 }
@@ -206,6 +211,39 @@ export interface TaskTableView {
 export interface TaskTableParams {
   tab?: TaskTableTab;
   wardId?: number;
+}
+
+// ---------------------------------------------------------------- 补录进度卡片（E21-T15 / C-DASH-007）
+
+/** 补录进度上传人候选（id 为字符串——超过 2^53 的 ID 不进 JSON number）。 */
+export interface ScanProgressUploader {
+  id: string;
+  name: string;
+}
+
+/** 补录进度卡片数据：待录入 / 已电子化 / 无需录入份数与已电子化比例 + 补录随访记录条数。 */
+export interface ScanProgressView {
+  /** 补录随访记录条数（已提交的历史补录记录，A-FU-014 / C-FU-013） */
+  backfillRecordCount: number;
+  /** 已电子化份数（转录 C-SCAN-012 随 E21-T17 自动产生或手工标记） */
+  doneCount: number;
+  /** 已电子化比例（百分数整数；= done ÷（pending + done），无需录入不进分母，分母 0 为 0） */
+  donePct: number;
+  /** 无需录入份数 */
+  noEntryCount: number;
+  /** 待录入份数 */
+  pendingCount: number;
+  /** 上传人筛选候选（范围内出现过的上传人） */
+  uploaders: ScanProgressUploader[];
+  /** 文档年份筛选候选（report_date 年份，降序） */
+  years: number[];
+}
+
+/** 补录进度请求参数（wardId 页面级病区筛选；uploaderId 上传人；year 文档年份）。 */
+export interface ScanProgressParams {
+  uploaderId?: null | number | string;
+  wardId?: number;
+  year?: null | number;
 }
 
 // ---------------------------------------------------------------- 病区筛选（A-DASH-005 / C-DASH-008）
@@ -600,6 +638,7 @@ export type DashboardAreaKind =
   | 'completeness'
   | 'kpi'
   | 'rate'
+  | 'scan_progress'
   | 'task'
   | 'trend';
 
@@ -613,6 +652,7 @@ const AREA_KIND_BY_CODE: Record<string, DashboardAreaKind> = {
   followup_completeness: 'completeness',
   kpi: 'kpi',
   node_rate: 'rate',
+  scan_progress: 'scan_progress',
   task_board: 'task',
   task_table: 'task',
   trend: 'trend',
@@ -623,7 +663,8 @@ const AREA_KIND_BY_CODE: Record<string, DashboardAreaKind> = {
  * 可见卡片 → 首页区块序列（E19-T06 按角色布局与顺序渲染）：
  * 任务区（task_board / task_table）、统计区（yearly_rate / node_rate）、完整度区
  * （baseline / followup_completeness）各归并为一个区块，排在组内第一张可见卡片的位置；
- * 未知编码（E21 的 C 卡片等尚未接入的目录项）跳过，不渲染也不报错。
+ * 补录进度（scan_progress，E21-T15）独立成区；未知编码（E21 的其余 C 卡片等尚未接入的
+ * 目录项）跳过，不渲染也不报错。
  */
 export function layoutAreas(view: DashboardLayoutView): DashboardArea[] {
   const areas: DashboardArea[] = [];

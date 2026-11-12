@@ -619,4 +619,45 @@ public interface ReportMapper {
     @IgnoreScope(reason = "配置删除守卫计数（E16-T02 / OQ-95②）：全租户口径，只回计数不吐患者数据")
     @Select("SELECT COUNT(*) FROM rpt_report WHERE name_id = #{nameId}")
     long countReportsOfName(@Param("nameId") long nameId);
+
+    // ---------------------------------------------------------------- 电子化状态手工修改（E21-T15 /
+    // C-SCAN-011）
+
+    /** 电子化状态行（手工修改用）：当前状态可能为 NULL（类型 / 名称均未配置默认值，或 A 租户行）。 */
+    record DigitizeRow(
+            long id,
+            long patientId,
+            String typeName,
+            String nameSnapshot,
+            String digitizeStatus,
+            Integer version) {}
+
+    /** 单份报告单的电子化状态行（@DataScope 出行：越范围 / 已删 / 不存在 null → 服务层 40400 并写 DENIED 审计）。 */
+    @DataScope(resource = "patient")
+    @Select(
+            """
+            SELECT r.id, r.patient_id AS patientId, r.type_name AS typeName,
+                   r.name_snapshot AS nameSnapshot, r.digitize_status AS digitizeStatus,
+                   r.version
+            FROM rpt_report r
+            JOIN pt_patient pt ON pt.id = r.patient_id AND pt.deleted = 0
+            WHERE r.id = #{id} AND r.status = 'NORMAL'
+            """)
+    DigitizeRow findDigitizeRow(@Param("id") long id);
+
+    /**
+     * 手工修改电子化状态（E21-T15）：状态落列并推进乐观锁版本（与 E16-T13 修改位置同一口径）。 留痕（谁、何时、前后值、无需录入原因）在 RPT_DIGITIZE_CHANGE
+     * 操作日志。调用方已经 findDigitizeRow（@DataScope）确认报告单可见。
+     */
+    @IgnoreScope(reason = "报告单电子化状态修改（E21-T15）：调用方已经 findDigitizeRow（@DataScope）确认报告单可见（越范围 40400）")
+    @Update(
+            """
+            UPDATE rpt_report
+            SET digitize_status = #{digitizeStatus}, version = version + 1, updated_by = #{operator}
+            WHERE id = #{id} AND status = 'NORMAL'
+            """)
+    int updateDigitizeStatus(
+            @Param("id") long id,
+            @Param("digitizeStatus") String digitizeStatus,
+            @Param("operator") long operator);
 }

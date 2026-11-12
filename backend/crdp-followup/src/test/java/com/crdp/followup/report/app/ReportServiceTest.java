@@ -28,6 +28,7 @@ import com.crdp.followup.report.infra.mapper.ReportMapper;
 import com.crdp.form.record.app.FormService;
 import com.crdp.framework.audit.AuditEntry;
 import com.crdp.framework.audit.AuditLogger;
+import com.crdp.framework.audit.AuditResult;
 import com.crdp.framework.security.SessionPrincipal;
 import com.crdp.framework.web.ApiException;
 import java.time.LocalDate;
@@ -55,6 +56,8 @@ class ReportServiceTest {
 
     private final ReportMapper mapper = mock(ReportMapper.class);
     private final ReportConfigMapper config = mock(ReportConfigMapper.class);
+    private final com.crdp.followup.report.infra.mapper.ReportFeatureMapper features =
+            mock(com.crdp.followup.report.infra.mapper.ReportFeatureMapper.class);
     private final ReportPatientGateway patientScope = mock(ReportPatientGateway.class);
     private final FormService formService = mock(FormService.class);
     private final FilePolicyService filePolicy = mock(FilePolicyService.class);
@@ -67,6 +70,7 @@ class ReportServiceTest {
             new ReportService(
                     mapper,
                     config,
+                    features,
                     patientScope,
                     formService,
                     filePolicy,
@@ -81,6 +85,8 @@ class ReportServiceTest {
                         new org.springframework.security.authentication
                                 .UsernamePasswordAuthenticationToken(principal(), null, List.of()));
         lenient().when(patientScope.patientIdInScope(PATIENT)).thenReturn(PATIENT);
+        // 电子化状态开关默认开（医院 C 形态）；关闭用例在各自测试内覆写（E21-T15）
+        lenient().when(features.findEnabled("scan_progress")).thenReturn(true);
         lenient()
                 .when(filePolicy.policy())
                 .thenReturn(new FilePolicyService.UploadPolicy(List.of(), 20, 50, 10));
@@ -1343,6 +1349,187 @@ class ReportServiceTest {
                                                                 2)))));
         assertEquals(40001, overlap.code(), "add 与 remove 含同一在册位置：add 侧 40001 先拦截");
         assertTrue(overlap.getMessage().contains("已在报告单上"), overlap.getMessage());
+    }
+
+    // ---------------------------------------------------------------- 电子化状态手工修改（E21-T15 /
+    // C-SCAN-011；验收「状态可手工修改并留痕」）
+
+    /** 电子化状态行（PENDING 当前态，version 4）。 */
+    private static ReportMapper.DigitizeRow digitizeRow(String status) {
+        return new ReportMapper.DigitizeRow(900L, PATIENT, "程控报告单", "常规律控（示例）", status, 4);
+    }
+
+    /** 手工改为「无需录入」须填原因（C-SCAN-011）：落库、version + 1、写 RPT_DIGITIZE_CHANGE 前后值与原因。 */
+    @Test
+    void changeDigitizeStatusMarksNoEntryWithReasonAndAudits() {
+        when(mapper.findDigitizeRow(900L)).thenReturn(digitizeRow("PENDING"));
+
+        ReportService.DigitizeChangedView view =
+                service.changeDigitizeStatus(
+                        900L,
+                        new ReportService.DigitizeChangeRequest("NO_ENTRY", "  检验类资料，无需转录（示例）  "));
+
+        assertEquals("900", view.id());
+        assertEquals("NO_ENTRY", view.digitizeStatus());
+        assertEquals(5, view.version(), "version + 1（与修改位置同口径）");
+        verify(mapper).updateDigitizeStatus(900L, "NO_ENTRY", OPERATOR);
+
+        ArgumentCaptor<AuditEntry> captor = ArgumentCaptor.forClass(AuditEntry.class);
+        verify(audit).append(captor.capture());
+        AuditEntry entry = captor.getValue();
+        assertEquals("RPT_DIGITIZE_CHANGE", entry.action());
+        assertEquals("REPORT", entry.objectType());
+        assertEquals("900", entry.objectId());
+        assertEquals(AuditResult.SUCCESS, entry.result());
+        assertTrue(entry.description().contains("待录入 → 无需录入"), entry.description());
+        assertTrue(entry.description().contains("原因：检验类资料，无需转录（示例）"), entry.description());
+        assertTrue(entry.beforeJson().contains("PENDING"), entry.beforeJson());
+        assertTrue(entry.afterJson().contains("NO_ENTRY"), entry.afterJson());
+    }
+
+    /** 手工改为「已电子化 / 待录入」不要求原因，但填了照记入日志（留痕完整）。 */
+    @Test
+    void changeDigitizeStatusToDoneWithoutReasonStillAudits() {
+        when(mapper.findDigitizeRow(900L)).thenReturn(digitizeRow("PENDING"));
+
+        service.changeDigitizeStatus(900L, new ReportService.DigitizeChangeRequest("DONE", null));
+
+        verify(mapper).updateDigitizeStatus(900L, "DONE", OPERATOR);
+        ArgumentCaptor<AuditEntry> captor = ArgumentCaptor.forClass(AuditEntry.class);
+        verify(audit).append(captor.capture());
+        assertTrue(
+                captor.getValue().description().contains("待录入 → 已电子化"),
+                captor.getValue().description());
+        assertFalse(captor.getValue().description().contains("原因："), "无原因不拼原因段");
+    }
+
+    /** 当前状态为 NULL（类型 / 名称未配置默认值）也可手工设定，before 记「未设置」。 */
+    @Test
+    void changeDigitizeStatusFromNullAllowed() {
+        when(mapper.findDigitizeRow(900L)).thenReturn(digitizeRow(null));
+
+        ReportService.DigitizeChangedView view =
+                service.changeDigitizeStatus(
+                        900L, new ReportService.DigitizeChangeRequest("PENDING", null));
+
+        assertEquals("PENDING", view.digitizeStatus());
+        ArgumentCaptor<AuditEntry> captor = ArgumentCaptor.forClass(AuditEntry.class);
+        verify(audit).append(captor.capture());
+        assertTrue(
+                captor.getValue().description().contains("未设置 → 待录入"),
+                captor.getValue().description());
+    }
+
+    /** 改为「无需录入」原因必填（空 / 空白 40001），超 255 字 40001。 */
+    @Test
+    void changeDigitizeStatusRequiresReasonForNoEntry() {
+        when(mapper.findDigitizeRow(900L)).thenReturn(digitizeRow("PENDING"));
+
+        ApiException blank =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.changeDigitizeStatus(
+                                        900L,
+                                        new ReportService.DigitizeChangeRequest(
+                                                "NO_ENTRY", "   ")));
+        assertEquals(40001, blank.code());
+        assertTrue(blank.getMessage().contains("改为「无需录入」须填写原因"), blank.getMessage());
+
+        ApiException tooLong =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.changeDigitizeStatus(
+                                        900L,
+                                        new ReportService.DigitizeChangeRequest(
+                                                "NO_ENTRY", "长".repeat(256))));
+        assertEquals(40001, tooLong.code());
+        assertTrue(tooLong.getMessage().contains("不能超过 255 字"), tooLong.getMessage());
+        verify(mapper, never()).updateDigitizeStatus(anyLong(), anyString(), anyLong());
+        verify(audit, never()).append(any(AuditEntry.class));
+    }
+
+    /** 取值只收三种；目标与当前一致 40001（无变化不留痕）。 */
+    @Test
+    void changeDigitizeStatusRejectsInvalidAndUnchangedStatus() {
+        when(mapper.findDigitizeRow(900L)).thenReturn(digitizeRow("PENDING"));
+
+        ApiException invalid =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.changeDigitizeStatus(
+                                        900L,
+                                        new ReportService.DigitizeChangeRequest(
+                                                "DONE!", "非法取值（示例）")));
+        assertEquals(40001, invalid.code());
+        assertTrue(invalid.getMessage().contains("PENDING"), invalid.getMessage());
+
+        ApiException unchanged =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.changeDigitizeStatus(
+                                        900L,
+                                        new ReportService.DigitizeChangeRequest("PENDING", null)));
+        assertEquals(40001, unchanged.code());
+        assertTrue(unchanged.getMessage().contains("未变化"), unchanged.getMessage());
+        verify(mapper, never()).updateDigitizeStatus(anyLong(), anyString(), anyLong());
+        verify(audit, never()).append(any(AuditEntry.class));
+    }
+
+    /** 开关 scan_progress 关闭（含无行）→ 40301（医院 A / B 不启用，AGENTS §5.7）。 */
+    @Test
+    void changeDigitizeStatusFeatureOffRejected() {
+        when(features.findEnabled("scan_progress")).thenReturn(false);
+
+        ApiException off =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.changeDigitizeStatus(
+                                        900L,
+                                        new ReportService.DigitizeChangeRequest(
+                                                "NO_ENTRY", "开关关闭（示例）")));
+        assertEquals(40301, off.code());
+
+        when(features.findEnabled("scan_progress")).thenReturn(null);
+        ApiException noRow =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.changeDigitizeStatus(
+                                        900L,
+                                        new ReportService.DigitizeChangeRequest("DONE", null)));
+        assertEquals(40301, noRow.code(), "无行视为默认关闭");
+        verify(mapper, never()).findDigitizeRow(anyLong());
+        verify(audit, never()).append(any(AuditEntry.class));
+    }
+
+    /** 越范围 / 不存在 / 已删 40400 并写 DENIED 审计（不暴露对象存在）；请求体缺失 40001。 */
+    @Test
+    void changeDigitizeStatusOutOfScopeDeniedAndAudited() {
+        when(mapper.findDigitizeRow(900L)).thenReturn(null);
+
+        ApiException error =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.changeDigitizeStatus(
+                                        900L,
+                                        new ReportService.DigitizeChangeRequest("DONE", null)));
+        assertEquals(40400, error.code());
+        verify(mapper, never()).updateDigitizeStatus(anyLong(), anyString(), anyLong());
+        ArgumentCaptor<AuditEntry> captor = ArgumentCaptor.forClass(AuditEntry.class);
+        verify(audit).append(captor.capture());
+        assertEquals("RPT_DIGITIZE_CHANGE", captor.getValue().action());
+        assertEquals(AuditResult.DENIED, captor.getValue().result());
+        assertEquals(40400, captor.getValue().errorCode());
+
+        ApiException emptyBody =
+                assertThrows(ApiException.class, () -> service.changeDigitizeStatus(900L, null));
+        assertEquals(40001, emptyBody.code());
     }
 
     /** 增加的位置须在当前模板版本锚点内（验收：锚点不在当前模板版本时拒绝）。 */

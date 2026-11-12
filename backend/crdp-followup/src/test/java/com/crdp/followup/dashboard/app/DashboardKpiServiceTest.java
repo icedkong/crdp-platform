@@ -142,7 +142,8 @@ class DashboardKpiServiceTest {
         assertEquals(20L, byCode.get("pending").value());
         assertEquals(
                 Map.of("tab", "all", "status", "PENDING"), byCode.get("pending").drill().query());
-        // 数据源随 E21 的两项：占位不出数、不钻取（与任务列表 C 三列占位同做法）
+        // 数据源随 E21 的 ERI 仍占位；待录入扫描件数在 scan_progress 关闭（本测默认 null）时占位
+        // （E21-T15：开关打开出数并钻取，见 cStyleScanPendingWithFeatureOn）
         assertNull(byCode.get("eriNear").value());
         assertNull(byCode.get("eriNear").drill());
         assertNull(byCode.get("scanPending").value());
@@ -150,6 +151,36 @@ class DashboardKpiServiceTest {
         // 近 30 天标红可算（fu_record.highlight，E17-T04）；列表卡片随 E21-T19，暂不钻取
         assertEquals(3L, byCode.get("highlightRecent").value());
         assertNull(byCode.get("highlightRecent").drill());
+    }
+
+    @Test
+    void cStyleScanPendingWithFeatureOnDrillsToReportList() {
+        when(features.findEnabled("implant")).thenReturn(true);
+        when(features.findEnabled("scan_progress")).thenReturn(true);
+        when(stats.countReportsByDigitizeStatus("PENDING", null)).thenReturn(46L);
+
+        KpiCardView view = service.kpi(null);
+
+        MetricView scanPending =
+                view.metrics().stream()
+                        .filter(metric -> "scanPending".equals(metric.code()))
+                        .findFirst()
+                        .orElseThrow();
+        // E21-T15：待录入扫描件数出数，钻取全院报告单列表「电子化 = 待录入」（检索同条件树，C-SCAN-014）
+        assertTrue(scanPending.available());
+        assertEquals(46L, scanPending.value());
+        assertEquals("REPORT_LIST", scanPending.drill().target());
+        assertEquals(Map.of("digitizeStatus", "PENDING"), scanPending.drill().query());
+    }
+
+    @Test
+    void cStyleScanPendingWardFilterPassedThrough() {
+        when(features.findEnabled("implant")).thenReturn(true);
+        when(features.findEnabled("scan_progress")).thenReturn(true);
+
+        service.kpi(7L);
+
+        verify(stats).countReportsByDigitizeStatus("PENDING", 7L);
     }
 
     @Test

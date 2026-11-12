@@ -53,6 +53,7 @@ import CardSettings from './card-settings.vue';
 import CompletenessArea from './completeness-area.vue';
 import { defaultTrendRange, metricIcon, trendChartOption } from './logic';
 import RateArea from './rate-area.vue';
+import ScanProgressArea from './scan-progress-area.vue';
 import TaskArea from './task-area.vue';
 
 defineOptions({ name: 'HospitalDashboard' });
@@ -343,6 +344,13 @@ function handleLayoutSaved(view: DashboardLayoutView) {
           v-else-if="area.kind === 'completeness'"
           :show-baseline="layoutCardVisible(layout, 'baseline_completeness')"
           :show-followup="layoutCardVisible(layout, 'followup_completeness')"
+          :ward-id="wardId"
+        />
+
+        <!-- 补录进度（E21-T15 / C-DASH-007，医院 C 默认顺序末位）：开关 scan_progress
+             关闭时布局不含本卡（目录 ∩ 功能开关），组件渲染即代表开关开启 -->
+        <ScanProgressArea
+          v-else-if="area.kind === 'scan_progress'"
           :ward-id="wardId"
         />
       </template>

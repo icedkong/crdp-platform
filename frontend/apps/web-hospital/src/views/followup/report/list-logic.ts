@@ -130,7 +130,8 @@ export const DESKTOP_COLUMNS = [
   { dataIndex: 'digitizeStatus', title: '电子化', width: 96 },
   { dataIndex: 'creatorName', title: '上传人', width: 110 },
   { dataIndex: 'createdAtText', title: '上传时间', width: 140 },
-  { dataIndex: 'action', fixed: 'right' as const, title: '操作', width: 88 },
+  // E21-T15 起操作列含「改状态」（C）与「查看」，加宽放两条链接
+  { dataIndex: 'action', fixed: 'right' as const, title: '操作', width: 110 },
 ];
 
 /** 平板保留主要列（pages.md §6.4 响应式；缩略图 / 患者 / 类型 / 时间 / 位置 / 电子化）。 */
@@ -159,4 +160,19 @@ export function fileCountText(row: ReportSearchRow): string {
 /** 患者副行（病案号脱敏值 + 随访编号，C-SCAN-014 按「姓名、病历号、随访编号」识别患者）。 */
 export function patientSubText(row: ReportSearchRow): string {
   return row.visitNo ? `${row.mrn} · ${row.visitNo}` : row.mrn;
+}
+
+/**
+ * 钻取路由 query → 初始筛选（E21-T15：首页「待录入扫描件数」钻取，digitizeStatus=PENDING）。
+ * 只认 digitizeStatus（PENDING / DONE / NO_ENTRY，非法值忽略）；未识别的 query 不动筛选。
+ */
+export function filtersFromRouteQuery(query: Record<string, unknown>): {
+  digitizeStatus: null | string;
+} {
+  const raw = query.digitizeStatus;
+  const allowed = DIGITIZE_STATUS_OPTIONS.map((option) => option.value);
+  return {
+    digitizeStatus:
+      typeof raw === 'string' && allowed.includes(raw) ? raw : null,
+  };
 }

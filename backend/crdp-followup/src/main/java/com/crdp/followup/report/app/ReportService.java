@@ -9,6 +9,7 @@ import com.crdp.followup.report.infra.mapper.ReportConfigMapper;
 import com.crdp.followup.report.infra.mapper.ReportConfigMapper.ItemRow;
 import com.crdp.followup.report.infra.mapper.ReportConfigMapper.NameRow;
 import com.crdp.followup.report.infra.mapper.ReportConfigMapper.TypeRow;
+import com.crdp.followup.report.infra.mapper.ReportFeatureMapper;
 import com.crdp.followup.report.infra.mapper.ReportInsert;
 import com.crdp.followup.report.infra.mapper.ReportMapper;
 import com.crdp.followup.report.infra.mapper.ReportMapper.FileCountRow;
@@ -65,6 +66,13 @@ public class ReportService {
 
     static final String ANCHOR_SECTION = "section";
 
+    /** 电子化状态功能开关（C-SCAN-011 / C-DASH-007；关闭 → 40301，AGENTS §5.7）。 */
+    static final String SCAN_PROGRESS_FEATURE = "scan_progress";
+
+    /** 电子化状态取值（C-SCAN-011：PENDING 待录入 / DONE 已电子化 / NO_ENTRY 无需录入；DONE 只由转录或手工产生）。 */
+    private static final Map<String, String> DIGITIZE_LABEL =
+            Map.of("PENDING", "待录入", "DONE", "已电子化", "NO_ENTRY", "无需录入");
+
     /** 来源标签（与患者时间轴同口径：历史补录 / 计划外随访，E15-T06 / T07）。 */
     private static final Map<String, String> SOURCE_LABEL =
             Map.of("BACKFILL", "历史补录", "UNPLANNED", "计划外随访", "TASK", "随访", "REMOTE", "远程监测");
@@ -90,6 +98,7 @@ public class ReportService {
 
     private final ReportMapper mapper;
     private final ReportConfigMapper config;
+    private final ReportFeatureMapper features;
     private final ReportPatientGateway patientScope;
     private final FormService formService;
     private final FilePolicyService filePolicy;
@@ -100,6 +109,7 @@ public class ReportService {
     public ReportService(
             ReportMapper mapper,
             ReportConfigMapper config,
+            ReportFeatureMapper features,
             ReportPatientGateway patientScope,
             FormService formService,
             FilePolicyService filePolicy,
@@ -108,6 +118,7 @@ public class ReportService {
             AuditLogger audit) {
         this.mapper = mapper;
         this.config = config;
+        this.features = features;
         this.patientScope = patientScope;
         this.formService = formService;
         this.filePolicy = filePolicy;
@@ -600,6 +611,103 @@ public class ReportService {
                 operator);
         return new LocationsChangedView(
                 String.valueOf(reportId), afterTags.size(), List.copyOf(afterTags));
+    }
+
+    // ---------------------------------------------------------------- 电子化状态手工修改（E21-T15 /
+    // C-SCAN-011）
+
+    /** 手工修改请求（report.md §3 POST /reports/{id}/digitize-status）：改为「无需录入」须填原因。 */
+    public record DigitizeChangeRequest(String status, String reason) {}
+
+    /** 修改结果：新状态与推进后的乐观锁版本（编辑 / 修改位置同口径）。 */
+    public record DigitizeChangedView(String id, String digitizeStatus, int version) {}
+
+    /**
+     * 手工修改电子化状态（C-SCAN-011「手工改为无需录入须填原因」，验收「状态可手工修改并留痕」）：
+     *
+     * <ul>
+     *   <li>功能开关 {@code scan_progress} 关闭（含无行）→ 40301（医院 A / B 不启用电子化状态，A-ATT-018）。
+     *   <li>取值只收 PENDING / DONE / NO_ENTRY（其他 40001）；目标状态与当前一致 40001（无变化不留痕）。
+     *   <li>改为 NO_ENTRY 时 reason 必填（去首尾空白非空、≤ 255 字）；其余状态 reason 可空（填了照记入日志）。
+     *   <li>留痕：同事务写 RPT_DIGITIZE_CHANGE 操作日志（谁、何时、前后值、原因），报告单 version + 1 （乐观锁与 E16-T13
+     *       修改位置同口径）。当前状态为 NULL（类型 / 名称未配置默认值）也可手工设定。
+     *   <li>「转录到结构化记录后自动变已电子化」（C-SCAN-012）随 E21-T17，不经本口。
+     *   <li>越范围 / 不存在 / 已删报告单 40400（写 DENIED 审计，不暴露对象存在）；无权限 40300、模块关闭 40301。
+     * </ul>
+     */
+    @Transactional
+    public DigitizeChangedView changeDigitizeStatus(long reportId, DigitizeChangeRequest request) {
+        if (request == null) {
+            throw bad("请求体不能为空");
+        }
+        if (!Boolean.TRUE.equals(features.findEnabled(SCAN_PROGRESS_FEATURE))) {
+            throw new ApiException(403, 40301, "电子化状态未开通（功能开关 scan_progress 关闭）");
+        }
+        String target = request.status() == null ? "" : request.status().trim();
+        String label = DIGITIZE_LABEL.get(target);
+        if (label == null) {
+            throw bad("电子化状态只支持：待录入（PENDING）/ 已电子化（DONE）/ 无需录入（NO_ENTRY）");
+        }
+        ReportMapper.DigitizeRow report = mapper.findDigitizeRow(reportId);
+        if (report == null) {
+            audit.append(
+                    AuditEntry.operation("followup", "RPT_DIGITIZE_CHANGE")
+                            .objectType("REPORT")
+                            .objectId(String.valueOf(reportId))
+                            .description("报告单电子化状态修改被拒绝：报告单不在操作者数据范围内或已删除")
+                            .result(AuditResult.DENIED)
+                            .errorCode(40400)
+                            .reason("OUT_OF_SCOPE")
+                            .build());
+            throw new ApiException(404, 40400, "报告单不存在或不在您的数据范围内");
+        }
+        if (target.equals(report.digitizeStatus())) {
+            throw bad("电子化状态未变化（当前已是「" + label + "」）");
+        }
+        String reason = trimToNull(request.reason());
+        if (reason != null && reason.length() > 255) {
+            throw bad("原因不能超过 255 字");
+        }
+        if ("NO_ENTRY".equals(target) && reason == null) {
+            throw bad("改为「无需录入」须填写原因");
+        }
+        long operator = CurrentSession.requireHospital().userId();
+        mapper.updateDigitizeStatus(reportId, target, operator);
+        String beforeLabel =
+                report.digitizeStatus() == null
+                        ? "未设置"
+                        : DIGITIZE_LABEL.getOrDefault(
+                                report.digitizeStatus(), report.digitizeStatus());
+        // before 的 digitizeStatus 可为 NULL（Map.of 不收 null 值），用 LinkedHashMap 承载
+        Map<String, String> before = new LinkedHashMap<>();
+        before.put("digitizeStatus", report.digitizeStatus());
+        audit.append(
+                AuditEntry.operation("followup", "RPT_DIGITIZE_CHANGE")
+                        .objectType("REPORT")
+                        .objectId(String.valueOf(reportId))
+                        .description(
+                                "修改报告单电子化状态："
+                                        + beforeLabel
+                                        + " → "
+                                        + label
+                                        + (reason == null ? "" : "，原因：" + reason)
+                                        + "；报告单："
+                                        + report.typeName()
+                                        + (report.nameSnapshot() == null
+                                                ? ""
+                                                : " · " + report.nameSnapshot()))
+                        .beforeJson(writeJson(before))
+                        .afterJson(writeJson(Map.of("digitizeStatus", target)))
+                        .result(AuditResult.SUCCESS)
+                        .build());
+        log.info(
+                "报告单电子化状态变更（E21-T15）：reportId={} patientId={} {} → {} operator={}",
+                reportId,
+                report.patientId(),
+                report.digitizeStatus(),
+                target,
+                operator);
+        return new DigitizeChangedView(String.valueOf(reportId), target, report.version() + 1);
     }
 
     /** 增加清单：创建同口径锚点校验（当前模板版本）+ 请求内去重 + 不与在册位置重复（同一报告单同一位置唯一）。 */
