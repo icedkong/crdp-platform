@@ -74,7 +74,12 @@ public class FieldDictionaryService {
             int sortNo,
             String status) {}
 
-    /** 字段视图：key=稳定键、code=字段编码（导入导出名）、label=显示名；条件与派生为原始条件树对象。 */
+    /**
+     * 字段视图：key=稳定键、code=字段编码（导入导出名）、label=显示名；条件与派生为原始条件树对象。
+     *
+     * <p>{@code dictCode}（业务字典绑定，E23-T20 / OQ-69④）与 {@code carryOver}（带入上次值标记，
+     * OQ-67①）为实施级配置，只读展示（维护页不可改，经迁移 / 实施调整）。
+     */
     public record FieldView(
             String formCode,
             String formName,
@@ -89,6 +94,8 @@ public class FieldDictionaryService {
             RangeView hardRange,
             RangeView softRange,
             List<OptionView> options,
+            String dictCode,
+            boolean carryOver,
             boolean required,
             Object visibleWhen,
             Object requiredWhen,
@@ -98,7 +105,61 @@ public class FieldDictionaryService {
             String help,
             int sortNo,
             String status,
-            String updatedAt) {}
+            String updatedAt) {
+
+        /** 兼容构造（dict_code / carry_over 落地前形态）：不绑字典、不可带入。 */
+        public FieldView(
+                String formCode,
+                String formName,
+                String key,
+                String code,
+                String label,
+                String categoryKey,
+                String categoryLabel,
+                String type,
+                String unit,
+                Integer decimals,
+                RangeView hardRange,
+                RangeView softRange,
+                List<OptionView> options,
+                boolean required,
+                Object visibleWhen,
+                Object requiredWhen,
+                Object derivedDef,
+                boolean sensitive,
+                String storage,
+                String help,
+                int sortNo,
+                String status,
+                String updatedAt) {
+            this(
+                    formCode,
+                    formName,
+                    key,
+                    code,
+                    label,
+                    categoryKey,
+                    categoryLabel,
+                    type,
+                    unit,
+                    decimals,
+                    hardRange,
+                    softRange,
+                    options,
+                    null,
+                    false,
+                    required,
+                    visibleWhen,
+                    requiredWhen,
+                    derivedDef,
+                    sensitive,
+                    storage,
+                    help,
+                    sortNo,
+                    status,
+                    updatedAt);
+        }
+    }
 
     /** 选项维护：code 已存在为改（显示名 / 排序 / 停用），不存在为新增；编码与删除都不支持。 */
     public record OptionUpdate(Integer code, String label, Integer sortNo, String status) {}
@@ -335,6 +396,8 @@ public class FieldDictionaryService {
                 readRange(row.hardRange()),
                 readRange(row.softRange()),
                 options,
+                row.dictCode(),
+                row.carryOver(),
                 row.required(),
                 readTree(row.visibleWhen()),
                 readTree(row.requiredWhen()),

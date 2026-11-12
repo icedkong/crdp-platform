@@ -1484,6 +1484,8 @@ public class ImportCommitService {
                                         null,
                                         null,
                                         null,
+                                        null,
+                                        false,
                                         rule.required(),
                                         null,
                                         null,

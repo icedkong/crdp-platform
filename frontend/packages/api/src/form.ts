@@ -281,7 +281,11 @@ export interface FormSchemaField {
 }
 
 export interface FormSchemaOption {
-  code: number;
+  /**
+   * 选项编码：选项集来源为整数（fe_option.option_code）；业务字典来源（fe_field.dict_code 绑定，
+   * E23-T20 / OQ-69④ 定稿，components.md §10.1）为字符串（cfg_dict 稳定编码，库列与 JSON 同向）。
+   */
+  code: number | string;
   /** 停用选项：不可新选，历史值仍按编码显示（不删除即不失效）。 */
   disabled?: boolean;
   exclusive?: boolean;

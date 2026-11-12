@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.crdp.form.field.app.FormDictPort;
 import com.crdp.form.field.infra.mapper.FormFieldMapper;
 import com.crdp.form.field.infra.mapper.OptionRow;
 import com.crdp.form.record.infra.mapper.VersionFieldRow;
@@ -24,7 +25,9 @@ import org.junit.jupiter.api.Test;
 class FormDataValidatorTest {
 
     private final FormFieldMapper fieldMapper = mock(FormFieldMapper.class);
-    private final FormDataValidator validator = new FormDataValidator(fieldMapper);
+    private final FormDictPort dictPort = code -> List.of();
+
+    private final FormDataValidator validator = new FormDataValidator(fieldMapper, dictPort);
 
     private static VersionFieldRow field(
             String key, String type, String storage, String optionSet) {
@@ -266,5 +269,92 @@ class FormDataValidatorTest {
         VersionFieldRow days = field("f030", "derived", "json", null);
         assertDoesNotThrow(() -> validator.validateData(Map.of("f030", 7), List.of(days)));
         assertDoesNotThrow(() -> validator.validateData(Map.of("f030", "7（手工，示例）"), List.of(days)));
+    }
+
+    // ------------------------------------------- 字典绑定字段（E23-T20 / OQ-69④：字符串编码）
+
+    private static VersionFieldRow dictField(String key, String type, String dictCode) {
+        return new VersionFieldRow(
+                1L,
+                1L,
+                "C_PROGRAM_FU",
+                1,
+                key,
+                key + "_code",
+                "字段「" + key + "」",
+                "pacing",
+                type,
+                null,
+                null,
+                null,
+                null,
+                null,
+                dictCode,
+                false,
+                false,
+                null,
+                null,
+                null,
+                false,
+                "json",
+                null,
+                0);
+    }
+
+    @Test
+    void dictBoundFieldAcceptsStringCodesFromDictItems() {
+        FormDictPort pacemakerTypes =
+                code ->
+                        List.of(
+                                new FormDictPort.DictItem("SSI", "单腔起搏器(SSI)", 10, true),
+                                new FormDictPort.DictItem("CRT_D", "CRT-D", 20, true),
+                                new FormDictPort.DictItem("LEADLESS", "无导线起搏器", 30, false));
+        FormDataValidator validator = new FormDataValidator(fieldMapper, pacemakerTypes);
+        assertDoesNotThrow(
+                () ->
+                        validator.validateData(
+                                Map.of("f318", "SSI"),
+                                List.of(dictField("f318", "select", "pacemaker_type"))),
+                "绑定字典的单选存字符串编码（cfg_dict 稳定码）");
+        ApiException failure =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                validator.validateData(
+                                        Map.of("f318", 1),
+                                        List.of(dictField("f318", "select", "pacemaker_type"))));
+        assertEquals(40001, failure.code(), "整数编码不再是字典字段的合法值");
+        ApiException unknown =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                validator.validateData(
+                                        Map.of("f318", "XXX"),
+                                        List.of(dictField("f318", "select", "pacemaker_type"))));
+        assertEquals(40001, unknown.code(), "字典外编码拒绝（与 ImplantService 同口径）");
+    }
+
+    @Test
+    void dictBoundMultiselectStoresStringArrayAndAllowsDisabledItems() {
+        FormDictPort modes =
+                code ->
+                        List.of(
+                                new FormDictPort.DictItem("DDD", "双腔起搏器(DDD)", 10, true),
+                                new FormDictPort.DictItem("VVI", "VVI", 20, false));
+        FormDataValidator validator = new FormDataValidator(fieldMapper, modes);
+        assertDoesNotThrow(
+                () ->
+                        validator.validateData(
+                                Map.of("f318x", List.of("DDD", "VVI")),
+                                List.of(dictField("f318x", "multiselect", "pacing_mode"))),
+                "多选存字符串数组；停用项的历史值可保存（C-FLD-009）");
+        ApiException duplicate =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                validator.validateData(
+                                        Map.of("f318x", List.of("DDD", "DDD")),
+                                        List.of(dictField("f318x", "multiselect", "pacing_mode"))));
+        assertEquals(40001, duplicate.code(), "编码重复拒绝");
     }
 }

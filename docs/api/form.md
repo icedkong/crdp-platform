@@ -192,7 +192,7 @@ A-FLD-013（E23-T01，followup V38）：真实字典中「出生日期」为 `f2
 
 ## 4. 业务字典（A-FLD-012、C-FLD-002/003）
 
-E11-T08 已落地业务字典的维护能力（取值新增、停用、排序、**别名**与变更记录，接口见 `system.md` §4；「患者类型」「术者」平台预置字典见平台库 V36）。C 的统一起搏模式字典（C-FLD-003）已随 E21-T04 预置（`pacing_mode`，Q08 定稿 11 项，平台库 V70，植入记录选项现读该字典），程控记录表单字段届时绑定同一字典即「植入与程控共用」。表单选项引用租户字典（`optionSource: { dict: 'pacing_mode' }`，后端下发 schema 时展开）仍为**推断，待确认**：fe_field 加 `dict_code` 列与展开逻辑（含 `optionSet` 编码类型 number→number|string 的 components.md §10.1 定稿）随 C 字段字典录入（E23-T20）配套落地，本任务未落（OQ-69④、OQ-129②）。
+E11-T08 已落地业务字典的维护能力（取值新增、停用、排序、**别名**与变更记录，接口见 `system.md` §4；「患者类型」「术者」平台预置字典见平台库 V36）。C 的统一起搏模式字典（C-FLD-003）已随 E21-T04 预置（`pacing_mode`，Q08 定稿 11 项，平台库 V70，植入记录选项现读该字典），程控记录表单字段届时绑定同一字典即「植入与程控共用」。**字段 → 业务字典绑定已随 E23-T20 落地（followup V89 加 `fe_field.dict_code` / `fe_form_version_field` 快照列；C 字段字典 V90 绑定 pacemaker_type、pacemaker_brand、pacing_mode、implant_indication 共 9 字段）**：绑定字段的选项不走 fe_option_set，`GET /forms/{code}` 下发 FormSchema 时经 FormDictPort 读本院生效字典项展开进 `optionSet`（含停用项、带 `disabled` 标记，C-FLD-009）；值编码为字符串（FormDataValidator 同口径，选项集来源仍为整数——components.md §10.1 `code: number | string` 定稿）；电极植入部位按腔室三字典（lead_position_ra/rv/lv，Q15）不绑单列，选项仍经 `GET /implants/options` 按腔室过滤。绑定与带入标记为实施级配置（维护页只读，经迁移 / 实施调整）。
 
 ## 5. 租户配置模板（A-FLD-014）
 

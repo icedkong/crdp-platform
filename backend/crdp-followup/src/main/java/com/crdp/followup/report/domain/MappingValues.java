@@ -25,8 +25,11 @@ public final class MappingValues {
 
     private MappingValues() {}
 
-    /** 选项（编码 + 显示名；fe_field 选项集的精简投影）。 */
-    public record Option(int code, String label) {}
+    /**
+     * 选项（编码 + 显示名；fe_field 选项集 / 业务字典的精简投影，OQ-69④）： 选项集来源编码为 {@code
+     * Integer}、字典来源（fe_field.dict_code 绑定）为 {@code String}，按原类型返回（写入 FormDataValidator 同口径）。
+     */
+    public record Option(Object code, String label) {}
 
     /** 转换结果：ok 时 value 为目标类型值；失败时 value 为空、error 为提示文案。 */
     public record Converted(Object value, String error) {
@@ -127,7 +130,7 @@ public final class MappingValues {
             try {
                 int code = Integer.parseInt(text);
                 for (Option option : options) {
-                    if (option.code() == code) {
+                    if (option.code() instanceof Integer intCode && intCode == code) {
                         return Converted.ok(code);
                     }
                 }

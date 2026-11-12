@@ -67,6 +67,12 @@ class ImplantReplaceServiceTest {
     private final com.crdp.followup.task.app.StartDateRecalculationService startDateRecalc =
             mock(com.crdp.followup.task.app.StartDateRecalculationService.class);
 
+    private final com.crdp.form.history.app.FieldHistoryService fieldHistory =
+            mock(com.crdp.form.history.app.FieldHistoryService.class);
+
+    private final com.crdp.form.record.app.FormService forms =
+            mock(com.crdp.form.record.app.FormService.class);
+
     private final ImplantService service =
             new ImplantService(
                     gateway,
@@ -76,7 +82,9 @@ class ImplantReplaceServiceTest {
                     audit,
                     planMappings,
                     planSwitch,
-                    startDateRecalc);
+                    startDateRecalc,
+                    fieldHistory,
+                    forms);
 
     private final AtomicLong idSeq = new AtomicLong(700);
 

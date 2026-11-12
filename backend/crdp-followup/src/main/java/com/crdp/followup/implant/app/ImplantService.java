@@ -63,6 +63,39 @@ public class ImplantService {
     /** 功能开关编码（cfg_feature，种子 V100 默认关闭；components.md §1.3）。 */
     static final String FEATURE_IMPLANT = "implant";
 
+    /** 植入记录字段字典表单编码（fe_form，V90 随包；字段级留痕键 = 其稳定键 f1xx / f12x）。 */
+    static final String IMPLANT_FORM_CODE = "C_IMPLANT";
+
+    /** 植入记录行 → 字段级留痕值（键 = C_IMPLANT 稳定键，V90 附录植入 #2–#11 + 配套两列； 日期转 ISO 文本，值编码同 fe_record.data）。 */
+    private static java.util.Map<String, Object> implantHistoryValues(
+            String implantType,
+            java.time.LocalDate implantDate,
+            String deviceType,
+            String brand,
+            String model,
+            String serialNo,
+            String pacingMode,
+            String hospital,
+            String doctor,
+            String indication,
+            String indicationNote,
+            String note) {
+        java.util.Map<String, Object> values = new java.util.LinkedHashMap<>();
+        values.put("f102", implantType);
+        values.put("f103", implantDate == null ? null : implantDate.toString());
+        values.put("f104", deviceType);
+        values.put("f105", brand);
+        values.put("f106", model);
+        values.put("f107", serialNo);
+        values.put("f108", pacingMode);
+        values.put("f109", hospital);
+        values.put("f110", doctor);
+        values.put("f111", indication);
+        values.put("f114", indicationNote);
+        values.put("f115", note);
+        return values;
+    }
+
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private final ImplantGateway gateway;
@@ -76,6 +109,10 @@ public class ImplantService {
 
     private final com.crdp.followup.task.app.StartDateRecalculationService startDateRecalc;
 
+    private final com.crdp.form.history.app.FieldHistoryService fieldHistory;
+
+    private final com.crdp.form.record.app.FormService forms;
+
     public ImplantService(
             ImplantGateway gateway,
             ImplantMapper mapper,
@@ -84,7 +121,9 @@ public class ImplantService {
             AuditLogger audit,
             com.crdp.followup.plan.app.DevicePlanMappingService planMappings,
             com.crdp.followup.plan.app.PlanSwitchService planSwitch,
-            com.crdp.followup.task.app.StartDateRecalculationService startDateRecalc) {
+            com.crdp.followup.task.app.StartDateRecalculationService startDateRecalc,
+            com.crdp.form.history.app.FieldHistoryService fieldHistory,
+            com.crdp.form.record.app.FormService forms) {
         this.gateway = gateway;
         this.mapper = mapper;
         this.features = features;
@@ -93,6 +132,8 @@ public class ImplantService {
         this.planMappings = planMappings;
         this.planSwitch = planSwitch;
         this.startDateRecalc = startDateRecalc;
+        this.fieldHistory = fieldHistory;
+        this.forms = forms;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -415,6 +456,41 @@ public class ImplantService {
         if (leadsProvided) {
             replaceLeads(existing.patientId(), implantId, normalized.leads(), currentLeads, userId);
         }
+        // E23-T20 / OQ-129②：编辑植入记录的字段级留痕（C-PAT-011）——键 = C_IMPLANT 稳定键（V90 字典随包），
+        // 与操作审计（前后摘要）同一事务逐字段追加；日期存 ISO 文本（值编码同 fe_record.data）。
+        fieldHistory.logChanges(
+                com.crdp.form.history.app.FieldHistoryService.PT_IMPLANT,
+                implantId,
+                IMPLANT_FORM_CODE,
+                forms.publishedVersion(IMPLANT_FORM_CODE),
+                implantHistoryValues(
+                        existing.implantType(),
+                        existing.implantDate(),
+                        existing.deviceType(),
+                        existing.brand(),
+                        existing.model(),
+                        existing.serialNo(),
+                        existing.pacingMode(),
+                        existing.hospital(),
+                        existing.doctor(),
+                        existing.indication(),
+                        existing.indicationNote(),
+                        existing.note()),
+                implantHistoryValues(
+                        normalized.implantType(),
+                        normalized.implantDate(),
+                        normalized.deviceType(),
+                        normalized.brand(),
+                        normalized.model(),
+                        normalized.serialNo(),
+                        normalized.pacingMode(),
+                        normalized.hospital(),
+                        normalized.doctor(),
+                        normalized.indication(),
+                        normalized.indicationNote(),
+                        normalized.note()),
+                com.crdp.form.history.domain.ChangeSource.USER,
+                null);
 
         audit.append(
                 AuditEntry.operation("followup", "IMPLANT_UPDATE")

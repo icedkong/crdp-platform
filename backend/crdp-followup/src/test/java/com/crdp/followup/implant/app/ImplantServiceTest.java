@@ -66,6 +66,12 @@ class ImplantServiceTest {
     private final com.crdp.followup.task.app.StartDateRecalculationService startDateRecalc =
             mock(com.crdp.followup.task.app.StartDateRecalculationService.class);
 
+    private final com.crdp.form.history.app.FieldHistoryService fieldHistory =
+            mock(com.crdp.form.history.app.FieldHistoryService.class);
+
+    private final com.crdp.form.record.app.FormService forms =
+            mock(com.crdp.form.record.app.FormService.class);
+
     private final ImplantService service =
             new ImplantService(
                     gateway,
@@ -75,7 +81,9 @@ class ImplantServiceTest {
                     audit,
                     planMappings,
                     planSwitch,
-                    startDateRecalc);
+                    startDateRecalc,
+                    fieldHistory,
+                    forms);
 
     private final AtomicLong idSeq = new AtomicLong(500);
 
@@ -403,6 +411,42 @@ class ImplantServiceTest {
         verify(mapper).unlinkLead(501L, 602L);
         verify(mapper).deleteUnlinkedLead(602L, PATIENT_ID);
         verify(audit).append(any(AuditEntry.class));
+    }
+
+    @Test
+    void updateWritesFieldLevelHistoryForCImplantKeys() {
+        // E23-T20 / OQ-129②：编辑植入记录写字段级历史（PT_IMPLANT，键 = C_IMPLANT 稳定键，值编码同 fe_record.data）
+        ImplantRow existing = implant(501L, "ACTIVE", "2026-01-05");
+        when(gateway.implantInScope(501L)).thenReturn(existing);
+        when(gateway.leadsOfImplant(501L)).thenReturn(List.of());
+        when(gateway.implantsOf(PATIENT_ID)).thenReturn(List.of(existing));
+        when(gateway.leadsOf(PATIENT_ID)).thenReturn(List.of());
+        when(forms.publishedVersion("C_IMPLANT")).thenReturn(1);
+
+        service.update(
+                501L,
+                new ImplantService.UpdateRequest(3, payload("FIRST", "2026-02-10", "CRT_D", null)));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.Map<String, Object>> before =
+                ArgumentCaptor.forClass(java.util.Map.class);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.Map<String, Object>> after =
+                ArgumentCaptor.forClass(java.util.Map.class);
+        verify(fieldHistory)
+                .logChanges(
+                        eq(com.crdp.form.history.app.FieldHistoryService.PT_IMPLANT),
+                        eq(501L),
+                        eq("C_IMPLANT"),
+                        eq(1),
+                        before.capture(),
+                        after.capture(),
+                        eq(com.crdp.form.history.domain.ChangeSource.USER),
+                        any());
+        assertEquals("2026-01-05", before.getValue().get("f103"), "旧植入日期（ISO 文本）");
+        assertEquals("2026-02-10", after.getValue().get("f103"), "新植入日期");
+        assertEquals("DDD", before.getValue().get("f104"), "旧起搏器类型（稳定键 f104）");
+        assertEquals("CRT_D", after.getValue().get("f104"));
     }
 
     @Test

@@ -63,6 +63,12 @@ class PlanSwitchIT {
     private static final String ICD_CODE = "IT-E21T06-ICD";
     private static final String FORM_CODE = "IT_E21T06_FU";
 
+    /**
+     * IT 自建 ERI 状态选项集（E23-T20 起 V90 随包预置共享的 c_eri_status，编码契约相同 0/1/2）： 本 IT
+     * 用自有编码建集与清理，不再删改共享预置（配置模板导出 / 双院配置比对依赖 demoa 的 V90 种子完整）。
+     */
+    private static final String ERI_SET = "it_e21t06_eri";
+
     @Autowired private TestRestTemplate rest;
     @Autowired private JdbcTemplate jdbc;
 
@@ -156,8 +162,8 @@ class PlanSwitchIT {
                     jdbc.update("DELETE FROM fe_form_version_field WHERE form_code = ?", FORM_CODE);
                     jdbc.update("DELETE FROM fe_form_version WHERE form_code = ?", FORM_CODE);
                     jdbc.update("DELETE FROM fe_field WHERE form_code = ?", FORM_CODE);
-                    jdbc.update("DELETE FROM fe_option WHERE set_code = 'c_eri_status'");
-                    jdbc.update("DELETE FROM fe_option_set WHERE code = 'c_eri_status'");
+                    jdbc.update("DELETE FROM fe_option WHERE set_code = ?", ERI_SET);
+                    jdbc.update("DELETE FROM fe_option_set WHERE code = ?", ERI_SET);
                     jdbc.update("DELETE FROM fe_form WHERE code = ?", FORM_CODE);
                 });
     }
@@ -648,8 +654,8 @@ class PlanSwitchIT {
     }
 
     /**
-     * IT 程控表单（f323 ERI 状态〔c_eri_status 0/1/2〕/ f324 预计电池寿命 / f333 下次随访时间，全部选填，OQ-130①
-     * 键契约）。幂等（同用例多次补录只建一次）。
+     * IT 程控表单（f323 ERI 状态〔ERI_SET 0/1/2，与 V90 契约 c_eri_status 同码〕/ f324 预计电池寿命 / f333
+     * 下次随访时间，全部选填，OQ-130① 键契约）。幂等（同用例多次补录只建一次）。
      */
     private void createProgramForm() {
         runInTenant(
@@ -670,22 +676,25 @@ class PlanSwitchIT {
                                     + " JSON_OBJECT('key','battery','label','电池','sortNo',50)))",
                             FORM_CODE);
                     jdbc.update(
-                            "INSERT INTO fe_option_set (code, name) VALUES ('c_eri_status',"
-                                    + " 'ERI 状态（示例）')");
+                            "INSERT INTO fe_option_set (code, name) VALUES (?, 'ERI 状态（示例）')",
+                            ERI_SET);
                     jdbc.update(
                             "INSERT INTO fe_option (set_code, option_code, label, sort_no) VALUES"
-                                    + " ('c_eri_status', 0, '正常', 10), ('c_eri_status', 1, '接近ERI', 20),"
-                                    + " ('c_eri_status', 2, '已达ERI(EOI)', 30)");
+                                    + " (?, 0, '正常', 10), (?, 1, '接近ERI', 20), (?, 2, '已达ERI(EOI)', 30)",
+                            ERI_SET,
+                            ERI_SET,
+                            ERI_SET);
                     jdbc.update(
                             "INSERT INTO fe_field (form_code, field_key, field_code, label,"
                                     + " category_key, type, option_set_code, required, sort_no) VALUES"
                                     + " (?, 'f323', 'eri_status', 'ERI 状态', 'battery', 'radio',"
-                                    + " 'c_eri_status', 0, 10),"
+                                    + " ?, 0, 10),"
                                     + " (?, 'f324', 'battery_life', '预计电池寿命(年)', 'battery',"
                                     + " 'number', NULL, 0, 20),"
                                     + " (?, 'f333', 'next_visit_date', '下次随访时间', 'fu_overview',"
                                     + " 'date', NULL, 0, 30)",
                             FORM_CODE,
+                            ERI_SET,
                             FORM_CODE,
                             FORM_CODE);
                     jdbc.update(

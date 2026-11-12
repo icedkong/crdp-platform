@@ -16,6 +16,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.crdp.form.field.app.FormDictPort;
 import com.crdp.form.field.infra.mapper.FormFieldMapper;
 import com.crdp.form.record.infra.mapper.FormRecordMapper;
 import com.crdp.form.record.infra.mapper.FormRecordRow;
@@ -51,6 +52,9 @@ import org.springframework.security.core.context.SecurityContextHolder;
 @ExtendWith(MockitoExtension.class)
 class FormServiceDraftTest {
 
+    /** 字典端口桩：不绑字典（本测试无 dict_code 字段）。 */
+    private static final FormDictPort dictPort = code -> List.of();
+
     private final FormFieldMapper fieldMapper = mock(FormFieldMapper.class);
     private final FormRecordMapper recordMapper = mock(FormRecordMapper.class);
     private final FormRuleMapper ruleMapper = mock(FormRuleMapper.class);
@@ -59,7 +63,8 @@ class FormServiceDraftTest {
             new FormService(
                     fieldMapper,
                     recordMapper,
-                    new FormDataValidator(fieldMapper),
+                    dictPort,
+                    new FormDataValidator(fieldMapper, dictPort),
                     ruleMapper,
                     new FormRuleEngine(new FormConditionEngine()),
                     new FormConditionEngine(),

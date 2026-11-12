@@ -779,6 +779,8 @@ public class ImportValidationService {
                                             null,
                                             null,
                                             null,
+                                            null,
+                                            false,
                                             rule.required(),
                                             null,
                                             null,

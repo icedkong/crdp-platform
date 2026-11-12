@@ -271,8 +271,10 @@ class TenantOnboardingServiceMySqlIT {
                 // E21-T11 增加 V87（fu_record 软删除列与器械维度 implant_id）。
                 // E21-T06 增加 V88（fu_enrollment 计划切换三列 switch_reason / eri_since /
                 // doctor_next_date）。
+                // E23-T20 增加 V89（fe_field / fe_form_version_field 字典绑定与带入标记两列）、
+                // V90（医院 C 字段字典）与 V91（医院 C 两套预置计划）。
                 // 此处随迁移清单维护
-                java.util.stream.IntStream.rangeClosed(1, 88).mapToObj(String::valueOf).toList(),
+                java.util.stream.IntStream.rangeClosed(1, 91).mapToObj(String::valueOf).toList(),
                 root.queryForList(
                         "SELECT version FROM "
                                 + DB
