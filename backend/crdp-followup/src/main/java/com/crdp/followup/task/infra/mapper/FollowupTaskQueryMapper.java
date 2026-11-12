@@ -21,7 +21,7 @@ import org.apache.ibatis.annotations.Select;
 @Mapper
 public interface FollowupTaskQueryMapper {
 
-    /** 列表行原始数据：姓名 / 病案号为密文，由应用层解密后脱敏输出。 */
+    /** 列表行原始数据：姓名 / 病案号为密文，由应用层解密后脱敏输出；nextPlanDate 已按「医生填写 → 计划默认」合并（E21-T08 / OQ-138③）。 */
     record TaskRowRaw(
             long id,
             long patientId,
@@ -87,7 +87,7 @@ public interface FollowupTaskQueryMapper {
                    t.window_end AS windowEnd, t.open_date AS openDate,
                    t.status, t.complete_kind AS completeKind, t.create_type AS createType,
                    t.record_id AS recordId, t.assignee_id AS assigneeId,
-                   u.display_name AS assigneeName, e.next_plan_date AS nextPlanDate
+                   u.display_name AS assigneeName, COALESCE(e.doctor_next_date, e.next_plan_date) AS nextPlanDate
             FROM fu_task t
             JOIN pt_patient pt ON pt.id = t.patient_id AND pt.deleted = 0
             LEFT JOIN ward w ON w.id = pt.ward_id
@@ -245,7 +245,7 @@ public interface FollowupTaskQueryMapper {
                    t.window_end AS windowEnd, t.open_date AS openDate,
                    t.status, t.complete_kind AS completeKind, t.create_type AS createType,
                    t.record_id AS recordId, t.assignee_id AS assigneeId,
-                   u.display_name AS assigneeName, e.next_plan_date AS nextPlanDate
+                   u.display_name AS assigneeName, COALESCE(e.doctor_next_date, e.next_plan_date) AS nextPlanDate
             FROM fu_task t
             JOIN pt_patient pt ON pt.id = t.patient_id AND pt.deleted = 0
             LEFT JOIN ward w ON w.id = pt.ward_id
@@ -287,7 +287,7 @@ public interface FollowupTaskQueryMapper {
                    t.window_end AS windowEnd, t.open_date AS openDate,
                    t.status, t.complete_kind AS completeKind, t.create_type AS createType,
                    t.record_id AS recordId, t.assignee_id AS assigneeId,
-                   u.display_name AS assigneeName, e.next_plan_date AS nextPlanDate
+                   u.display_name AS assigneeName, COALESCE(e.doctor_next_date, e.next_plan_date) AS nextPlanDate
             FROM fu_task t
             JOIN pt_patient pt ON pt.id = t.patient_id AND pt.deleted = 0
             LEFT JOIN ward w ON w.id = pt.ward_id
@@ -428,20 +428,21 @@ public interface FollowupTaskQueryMapper {
     /**
      * 时间轴在组入组行：「计划中」节点（下次计划日期实时缓存，A-FU-001「未来年度只在时间轴上显示下次计划日期，按当前起算日期实时计算」；
      * fu_enrollment.next_plan_date 由调度 / 起算日期重算维护，E14-T04 / E14-T07）。
+     * 展示优先级：医生填写（doctor_next_date，E21-T06 登记）→ 计划默认缓存（E21-T08 / OQ-138③ 读取侧合并；登记被消费后清空，回落默认）。
      */
     record TimelineEnrollmentRow(long id, String planName, LocalDate nextPlanDate) {}
 
-    /** 在组（ACTIVE）且有下次计划日期缓存的入组（@DataScope 出行）。 */
+    /** 在组（ACTIVE）且有下次计划日期（医生指定或计划默认）的入组（@DataScope 出行）。 */
     @com.crdp.framework.datascope.DataScope(resource = "patient")
     @Select(
             """
-            SELECT e.id, p.name AS planName, e.next_plan_date AS nextPlanDate
+            SELECT e.id, p.name AS planName, COALESCE(e.doctor_next_date, e.next_plan_date) AS nextPlanDate
             FROM fu_enrollment e
             JOIN pt_patient pt ON pt.id = e.patient_id AND pt.deleted = 0
             LEFT JOIN fu_plan p ON p.id = e.plan_id
             WHERE e.patient_id = #{patientId} AND e.status = 'ACTIVE'
-              AND e.next_plan_date IS NOT NULL
-            ORDER BY e.next_plan_date ASC, e.id ASC
+              AND (e.doctor_next_date IS NOT NULL OR e.next_plan_date IS NOT NULL)
+            ORDER BY nextPlanDate ASC, e.id ASC
             """)
     List<TimelineEnrollmentRow> timelineEnrollments(@Param("patientId") long patientId);
 }

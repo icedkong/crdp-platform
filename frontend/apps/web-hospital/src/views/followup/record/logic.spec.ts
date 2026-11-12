@@ -27,7 +27,11 @@ import {
   headerTitle,
   implantDurationText,
   missingRequiredText,
+  nextVisitFieldKey,
+  nextVisitIssueText,
+  nextVisitNote,
   nextVisitText,
+  nextVisitWindowPreviewOf,
   readonlyBanner,
   rendererContextOf,
   submitConfirmText,
@@ -421,5 +425,76 @@ describe('e21-T11 / C-FU-008：录入缺省（随访医生 = 当前用户）', (
         { doctorId: '7', doctorName: '张医生（示例）' },
       ),
     ).toEqual({});
+  });
+});
+
+describe('e21-t08 医生指定下次随访时间（C-FU-005 / Q05）', () => {
+  const schemaOf = (
+    fields: {
+      code: string;
+      key: string;
+    }[],
+  ): FormSchema => ({
+    categories: [
+      {
+        fields: fields as never,
+        key: 'overview',
+        label: '随访概况',
+        order: 10,
+      },
+    ],
+    code: 'C_PROGRAM_FU',
+    name: '随访程控记录（示例）',
+    rules: [],
+    usage: 'FOLLOWUP',
+    version: 1,
+  });
+
+  it('按字段编码定位稳定键；A / B 模板（无该编码）返回 null', () => {
+    expect(
+      nextVisitFieldKey(
+        schemaOf([
+          { code: 'followup_date', key: 'f303' },
+          { code: 'next_visit_date', key: 'f333' },
+        ]),
+      ),
+    ).toBe('f333');
+    expect(
+      nextVisitFieldKey(schemaOf([{ code: 'death', key: 'f019' }])),
+    ).toBeNull();
+    expect(nextVisitFieldKey(null)).toBeNull();
+  });
+
+  it('校验（pages.md §5.1 照抄）：不能早于或等于本次随访日期、不能早于今天', () => {
+    const today = () => '2026-11-13';
+    expect(nextVisitIssueText('2027-01-15', '2026-11-13', today)).toBe('');
+    expect(nextVisitIssueText('', '2026-11-13', today)).toBe('');
+    expect(nextVisitIssueText(null, '2026-11-13', today)).toBe('');
+    expect(nextVisitIssueText('2026-11-13', '2026-11-13', today)).toBe(
+      '下次随访时间不能早于或等于本次随访日期',
+    );
+    expect(nextVisitIssueText('2026-11-10', '2026-11-13', today)).toBe(
+      '下次随访时间不能早于或等于本次随访日期',
+    );
+    // 早于今天但晚于本次随访日期（本次随访是过去日期）→ 不能早于今天
+    expect(nextVisitIssueText('2026-11-12', '2026-11-10', today)).toBe(
+      '下次随访时间不能早于今天',
+    );
+  });
+
+  it('窗口预览：按当前任务节点的前后宽度围绕医生日期展开；无任务上下文 / 未填为 null', () => {
+    // 任务窗口 plan 2026-11-05 ± 7 天 → 医生日期 2027-01-15 的预览窗口 ±7 天
+    expect(nextVisitWindowPreviewOf('2027-01-15', context())).toEqual({
+      start: '2027-01-08',
+      end: '2027-01-22',
+    });
+    expect(nextVisitWindowPreviewOf('2027-01-15', null)).toBeNull();
+    expect(nextVisitWindowPreviewOf(null, context())).toBeNull();
+  });
+
+  it('补充提示：补录「只保存」；常规 / 计划外为空', () => {
+    expect(nextVisitNote('BACKFILL')).toBe('补录：只保存');
+    expect(nextVisitNote('UNPLANNED')).toBeNull();
+    expect(nextVisitNote(null)).toBeNull();
   });
 });

@@ -76,6 +76,7 @@ class FollowupTaskCreationServiceTest {
                                         "NORMAL",
                                         LocalDate.of(2025, 4, 1),
                                         null,
+                                        null,
                                         null)));
         when(taskMapper.resolveStartDate(PLAN_ID, PATIENT_ID)).thenReturn(BASIS);
         when(planMapper.findById(PLAN_ID))
@@ -321,6 +322,7 @@ class FollowupTaskCreationServiceTest {
                                         "NORMAL",
                                         LocalDate.of(2025, 4, 1),
                                         null,
+                                        null,
                                         null),
                                 new FollowupTaskMapper.EnrollmentRow(
                                         32L,
@@ -329,6 +331,7 @@ class FollowupTaskCreationServiceTest {
                                         BASIS,
                                         "NORMAL",
                                         LocalDate.of(2025, 4, 1),
+                                        null,
                                         null,
                                         null)));
         when(planMapper.findById(PLAN_ID))
@@ -374,6 +377,7 @@ class FollowupTaskCreationServiceTest {
                                         "NORMAL",
                                         LocalDate.of(2025, 4, 1),
                                         null,
+                                        null,
                                         null)));
         when(taskMapper.resolveStartDate(PLAN_ID, PATIENT_ID)).thenReturn(null);
 
@@ -398,6 +402,7 @@ class FollowupTaskCreationServiceTest {
                                         BASIS,
                                         "NORMAL",
                                         LocalDate.of(2025, 4, 1),
+                                        null,
                                         null,
                                         null)));
         when(planMapper.findById(PLAN_ID))
@@ -443,6 +448,7 @@ class FollowupTaskCreationServiceTest {
                                         BASIS,
                                         "NORMAL",
                                         LocalDate.of(2025, 4, 1),
+                                        null,
                                         null,
                                         null)));
         when(planMapper.findById(PLAN_ID))
@@ -744,7 +750,8 @@ class FollowupTaskCreationServiceTest {
                                         "NORMAL",
                                         LocalDate.of(2025, 4, 1),
                                         pauseFrom,
-                                        pauseTo)));
+                                        pauseTo,
+                                        null)));
         when(planMapper.findById(PLAN_ID))
                 .thenReturn(
                         new PlanMapper.PlanRow(
@@ -819,6 +826,166 @@ class FollowupTaskCreationServiceTest {
         assertEquals("NORMAL", captor.getValue().getCreateType());
         assertEquals("PENDING", captor.getValue().getStatus());
         verify(outbox).publish(eq("TaskOpened"), anyString());
+    }
+
+    // ---------------------------------------------------------------- E21-T08 / C-FU-005
+    // 医生指定下次随访时间
+
+    /** C 常规随访形态（V91）：滚动节点（LAST_VISIT + 12 个月、提醒 / 窗口前 / 后各 30 天）。 */
+    private static PlanMapper.NodeRow rollingNodeRow(long nodeId) {
+        return new PlanMapper.NodeRow(
+                nodeId,
+                SUBPLAN_ID,
+                "NODE",
+                "常规随访（示例）",
+                null,
+                null,
+                null,
+                null,
+                "LAST_VISIT",
+                12,
+                "MONTH",
+                30,
+                "DAY",
+                30,
+                "DAY",
+                30,
+                "DAY",
+                "FORM",
+                "DOCTOR",
+                "fu_program_v1",
+                "SKIP",
+                "NORMAL",
+                10);
+    }
+
+    private static PlanMapper.NodeRow rollingSubplanRow() {
+        return new PlanMapper.NodeRow(
+                SUBPLAN_ID,
+                null,
+                "SUBPLAN",
+                "常规随访（示例）",
+                "CYCLE",
+                null,
+                12,
+                "MONTH",
+                null,
+                0,
+                "YEAR",
+                0,
+                "DAY",
+                0,
+                "DAY",
+                0,
+                "DAY",
+                null,
+                null,
+                null,
+                null,
+                null,
+                10);
+    }
+
+    /** 可调入组（C 常规随访滚动 + 医生指定 2027-01-15，上次随访 2026-11-13）。 */
+    private void doctorDateEnrollment(LocalDate doctorNextDate) {
+        when(taskMapper.findSchedulableEnrollments())
+                .thenReturn(
+                        List.of(
+                                new FollowupTaskMapper.EnrollmentRow(
+                                        ENROLLMENT_ID,
+                                        PATIENT_ID,
+                                        PLAN_ID,
+                                        BASIS,
+                                        "NORMAL",
+                                        LocalDate.of(2025, 4, 1),
+                                        null,
+                                        null,
+                                        doctorNextDate)));
+        when(planMapper.findById(PLAN_ID))
+                .thenReturn(
+                        new PlanMapper.PlanRow(
+                                PLAN_ID,
+                                "PLAN-IT-C",
+                                "示例 IT 程控随访计划",
+                                1,
+                                "PUBLISHED",
+                                "IMPLANT_DATE",
+                                "ONGOING",
+                                null,
+                                null,
+                                null,
+                                0,
+                                null,
+                                1L));
+        when(planMapper.findNodesByPlanId(PLAN_ID))
+                .thenReturn(List.of(rollingSubplanRow(), rollingNodeRow(NODE_ID)));
+        when(taskMapper.findLastVisitDate(ENROLLMENT_ID)).thenReturn(LocalDate.of(2026, 11, 13));
+        when(taskMapper.findTaskOccurrences(ENROLLMENT_ID)).thenReturn(List.of());
+        when(taskMapper.findOwnerContext(PATIENT_ID))
+                .thenReturn(new FollowupTaskMapper.PatientOwnerRow(55L, 66L));
+    }
+
+    @Test
+    void doctorDateCreatesTaskWithWindowAroundItAndClearsRegistration() {
+        // 验收：计划日 2027-01-15、±30 天 → 窗口开始日 2026-12-16 建任务；创建后清理 doctor_next_date（OQ-138③）
+        moduleOpen();
+        doctorDateEnrollment(LocalDate.of(2027, 1, 15));
+        insertSucceeds();
+
+        run(LocalDate.of(2026, 12, 16));
+
+        ArgumentCaptor<FollowupTaskInsertRow> captor =
+                ArgumentCaptor.forClass(FollowupTaskInsertRow.class);
+        verify(taskMapper).insertTask(captor.capture());
+        FollowupTaskInsertRow row = captor.getValue();
+        assertEquals(NODE_ID, row.getNodeId());
+        assertEquals(LocalDate.of(2027, 1, 15), row.getPlanDate(), "计划日期 = 医生指定日期");
+        assertEquals(LocalDate.of(2026, 12, 16), row.getWindowStart());
+        assertEquals(LocalDate.of(2027, 2, 14), row.getWindowEnd());
+        assertEquals(LocalDate.of(2026, 12, 16), row.getOpenDate(), "窗口开始日创建");
+        assertEquals("NORMAL", row.getCreateType());
+        assertEquals("PENDING", row.getStatus());
+        verify(taskMapper).clearDoctorNextDate(ENROLLMENT_ID);
+        verify(outbox).publish(eq("TaskOpened"), contains("\"windowStart\":\"2026-12-16\""));
+        verify(audit).append(any());
+    }
+
+    @Test
+    void doctorDateNotClearedBeforeWindowOpens() {
+        // 医生窗口未开启（12-15）：不建任务、不清 doctor_next_date（登记保持，等窗口开启日消费）
+        moduleOpen();
+        doctorDateEnrollment(LocalDate.of(2027, 1, 15));
+
+        run(LocalDate.of(2026, 12, 15));
+
+        verify(taskMapper, never()).insertTask(any());
+        verify(taskMapper, never()).clearDoctorNextDate(anyLong());
+        // 缓存保持计划默认（lastVisit + 12 个月 = 2027-11-13，开启 2027-10-14）
+        verify(taskMapper)
+                .updateNextCache(
+                        ENROLLMENT_ID, LocalDate.of(2027, 11, 13), LocalDate.of(2027, 10, 14));
+    }
+
+    @Test
+    void doctorDateReschedulesExistingPendingTaskInsteadOfSkipping() {
+        // 医生指定前该次任务已按默认日期创建（PENDING）：调度重放不跳过——按医生日期重排窗口并清理登记
+        moduleOpen();
+        doctorDateEnrollment(LocalDate.of(2027, 1, 15));
+        when(taskMapper.findTaskId(ENROLLMENT_ID, NODE_ID, 1)).thenReturn(901L);
+
+        run(LocalDate.of(2026, 12, 16));
+
+        verify(taskMapper, never()).insertTask(any());
+        verify(taskMapper)
+                .rescheduleTask(
+                        901L,
+                        LocalDate.of(2027, 1, 15),
+                        LocalDate.of(2026, 12, 16),
+                        LocalDate.of(2026, 12, 16),
+                        LocalDate.of(2027, 2, 14),
+                        LocalDate.of(2026, 12, 16));
+        verify(taskMapper).clearDoctorNextDate(ENROLLMENT_ID);
+        verify(outbox, never()).publish(anyString(), anyString());
     }
 
     @Test

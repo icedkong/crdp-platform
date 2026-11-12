@@ -50,7 +50,10 @@ import org.springframework.stereotype.Service;
  *   <li>刷新入组的下次计划日期 / 开启日缓存（fu_enrollment.next_plan_date / next_open_date，V46 预留）；
  *   <li>滚动循环节点（basis = LAST_VISIT，E21-T07 / C-FU-006）：排期基准 = max（上次实际随访日期快照
  *       fu_enrollment.last_visit_date，该节点已排最新一次计划日期）+ 节点偏移——ERI 期随访每 1–3 个月（默认 1 个月）从 eri_since
- *       那次随访起循环，更换器械后入组结束、循环随之结束；常规随访同理按上次随访滚动，无随访时首次回落起算日期且与固定节点计划日重合时抑制（OQ-139②）。
+ *       那次随访起循环，更换器械后入组结束、循环随之结束；常规随访同理按上次随访滚动，无随访时首次回落起算日期且与固定节点计划日重合时抑制（OQ-139②）；
+ *   <li>医生指定下次随访日期（E21-T08 / C-FU-005，OQ-141）：fu_enrollment.doctor_next_date（E21-T06 随记录提交登记）
+ *       作为「下一次任务」的计划日期，窗口按目标节点的宽度围绕该日期展开、开启日照常创建；优先级 医生指定 → ERI 期循环 → 计划默认， 只影响紧接着的下一次——任务创建或既有
+ *       PENDING 任务重排后清理已用值（OQ-138③），滚动循环随后从医生日期起继续； 目标次数已按默认日期建过时重排而非跳过（非 PENDING 落空，登记照清）。
  * </ul>
  *
  * <p>{@link #initializeForNewEnrollment}（E14-T05）：入组当天同步创建补录（BACKFILL）与当期（NORMAL）任务，
@@ -215,7 +218,15 @@ public class FollowupTaskCreationService {
         CreationCounts counts =
                 initializeInternal(
                         new FollowupTaskMapper.EnrollmentRow(
-                                enrollmentId, patientId, planId, null, mode, today, null, null),
+                                enrollmentId,
+                                patientId,
+                                planId,
+                                null,
+                                mode,
+                                today,
+                                null,
+                                null,
+                                null),
                         today,
                         null,
                         true);
@@ -242,7 +253,15 @@ public class FollowupTaskCreationService {
         LocalDate today = PlanDateCalculator.businessToday(Instant.now());
         FollowupTaskMapper.EnrollmentRow row =
                 new FollowupTaskMapper.EnrollmentRow(
-                        enrollmentId, patientId, planId, null, mode, today, pausedFrom, today);
+                        enrollmentId,
+                        patientId,
+                        planId,
+                        null,
+                        mode,
+                        today,
+                        pausedFrom,
+                        today,
+                        null);
         CreationCounts counts = initializeInternal(row, today, pausedFrom, false);
         return new ResumeInitSummary(counts.skipped(), counts.normal());
     }
@@ -278,6 +297,15 @@ public class FollowupTaskCreationService {
                         : null;
         List<TaskCreationPlanner.NodeDef> defs = nodeDefs(rows);
         TaskCreationPlanner.LoopBasis loopBasis = loopBasisOf(enrollment.id(), defs);
+        LocalDate doctorNextDate = null;
+        if (!atEnrollment) { // 新入组行 doctor_next_date 恒 NULL（E21-T06 登记只落在既有入组）
+            if (enrollment.doctorNextDate() != null) {
+                doctorNextDate =
+                        enrollment.doctorNextDate(); // 每日调度行随 findSchedulableEnrollments 带出
+            } else if (resumePausedFrom != null) {
+                doctorNextDate = taskMapper.findDoctorNextDate(enrollment.id()); // 恢复补偿合成行
+            }
+        }
         PlanResult result;
         if (resumePausedFrom != null) {
             result =
@@ -288,7 +316,8 @@ public class FollowupTaskCreationService {
                             logicalDate,
                             resumePausedFrom,
                             planEnd,
-                            loopBasis);
+                            loopBasis,
+                            doctorNextDate);
         } else if (atEnrollment) {
             result =
                     TaskCreationPlanner.planForEnrollment(
@@ -302,7 +331,8 @@ public class FollowupTaskCreationService {
                             logicalDate,
                             enrollment.enrolledOn(),
                             planEnd,
-                            loopBasis);
+                            loopBasis,
+                            doctorNextDate);
         }
         return createPlannedTasks(enrollment, result, rows, logicalDate);
     }
@@ -382,8 +412,13 @@ public class FollowupTaskCreationService {
         int backfill = 0;
         int skipped = 0;
         for (PlannedTask task : result.due()) {
-            // 幂等：已存在（重复执行 / 补跑重放）直接跳过；并发撞 uk 由唯一键兜底转已存在
+            // 幂等：已存在（重复执行 / 补跑重放）直接跳过；并发撞 uk 由唯一键兜底转已存在。
+            // 例外（E21-T08 / C-FU-005）：医生指定覆盖的目标次数已按默认日期建过（PENDING）时不跳过——
+            // 按医生日期重排窗口（E14-T07 rescheduleTask 同款 PENDING 守卫）并清理登记，医生日期才算生效
             if (taskMapper.findTaskId(enrollment.id(), task.nodeId(), task.occurrence()) != null) {
+                if (task.doctorOverride()) {
+                    rescheduleExistingForDoctor(enrollment, task);
+                }
                 continue;
             }
             PlanMapper.NodeRow template = templates.get(task.nodeId());
@@ -431,6 +466,19 @@ public class FollowupTaskCreationService {
                         task.occurrence());
                 continue;
             }
+            if (task.doctorOverride()) {
+                // 医生指定已生效（OQ-138③ 清理已用值——只影响下一次；清完滚动循环从医生日期起继续）
+                taskMapper.clearDoctorNextDate(enrollment.id());
+                log.info(
+                        "医生指定下次随访日期已建任务（E21-T08）：enrollment={} node={} occurrence={}"
+                                + " 计划日期={} 窗口={}~{}",
+                        enrollment.id(),
+                        task.nodeId(),
+                        task.occurrence(),
+                        task.planDate(),
+                        task.windowStart(),
+                        task.windowEnd());
+            }
             switch (createType) {
                 case TaskCreationPlanner.CREATE_NORMAL -> {
                     normal++;
@@ -445,6 +493,36 @@ public class FollowupTaskCreationService {
                 result.next() != null ? result.next().planDate() : null,
                 result.next() != null ? result.next().openDate() : null);
         return new CreationCounts(normal, backfill, skipped);
+    }
+
+    /**
+     * 医生指定覆盖的目标次数已存在（按默认日期创建过）时的重排（E21-T08 / C-FU-005）：PENDING（尚无联系记录）→ 五列日期组按医生日期整体重排（E14-T07
+     * rescheduleTask 同款守卫，窗口围绕医生日期展开）； 非 PENDING（已联系 / 已完成 / 已终态）重排落空——登记同样清理（「只影响下一次」，下一次已不可再改）。
+     * 任务行本身即业务记录，不逐条写审计（与创建同口径）。
+     */
+    private void rescheduleExistingForDoctor(
+            FollowupTaskMapper.EnrollmentRow enrollment, PlannedTask task) {
+        Long existingId = taskMapper.findTaskId(enrollment.id(), task.nodeId(), task.occurrence());
+        if (existingId == null) {
+            return; // 并发下已被移除（撤回）：走下面的正常创建路径
+        }
+        int moved =
+                taskMapper.rescheduleTask(
+                        existingId,
+                        task.planDate(),
+                        task.remindStart(),
+                        task.windowStart(),
+                        task.windowEnd(),
+                        task.openDate());
+        taskMapper.clearDoctorNextDate(enrollment.id());
+        log.info(
+                "医生指定下次随访日期重排既有任务（E21-T08）：taskId={} enrollment={} 计划日期={}" + " 窗口={}~{} moved={}",
+                existingId,
+                enrollment.id(),
+                task.planDate(),
+                task.windowStart(),
+                task.windowEnd(),
+                moved);
     }
 
     /**

@@ -52,6 +52,7 @@ import type {
   RendererField,
 } from './layout';
 import type { FieldMetaValue } from './multiselect';
+import type { NextVisitAffordance } from './next-visit';
 import type { RendererValidateResult } from './types';
 
 import { computed, ref, watch } from 'vue';
@@ -109,6 +110,12 @@ import {
   normalizeMultiselectValue,
   selectedNeedsDetailCodes,
 } from './multiselect';
+import {
+  NEXT_VISIT_FIELD_CODE,
+  NEXT_VISIT_PLACEHOLDER,
+  nextVisitHintOf,
+  nextVisitQuickOptions,
+} from './next-visit';
 
 const props = withDefaults(
   defineProps<{
@@ -127,6 +134,12 @@ const props = withDefaults(
     mode?: 'edit' | 'readonly';
     /** 表单数据（键 = 稳定键；v-model）。 */
     modelValue: Record<string, unknown>;
+    /**
+     * 「下次随访时间」字段的录入辅助（E21-T08 / C-FU-005，Q05）：间隔快捷 +1..+12 个月、
+     * 占位与窗口预览 / 补充提示。按字段编码 next_visit_date 识别（C 程控表单 f333）；
+     * A / B 模板无该字段，null 即整体不生效。
+     */
+    nextVisit?: NextVisitAffordance | null;
     /** 上一次记录（带入上次值 / 对比标红；规则参数决定取法，后端给）。 */
     previous?: null | PreviousRecord;
     /** 表单模板（FormSchema，字段 / 分组 / 选项 / 条件 / 校验 / 对比规则全部来自它）。 */
@@ -140,6 +153,7 @@ const props = withDefaults(
     layout: 'auto',
     meta: undefined,
     mode: 'edit',
+    nextVisit: null,
     previous: null,
     showErrors: false,
   },
@@ -558,6 +572,27 @@ function needsDetailInput(field: RendererField): boolean {
   );
 }
 
+// ---------------------------------------------------------------- 下次随访时间（E21-T08 / C-FU-005）
+
+/** 「下次随访时间」字段（按字段编码识别；props.nextVisit 为 null 整体不生效，A / B 模板）。 */
+function isNextVisitField(field: RendererField): boolean {
+  return props.nextVisit !== null && field.code === NEXT_VISIT_FIELD_CODE;
+}
+
+/** 间隔快捷选项（值 = 本次随访日期 ?? 今天 + N 个月；月末与后端同口径）。 */
+function nextVisitChips(): { label: string; value: string }[] {
+  return props.nextVisit ? nextVisitQuickOptions(props.nextVisit) : [];
+}
+
+/** 字段旁提示：窗口预览（已填）与页面补充提示（补录「只保存」等）。 */
+function nextVisitHint(field: RendererField): string {
+  if (!props.nextVisit) return '';
+  return nextVisitHintOf(
+    props.nextVisit,
+    !isEmptyFormValue(props.modelValue[field.key]),
+  );
+}
+
 // ---------------------------------------------------------------- 已填 / 应填（E11-T11 / A-PAT-021、C-PAT-018，口径 A-PAT-019）
 
 /** 分类进度（A-PAT-019 口径：必填字段、按条件实际显示的才计入；与后端 FormProgressEngine 同口径）。 */
@@ -872,6 +907,9 @@ defineExpose({ anchors, focusFirstError, scrollTo, validate });
               </div>
               <DatePicker
                 v-else-if="kindOf(field) === 'date'"
+                :placeholder="
+                  isNextVisitField(field) ? NEXT_VISIT_PLACEHOLDER : undefined
+                "
                 :style="fieldControlStyle(field)"
                 :value="
                   typeof valueOf(field) === 'string'
@@ -942,6 +980,30 @@ defineExpose({ anchors, focusFirstError, scrollTo, validate });
                 class="field-unit"
                 v-text="unitOf(field)"
               ></span>
+
+              <!-- E21-T08 / C-FU-005：下次随访时间的间隔快捷（+N 个月，只编辑态）与
+                   窗口预览 / 补充提示（pages.md §5.1） -->
+              <template v-if="isNextVisitField(field)">
+                <span v-if="!isReadonly" class="next-visit-quick">
+                  <button
+                    v-for="option in nextVisitChips()"
+                    :key="option.label"
+                    class="quick-chip"
+                    :data-testid="`next-visit-quick-${option.label}`"
+                    type="button"
+                    @click="setField(field.key, option.value)"
+                  >
+                    {{ option.label }}
+                  </button>
+                </span>
+                <span
+                  v-if="nextVisitHint(field)"
+                  :data-testid="`next-visit-hint-${field.key}`"
+                  class="next-visit-hint"
+                >
+                  {{ nextVisitHint(field) }}
+                </span>
+              </template>
 
               <!-- 「其他」补充说明：写入字段备注（data_meta.note，Q37） -->
               <Input
@@ -1054,6 +1116,30 @@ defineExpose({ anchors, focusFirstError, scrollTo, validate });
 }
 
 .carry-hint {
+  font-size: 12px;
+  color: var(--form-text-secondary);
+}
+
+/* E21-T08 / C-FU-005：下次随访时间的间隔快捷与提示（pages.md §5.1） */
+.next-visit-quick {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 4px;
+}
+
+.quick-chip {
+  padding: 2px 8px;
+  font-size: 12px;
+  color: var(--form-carry-border);
+  cursor: pointer;
+  background: #fff;
+  border: 1px solid var(--form-carry-border);
+  border-radius: 4px;
+}
+
+.next-visit-hint {
+  display: block;
+  margin-top: 2px;
   font-size: 12px;
   color: var(--form-text-secondary);
 }

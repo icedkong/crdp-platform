@@ -747,3 +747,90 @@ describe('e16-t14 FormRenderer：category-end 分类末尾作用域插槽', () =
     expect(wrapper.find('.strip').exists()).toBe(false);
   });
 });
+
+/* ----------------------------------------------------------------------
+ * E21-T08 / C-FU-005（Q05）：「下次随访时间」字段（字段编码 next_visit_date，C 程控
+ * 表单 f333）——间隔快捷 +1..+12 个月、窗口预览与补充提示按页面传入的 affordance 渲染。
+ */
+describe('e21-t08 FormRenderer：下次随访时间字段（C-FU-005 / Q05）', () => {
+  const cSchema: FormSchema = {
+    categories: [
+      {
+        key: 'overview',
+        label: '随访概况',
+        order: 10,
+        fields: [
+          f({ key: 'f303', label: '随访日期', type: 'date', required: true }),
+          f({
+            key: 'f333',
+            label: '下次随访时间',
+            type: 'date',
+            code: 'next_visit_date',
+          }),
+        ],
+      },
+    ],
+    code: 'C_PROGRAM_FU',
+    name: '随访程控记录（示例）',
+    rules: [],
+    usage: 'FOLLOWUP',
+    version: 1,
+  };
+
+  function mountC(props: Record<string, unknown> = {}) {
+    return mount(FormRenderer, {
+      props: {
+        schema: cSchema,
+        modelValue: {},
+        ...props,
+      },
+    });
+  }
+
+  it('无 affordance（A / B 模板）不渲染快捷与提示', () => {
+    const wrapper = mountC();
+    expect(wrapper.find('.next-visit-quick').exists()).toBe(false);
+    expect(wrapper.find('.next-visit-hint').exists()).toBe(false);
+  });
+
+  it('间隔快捷 +1..+12 个月（基准 = 本次随访日期），点击写入字段值', async () => {
+    const wrapper = mountC({
+      modelValue: { f303: '2026-11-13' },
+      nextVisit: { baseDate: '2026-11-13', note: null, windowPreview: null },
+    });
+    const chips = wrapper.findAll('.quick-chip');
+    expect(chips.map((chip) => chip.text())).toEqual([
+      '+1 个月',
+      '+2 个月',
+      '+3 个月',
+      '+6 个月',
+      '+12 个月',
+    ]);
+    await chips[1]?.trigger('click');
+    const updates = wrapper.emitted('update:modelValue');
+    expect(updates?.at(-1)?.[0]).toEqual({
+      f303: '2026-11-13',
+      f333: '2027-01-13',
+    });
+  });
+
+  it('已填时显示窗口预览；未填只显示补充提示（补录：只保存）', async () => {
+    const affordance = {
+      baseDate: '2026-11-13',
+      note: '补录：只保存',
+      windowPreview: { start: '2026-12-16', end: '2027-02-14' },
+    };
+    const empty = mountC({ nextVisit: affordance });
+    expect(empty.find('[data-testid="next-visit-hint-f333"]').text()).toBe(
+      '补录：只保存',
+    );
+
+    const filled = mountC({
+      modelValue: { f333: '2027-01-15' },
+      nextVisit: affordance,
+    });
+    expect(filled.find('[data-testid="next-visit-hint-f333"]').text()).toBe(
+      '= 下次计划日期；窗口 2026-12-16 ~ 2027-02-14；补录：只保存',
+    );
+  });
+});

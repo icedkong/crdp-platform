@@ -103,7 +103,7 @@ public interface DashboardTaskMapper {
                    t.window_end AS windowEnd, t.open_date AS openDate,
                    t.status, t.complete_kind AS completeKind, t.create_type AS createType,
                    t.record_id AS recordId, t.assignee_id AS assigneeId,
-                   u.display_name AS assigneeName, e.next_plan_date AS nextPlanDate
+                   u.display_name AS assigneeName, COALESCE(e.doctor_next_date, e.next_plan_date) AS nextPlanDate
             FROM fu_task t
             JOIN pt_patient pt ON pt.id = t.patient_id AND pt.deleted = 0
             LEFT JOIN ward w ON w.id = pt.ward_id
@@ -185,7 +185,7 @@ public interface DashboardTaskMapper {
                    t.window_end AS windowEnd, t.open_date AS openDate,
                    t.status, t.complete_kind AS completeKind, t.create_type AS createType,
                    t.record_id AS recordId, t.assignee_id AS assigneeId,
-                   u.display_name AS assigneeName, e.next_plan_date AS nextPlanDate
+                   u.display_name AS assigneeName, COALESCE(e.doctor_next_date, e.next_plan_date) AS nextPlanDate
             FROM fu_task t
             JOIN pt_patient pt ON pt.id = t.patient_id AND pt.deleted = 0
             LEFT JOIN ward w ON w.id = pt.ward_id
