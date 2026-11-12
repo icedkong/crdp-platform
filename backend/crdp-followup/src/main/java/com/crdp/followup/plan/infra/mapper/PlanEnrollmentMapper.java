@@ -346,4 +346,22 @@ public interface PlanEnrollmentMapper {
             """)
     int setDoctorNextDate(
             @Param("patientId") long patientId, @Param("nextDate") LocalDate nextDate);
+
+    /**
+     * 上次实际随访日期快照单调推进（E21-T07 / C-FU-006，followup V93：滚动循环节点 LAST_VISIT 的排期基准）： 只增不减——早于现快照的补录 /
+     * 修改不回拨；删除或改早最新一次记录不回退（下次提交自愈，OQ-140②）。按患者定向 UPDATE 在组入组，无 SELECT 输出。
+     */
+    @IgnoreScope(
+            reason =
+                    "滚动循环排期基准快照（E21-T07）：按患者定向 UPDATE 在组入组（调度消费，无患者数据"
+                            + "输出），触发入口（记录提交 / 修改）已做患者数据范围校验（40400）")
+    @Update(
+            """
+            UPDATE fu_enrollment
+            SET last_visit_date = #{visitDate}
+            WHERE patient_id = #{patientId} AND status IN ('ACTIVE', 'PAUSED')
+              AND (last_visit_date IS NULL OR last_visit_date < #{visitDate})
+            """)
+    int advanceLastVisitDate(
+            @Param("patientId") long patientId, @Param("visitDate") LocalDate visitDate);
 }

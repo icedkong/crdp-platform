@@ -17,6 +17,7 @@ import com.crdp.framework.outbox.OutboxPublisher;
 import com.crdp.framework.tenant.TenantContext;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -46,7 +47,10 @@ import org.springframework.stereotype.Service;
  *       FollowupTaskStatusService#refreshOverdue}——窗口结束日次日仍未完成（待随访 / 进行中，补录豁免）的任务置 OVERDUE 并写
  *       TASK_OVERDUE 事件（通知规则引擎 E09-T04 消费）；
  *   <li>新建任务写 {@code TaskOpened} 事件到租户库 outbox（消费方随 E15 通知落地，无人订阅保持 PENDING，OQ-60③）；
- *   <li>刷新入组的下次计划日期 / 开启日缓存（fu_enrollment.next_plan_date / next_open_date，V46 预留）。
+ *   <li>刷新入组的下次计划日期 / 开启日缓存（fu_enrollment.next_plan_date / next_open_date，V46 预留）；
+ *   <li>滚动循环节点（basis = LAST_VISIT，E21-T07 / C-FU-006）：排期基准 = max（上次实际随访日期快照
+ *       fu_enrollment.last_visit_date，该节点已排最新一次计划日期）+ 节点偏移——ERI 期随访每 1–3 个月（默认 1 个月）从 eri_since
+ *       那次随访起循环，更换器械后入组结束、循环随之结束；常规随访同理按上次随访滚动，无随访时首次回落起算日期且与固定节点计划日重合时抑制（OQ-139②）。
  * </ul>
  *
  * <p>{@link #initializeForNewEnrollment}（E14-T05）：入组当天同步创建补录（BACKFILL）与当期（NORMAL）任务，
@@ -272,31 +276,83 @@ public class FollowupTaskCreationService {
                 "YEARS".equals(plan.cycleType()) && plan.cycleYears() != null
                         ? startDate.plusYears(plan.cycleYears())
                         : null;
+        List<TaskCreationPlanner.NodeDef> defs = nodeDefs(rows);
+        TaskCreationPlanner.LoopBasis loopBasis = loopBasisOf(enrollment.id(), defs);
         PlanResult result;
         if (resumePausedFrom != null) {
             result =
                     TaskCreationPlanner.planForResume(
-                            nodeDefs(rows),
+                            defs,
                             enrollment.mode(),
                             startDate,
                             logicalDate,
                             resumePausedFrom,
-                            planEnd);
+                            planEnd,
+                            loopBasis);
         } else if (atEnrollment) {
             result =
                     TaskCreationPlanner.planForEnrollment(
-                            nodeDefs(rows), enrollment.mode(), startDate, logicalDate, planEnd);
+                            defs, enrollment.mode(), startDate, logicalDate, planEnd, loopBasis);
         } else {
             result =
                     TaskCreationPlanner.plan(
-                            nodeDefs(rows),
+                            defs,
                             enrollment.mode(),
                             startDate,
                             logicalDate,
                             enrollment.enrolledOn(),
-                            planEnd);
+                            planEnd,
+                            loopBasis);
         }
         return createPlannedTasks(enrollment, result, rows, logicalDate);
+    }
+
+    /**
+     * 滚动循环（basis = LAST_VISIT）节点的排期输入（E21-T07 / C-FU-006）：入组的上次实际随访日期快照 + 各滚动节点 已排任务的推进状态（下次次数 =
+     * 已排最大次数 + 1、最新一次计划日期——错过未执行的次数同样按周期前移，OQ-140①）。 无滚动节点的计划（A / B）返回 {@link
+     * TaskCreationPlanner.LoopBasis#none()}，不产生额外查询。
+     */
+    private TaskCreationPlanner.LoopBasis loopBasisOf(
+            long enrollmentId, List<TaskCreationPlanner.NodeDef> defs) {
+        List<Long> rollingNodeIds =
+                defs.stream()
+                        .filter(
+                                node ->
+                                        "NODE".equals(node.nodeType())
+                                                && "LAST_VISIT".equalsIgnoreCase(node.basis()))
+                        .map(TaskCreationPlanner.NodeDef::id)
+                        .toList();
+        if (rollingNodeIds.isEmpty()) {
+            return TaskCreationPlanner.LoopBasis.none();
+        }
+        return loopBasis(
+                taskMapper.findLastVisitDate(enrollmentId),
+                taskMapper.findTaskOccurrences(enrollmentId),
+                rollingNodeIds);
+    }
+
+    /**
+     * 同上（纯装配，供 {@code StartDateRecalculationService} 的 next 缓存重算共用）：occurrenceRows 按次数升序，
+     * 取每节点最后一行为「最新一次」。
+     */
+    static TaskCreationPlanner.LoopBasis loopBasis(
+            LocalDate lastVisitDate,
+            List<FollowupTaskMapper.TaskOccurrenceRow> occurrenceRows,
+            List<Long> rollingNodeIds) {
+        Map<Long, TaskCreationPlanner.LoopBasis.NodeLoopState> states = new HashMap<>();
+        for (FollowupTaskMapper.TaskOccurrenceRow row : occurrenceRows) {
+            if (!rollingNodeIds.contains(row.nodeId())) {
+                continue;
+            }
+            TaskCreationPlanner.LoopBasis.NodeLoopState previous = states.get(row.nodeId());
+            if (previous == null || row.occurrence() >= previous.nextOccurrence()) {
+                states.put(
+                        row.nodeId(),
+                        new TaskCreationPlanner.LoopBasis.NodeLoopState(
+                                row.occurrence() + 1, row.planDate()));
+            }
+        }
+        return new TaskCreationPlanner.LoopBasis(lastVisitDate, Map.copyOf(states));
     }
 
     /**

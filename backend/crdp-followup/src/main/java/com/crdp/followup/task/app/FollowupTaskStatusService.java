@@ -580,7 +580,8 @@ public class FollowupTaskStatusService {
 
     /**
      * 直接录入期判定（A-FU-010「逾期后到下一节点任务开启前仍可直接录入」）：completedOn 早于本节点第 N+1 次的开启日即在期内。 第 N+1
-     * 次按入组起算快照与计划版本实时计算（未来次数未预生成，A-FU-001）；无下一次或计划配置缺失不设界（防御放行，OQ-82③）。
+     * 次按入组起算快照与计划版本实时计算（未来次数未预生成，A-FU-001）；滚动循环节点（E21-T07）的下一次由 随访滚动派生（max（上次随访快照，已排最新一次计划日期）+ 偏移）；
+     * 无下一次或计划配置缺失不设界（防御放行，OQ-82③）。
      */
     private boolean withinDirectEntryPeriod(
             FollowupTaskMapper.TaskRow task, LocalDate completedOn) {
@@ -591,14 +592,19 @@ public class FollowupTaskStatusService {
         if (startDate == null || rows.isEmpty()) {
             return true; // 配置防御：查不到排期依据时不拦完成（历史补录仍可兜底）
         }
+        List<TaskCreationPlanner.NodeDef> defs = FollowupTaskCreationService.nodeDefs(rows);
+        if (defs.stream()
+                .anyMatch(
+                        node ->
+                                node.id() == task.nodeId()
+                                        && "LAST_VISIT".equalsIgnoreCase(node.basis()))) {
+            return completedOn.isBefore(rollingNextOpenDate(task));
+        }
         PlanDateCalculator.NodeSchedule next =
                 TaskCreationPlanner.occurrenceScheduleOf(
-                        FollowupTaskCreationService.nodeDefs(rows),
-                        task.nodeId(),
-                        task.occurrence() + 1,
-                        startDate);
+                        defs, task.nodeId(), task.occurrence() + 1, startDate);
         if (next == null) {
-            return true; // FIXED 排完 / 滚动基准只排第 1 次：无下一节点可开启，直接录入期不设界
+            return true; // FIXED 排完：无下一节点可开启，直接录入期不设界
         }
         LocalDate planEnd =
                 "YEARS".equals(plan.cycleType()) && plan.cycleYears() != null
@@ -608,6 +614,31 @@ public class FollowupTaskStatusService {
             return true; // 管理周期边界外不会再开任务（同 E14 调度口径）
         }
         return completedOn.isBefore(next.openDate());
+    }
+
+    /**
+     * 滚动循环节点的下一次开启日（E21-T07）：max（上次实际随访日期快照，该节点已排最新一次计划日期）+ 节点偏移 后按节点提醒 / 窗口前取较早一天；
+     * 无快照也无已排次数（防御）返回极大值——不设界放行（与配置缺失同口径，OQ-82③）。
+     */
+    private LocalDate rollingNextOpenDate(FollowupTaskMapper.TaskRow task) {
+        LocalDate lastVisit = taskMapper.findLastVisitDate(task.enrollmentId());
+        LocalDate latestPlanDate = null;
+        int latestOccurrence = 0;
+        for (FollowupTaskMapper.TaskOccurrenceRow row :
+                taskMapper.findTaskOccurrences(task.enrollmentId())) {
+            if (row.nodeId() == task.nodeId() && row.occurrence() > latestOccurrence) {
+                latestOccurrence = row.occurrence();
+                latestPlanDate = row.planDate();
+            }
+        }
+        List<PlanMapper.NodeRow> rows = planMapper.findNodesByPlanId(task.planId());
+        PlanDateCalculator.NodeSchedule next =
+                TaskCreationPlanner.rollingNextSchedule(
+                        FollowupTaskCreationService.nodeDefs(rows),
+                        task.nodeId(),
+                        lastVisit,
+                        latestPlanDate);
+        return next != null ? next.openDate() : LocalDate.MAX;
     }
 
     // ---------------------------------------------------------------- 期间未执行：补做 /

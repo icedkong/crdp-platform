@@ -328,6 +328,42 @@ class PlanSwitchServiceTest {
         verify(enrollmentMapper, never()).switchEnrollmentMode(anyLong(), anyString(), any());
     }
 
+    // ---------------------------------------------------------------- E21-T07 / C-FU-006 滚动循环基准：
+    // 上次实际随访日期快照（fu_enrollment.last_visit_date，V93）
+
+    @Test
+    void recordSubmissionAdvancesLastVisitDateSnapshot() {
+        when(enrollmentMapper.findSwitchableEnrollments(PATIENT_ID))
+                .thenReturn(List.of(pacerEnrollment("ERI")));
+        LocalDate visitDate = LocalDate.of(2026, 10, 20);
+
+        service.onRecordSubmitted(PATIENT_ID, 705L, visitDate, Map.of("f323", "1"));
+
+        // 滚动循环节点（ERI 期每 1–3 个月 / 常规随访）的排期基准：记录提交单调推进快照（只增不减，SQL 守卫）
+        verify(enrollmentMapper).advanceLastVisitDate(PATIENT_ID, visitDate);
+    }
+
+    @Test
+    void recordSubmissionWithoutActiveEnrollmentDoesNotAdvanceSnapshot() {
+        when(enrollmentMapper.findSwitchableEnrollments(PATIENT_ID)).thenReturn(List.of());
+
+        service.onRecordSubmitted(
+                PATIENT_ID, 705L, LocalDate.of(2026, 10, 20), Map.of("f323", "1"));
+
+        verify(enrollmentMapper, never()).advanceLastVisitDate(anyLong(), any());
+    }
+
+    @Test
+    void unresolvableVisitDateFallsBackToTodayForSnapshot() {
+        when(enrollmentMapper.findSwitchableEnrollments(PATIENT_ID))
+                .thenReturn(List.of(pacerEnrollment("NORMAL")));
+
+        service.onRecordSubmitted(PATIENT_ID, 705L, null, Map.of());
+
+        // 随访日期不可解析（visit_date 与表单字段均空，防御）回落今天——与 eri_since 同口径
+        verify(enrollmentMapper).advanceLastVisitDate(eq(PATIENT_ID), eq(LocalDate.now()));
+    }
+
     // ---------------------------------------------------------------- SW-8 ERI 标记解除：恢复原计划的常规间隔
 
     @Test

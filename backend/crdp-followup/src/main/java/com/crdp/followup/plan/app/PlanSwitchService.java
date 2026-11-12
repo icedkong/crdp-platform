@@ -41,8 +41,10 @@ import org.springframework.transaction.annotation.Transactional;
  * <p><b>ERI 期切换不换入组行</b>（切换表「接近 ERI / ERI 标记解除」两行，C-FU-006）：随访记录提交（或修改已提交记录）时 ERI 状态（C_PROGRAM_FU
  * 稳定键 f323，OQ-130① 契约：0 正常 / 1 接近ERI / 2 已达ERI(EOI)）为接近 / 已达，或预计电池寿命（f324）≤ 1 年 → 在组入组 {@code mode}
  * 翻 ERI、{@code eri_since} = 该次随访日期（「否，从该次随访日期起算」），常规未完成任务终止（循环接管）；后续 ERI 状态更正为正常且电池寿命不再偏低 → {@code
- * mode} 回 NORMAL、{@code eri_since} 清空，恢复原计划的常规间隔（SW-7 / SW-8）。ERI 期循环任务的创建（每 1–3 个月、更换器械后结束）随
- * E21-T07；「同时满足多项时按 医生指定 → ERI 期循环 → 计划默认 取值」在任务创建侧解析（E21-T07 / T08）。
+ * mode} 回 NORMAL、{@code eri_since} 清空，恢复原计划的常规间隔（SW-7 / SW-8）。ERI 期循环任务的创建（每 1–3 个月、从 eri_since
+ * 起算、更换器械后结束）已随 <b>E21-T07</b> 落地：TaskCreationPlanner 滚动排期（LoopBasis，基准 = max（{@code
+ * last_visit_date} 快照，已排最新一次计划日期）+ 节点偏移）与每日调度消费；「同时满足多项时按 医生指定 → ERI 期循环 → 计划默认 取值」中医生指定的窗口展开随
+ * E21-T08。
  *
  * <p><b>医生指定下次随访时间</b>（切换表末行，C-FU-005 / Q05）：只登记 {@code
  * doctor_next_date}（每次提交覆盖，只影响下一次任务），<b>不改变计划类型</b>（SW-10）； 早于今天的日期忽略（补录的历史记录「只保存，不再生成任务」，C 规格 §5
@@ -323,6 +325,9 @@ public class PlanSwitchService {
             enrollmentMapper.setDoctorNextDate(patientId, doctorDate);
             doctorSet = true;
         }
+        // 上次实际随访日期快照单调推进（E21-T07 / C-FU-006）：滚动循环节点（常规 / ERI 期）的排期基准
+        // fu_enrollment.last_visit_date（V93）——ERI 期第一次循环 = eri_since 那次随访 + 间隔，此后每次随访滚动一次
+        enrollmentMapper.advanceLastVisitDate(patientId, effectiveVisit);
         if (switched == 0 && restored == 0 && doctorSet) {
             log.info(
                     "医生指定下次随访日期（SW-10，计划类型不变）：patient={} date={}（窗口展开随 E21-T08）",

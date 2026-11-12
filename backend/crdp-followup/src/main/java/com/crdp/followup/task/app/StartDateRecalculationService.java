@@ -160,7 +160,7 @@ public class StartDateRecalculationService {
                     TaskCreationPlanner.occurrenceScheduleOf(
                             defs, task.nodeId(), task.occurrence(), newStart);
             if (schedule == null) {
-                continue; // 节点已不在该版本配置里（防御）：不动历史行
+                continue; // 节点已不在该版本配置里 / 滚动节点（E21-T07：次数日期派生自随访，不随起算日期重算）：不动历史行
             }
             if ((planEnd != null && schedule.planDate().isAfter(planEnd))
                     || schedule.openDate().isAfter(today)) {
@@ -179,21 +179,38 @@ public class StartDateRecalculationService {
         return new int[] {rescheduled, withdrawn};
     }
 
-    /** 下次计划日期 / 开启日缓存实时按新起算重算（与每日调度同口径：首个开启日在今天之后的次数）。 */
+    /** 下次计划日期 / 开启日缓存实时按新起算重算（与每日调度同口径：首个开启日在今天之后的次数；滚动循环输入 E21-T07 起同口径装配）。 */
     private void refreshNextCache(
             FollowupTaskMapper.RecalcEnrollmentRow enrollment,
             List<PlanMapper.NodeRow> rows,
             LocalDate newStart,
             LocalDate planEnd,
             LocalDate today) {
+        List<TaskCreationPlanner.NodeDef> defs = FollowupTaskCreationService.nodeDefs(rows);
+        List<Long> rollingNodeIds =
+                defs.stream()
+                        .filter(
+                                node ->
+                                        "NODE".equals(node.nodeType())
+                                                && "LAST_VISIT".equalsIgnoreCase(node.basis()))
+                        .map(TaskCreationPlanner.NodeDef::id)
+                        .toList();
+        TaskCreationPlanner.LoopBasis loopBasis =
+                rollingNodeIds.isEmpty()
+                        ? TaskCreationPlanner.LoopBasis.none()
+                        : FollowupTaskCreationService.loopBasis(
+                                taskMapper.findLastVisitDate(enrollment.id()),
+                                taskMapper.findTaskOccurrences(enrollment.id()),
+                                rollingNodeIds);
         TaskCreationPlanner.PlanResult result =
                 TaskCreationPlanner.plan(
-                        FollowupTaskCreationService.nodeDefs(rows),
+                        defs,
                         enrollment.mode(),
                         newStart,
                         today,
                         enrollment.enrolledOn(),
-                        planEnd);
+                        planEnd,
+                        loopBasis);
         taskMapper.updateNextCache(
                 enrollment.id(),
                 result.next() != null ? result.next().planDate() : null,
