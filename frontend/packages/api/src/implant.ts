@@ -6,6 +6,8 @@
  * 新建 / 编辑表单的选项清单来自 GET /implants/options（暂行预置，业务字典值随 E21-T04）。
  */
 
+import { visitNoError } from './patient-registration';
+
 /** 电极行（挂在植入记录下；RA / RV / LV 腔室，部位按腔室过滤）。 */
 export interface ImplantLeadView {
   chamber: string;
@@ -603,7 +605,8 @@ export function implantFormOf(record: ImplantRecordView): ImplantForm {
 
 /**
  * C 登记校验（C-PAT-001 最小必填，OQ-71①）：姓名、性别、出生日期、病历号、科室、病区 +
- * 首条植入记录（植入表单校验复用 {@link validateImplantForm}）；错误键带 `patient.` /
+ * 首条植入记录（植入表单校验复用 {@link validateImplantForm}）；visitNo 可空 = 自动生成
+ * （C-PAT-003 / E21-T10），填写时限长 ≤64（与后端 40001 同口径）；错误键带 `patient.` /
  * `implant.` 前缀供页面分区展示。
  */
 export function validateCRegistration(
@@ -613,6 +616,7 @@ export function validateCRegistration(
     gender?: null | string;
     medicalRecordNo?: null | string;
     name?: null | string;
+    visitNo?: null | string;
     wardId?: null | number;
   },
   implant: ImplantForm | null | undefined,
@@ -626,6 +630,8 @@ export function validateCRegistration(
   if (!patient.birthDate) errors['patient.birthDate'] = '必填';
   if (!patient.deptId) errors['patient.deptId'] = '必选';
   if (!patient.wardId) errors['patient.wardId'] = '必选';
+  const visitNoIssue = visitNoError(patient.visitNo);
+  if (visitNoIssue) errors['patient.visitNo'] = visitNoIssue;
   if (!implant) {
     errors['patient.implant'] = '请同时填写首条植入记录（C-PAT-001）';
     return errors;

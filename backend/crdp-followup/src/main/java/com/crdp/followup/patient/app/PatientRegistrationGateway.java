@@ -36,6 +36,12 @@ public class PatientRegistrationGateway {
         return mapper.findLiveIdByMrnBlind(mrnBlind);
     }
 
+    /** 全院随访编号存在性（E21-T10 / C-PAT-003：历史患者手填纸质原编号的唯一校验；软删除不占用）。 */
+    @IgnoreScope(reason = "随访编号本院唯一（C-PAT-003 / Q10）：全院查重只取存在性，不输出患者数据；" + "范围外同号患者同样阻止登记")
+    public Long liveIdByVisitNo(String visitNo) {
+        return mapper.findLiveIdByVisitNo(visitNo);
+    }
+
     /** 查重摘要（当前用户数据范围内；越范围 null）。 */
     @DataScope(resource = "patient")
     public PatientMapper.DuplicateRow duplicateSummaryByMrnBlind(String mrnBlind) {

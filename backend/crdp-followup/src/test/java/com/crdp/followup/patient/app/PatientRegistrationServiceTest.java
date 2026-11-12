@@ -62,10 +62,19 @@ class PatientRegistrationServiceTest {
             mock(com.crdp.followup.plan.app.PlanEnrollmentService.class);
     private final com.crdp.followup.implant.app.ImplantService implants =
             mock(com.crdp.followup.implant.app.ImplantService.class);
+    private final VisitNoService visitNos = mock(VisitNoService.class);
 
     private final PatientRegistrationService service =
             new PatientRegistrationService(
-                    mapper, gateway, crypto, audit, statusHistory, summary, enrollments, implants);
+                    mapper,
+                    gateway,
+                    crypto,
+                    audit,
+                    statusHistory,
+                    summary,
+                    enrollments,
+                    implants,
+                    visitNos);
 
     @BeforeEach
     void login() {
@@ -353,6 +362,172 @@ class PatientRegistrationServiceTest {
                 request(MRN, NAME).withImplant(implantPayload()).build(), "植入记录功能未开通，不能携带植入记录");
     }
 
+    // ---------------------------------------------------------------- 随访编号（E21-T10 /
+    // C-PAT-003、C-PAT-008）
+
+    /** C 登记公共桩：开关开启、病区 / 科室 / 查重通过、首条植入记录合法。 */
+    private void cModeReady() {
+        wardEnabled();
+        when(mapper.countEnabledDept(7L)).thenReturn(1);
+        when(gateway.liveIdByMrnBlind("BLIND:" + MRN)).thenReturn(null);
+        when(mapper.findWards()).thenReturn(List.of(new PatientMapper.OptionRow(WARD_ID, "示例二病区")));
+        when(mapper.insertPatient(any()))
+                .thenAnswer(
+                        invocation -> {
+                            PatientInsert row = invocation.getArgument(0);
+                            row.setId(101L);
+                            return 1;
+                        });
+        when(implants.implantEnabled()).thenReturn(true);
+    }
+
+    @Test
+    void cModeRegistrationGeneratesVisitNoFromConfiguredRule() {
+        cModeReady();
+        when(visitNos.nextVisitNo()).thenReturn("105-2026-007");
+
+        PatientRegistrationService.CreatedView view =
+                service.create(
+                        request(MRN, NAME)
+                                .withDept(7L)
+                                .withoutHospitalStay()
+                                .withImplant(implantPayload())
+                                .build());
+
+        assertEquals("105-2026-007", view.visitNo(), "登记结果返回自动生成的随访编号");
+        ArgumentCaptor<PatientInsert> captor = ArgumentCaptor.forClass(PatientInsert.class);
+        verify(mapper).insertPatient(captor.capture());
+        assertEquals("105-2026-007", captor.getValue().getVisitNo(), "留空 → 按本院规则自动生成");
+        verify(gateway, never()).liveIdByVisitNo(anyString());
+
+        // 审计：编号非敏感字段原样记录（自动生成口径）
+        ArgumentCaptor<AuditEntry> auditCaptor = ArgumentCaptor.forClass(AuditEntry.class);
+        verify(audit).append(auditCaptor.capture());
+        assertTrue(
+                auditCaptor.getValue().description().contains("随访编号 105-2026-007（自动生成）"),
+                "审计描述记录随访编号与来源");
+    }
+
+    @Test
+    void cModeRegistrationAcceptsManualPaperVisitNoWhenUnique() {
+        cModeReady();
+        when(gateway.liveIdByVisitNo("PAPER-2019-012")).thenReturn(null);
+
+        PatientRegistrationService.CreatedView view =
+                service.create(
+                        request(MRN, NAME)
+                                .withDept(7L)
+                                .withoutHospitalStay()
+                                .withImplant(implantPayload())
+                                .withVisitNo("  PAPER-2019-012  ")
+                                .build());
+
+        ArgumentCaptor<PatientInsert> captor = ArgumentCaptor.forClass(PatientInsert.class);
+        verify(mapper).insertPatient(captor.capture());
+        assertEquals("PAPER-2019-012", captor.getValue().getVisitNo(), "手填原编号去空白后入库");
+        assertEquals("PAPER-2019-012", view.visitNo());
+        verify(visitNos, never()).nextVisitNo(); // 手填时不占用自动流水
+
+        ArgumentCaptor<AuditEntry> auditCaptor = ArgumentCaptor.forClass(AuditEntry.class);
+        verify(audit).append(auditCaptor.capture());
+        assertTrue(
+                auditCaptor.getValue().description().contains("随访编号 PAPER-2019-012（纸质原编号）"),
+                "审计描述记录纸质原编号口径");
+    }
+
+    @Test
+    void cModeRegistrationBlocksDuplicateManualVisitNoWith40902() {
+        cModeReady();
+        when(gateway.liveIdByVisitNo("PAPER-2019-012")).thenReturn(33L);
+
+        ApiException error =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.create(
+                                        request(MRN, NAME)
+                                                .withDept(7L)
+                                                .withoutHospitalStay()
+                                                .withImplant(implantPayload())
+                                                .withVisitNo("PAPER-2019-012")
+                                                .build()));
+
+        assertEquals(40902, error.code(), "重复编号被拒（C-ACC-08）");
+        assertEquals("该随访编号已在本院使用，请核对纸质原编号后重试", error.getMessage());
+        verify(mapper, never()).insertPatient(any());
+        ArgumentCaptor<AuditEntry> auditCaptor = ArgumentCaptor.forClass(AuditEntry.class);
+        verify(audit).append(auditCaptor.capture());
+        assertEquals(AuditResult.DENIED, auditCaptor.getValue().result());
+        assertEquals("DUPLICATE_VISIT_NO", auditCaptor.getValue().reason());
+    }
+
+    @Test
+    void cModeRegistrationRejectsOverlongManualVisitNo() {
+        cModeReady();
+        assertRejected(
+                request(MRN, NAME)
+                        .withDept(7L)
+                        .withoutHospitalStay()
+                        .withImplant(implantPayload())
+                        .withVisitNo("x".repeat(65))
+                        .build(),
+                "随访编号过长（最多 64 个字符）");
+    }
+
+    @Test
+    void aModeRegistrationRejectsManualVisitNo() {
+        wardEnabled();
+        when(gateway.liveIdByMrnBlind("BLIND:" + MRN)).thenReturn(null);
+        // A / B 租户（implant 关闭）：随访编号为 C 口径，携带 → 40001，A 登记口径不受影响
+        assertRejected(
+                request(MRN, NAME).withVisitNo("105-2026-001").build(),
+                "随访编号为医院 C 登记口径，当前未开通，不能填写");
+    }
+
+    @Test
+    void createTranslatesVisitNoUniqueKeyRaceTo40902() {
+        cModeReady();
+        when(visitNos.nextVisitNo()).thenReturn("105-2026-008");
+        // doThrow 重_stub：不触发 cModeReady 已挂的 answer（when() 装配调用会以 null 参数跑旧 answer）
+        org.mockito.Mockito.doThrow(
+                        new org.springframework.dao.DuplicateKeyException(
+                                "Duplicate entry '105-2026-008' for key 'uk_pt_patient_visit_no'"))
+                .when(mapper)
+                .insertPatient(any());
+
+        ApiException error =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.create(
+                                        request(MRN, NAME)
+                                                .withDept(7L)
+                                                .withoutHospitalStay()
+                                                .withImplant(implantPayload())
+                                                .build()));
+
+        assertEquals(40902, error.code(), "并发同号由 uk_pt_patient_visit_no 兜底");
+        assertEquals("该随访编号已在本院使用，请核对纸质原编号后重试", error.getMessage());
+    }
+
+    @Test
+    void optionsIncludeVisitNoRuleOnlyInCMode() {
+        when(mapper.findWards()).thenReturn(List.of(new PatientMapper.OptionRow(WARD_ID, "示例二病区")));
+        when(mapper.findDepts()).thenReturn(List.of());
+        // A / B：implant 关闭 → 无编号规则
+        when(implants.implantEnabled()).thenReturn(false);
+        assertNull(service.options().visitNoRule(), "A / B 登记无随访编号规则");
+
+        // C：下发本院生效前缀与年内首号示例（登记页提示）
+        when(implants.implantEnabled()).thenReturn(true);
+        when(visitNos.rule()).thenReturn(new VisitNoService.VisitNoRule("C21"));
+        when(visitNos.sampleForCurrentYear()).thenReturn("C21-2026-001");
+        PatientRegistrationService.VisitNoRuleView rule = service.options().visitNoRule();
+        assertNotNull(rule);
+        assertEquals("C21", rule.prefix());
+        assertEquals("C21-2026-001", rule.sample());
+    }
+
     @Test
     void createBlocksDuplicateMedicalRecordNoWith40902() {
         wardEnabled();
@@ -590,6 +765,7 @@ class PatientRegistrationServiceTest {
         private LocalDate admission = ADMISSION;
         private LocalDate discharge = DISCHARGE;
         private Integer dischargeStatus = 1;
+        private String visitNo;
         private com.crdp.followup.implant.app.ImplantService.ImplantPayload implant;
 
         private RequestBuilder(String mrn, String name) {
@@ -643,6 +819,11 @@ class PatientRegistrationServiceTest {
             return this;
         }
 
+        RequestBuilder withVisitNo(String value) {
+            this.visitNo = value;
+            return this;
+        }
+
         /** C 登记口径：不带住院 / 出院字段（附录 A 患者 #1–#21 无此三项）。 */
         RequestBuilder withoutHospitalStay() {
             this.surgery = null;
@@ -665,6 +846,7 @@ class PatientRegistrationServiceTest {
                     discharge,
                     dischargeStatus,
                     null,
+                    visitNo,
                     implant);
         }
     }

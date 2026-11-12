@@ -23,7 +23,10 @@ export interface PatientDuplicateCheckResult {
   possibleMatches?: DuplicatePatientSummary[];
 }
 
-/** 登记表单（A 出院登记最小必填集；birthDate / deptId / legacyNo 可选，C 差异随 E21）。 */
+/**
+ * 登记表单（A 出院登记最小必填集；birthDate / deptId / legacyNo 可选；visitNo 为医院 C
+ * 手填随访编号〔纸质原编号，可空 = 自动生成〕，C-PAT-003 / E21-T10）。
+ */
 export interface PatientRegistrationForm {
   admissionDate?: null | string;
   birthDate?: null | string;
@@ -35,6 +38,7 @@ export interface PatientRegistrationForm {
   medicalRecordNo?: null | string;
   name?: null | string;
   surgeryDate?: null | string;
+  visitNo?: null | string;
   wardId?: null | number;
 }
 
@@ -54,14 +58,16 @@ export interface PatientRegistrationPayload {
   medicalRecordNo: string;
   name: string;
   surgeryDate?: null | string;
+  visitNo?: null | string;
   wardId?: null | number;
 }
 
-/** 登记成功响应（id 为字符串，超过 2^53 的 ID 序列化为字符串口径）。 */
+/** 登记成功响应（id 为字符串，超过 2^53 的 ID 序列化为字符串口径；visitNo 为 C 随访编号，非敏感）。 */
 export interface PatientCreatedResult {
   dischargeDate?: null | string;
   id: string;
   nameMasked: string;
+  visitNo?: null | string;
   wardName?: null | string;
 }
 
@@ -80,7 +86,31 @@ export interface PatientRegistrationOptions {
   depts: RegistrationWardOption[];
   dischargeStatuses: RegistrationOptionItem[];
   genders: RegistrationOptionItem[];
+  visitNoRule?: null | VisitNoRule;
   wards: RegistrationWardOption[];
+}
+
+/**
+ * 随访编号规则（E21-T10 / C-PAT-003）：prefix 为本院生效前缀（租户参数 followup.visitno.prefix
+ * 覆盖 → 平台默认 → 出厂 105，OQ-131①），sample 为年内首号示例；implant 开关关闭（A / B）为 null。
+ */
+export interface VisitNoRule {
+  prefix: string;
+  sample: string;
+}
+
+/** 登记页随访编号帮助文案：留空自动生成（含示例）；历史患者可填纸质原编号。 */
+export function visitNoHelpText(rule: null | undefined | VisitNoRule): string {
+  if (!rule) return '随访编号';
+  return `留空按「${rule.prefix}-建档年份-年内流水号」自动生成（如 ${rule.sample}）；历史患者可填纸质原编号，本院唯一`;
+}
+
+/** 手填随访编号校验（与后端 40001 同口径）：去空白后 ≤64 位；空白视为留空（自动生成）。 */
+export function visitNoError(value: null | string | undefined): null | string {
+  const trimmed = (value ?? '').trim();
+  if (trimmed.length === 0) return null;
+  if (trimmed.length > 64) return '随访编号过长（最多 64 个字符）';
+  return null;
 }
 
 /** 出院状态口径（A 规格字段 191：1=存活 / 2=病重自动出院 / 3=死亡）。 */
@@ -189,6 +219,7 @@ export function buildRegistrationPayload(
     dischargeDate: form.dischargeDate || null,
     dischargeStatus,
     legacyNo: form.legacyNo?.trim() || null,
+    visitNo: form.visitNo?.trim() || null,
   };
 }
 

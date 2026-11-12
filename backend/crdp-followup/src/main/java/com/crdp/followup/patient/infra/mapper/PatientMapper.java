@@ -237,22 +237,31 @@ public interface PatientMapper {
     /**
      * 出院登记写入；并发同号由 uk_pt_patient_mrn 兜底（DuplicateKeyException → 40902）。 followup_status
      * 随行写入（E23-T09 / UAT-SELF-05）：出院状态 = 3 死亡 → DEAD（A 规格 §10 状态规则表），其余 ACTIVE（OQ-71②）；此前依赖列默认
-     * ACTIVE 导致死亡患者可被批量入组。
+     * ACTIVE 导致死亡患者可被批量入组。 visit_no 随行写入（E21-T10 / C-PAT-003：C 登记自动生成或手填纸质原编号，A 登记为 NULL；并发同号由
+     * uk_pt_patient_visit_no 兜底）。
      */
     @Insert(
             """
             INSERT INTO pt_patient
               (mrn_cipher, mrn_blind, name_cipher, name_blind, id_card_cipher, address_cipher,
                gender, birth_date, dept_id, ward_id, surgery_date, admission_date, discharge_date,
-               discharge_status, legacy_no, created_by, followup_status)
+               discharge_status, legacy_no, visit_no, created_by, followup_status)
             VALUES
               (#{row.mrnCipher}, #{row.mrnBlind}, #{row.nameCipher}, #{row.nameBlind},
                #{row.idCardCipher}, #{row.addressCipher},
                #{row.gender}, #{row.birthDate}, #{row.deptId}, #{row.wardId},
                #{row.surgeryDate}, #{row.admissionDate}, #{row.dischargeDate},
-               #{row.dischargeStatus}, #{row.legacyNo}, #{row.createdBy},
+               #{row.dischargeStatus}, #{row.legacyNo}, #{row.visitNo}, #{row.createdBy},
                COALESCE(#{row.followupStatus}, 'ACTIVE'))
             """)
     @Options(useGeneratedKeys = true, keyProperty = "row.id", keyColumn = "id")
     int insertPatient(@Param("row") PatientInsert row);
+
+    /**
+     * 全院随访编号存在性（E21-T10 / C-PAT-003「历史患者可手工填写纸质原编号，系统校验唯一」）： 唯一性是全院约束（与病案号同口径），只取
+     * id、不输出患者数据；软删除患者不占用编号（uk_pt_patient_visit_no 与 delete_token 组合）。
+     */
+    @IgnoreScope(reason = "随访编号本院唯一（C-PAT-003 / Q10）：全院查重只取存在性，不输出患者数据；" + "范围外同号患者同样阻止登记")
+    @Select("SELECT id FROM pt_patient WHERE visit_no = #{visitNo} AND deleted = 0 LIMIT 1")
+    Long findLiveIdByVisitNo(@Param("visitNo") String visitNo);
 }

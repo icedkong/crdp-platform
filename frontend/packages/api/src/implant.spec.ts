@@ -210,6 +210,37 @@ describe('e21-T01 C 登记校验（C-PAT-001 最小必填，OQ-71①）', () => 
     expect(errors['patient.implant']).toContain('首条植入记录');
   });
 
+  it('e21-T10：visitNo 可空 = 自动生成；超长报 patient.visitNo（C-PAT-003）', () => {
+    const base = {
+      medicalRecordNo: '105-2026-001',
+      name: '张小明（示例）',
+      gender: 'M',
+      birthDate: '1955-01-01',
+      deptId: 7,
+      wardId: 3,
+    };
+    expect(
+      validateCRegistration({ ...base, visitNo: null }, validForm(), options()),
+    ).toEqual({});
+    expect(
+      validateCRegistration({ ...base, visitNo: '  ' }, validForm(), options()),
+    ).toEqual({});
+    expect(
+      validateCRegistration(
+        { ...base, visitNo: 'PAPER-2019-012' },
+        validForm(),
+        options(),
+      ),
+    ).toEqual({});
+    expect(
+      validateCRegistration(
+        { ...base, visitNo: 'x'.repeat(65) },
+        validForm(),
+        options(),
+      ),
+    ).toEqual({ 'patient.visitNo': '随访编号过长（最多 64 个字符）' });
+  });
+
   it('合法 C 登记无错误；植入错误带 implant. 前缀', () => {
     const ok = validateCRegistration(
       {

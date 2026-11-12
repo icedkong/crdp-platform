@@ -51,6 +51,8 @@ public class PatientRegistrationController {
             summary =
                     "出院登记（A-PAT-003）/ 患者登记（C-PAT-001）：最小必填集落 pt_patient 实体列；"
                             + "病案号本院唯一，重复返回 40902（data 带范围内已有患者脱敏摘要）；"
+                            + "医院 C（implant 开关开启）visitNo 留空按可配置规则自动生成（前缀-建档年份-年内流水号，"
+                            + "C-PAT-003 / Q10），历史患者可手填纸质原编号（本院唯一，重复 40902）；"
                             + "写 PATIENT_CREATE 审计（敏感值只存摘要）")
     @PostMapping
     @RequireModule("followup")
@@ -71,13 +73,15 @@ public class PatientRegistrationController {
                                 request.dischargeDate(),
                                 request.dischargeStatus(),
                                 request.legacyNo(),
+                                request.visitNo(),
                                 request.implant() == null ? null : request.implant().toPayload())));
     }
 
     @Operation(
             summary =
                     "登记候选（新建患者页下拉）：病区 / 科室（启用项），性别与出院状态为实体列编码"
-                            + "（出院状态 A 规格字段 191：1=存活 / 2=病重自动出院 / 3=死亡）")
+                            + "（出院状态 A 规格字段 191：1=存活 / 2=病重自动出院 / 3=死亡）；"
+                            + "医院 C 额外返回 visitNoRule（随访编号规则前缀与年内首号示例，C-PAT-003，A / B 为 null）")
     @GetMapping("/registration-options")
     @RequireModule("followup")
     @RequiresPermission("followup:patient:create")
@@ -85,13 +89,16 @@ public class PatientRegistrationController {
         return ApiResponse.ok(service.options());
     }
 
-    /** 查重请求体：medicalRecordNo 必填；name + birthDate 可选（C-PAT-002 可能重复提示）。 */
+    /** 查重请求体：medicalRecordNo 必填；name + birthDate 可选（C-PAT-002）。 */
     public record DuplicateCheckRequest(
             @Size(max = 64) String medicalRecordNo,
             @Size(max = 64) String name,
             LocalDate birthDate) {}
 
-    /** 登记请求体（字段即 pt_patient 实体列；A 出院登记最小必填集由服务端校验；implant 为医院 C 首条植入记录，implant 开关开启时必填）。 */
+    /**
+     * 登记请求体（字段即 pt_patient 实体列；A 出院登记最小必填集由服务端校验；implant 为医院 C 首条植入记录，implant 开关开启时必填； visitNo 为医院
+     * C 手填随访编号〔纸质原编号，可空 = 自动生成〕，开关关闭时携带 40001）。
+     */
     public record CreateRequest(
             @Size(max = 64) String medicalRecordNo,
             @Size(max = 64) String name,
@@ -104,6 +111,7 @@ public class PatientRegistrationController {
             LocalDate dischargeDate,
             Integer dischargeStatus,
             @Size(max = 64) String legacyNo,
+            @Size(max = 64) String visitNo,
             ImplantPayloadRequest implant) {}
 
     /** C 首条植入记录载荷（结构同 implant 域 POST /patients/{id}/implants 请求体，C-PAT-001）。 */
