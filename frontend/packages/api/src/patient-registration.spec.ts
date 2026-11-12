@@ -12,6 +12,8 @@ import {
   dischargeStatusText,
   duplicateNoticeOf,
   validateRegistration,
+  visitNoError,
+  visitNoHelpText,
 } from './patient-registration';
 
 /** 虚构合法表单（A 出院登记最小必填集，design-system §17 示例口径）。 */
@@ -167,5 +169,35 @@ describe('e13-T01 出院登记（A-PAT-003）', () => {
     expect(dischargeStatusText(3)).toBe('死亡');
     expect(dischargeStatusText(undefined)).toBe('');
     expect(dischargeStatusText(9)).toBe('9');
+  });
+});
+
+describe('e21-T10 随访编号（C-PAT-003：留空自动生成，历史患者可填纸质原编号）', () => {
+  it('请求体：留空归一 null，填写去空白', () => {
+    const auto = buildRegistrationPayload({
+      ...validForm(),
+      visitNo: '   ',
+    });
+    expect(auto.visitNo).toBeNull();
+
+    const manual = buildRegistrationPayload({
+      ...validForm(),
+      visitNo: ' PAPER-2019-012 ',
+    });
+    expect(manual.visitNo).toBe('PAPER-2019-012');
+  });
+
+  it('手填校验与后端 40001 同口径：空白视为留空，超长报错', () => {
+    expect(visitNoError(null)).toBeNull();
+    expect(visitNoError('  ')).toBeNull();
+    expect(visitNoError('PAPER-2019-012')).toBeNull();
+    expect(visitNoError('x'.repeat(65))).toBe('随访编号过长（最多 64 个字符）');
+  });
+
+  it('帮助文案展示本院生效规则与示例；无规则（A / B）退化为字段名', () => {
+    expect(visitNoHelpText({ prefix: '105', sample: '105-2026-001' })).toBe(
+      '留空按「105-建档年份-年内流水号」自动生成（如 105-2026-001）；历史患者可填纸质原编号，本院唯一',
+    );
+    expect(visitNoHelpText(null)).toBe('随访编号');
   });
 });

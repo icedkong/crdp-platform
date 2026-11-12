@@ -563,6 +563,8 @@ export {
   dischargeStatusText,
   duplicateNoticeOf,
   validateRegistration,
+  visitNoError,
+  visitNoHelpText,
 } from './patient-registration';
 
 export type {
@@ -576,6 +578,7 @@ export type {
   RegistrationErrors,
   RegistrationOptionItem,
   RegistrationWardOption,
+  VisitNoRule,
 } from './patient-registration';
 export {
   buildPatientSearchPayload,

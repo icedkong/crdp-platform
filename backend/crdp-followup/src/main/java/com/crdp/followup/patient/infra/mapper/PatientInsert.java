@@ -19,6 +19,7 @@ public class PatientInsert {
     private java.time.LocalDate dischargeDate;
     private Integer dischargeStatus;
     private String legacyNo;
+    private String visitNo;
     private Long createdBy;
     private String followupStatus;
 
@@ -150,6 +151,14 @@ public class PatientInsert {
 
     public void setLegacyNo(String legacyNo) {
         this.legacyNo = legacyNo;
+    }
+
+    public String getVisitNo() {
+        return visitNo;
+    }
+
+    public void setVisitNo(String visitNo) {
+        this.visitNo = visitNo;
     }
 
     public Long getCreatedBy() {

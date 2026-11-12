@@ -22,6 +22,7 @@ import {
   emptyImplantForm,
   validateCRegistration,
   validateRegistration,
+  visitNoHelpText,
 } from '@crdp/api';
 import {
   Alert,
@@ -72,6 +73,7 @@ const options = ref<PatientRegistrationOptions>({
     { code: 'F', label: '女' },
   ],
   dischargeStatuses: [],
+  visitNoRule: null,
 });
 
 const form = reactive<PatientRegistrationForm>({
@@ -86,6 +88,7 @@ const form = reactive<PatientRegistrationForm>({
   dischargeDate: null,
   dischargeStatus: undefined,
   legacyNo: '',
+  visitNo: '',
 });
 
 const errors = ref<Partial<Record<keyof PatientRegistrationForm, string>>>({});
@@ -114,6 +117,11 @@ watch(
 const checking = ref(false);
 const submitting = ref(false);
 const duplicateNotice = ref<DuplicateNotice>(null);
+
+/** 随访编号帮助文案：展示本院生效规则（前缀租户参数可配，E21-T10）。 */
+const visitNoHelp = computed(() =>
+  implantMode.value ? visitNoHelpText(options.value.visitNoRule) : '',
+);
 
 /** 病案号重复（红色）时保存置灰；可能重复（橙色）只提示。 */
 const blocked = computed(() => duplicateNotice.value?.kind === 'blocked');
@@ -226,7 +234,11 @@ async function submit() {
         ? { implant: buildImplantPayload(implantForm) }
         : {}),
     });
-    message.success('登记成功，正在进入患者档案');
+    message.success(
+      created.visitNo
+        ? `登记成功，随访编号 ${created.visitNo}，正在进入患者档案`
+        : '登记成功，正在进入患者档案',
+    );
     void router.push(patientDetailPath(created.id));
   } catch (error) {
     const notice = noticeFromSubmitError(error);
@@ -473,6 +485,29 @@ async function submit() {
           </template>
 
           <template v-else>
+            <!-- E21-T10 / C-PAT-003：留空按本院规则自动生成；历史患者可填纸质原编号（本院唯一） -->
+            <div class="form-grid">
+              <FormItem
+                label="随访编号"
+                :validate-status="errors.visitNo ? 'error' : undefined"
+                :help="errors.visitNo || visitNoHelp"
+              >
+                <Input
+                  v-model:value="form.visitNo"
+                  data-testid="visitno-input"
+                  :maxlength="64"
+                  :placeholder="implantMode ? '留空自动生成' : ''"
+                  allow-clear
+                />
+              </FormItem>
+              <FormItem label="原系统编号" help="历史数据迁移时保留，可空">
+                <Input
+                  v-model:value="form.legacyNo"
+                  :maxlength="64"
+                  placeholder="如 OLD-C-000123（示例）"
+                />
+              </FormItem>
+            </div>
             <div class="group-title group-title-implant">
               首条植入记录与电极（C-PAT-001 / C-PAT-004 / C-PAT-005）
             </div>
@@ -481,13 +516,6 @@ async function submit() {
               :errors="implantErrors"
               :options="implantOptions"
             />
-            <FormItem label="原系统编号" help="历史数据迁移时保留，可空">
-              <Input
-                v-model:value="form.legacyNo"
-                :maxlength="64"
-                placeholder="如 OLD-C-000123（示例）"
-              />
-            </FormItem>
           </template>
         </Form>
 

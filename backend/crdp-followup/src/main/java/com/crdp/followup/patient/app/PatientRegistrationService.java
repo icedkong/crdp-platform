@@ -64,6 +64,7 @@ public class PatientRegistrationService {
     private final PatientSummaryService summary;
     private final PlanEnrollmentService enrollments;
     private final ImplantService implants;
+    private final VisitNoService visitNos;
 
     public PatientRegistrationService(
             PatientMapper mapper,
@@ -73,7 +74,8 @@ public class PatientRegistrationService {
             PatientStatusHistoryService statusHistory,
             PatientSummaryService summary,
             PlanEnrollmentService enrollments,
-            ImplantService implants) {
+            ImplantService implants,
+            VisitNoService visitNos) {
         this.mapper = mapper;
         this.gateway = gateway;
         this.crypto = crypto;
@@ -82,6 +84,7 @@ public class PatientRegistrationService {
         this.summary = summary;
         this.enrollments = enrollments;
         this.implants = implants;
+        this.visitNos = visitNos;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -99,7 +102,7 @@ public class PatientRegistrationService {
             DuplicatePatientView patient,
             List<DuplicatePatientView> possibleMatches) {}
 
-    /** 登记请求：字段即 pt_patient 实体列（A 出院登记口径的最小必填集见 {@link #create}）。 */
+    /** 登记请求：字段即 pt_patient 实体列（A 出院登记口径的最小必填集见 {@link #create}；visitNo 为医院 C 手填纸质原编号，可空）。 */
     public record CreateRequest(
             String medicalRecordNo,
             String name,
@@ -112,22 +115,34 @@ public class PatientRegistrationService {
             LocalDate dischargeDate,
             Integer dischargeStatus,
             String legacyNo,
+            String visitNo,
             ImplantService.ImplantPayload implant) {}
 
-    /** 登记结果（敏感值脱敏；进入详情 / 基线补录由后续任务页面承接）。 */
+    /** 登记结果（敏感值脱敏；visitNo 为随访编号，C-PAT-003，非敏感字段原样返回）。 */
     public record CreatedView(
-            String id, String nameMasked, String wardName, LocalDate dischargeDate) {}
+            String id,
+            String nameMasked,
+            String wardName,
+            LocalDate dischargeDate,
+            String visitNo) {}
 
     /** 登记候选（页面下拉）：性别 / 出院状态为实体列编码，病区 / 科室来自字典。 */
     public record OptionItem(String code, String label) {}
 
     public record WardOption(long id, String name) {}
 
+    /**
+     * 随访编号规则（E21-T10 / C-PAT-003，登记页提示用）：prefix 为本院生效前缀，sample 为年内首个示例编号； implant 开关关闭时整个对象为 null（A
+     * / B 登记无随访编号）。
+     */
+    public record VisitNoRuleView(String prefix, String sample) {}
+
     public record RegistrationOptionsView(
             List<WardOption> wards,
             List<WardOption> depts,
             List<OptionItem> genders,
-            List<OptionItem> dischargeStatuses) {}
+            List<OptionItem> dischargeStatuses,
+            VisitNoRuleView visitNoRule) {}
 
     // ---------------------------------------------------------------- 查重（A-PAT-007、C-PAT-002）
 
@@ -172,6 +187,11 @@ public class PatientRegistrationService {
         boolean cMode = implants.implantEnabled();
         if (!cMode && request.implant() != null) {
             throw new ApiException(400, 40001, "植入记录功能未开通，不能携带植入记录");
+        }
+        // E21-T10 / C-PAT-003：随访编号为医院 C 口径（implant 开关信号，OQ-71①）；开关关闭的 A / B 租户不生成也不接受手填
+        String manualVisitNo = normalizeManualVisitNo(request.visitNo());
+        if (!cMode && manualVisitNo != null) {
+            throw new ApiException(400, 40001, "随访编号为医院 C 登记口径，当前未开通，不能填写");
         }
         String mrn = requireText(request.medicalRecordNo(), "请填写病案号");
         String name = requireText(request.name(), "请填写姓名");
@@ -225,6 +245,21 @@ public class PatientRegistrationService {
             throw duplicateBlocked(mrn, mrnBlind);
         }
 
+        // E21-T10 / C-PAT-003：历史患者手工填写纸质原编号（全院唯一，重复 40902），留空按本院规则自动生成
+        // （前缀-建档年份-年内流水号，前缀租户参数可配，取号在本事务内、回滚即弃号）
+        String visitNo;
+        boolean visitNoManual;
+        if (manualVisitNo != null) {
+            if (gateway.liveIdByVisitNo(manualVisitNo) != null) {
+                throw visitNoBlocked(manualVisitNo);
+            }
+            visitNo = manualVisitNo;
+            visitNoManual = true;
+        } else {
+            visitNo = cMode ? visitNos.nextVisitNo() : null;
+            visitNoManual = false;
+        }
+
         PatientInsert row = new PatientInsert();
         row.setMrnCipher(crypto.encrypt(PURPOSE_MRN, mrn));
         row.setMrnBlind(mrnBlind);
@@ -239,6 +274,7 @@ public class PatientRegistrationService {
         row.setDischargeDate(dischargeDate);
         row.setDischargeStatus(dischargeStatus);
         row.setLegacyNo(blankToNull(request.legacyNo()));
+        row.setVisitNo(visitNo);
         row.setCreatedBy(CurrentSession.requireHospital().userId());
         // E23-T09 / UAT-SELF-05：出院状态 = 3 死亡 → 登记即「已死亡」（A 规格 §10 状态规则表），
         // 批量入组凭 followup_status 守卫跳过（§5）；此前依赖列默认 ACTIVE，死亡患者可被入组并创建随访任务
@@ -248,7 +284,11 @@ public class PatientRegistrationService {
         try {
             mapper.insertPatient(row);
         } catch (DuplicateKeyException race) {
-            // 并发登记同一病案号：唯一键兜底，与前置查重同口径
+            // 并发登记同一病案号 / 同一随访编号：唯一键兜底，与前置查重同口径（按约束名分流）
+            if (race.getMessage() != null && race.getMessage().contains("uk_pt_patient_visit_no")) {
+                log.warn("随访编号并发登记冲突，按重复处理（E21-T10）");
+                throw visitNoBlocked(visitNo);
+            }
             log.warn("病案号并发登记冲突，按重复处理（E13-T01）");
             throw duplicateBlocked(mrn, mrnBlind);
         }
@@ -284,6 +324,9 @@ public class PatientRegistrationService {
                                                 + wardId
                                                 + "，出生日期 "
                                                 + request.birthDate()
+                                                + "，随访编号 "
+                                                + visitNo
+                                                + (visitNoManual ? "（纸质原编号）" : "（自动生成）")
                                                 + "，同建首条植入记录（姓名与病历号为敏感字段，审计只记摘要）"
                                         : "出院登记新建患者：病区 "
                                                 + wardId
@@ -298,17 +341,22 @@ public class PatientRegistrationService {
                                                 wardId,
                                                 dischargeDate == null
                                                         ? request.birthDate().toString()
-                                                        : dischargeDate.toString())))
+                                                        : dischargeDate.toString(),
+                                                visitNo)))
                         .result(AuditResult.SUCCESS)
                         .build());
         return new CreatedView(
                 String.valueOf(row.getId()),
                 SensitiveValueMasker.mask("name", name),
                 wardNameOf(wardId),
-                dischargeDate);
+                dischargeDate,
+                visitNo);
     }
 
-    /** 登记候选（页面下拉）：病区 / 科室来自字典（启用项），性别与出院状态为实体列编码（A 规格字段 191）。 */
+    /**
+     * 登记候选（页面下拉）：病区 / 科室来自字典（启用项），性别与出院状态为实体列编码（A 规格字段 191）。 医院C（implant 开关开启）额外下发随访编号规则（
+     * C-PAT-003：登记页「留空自动生成（如 105-2026-001）」提示）；A / B 为 null。
+     */
     public RegistrationOptionsView options() {
         List<WardOption> wards =
                 mapper.findWards().stream()
@@ -318,6 +366,11 @@ public class PatientRegistrationService {
                 mapper.findDepts().stream()
                         .map(item -> new WardOption(item.id(), item.name()))
                         .toList();
+        VisitNoRuleView visitNoRule = null;
+        if (implants.implantEnabled()) {
+            visitNoRule =
+                    new VisitNoRuleView(visitNos.rule().prefix(), visitNos.sampleForCurrentYear());
+        }
         return new RegistrationOptionsView(
                 wards,
                 depts,
@@ -325,7 +378,8 @@ public class PatientRegistrationService {
                 List.of(
                         new OptionItem("1", "存活"),
                         new OptionItem("2", "病重自动出院"),
-                        new OptionItem("3", "死亡")));
+                        new OptionItem("3", "死亡")),
+                visitNoRule);
     }
 
     // ---------------------------------------------------------------- 内部
@@ -372,6 +426,19 @@ public class PatientRegistrationService {
                 40902,
                 patient == null ? "该病案号已在本院登记，请核对后重试" : "该病案号已在本院登记，可打开已有患者档案继续随访",
                 new DuplicateCheckView(true, patient, List.of()));
+    }
+
+    /** 40902 阻止（E21-T10 / C-PAT-003「历史患者可手工填写纸质原编号，系统校验唯一」，含并发唯一键兜底）： 随访编号非敏感字段，审计原样记录。 */
+    private ApiException visitNoBlocked(String visitNo) {
+        audit.append(
+                AuditEntry.operation("followup", "PATIENT_CREATE")
+                        .objectType("PATIENT")
+                        .description("患者登记被阻止：随访编号已存在（" + visitNo + "）")
+                        .result(AuditResult.DENIED)
+                        .errorCode(40902)
+                        .reason("DUPLICATE_VISIT_NO")
+                        .build());
+        return new ApiException(409, 40902, "该随访编号已在本院使用，请核对纸质原编号后重试");
     }
 
     private DuplicatePatientView toView(PatientMapper.DuplicateRow row) {
@@ -462,6 +529,24 @@ public class PatientRegistrationService {
         return value == null || value.isBlank() ? null : value.trim();
     }
 
+    /**
+     * 手填随访编号规范化（C-PAT-003 历史患者纸质原编号）：空白视为留空（走自动生成），非空去空白并限长 （与 pt_patient.visit_no 列宽一致）；仅医院 C
+     * 口径可填（开关外 40001 在入口处拦截）。
+     */
+    private static String normalizeManualVisitNo(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+        if (trimmed.length() > 64) {
+            throw new ApiException(400, 40001, "随访编号过长（最多 64 个字符）");
+        }
+        return trimmed;
+    }
+
     private String wardNameOf(long wardId) {
         return mapper.findWards().stream()
                 .filter(item -> item.id() == wardId)
@@ -470,9 +555,13 @@ public class PatientRegistrationService {
                 .orElse("");
     }
 
-    /** 审计摘要：敏感值只存脱敏结果（AGENTS.md §5.4）。 */
+    /** 审计摘要：敏感值只存脱敏结果（AGENTS.md §5.4）；visitNo 非敏感字段原样记录（E21-T10）。 */
     private record AuditSummary(
-            String mrnMasked, String nameMasked, Long wardId, String dischargeDate) {}
+            String mrnMasked,
+            String nameMasked,
+            Long wardId,
+            String dischargeDate,
+            String visitNo) {}
 
     private static String writeJson(Object value) {
         try {

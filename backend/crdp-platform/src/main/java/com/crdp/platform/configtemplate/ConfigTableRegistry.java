@@ -125,6 +125,8 @@ public final class ConfigTableRegistry {
                     "pt_implant",
                     "pt_lead",
                     "pt_implant_lead",
+                    // 随访编号年度流水（医院 C 患者编号计数，E21-T10；本院自增数据，绝不随模板复制）
+                    "pt_visit_no_seq",
                     // 随访业务数据
                     "fu_enrollment",
                     "fu_task",
