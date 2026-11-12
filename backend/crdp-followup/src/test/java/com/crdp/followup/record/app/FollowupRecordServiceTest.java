@@ -42,9 +42,11 @@ class FollowupRecordServiceTest {
 
     private final FollowupRecordMapper recordMapper = mock(FollowupRecordMapper.class);
     private final FormService formService = mock(FormService.class);
+    private final com.crdp.followup.implant.app.DeviceContextService deviceContext =
+            mock(com.crdp.followup.implant.app.DeviceContextService.class);
 
     private final FollowupRecordService service =
-            new FollowupRecordService(recordMapper, formService);
+            new FollowupRecordService(recordMapper, formService, deviceContext);
 
     private static final FollowupRecordMapper.RecordRowRaw ROW =
             new FollowupRecordMapper.RecordRowRaw(
@@ -295,7 +297,7 @@ class FollowupRecordServiceTest {
     @Test
     void submitValidatesStripsAndPersists() {
         when(recordMapper.findRecord(701L)).thenReturn(ROW, submittedRow());
-        when(formService.validateForSubmit("A_ANNUAL_FU", 1, Map.of("f214", "2026-11-05")))
+        when(formService.validateForSubmit(eq("A_ANNUAL_FU"), eq(1), any(), any()))
                 .thenReturn(List.of());
         when(formService.stripHiddenFields(eq("A_ANNUAL_FU"), eq(1), any(), any()))
                 .thenReturn(
@@ -312,7 +314,50 @@ class FollowupRecordServiceTest {
         assertEquals(3, outcome.view().version(), "提交后 version + 1");
         assertTrue(outcome.before().containsKey("f213"), "before = 提交前 data（字段历史 diff 用）");
         assertEquals(List.of("f219"), outcome.clearedKeys(), "隐藏字段清空键随提交流程带回");
-        verify(formService).validateForSubmit("A_ANNUAL_FU", 1, Map.of("f214", "2026-11-05"));
+    }
+
+    /**
+     * E21-T03 / C-FU-009：提交的完整校验与隐藏字段清空用<b>同一份器械上下文</b>——按记录随访日期匹配（ROW 为任务录入 visit_date = null →
+     * 当前器械），开关关闭 / 无器械为空 Map（ctx 断链 → 条件不成立）。
+     */
+    @Test
+    void submitPassesDeviceConditionContextToValidationAndStripping() {
+        when(recordMapper.findRecord(701L)).thenReturn(ROW, submittedRow());
+        Map<String, Object> deviceCtx =
+                Map.of("device", Map.of("type", "ICD", "hasRaLead", true, "chambers", 2));
+        when(deviceContext.conditionContext(301L, null)).thenReturn(deviceCtx);
+        when(formService.validateForSubmit(eq("A_ANNUAL_FU"), eq(1), any(), any()))
+                .thenReturn(List.of());
+        when(formService.stripHiddenFields(eq("A_ANNUAL_FU"), eq(1), any(), any()))
+                .thenReturn(new FormService.StrippedData(Map.of("f214", "2026-11-05"), List.of()));
+        when(formService.writeGateData(eq("A_ANNUAL_FU"), eq(1), any()))
+                .thenReturn(Map.of("f214", "2026-11-05"));
+        when(recordMapper.submitRecord(eq(701L), eq(2), any(), any(), eq(7L))).thenReturn(1);
+
+        service.submit(701L, 2, Map.of("f214", "2026-11-05"), null);
+
+        verify(formService).validateForSubmit(eq("A_ANNUAL_FU"), eq(1), any(), eq(deviceCtx));
+        verify(formService).stripHiddenFields(eq("A_ANNUAL_FU"), eq(1), any(), eq(deviceCtx));
+    }
+
+    /** 补录记录（visit_date 非空）按随访日期取器械上下文（C-PAT-007 补录按日期匹配）。 */
+    @Test
+    void submitOfBackfillRecordMatchesDeviceByVisitDate() {
+        FollowupRecordMapper.RecordRowRaw backfill = rowWithStatus("DRAFT");
+        when(recordMapper.findRecord(888L)).thenReturn(backfill, rowWithStatus("SUBMITTED"));
+        when(deviceContext.conditionContext(301L, LocalDate.of(2025, 6, 1)))
+                .thenReturn(
+                        Map.of("device", Map.of("type", "DDD", "hasRaLead", true, "chambers", 2)));
+        when(formService.validateForSubmit(eq("A_ANNUAL_FU"), eq(3), any(), any()))
+                .thenReturn(List.of());
+        when(formService.stripHiddenFields(eq("A_ANNUAL_FU"), eq(3), any(), any()))
+                .thenReturn(new FormService.StrippedData(Map.of(), List.of()));
+        when(formService.writeGateData(eq("A_ANNUAL_FU"), eq(3), any())).thenReturn(Map.of());
+        when(recordMapper.submitRecord(eq(888L), eq(0), any(), any(), eq(7L))).thenReturn(1);
+
+        service.submit(888L, 0, Map.of(), null);
+
+        verify(deviceContext).conditionContext(301L, LocalDate.of(2025, 6, 1));
     }
 
     @Test

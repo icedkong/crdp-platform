@@ -1,6 +1,7 @@
 package com.crdp.followup.record.app;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -52,6 +53,8 @@ class RecordEntryServiceTest {
     private final CompareSourceService compareSource = mock(CompareSourceService.class);
     private final CompareRuleService compareRules = mock(CompareRuleService.class);
     private final CompareHighlightService compareHighlights = mock(CompareHighlightService.class);
+    private final com.crdp.followup.implant.app.DeviceContextService deviceContext =
+            mock(com.crdp.followup.implant.app.DeviceContextService.class);
     private final CryptoService crypto = mock(CryptoService.class);
     private final AuditLogger audit = mock(AuditLogger.class);
 
@@ -66,6 +69,7 @@ class RecordEntryServiceTest {
                     compareSource,
                     compareRules,
                     compareHighlights,
+                    deviceContext,
                     crypto,
                     audit);
 
@@ -135,6 +139,60 @@ class RecordEntryServiceTest {
         assertTrue(view.context().mrn().contains("*"), "病案号脱敏：" + view.context().mrn());
         assertEquals("第4年随访", view.context().nodeName());
         assertEquals(LocalDate.of(2027, 11, 5), view.context().nextPlanDate());
+    }
+
+    /**
+     * E21-T03 / C-FU-009：详情随记录下发器械上下文 device——按记录随访日期解析（visit_date 为空的任务录入回落当前 器械，由
+     * DeviceContextService 判定），页面以 {@code { device: … }}} 传入 FormRenderer 的 context。
+     */
+    @Test
+    void detailCarriesDeviceContextResolvedByVisitDate() {
+        FollowupRecordService.RecordView backfill =
+                new FollowupRecordService.RecordView(
+                        702L,
+                        301L,
+                        null,
+                        "BACKFILL",
+                        LocalDate.of(2025, 6, 1),
+                        "A_ANNUAL_FU",
+                        1,
+                        "DRAFT",
+                        2,
+                        Map.of(),
+                        Map.of(),
+                        null,
+                        "2026-11-05T09:00:00+08:00");
+        when(recordService.record(702L)).thenReturn(backfill);
+        when(deviceContext.resolve(301L, LocalDate.of(2025, 6, 1)))
+                .thenReturn(
+                        new com.crdp.followup.implant.app.DeviceContextService.DeviceView(
+                                "501",
+                                "DDD",
+                                "双腔起搏器(DDD)",
+                                LocalDate.of(2024, 6, 1),
+                                true,
+                                2,
+                                false));
+
+        RecordEntryService.RecordDetailView view = service.detail(702L);
+
+        assertEquals("501", view.device().implantId());
+        assertEquals("DDD", view.device().type());
+        assertTrue(view.device().hasRaLead());
+        assertEquals(2, view.device().chambers());
+        assertFalse(view.device().current(), "按随访日期匹配到的是历史器械");
+    }
+
+    /** 开关关闭 / 无匹配器械（A 租户、取出后）→ device 为 null，记录页照常返回。 */
+    @Test
+    void detailWithoutDeviceStillReturns() {
+        when(recordService.record(701L)).thenReturn(record("DRAFT", Map.of()));
+        when(taskQueryMapper.taskContextByRecordId(701L)).thenReturn(null);
+        when(taskQueryMapper.patientBrief(301L)).thenReturn(null);
+
+        RecordEntryService.RecordDetailView view = service.detail(701L);
+
+        assertNull(view.device(), "无器械上下文时 device 为 null");
     }
 
     @Test

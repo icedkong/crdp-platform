@@ -1329,6 +1329,7 @@ export type {
   BackfillCreateRequest,
   BackfillCreateView,
   RecordDetailView,
+  RecordDeviceContext,
   RecordPatientBrief,
   RecordPreviousView,
   RecordSubmitResult,

@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import type {
   FormSchema,
+  RecordDeviceContext,
   RecordPatientBrief,
   RecordTaskContext,
 } from '@crdp/api';
@@ -72,6 +73,7 @@ import {
   missingRequiredText,
   nextVisitText,
   readonlyBanner,
+  rendererContextOf,
   submitConfirmText,
   submitSuccessMessage,
 } from './logic';
@@ -153,6 +155,14 @@ const context = ref<null | RecordTaskContext>(null);
 const patient = ref<null | RecordPatientBrief>(null);
 const source = ref<null | string>(null);
 const recordVisitDate = ref<null | string>(null);
+/**
+ * 器械上下文（E21-T03 / C-FU-009）：后端按记录随访日期匹配当时在用的器械下发，以
+ * `{ device }` 传给 FormRenderer 的 context 驱动按器械条件显示（心房参数 / ICD 项目 /
+ * AV 间期）；A / B 租户（implant 开关关闭）为 null，与后端提交清空同一上下文。
+ */
+const device = ref<null | RecordDeviceContext>(null);
+/** 渲染器条件上下文（components.md §10.2 context prop：点路径 device.* 取值）。 */
+const rendererContext = computed(() => rendererContextOf(device.value));
 const progressItems = ref<CategoryProgress[]>([]);
 /** 上一次记录（E17-T02 previous → E17-T03 渲染器对比标红与带入上次值）。 */
 const previousRecord = ref<null | PreviousRecord>(null);
@@ -408,6 +418,7 @@ async function load() {
     patient.value = detail.patient ?? null;
     source.value = detail.source ?? null;
     recordVisitDate.value = detail.visitDate ?? null;
+    device.value = detail.device ?? null;
     if (detail.context) {
       const queueView = await fetchTaskQueue(detail.context.taskId, {
         scope: filter.scope,
@@ -739,6 +750,7 @@ function handleJump(key: string) {
             <FormRenderer
               ref="renderer"
               v-model="data"
+              :context="rendererContext"
               :highlight-enabled="highlightEnabled"
               :meta="meta"
               :mode="readonly ? 'readonly' : 'edit'"

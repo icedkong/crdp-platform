@@ -91,6 +91,29 @@ public interface ImplantMapper {
             """)
     ImplantRow findActiveImplant(@Param("patientId") long patientId);
 
+    /**
+     * 日期当时在用的植入记录（E21-T03 / C-PAT-007「随访记录按随访日期关联当时在用的器械」）：区间 {@code [implant_date,
+     * end_date)}——已结束行（REPLACED / EXPLANTED）的结束日期 = 新植入日期或取出日期， 区间右开（更换当日归新器械）；在用行无结束日期视为仍在线。同日多行取
+     * id 大者（理论不可达：在用唯一约束 + 结束日期互斥，防御）。无匹配返回 null。
+     */
+    @DataScope(resource = "patient")
+    @Select(
+            """
+            SELECT id, patient_id AS patientId, implant_type AS implantType,
+                   implant_date AS implantDate, device_type AS deviceType, brand, model,
+                   serial_no AS serialNo, pacing_mode AS pacingMode, hospital, doctor,
+                   indication, indication_note AS indicationNote, note, status,
+                   end_date AS endDate, end_reason AS endReason, version,
+                   created_by AS createdBy, updated_by AS updatedBy
+            FROM pt_implant
+            WHERE patient_id = #{patientId}
+              AND implant_date <= #{date}
+              AND (status = 'ACTIVE' OR (end_date IS NOT NULL AND #{date} < end_date))
+            ORDER BY implant_date DESC, id DESC
+            LIMIT 1
+            """)
+    ImplantRow findImplantAt(@Param("patientId") long patientId, @Param("date") LocalDate date);
+
     /** 新建植入记录（在用唯一由 uk_pt_implant_active 生成列约束兜底，并发双开在用撞唯一键）。 */
     @Insert(
             """
