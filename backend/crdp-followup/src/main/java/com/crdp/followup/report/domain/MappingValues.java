@@ -3,6 +3,7 @@ package com.crdp.followup.report.domain;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -15,8 +16,9 @@ import java.util.regex.Pattern;
  *
  * <p>指标结果与附带写入值都是文本（rpt_indicator_value.result / rpt_mapping*.extra_writes.value），目标字段按
  * fe_field.type 存类型值 （FormDataValidator 同一套）：number 存 JSON 数值、date 存 YYYY-MM-DD 文本、单选 /
- * 下拉存选项编码整数（结果可填 选项名或编码）、pair_number 存 {length,width}（室壁瘤大小「30×20」，FormDataValidator.PairNumber
- * 口径）。 转换失败不抛异常，返回带中文原因的 {@link Converted}（预览逐行提示、确认 40001 拦截），用户改报告单指标后重试。
+ * 下拉存选项编码（结果可填 选项名或编码）、多选存编码数组（顿号 / 逗号 / 分号分隔逐项匹配，E23-T21 / C-SCAN-005 ICD 项目）、pair_number 存
+ * {length,width}（室壁瘤大小「30×20」，FormDataValidator.PairNumber 口径）。 转换失败不抛异常，返回带中文原因的 {@link
+ * Converted}（预览逐行提示、确认 40001 拦截），用户改报告单指标后重试。
  *
  * <p>冲突判定与 fe_field_history 的值口径一致（OQ-65）：空值 = null / 空串 / 空数组，空对空不算冲突； 数值按值比较（55 与 55.0
  * 同值）；其余严格同型。
@@ -51,6 +53,9 @@ public final class MappingValues {
     private static final Pattern PAIR =
             Pattern.compile("^\\s*(\\d+(?:\\.\\d+)?)\\s*[×xX\\*]\\s*(\\d+(?:\\.\\d+)?)\\s*$");
 
+    /** 多选取值分隔符：顿号 / 全半角逗号 / 全半角分号（ICD 恰当 / 不恰当治疗等多行合一的文本，E23-T21）。 */
+    private static final Pattern MULTI_SPLIT = Pattern.compile("[、，,;；]");
+
     /**
      * 文本结果 → 目标字段类型的值。
      *
@@ -71,9 +76,9 @@ public final class MappingValues {
             case "date" -> convertDate(fieldLabel, text);
             case "select", "radio" -> convertOption(fieldLabel, options, text, false);
             case "boolean" -> convertOption(fieldLabel, options, text, true);
+            case "multiselect" -> convertMultiOption(fieldLabel, options, text);
             case "text", "textarea" -> Converted.ok(text);
             case "datetime" -> Converted.fail("「" + fieldLabel + "」暂不支持日期时间字段写入");
-            case "multiselect" -> Converted.fail("「" + fieldLabel + "」暂不支持多选字段写入");
             case "derived" -> Converted.fail("「" + fieldLabel + "」是派生字段，由系统计算，不能写入");
             default -> Converted.fail("「" + fieldLabel + "」字段类型不支持写入：" + fieldType);
         };
@@ -126,12 +131,53 @@ public final class MappingValues {
         if (options.isEmpty()) {
             return Converted.fail("「" + fieldLabel + "」未配置选项集，不能写入");
         }
+        Object code = optionCodeOf(options, text);
+        if (code != null) {
+            return Converted.ok(code);
+        }
+        return Converted.fail(optionError(fieldLabel, options, text));
+    }
+
+    /**
+     * 多选（E23-T21 / C-SCAN-005：ICD 恰当 / 不恰当治疗）：顿号 / 逗号 / 分号分隔的选项名或编码 → 编码数组 （FormDataValidator
+     * 多选口径），去重保序；任一项不在选项内整行报错（预览提示、确认 40001）。
+     */
+    private static Converted convertMultiOption(
+            String fieldLabel, List<Option> options, String text) {
+        if (options == null || options.isEmpty()) {
+            return Converted.fail("「" + fieldLabel + "」未配置选项集，不能写入");
+        }
+        List<Object> codes = new ArrayList<>();
+        for (String token : MULTI_SPLIT.split(text)) {
+            String trimmed = token.trim();
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+            Object code = optionCodeOf(options, trimmed);
+            if (code == null) {
+                return Converted.fail(optionError(fieldLabel, options, trimmed));
+            }
+            if (!codes.contains(code)) {
+                codes.add(code);
+            }
+        }
+        if (codes.isEmpty()) {
+            return Converted.fail("「" + fieldLabel + "」结果为空，不能写入");
+        }
+        return Converted.ok(List.copyOf(codes));
+    }
+
+    /**
+     * 一个取值文本 → 选项编码：整数文本按整数码匹配，再按选项名、最后按字符串编码原样匹配（字典绑定的字符串 编码如起搏模式 VVI，OQ-69④；与整数码路径同口径）。未命中返回
+     * null。
+     */
+    private static Object optionCodeOf(List<Option> options, String text) {
         if (text.chars().allMatch(Character::isDigit)) {
             try {
                 int code = Integer.parseInt(text);
                 for (Option option : options) {
                     if (option.code() instanceof Integer intCode && intCode == code) {
-                        return Converted.ok(code);
+                        return code;
                     }
                 }
             } catch (NumberFormatException ignored) {
@@ -140,12 +186,21 @@ public final class MappingValues {
         }
         for (Option option : options) {
             if (option.label().equals(text)) {
-                return Converted.ok(option.code());
+                return option.code();
             }
         }
+        for (Option option : options) {
+            if (option.code() instanceof String stringCode && stringCode.equals(text)) {
+                return option.code();
+            }
+        }
+        return null;
+    }
+
+    private static String optionError(String fieldLabel, List<Option> options, String text) {
         String labels =
                 options.stream().map(Option::label).reduce((a, b) -> a + " / " + b).orElse("");
-        return Converted.fail("「" + fieldLabel + "」结果「" + text + "」不在选项（" + labels + "）内");
+        return "「" + fieldLabel + "」结果「" + text + "」不在选项（" + labels + "）内";
     }
 
     /**

@@ -275,8 +275,10 @@ class TenantOnboardingServiceMySqlIT {
                 // V90（医院 C 字段字典）与 V91（医院 C 两套预置计划）。
                 // E21-T13 增加 V92（cfg_feature 参数趋势开关 param_trend，默认 0）。
                 // E21-T07 增加 V93（fu_enrollment.last_visit_date 滚动循环排期基准快照）。
+                // E23-T21 增加 V94（医院 C 报告单类型与程控映射预置 rpt_type / rpt_name /
+                // rpt_indicator_tpl / rpt_indicator_item / rpt_mapping / rpt_mapping_item）。
                 // 此处随迁移清单维护
-                java.util.stream.IntStream.rangeClosed(1, 93).mapToObj(String::valueOf).toList(),
+                java.util.stream.IntStream.rangeClosed(1, 94).mapToObj(String::valueOf).toList(),
                 root.queryForList(
                         "SELECT version FROM "
                                 + DB
