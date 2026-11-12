@@ -10,7 +10,7 @@
 - 用医院 A 的配置模板开通医院 B 租户（独立租户、独立数据库，第 14 章「租户与配置」），使 B 的配置与 A **一致**：字段字典与表单、业务字典「患者类型」、报告单类型与字段集 / 指标模板 / 心脏超声映射、统计口径、首页（含首页卡片配置）、角色模板与权限点、通知设置、录入时对比提示规则、计划模板能力（A-FLD-014 复制清单）。
 - 验收判据「B 租户开通，配置与 A 一致」拆成三件可判定的证据：
   1. **开通完成**：§4 向导提交带 A 配置模板 `templateId`，开通编排各步含 `config-template` 全部 SUCCESS，租户 TRIAL、`plt_tenant.init_template_id` 登记所选模板、应用写 `CONFIG_TEMPLATE_APPLY` 审计；
-  2. **配置一致**：§5.1 机器侧核对工具（全注册表 23 张等价表逐表相等 + 角色包含）全部 PASS **且** §5.2 人工抽查（每域抽 3–5 项业务可见配置）逐项一致；
+  2. **配置一致**：§5.1 机器侧核对工具（全注册表 24 张等价表逐表相等 + 角色包含）全部 PASS **且** §5.2 人工抽查（每域抽 3–5 项业务可见配置）逐项一致；
   3. **只复制配置**：§5.1 工具的红线项（患者 / 随访业务数据为空、配置行不带源租户用户引用、病区与术者取值不复制）全部 PASS。
 - 本任务**不含** B 的业务差异化配置（都发生在初始化之后、各自成任务，互不阻塞）：A 年度随访在 B 停用与 B 预置计划（E23-T16）、首页节点随访率卡片开启（E23-T16 / T17，A-DASH-013）、B 用户 / 病区 / 角色取值（E23-T18）、B 验收（E23-T17）与上线（E23-T19）。
 
@@ -44,7 +44,7 @@
 
 | # | 步骤 | 入口 | 判据 |
 |---|---|---|---|
-| 1 | 导出 A 配置模板 | 平台端 → 租户管理 → 医院 A → 导出配置模板（`POST /api/platform/config-templates`，body `{"tenantId": <A 的租户 id>, "name": "医院 B 初始化模板（W37）"}`） | 响应 `tableCount = 29`、`rowCount > 0`；详情里 `ward` 为 STRUCTURE_ONLY 零行；导出写 `CONFIG_TEMPLATE_EXPORT` 审计 |
+| 1 | 导出 A 配置模板 | 平台端 → 租户管理 → 医院 A → 导出配置模板（`POST /api/platform/config-templates`，body `{"tenantId": <A 的租户 id>, "name": "医院 B 初始化模板（W37）"}`） | 响应 `tableCount = 30`、`rowCount > 0`；详情里 `ward` 为 STRUCTURE_ONLY 零行；导出写 `CONFIG_TEMPLATE_EXPORT` 审计 |
 | 2 | 向导提交（带模板） | 新建租户向导第 2 步「配置模板」下拉选择步骤 1 的模板（`POST /api/platform/tenants`，body 含 `name / code / modules:["followup"] / templateId`） | 步骤 1–4 全 SUCCESS；`config-template` 步骤 SUCCESS；租户状态 TRIAL；进度页可刷新（重试不带参数时沿用已登记模板，E12-T05 / OQ-96 ②） |
 | 3 | 补设租户管理员 | 向导第 3 步填 B 管理员（或开通后经用户管理补设，E06） | B 管理员可登录医院端 |
 | 4 | §5 一致性核对 | 本 runbook §5 | 两级核对全部一致 |
@@ -60,7 +60,7 @@
 - 演练 / CI（`--drill`，compose MySQL）：克隆医院 A 化身（t_demoa）的配置注册表为「B 初始化终态」→ 全部 PASS；再注入四类差异（字段字典改值 / 报告单类型多行 / 通知规则缺行 / 角色授权缺行）→ 逐项检出 FAIL；结束删除克隆库清场归零。
 - 生产（由运维执行，只读）：`python3 scripts/check_tenant_b_onboarding.py --host <rds主机> --port <端口> --db-a t_<A编码> --db-b t_<B编码> --user <只读账号>`——口令只经环境变量 `CRDP_TENANTB_MYSQL_PASSWORD`（或 `MYSQL_PWD`）进 mysql 客户端，不进 argv、不落盘。输出逐表 PASS / FAIL 与差异样例行；所有 SELECT 均为只读（工具内置写语句护栏）。
 - 核对面 = A-FLD-014 复制清单的机器可比部分：
-  - **23 张等价表**：`cfg_dict / cfg_dict_item（排除术者取值）/ cfg_param / cfg_feature`、`fe_*` 七表、`fu_plan / fu_plan_node`、`ntf_rule / ntf_setting`、`rpt_*` 六表、`fu_compare_rule`、`dash_role_layout`——业务列多重集两侧相等；数值引用（版本 / 计划 / 指标模板 / 映射 / 角色）join 到本院行取值比较，不比跨库自增 ID、用户引用与时间列（OQ-90 ④ / OQ-91 ③）；
+  - **24 张等价表**：`cfg_dict / cfg_dict_item（排除术者取值）/ cfg_param / cfg_feature`、`fe_*` 七表、`fu_plan / fu_plan_node / fu_plan_mapping`、`ntf_rule / ntf_setting`、`rpt_*` 六表、`fu_compare_rule`、`dash_role_layout`——业务列多重集两侧相等；数值引用（版本 / 计划 / 指标模板 / 映射 / 角色）join 到本院行取值比较，不比跨库自增 ID、用户引用与时间列（OQ-90 ④ / OQ-91 ③）；
   - **角色并集（包含）**：`sys_role / sys_role_scope / sys_role_field_policy` A 行全量落地（目标独有角色保留），`sys_role_menu` 按角色编码 join 后 A ⊆ B；`sys_role_scope_dept` 导入丢弃属口径（OQ-91 ④），不比对；
   - **红线**：`pt_patient / fu_enrollment / fu_task` 在 B 为零；B 配置行用户引用列为空；病区（ward）与术者取值不随模板进入（B 自行维护，E23-T18）。
 - 差异处置：FAIL 项先查模板导出时间与 A 变更记录（G2 冻结纪律）；确属漂移 → 在 B 库修正后重跑；属 A 违规变更 → 回退 A 变更或按第 14 章确认为 B 应有差异（登记到 §5.3 记录）。
@@ -118,7 +118,7 @@
 
 | 面 | 承载 | 验收锚点 |
 |---|---|---|
-| 向导路径演练（B 化身） | `backend/crdp-server/src/test/java/com/crdp/server/TenantBOnboardingMySqlIT.java`（门控 `CRDP_IT_MYSQL_PORT`）：从 demoa 导出模板 → 带 `templateId` 开通 e23t15b → 全注册表 23 张等价表与 A 逐表一致 + 角色包含 + 只复制配置红线；未选模板对照 SKIPPED | 验收「B 租户开通，配置与 A 一致」的机器侧主证据 |
+| 向导路径演练（B 化身） | `backend/crdp-server/src/test/java/com/crdp/server/TenantBOnboardingMySqlIT.java`（门控 `CRDP_IT_MYSQL_PORT`）：从 demoa 导出模板 → 带 `templateId` 开通 e23t15b → 全注册表 24 张等价表与 A 逐表一致 + 角色包含 + 只复制配置红线；未选模板对照 SKIPPED | 验收「B 租户开通，配置与 A 一致」的机器侧主证据 |
 | 核对工具自验 | `scripts/check_tenant_b_onboarding.py --selftest`（表清单 ↔ ConfigTableRegistry 防漂移、只读护栏、差异注入判定纯逻辑） | 工具自身正确性 |
 | runbook 防漂移 | `scripts/check_tenant_b_onboarding.py`（默认模式：本手册锚点 / tasks.csv 行 / 互引 / CI 接线） | 手册与实现不漂移 |
 | 核对逻辑演练 | `scripts/check_tenant_b_onboarding.py --drill`（compose MySQL：克隆 A 配置为 B 终态全 PASS → 四类差异逐项检出 → 清场归零） | §5.1 判定逻辑实测 |
