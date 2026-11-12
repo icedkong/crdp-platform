@@ -432,7 +432,8 @@ def drill_fixture_sql() -> str:
             lines.append(
                 f"INSERT INTO {DRILL_DB_B}.fe_field"
                 f" SELECT id, form_code, field_key, field_code, label, category_key, type, unit,"
-                f" decimals, hard_range, soft_range, option_set_code, required, visible_when,"
+                f" decimals, hard_range, soft_range, option_set_code, dict_code, carry_over,"
+                f" required, visible_when,"
                 f" required_when, derived_def, sensitive_flag, storage_type, help_text, sort_no,"
                 f" status, NULL, created_at, updated_at FROM {DRILL_DB_A}.fe_field;")
         elif t == "rpt_type":
