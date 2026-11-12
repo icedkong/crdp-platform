@@ -87,6 +87,20 @@ public interface PlanEnrollmentMapper {
     Long findActiveIdByPatientAndPlanCode(
             @Param("patientId") long patientId, @Param("planCode") String planCode);
 
+    /**
+     * 该患者在组（ACTIVE / PAUSED）入组的全部计划族编码（E21-T05 / C-FU-003：按器械类型自动入组前 判「同族已在组 / 其他族在组」——同族跳过、他族跳过等
+     * E21-T06 切换规则）。只取计划族编码，不输出患者或入组明细，与 {@link #findActiveIdByPatientAndPlanCode} 同口径。
+     */
+    @IgnoreScope(
+            reason =
+                    "器械类型自动入组（C-FU-003）的在组计划族判定：fu_enrollment 计划族编码是"
+                            + " uk_fu_enrollment_active 的唯一性口径（患者 × 计划族），只取编码，"
+                            + "不输出患者或入组明细")
+    @Select(
+            "SELECT DISTINCT plan_code FROM fu_enrollment"
+                    + " WHERE patient_id = #{patientId} AND status IN ('ACTIVE', 'PAUSED')")
+    List<String> findActivePlanCodes(long patientId);
+
     /** 患者入组状态位（E13-T07 批量入组预检的「已在组 / 已移除」判定）。 */
     record PatientEnrollmentStatusRow(long patientId, String status) {}
 

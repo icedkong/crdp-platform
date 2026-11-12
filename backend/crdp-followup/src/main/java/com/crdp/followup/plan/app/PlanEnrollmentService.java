@@ -132,10 +132,20 @@ public class PlanEnrollmentService {
 
     /**
      * 单患者入组：计划须为已发布（未发布 40901、已暂停 40901「不开启新任务」、已停用 40901「不再允许入组」）； 患者在册且未死亡（A-PAT-016
-     * 批量跳过「已死亡」同口径）；同族已在组 40901。
+     * 批量跳过「已死亡」同口径）；同族已在组 40901。 起算日期快照为空——入组即建与每日调度按计划起算字段解析回填（E14-T05 / OQ-80⑤）。
      */
     @Transactional
     public EnrollmentView enroll(long patientId, long planId, String mode) {
+        return enroll(patientId, planId, mode, null);
+    }
+
+    /**
+     * 带起算日期快照的入组（E21-T05 / C-FU-003）：医院 C 按器械类型自动入组时快照 = 植入日期（「起算日为植入日期」）； 快照优先于起算字段解析（与
+     * enrollForImport 同向），植入日期修改后的重算随 E21-T06 切换规则。其余校验与 {@link #enroll(long, long, String)} 一致。
+     */
+    @Transactional
+    public EnrollmentView enroll(
+            long patientId, long planId, String mode, java.time.LocalDate startDate) {
         PlanMapper.PlanRow plan = planMapper.findById(planId);
         if (plan == null) {
             throw new ApiException(404, 40400, "计划不存在");
@@ -167,7 +177,7 @@ public class PlanEnrollmentService {
                         patientId,
                         planId,
                         plan.code(),
-                        null,
+                        startDate,
                         normalizedMode,
                         "ACTIVE",
                         CurrentSession.current().map(principal -> principal.userId()).orElse(null));
@@ -208,6 +218,9 @@ public class PlanEnrollmentService {
                                         + plan.code()
                                         + "\",\"version\":"
                                         + plan.version()
+                                        + (startDate == null
+                                                ? ""
+                                                : ",\"startDate\":\"" + startDate + "\"")
                                         + ",\"mode\":\""
                                         + normalizedMode
                                         + "\",\"status\":\"ACTIVE\",\"backfillTasks\":"

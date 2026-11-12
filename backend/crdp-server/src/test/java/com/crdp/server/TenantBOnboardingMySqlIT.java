@@ -298,7 +298,8 @@ class TenantBOnboardingMySqlIT {
                         Map.of("tenantId", SOURCE_TENANT, "name", TEMPLATE_NAME));
         templateId = ((Number) exported.get("id")).longValue();
         assertThat(exported.get("tenantCode")).isEqualTo("demoa");
-        assertThat(((Number) exported.get("tableCount")).intValue()).isEqualTo(29);
+        // 30 = 29 + fu_plan_mapping（E21-T05 器械→计划映射随配置模板复制，COPY / device_type 自然键）
+        assertThat(((Number) exported.get("tableCount")).intValue()).isEqualTo(30);
         assertThat(((Number) exported.get("rowCount")).longValue()).isPositive();
 
         // 模板详情：ward 只复制结构且零行（「术者」「病区/中心」字典只复制结构、不复制取值，A-FLD-014）

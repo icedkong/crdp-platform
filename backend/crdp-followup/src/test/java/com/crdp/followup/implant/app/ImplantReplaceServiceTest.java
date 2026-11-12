@@ -57,9 +57,11 @@ class ImplantReplaceServiceTest {
     private final ImplantFeatureMapper features = mock(ImplantFeatureMapper.class);
     private final ImplantDictPort dicts = mock(ImplantDictPort.class);
     private final AuditLogger audit = mock(AuditLogger.class);
+    private final com.crdp.followup.plan.app.DevicePlanMappingService planMappings =
+            mock(com.crdp.followup.plan.app.DevicePlanMappingService.class);
 
     private final ImplantService service =
-            new ImplantService(gateway, mapper, features, dicts, audit);
+            new ImplantService(gateway, mapper, features, dicts, audit, planMappings);
 
     private final AtomicLong idSeq = new AtomicLong(700);
 
@@ -732,6 +734,91 @@ class ImplantReplaceServiceTest {
                                                 null,
                                                 List.of())));
         assertEquals(40900, state.code(), "只有在用器械可以取出");
+    }
+
+    // ---------------------------------------------------------------- 计划映射自动入组钩子（E21-T05 /
+    // C-FU-003）
+
+    @Test
+    void upgradeTriggersAutoEnrollmentWithNewDeviceType() {
+        when(gateway.implantsOf(PATIENT_ID))
+                .thenReturn(
+                        List.of(
+                                implantRow(
+                                        NEW_IMPLANT_ID,
+                                        "UPGRADE",
+                                        "ACTIVE",
+                                        "2026-03-10",
+                                        "CRT_D",
+                                        "CRT_D",
+                                        "MEDTRONIC"),
+                                active));
+        when(gateway.leadsOf(PATIENT_ID))
+                .thenReturn(
+                        List.of(
+                                lead(601L, "RA", "RA_APPENDAGE", "2024-06-01", "ACTIVE"),
+                                lead(602L, "RV", "RV_APEX", "2024-06-01", "ACTIVE")));
+        when(mapper.findLinksOfPatient(PATIENT_ID))
+                .thenReturn(
+                        List.of(
+                                new ImplantMapper.ImplantLinkRow(NEW_IMPLANT_ID, 601L),
+                                new ImplantMapper.ImplantLinkRow(NEW_IMPLANT_ID, 602L),
+                                new ImplantMapper.ImplantLinkRow(501L, 601L),
+                                new ImplantMapper.ImplantLinkRow(501L, 602L)));
+
+        service.replace(
+                501L,
+                new ImplantService.ReplaceRequest(
+                        3,
+                        "UPGRADE",
+                        null,
+                        implantPayload("2026-03-10", "CRT_D"),
+                        List.of(
+                                new ImplantService.LeadAction("601", "KEEP"),
+                                new ImplantService.LeadAction("602", "KEEP")),
+                        List.of()));
+
+        // 升级产生新在用器械：按新器械类型（CRT_D → ICD/CRT-D 计划）自动入组，起算日 = 新植入日期
+        verify(planMappings)
+                .autoEnrollByDeviceType(PATIENT_ID, "CRT_D", LocalDate.parse("2026-03-10"));
+    }
+
+    @Test
+    void leadRevisionDoesNotTriggerAutoEnrollment() {
+        when(gateway.implantsOf(PATIENT_ID))
+                .thenReturn(
+                        List.of(
+                                implantRow(
+                                        NEW_IMPLANT_ID,
+                                        "LEAD_REVISION",
+                                        "ACTIVE",
+                                        "2026-03-10",
+                                        "DDD",
+                                        "DDD",
+                                        "MEDTRONIC"),
+                                active));
+        when(gateway.leadsOf(PATIENT_ID))
+                .thenReturn(List.of(lead(601L, "RA", "RA_APPENDAGE", "2024-06-01", "ACTIVE")));
+        when(mapper.findLinksOfPatient(PATIENT_ID))
+                .thenReturn(
+                        List.of(
+                                new ImplantMapper.ImplantLinkRow(NEW_IMPLANT_ID, 601L),
+                                new ImplantMapper.ImplantLinkRow(501L, 601L)));
+
+        service.replace(
+                501L,
+                new ImplantService.ReplaceRequest(
+                        3,
+                        "LEAD_REVISION",
+                        null,
+                        sameGeneratorPayload("2026-03-10"),
+                        List.of(
+                                new ImplantService.LeadAction("601", "ABANDON"),
+                                new ImplantService.LeadAction("602", "KEEP")),
+                        List.of(newLead("RV", "RV_SEPTUM"))));
+
+        // 电极修正不切换计划（C-FU-007 切换表）
+        verify(planMappings, never()).autoEnrollByDeviceType(anyLong(), anyString(), any());
     }
 
     // ---------------------------------------------------------------- 夹具

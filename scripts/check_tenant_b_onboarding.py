@@ -118,6 +118,14 @@ EQUALITY_QUERIES: list[tuple[str, str]] = [
         " n.enroll_mode, n.sort_no"
         " FROM `{db}`.fu_plan_node n JOIN `{db}`.fu_plan p ON p.id = n.plan_id",
     ),
+    # 器械→计划映射（E21-T05 / C-FU-003；plan_code 为计划族编码引用，join fu_plan 取族名一并比对）
+    (
+        "fu_plan_mapping",
+        "SELECT m.device_type, m.plan_code, p.name AS plan_name, m.enabled"
+        " FROM `{db}`.fu_plan_mapping m"
+        " LEFT JOIN `{db}`.fu_plan p ON p.code = m.plan_code AND p.version ="
+        " (SELECT MAX(version) FROM `{db}`.fu_plan WHERE code = m.plan_code)",
+    ),
     # ---- followup：通知设置 ----
     (
         "ntf_rule",
@@ -401,7 +409,7 @@ def drill_fixture_sql() -> str:
     """「B 已由 A 模板初始化」终态：全部表结构 + 仅配置表行（模板语义）。
 
     * 结构：A 库所有表 CREATE TABLE ... LIKE（含患者业务表空壳——迁移建表、模板不带数据）；
-    * 行：27 张可比配置表 INSERT ... SELECT；cfg_dict_item 剔除术者取值（只复制结构）；
+    * 行：28 张可比配置表 INSERT ... SELECT；cfg_dict_item 剔除术者取值（只复制结构）；
     * 用户引用置空（tech-plan §6：配置中引用用户的字段一律置空，账号不随模板复制）；
     * ward 不带行（只复制结构）；flyway_schema_history 不入克隆（演练库非开通产物）。
     """
@@ -452,6 +460,7 @@ def drill_fixture_sql() -> str:
         f"UPDATE {DRILL_DB_B}.fe_rule SET updated_by = NULL;",
         f"UPDATE {DRILL_DB_B}.fe_form_version SET published_by = NULL;",
         f"UPDATE {DRILL_DB_B}.fu_plan SET created_by = NULL;",
+        f"UPDATE {DRILL_DB_B}.fu_plan_mapping SET created_by = NULL, updated_by = NULL;",
         f"UPDATE {DRILL_DB_B}.rpt_indicator_tpl SET updated_by = NULL;",
         f"UPDATE {DRILL_DB_B}.rpt_name SET updated_by = NULL;",
         f"UPDATE {DRILL_DB_B}.rpt_mapping SET updated_by = NULL;",
@@ -568,9 +577,9 @@ def run_selftest() -> int:
           f"遗漏：{sorted(registry - tool_tables) or '无'}）", tool_tables == registry)
     eq_tables = {t for t, _ in EQUALITY_QUERIES}
     ct_tables = {t for t, _ in CONTAINMENT_QUERIES}
-    check(f"等价 23 张 + 包含 4 张 + 口径不比对 {len(NOT_COMPARED)} 张（实际 {len(eq_tables)} / "
+    check(f"等价 24 张 + 包含 4 张 + 口径不比对 {len(NOT_COMPARED)} 张（实际 {len(eq_tables)} / "
           f"{len(ct_tables)} / {len(NOT_COMPARED)}）",
-          len(eq_tables) == 23 and len(ct_tables) == 4 and len(NOT_COMPARED) == 2)
+          len(eq_tables) == 24 and len(ct_tables) == 4 and len(NOT_COMPARED) == 2)
     check("等价 / 包含 / 不比对三组互不重叠",
           not (eq_tables & ct_tables) and not (eq_tables & set(NOT_COMPARED))
           and not (ct_tables & set(NOT_COMPARED)))
@@ -670,8 +679,8 @@ def run_default() -> int:
               "templateId", "config-template", "TRIAL", "init_template_id", "action=ENABLE")))
     check("两级核对（§5.1 机器侧 check_tenant_b_onboarding.py + §5.2 人工抽查每域 3–5 项）",
           "check_tenant_b_onboarding.py" in runbook and "人工抽查" in runbook)
-    check("核对口径（23 张等价表 + 角色并集包含 + 只复制红线；不比自增 ID / 用户引用 / 时间列）",
-          all(k in runbook for k in ("23 张等价表", "包含", "红线", "OQ-90", "OQ-91")))
+    check("核对口径（24 张等价表 + 角色并集包含 + 只复制红线；不比自增 ID / 用户引用 / 时间列）",
+          all(k in runbook for k in ("24 张等价表", "包含", "红线", "OQ-90", "OQ-91")))
     check("第 14 章 B 差异处置表与承接任务（E23-T16 / T17 / T18 / T28 / T19）",
           all(k in runbook for k in ("第 14 章", "E23-T16", "E23-T17", "E23-T18", "E23-T28", "E23-T19")))
     check("中止与回滚（config-template 重试 + 整体中止走 E05-T08 注销 + A 不受影响）",
@@ -684,8 +693,8 @@ def run_default() -> int:
     check("TenantBOnboardingMySqlIT 存在", bool(it))
     if it:
         check("IT 门控 CRDP_IT_MYSQL_PORT 且 local 剖面", "CRDP_IT_MYSQL_PORT" in it and '"local"' in it)
-        check("IT 断言全注册表（29 张 / 23 张等价表 + 角色包含）",
-              "29" in it and "dash_role_layout" in it and "containsAll" in it)
+        check("IT 断言全注册表（30 张 / 24 张等价表 + 角色包含）",
+              "30" in it and "dash_role_layout" in it and "containsAll" in it)
         check("IT 自建自清（DROP DATABASE IF EXISTS）与虚构标记（示例）",
               "DROP DATABASE IF EXISTS" in it and "示例" in it)
 

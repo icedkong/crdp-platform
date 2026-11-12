@@ -62,17 +62,27 @@ public interface FollowupTaskMapper {
             """)
     List<EnrollmentRow> findSchedulableEnrollments();
 
-    /** 起算日期快照为空时按计划的起算字段解析（fu_enrollment.start_date 由本任务回填，V46 注释预留）。 */
+    /**
+     * 起算日期快照为空时按计划的起算字段解析（fu_enrollment.start_date 由本任务回填，V46 注释预留）。
+     *
+     * <p>E21-T05 / C-FU-003：IMPLANT_DATE 解析为患者<b>在用</b>植入记录的植入日期（C-PAT-007 当前器械判定； 一位患者仅一条在用，取 id
+     * 最大一行兜底）；无在用器械返回 NULL 由服务层跳过（取出后 / 植入前不排期）。快照优先——器械类型 自动入组在 enroll
+     * 时已快照植入日期，本分支服务手工改选计划（快照为空）的入组。
+     */
     @IgnoreScope(
             reason =
                     "调度解析起算日期（只取起算字段对应的日期值，不输出患者数据）："
-                            + "IMPLANT_DATE（E21）/ CUSTOM 暂不可解析，返回 NULL 由服务层跳过")
+                            + "CUSTOM 未定义或字段值为空 / IMPLANT_DATE 无在用器械，返回 NULL 由服务层跳过")
     @Select(
             """
             SELECT CASE p.start_date_field
                      WHEN 'DISCHARGE_DATE' THEN pt.discharge_date
                      WHEN 'SURGERY_DATE' THEN pt.surgery_date
                      WHEN 'REGISTRATION_DATE' THEN DATE(pt.created_at)
+                     WHEN 'IMPLANT_DATE' THEN
+                       (SELECT i.implant_date FROM pt_implant i
+                         WHERE i.patient_id = #{patientId} AND i.status = 'ACTIVE'
+                         ORDER BY i.id DESC LIMIT 1)
                      ELSE NULL
                    END
             FROM fu_plan p
