@@ -112,6 +112,7 @@ class VisitNoRegistrationIT {
                         cBody("IT-MRN-E21T10-01", null, "2026-01-05"));
         assertEquals(0, code(first), "登记失败：" + first);
         assertEquals("105-" + businessYear + "-001", data(first).get("visitNo"), "年内首号");
+        String firstPatientId = String.valueOf(data(first).get("id"));
         Map<?, ?> second =
                 post(
                         "/api/hospital/followup/patients",
@@ -147,18 +148,20 @@ class VisitNoRegistrationIT {
         assertEquals(0, code(third));
         assertEquals("C21-" + businessYear + "-001", data(third).get("visitNo"), "规则可配置（验收原文）");
 
-        // 审计：登记描述记录编号与来源
+        // 审计：登记描述记录编号与来源（按本人审计行计数——先跑的 C 登记 IT 也会留下
+        // 「随访编号 105-…-001（自动生成）」审计且不随其清理删除，全局 LIKE 会多数）
         Long audits =
                 runInTenant(
                         "demoa",
                         () ->
                                 jdbc.queryForObject(
                                         "SELECT COUNT(*) FROM aud_log WHERE event_type ="
-                                                + " 'PATIENT_CREATE' AND detail LIKE"
-                                                + " '%随访编号 105-"
+                                                + " 'PATIENT_CREATE' AND target = ? AND detail"
+                                                + " LIKE '%随访编号 105-"
                                                 + businessYear
                                                 + "-001%（自动生成）%'",
-                                        Long.class));
+                                        Long.class,
+                                        "PATIENT:" + firstPatientId));
         assertEquals(1L, audits, "登记审计记录随访编号与来源");
     }
 
