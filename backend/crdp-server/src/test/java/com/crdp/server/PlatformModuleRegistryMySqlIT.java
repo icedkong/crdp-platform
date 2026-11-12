@@ -125,11 +125,12 @@ class PlatformModuleRegistryMySqlIT {
                                 + " FROM plt_module WHERE code = 'followup'");
         assertEquals("0.1.0", row.get("feature_version"));
         assertEquals(
-                "87",
+                "88",
                 row.get("migration_version").toString(),
-                "迁移版本取 db/tenant/followup 最大脚本版本 V87（E21-T11 fu_record 软删除列"
-                        + " 与器械维度 implant_id；此前 V86 器械→计划映射 fu_plan_mapping、V85 补录进度"
-                        + " 卡片目录行、V84 pt_visit_no_seq、V83 pt_implant.note、V82 C 对比标红预置）");
+                "迁移版本取 db/tenant/followup 最大脚本版本 V88（E21-T06 fu_enrollment 计划切换三列"
+                        + " switch_reason / eri_since / doctor_next_date；此前 V87 fu_record 软删除列与器械维度"
+                        + " implant_id、V86 器械→计划映射 fu_plan_mapping、V85 补录进度卡片目录行、V84"
+                        + " pt_visit_no_seq、V83 pt_implant.note、V82 C 对比标红预置）");
         assertEquals("base", row.get("depends_on"));
         assertNotNull(row.get("synced_at"), "启动同步应刷新 synced_at");
         assertEquals("ON", row.get("status"), "注册后默认上架");
@@ -140,7 +141,7 @@ class PlatformModuleRegistryMySqlIT {
                                 + " plt_module_version WHERE module_code = 'followup'"
                                 + " ORDER BY id DESC LIMIT 1");
         assertEquals("0.1.0", version.get("feature_version"));
-        assertEquals("87", version.get("migration_version").toString());
+        assertEquals("88", version.get("migration_version").toString());
         assertTrue(
                 String.valueOf(version.get("change_note")).contains("随访"),
                 "版本记录含变更说明：" + version.get("change_note"));

@@ -36,7 +36,8 @@ import org.springframework.test.context.ActiveProfiles;
  *       普通计划、ICD → ICD 计划、未映射类型不入组；
  *   <li>映射配置接口：GET 合并字典类型（含未映射项与计划族名）；PUT 整体替换并写 PLAN_MAPPING_SAVE 审计； 不存在的计划族 / 字典外类型 40001；无
  *       followup:plan:edit 40300；implant 开关关闭（含 demob）40301；
- *   <li>升级到他族计划：患者已在普通计划族在组时，CRT-D（映射到 ICD 计划）不自动并入——原入组结束与任务终止随 E21-T06（C-FU-007）；
+ *   <li>升级到他族计划（E21-T06 起）：患者已在普通计划族在组时，CRT-D（映射到 ICD 计划）触发计划切换——原入组结束（SWITCHED）、按新类型转入 ICD
+ *       计划（完整切换用例见 PlanSwitchIT）；
  *   <li>手工改选计划（C-FU-003「也可手工改选」）：批量入组入口入组 IMPLANT_DATE 起算的计划，起算快照由任务创建侧按在用器械回填（resolveStartDate 的
  *       IMPLANT_DATE 分支）。
  * </ol>
@@ -226,10 +227,10 @@ class DevicePlanMappingIT {
                 "入组固定在映射解析到的已发布版本（A-FU-019）");
     }
 
-    // ---------------------------------------------------------------- 升级到他族：切换随 E21-T06
+    // ---------------------------------------------------------------- 升级到他族：切换随 E21-T06 已接入
 
     @Test
-    void upgradeToOtherFamilyDoesNotDoubleEnroll() {
+    void upgradeToOtherFamilySwitchesPlanWithoutDoubleEnroll() {
         enableImplant();
         String admin = adminToken();
         publishedPlan(admin, PACER_CODE, "示例 IT 普通起搏器术后随访");
@@ -237,8 +238,17 @@ class DevicePlanMappingIT {
         assertEquals(
                 0, code(put("/api/hospital/followup/plans/device-mapping", admin, mappingBody())));
 
-        // DDD 已入普通计划 → 升级为 CRT-D（映射到 ICD 计划）：不自动并入，等待 E21-T06 切换规则
+        // DDD 已入普通计划 → 升级为 CRT-D（映射到 ICD 计划）：E21-T06 计划切换——原入组结束、转 ICD 计划
         long patientId = registerPatient(admin, "11", "DDD", "2026-01-05");
+        long pacerEnrollmentId =
+                runInTenant(
+                        "demoa",
+                        () ->
+                                jdbc.queryForObject(
+                                        "SELECT id FROM fu_enrollment WHERE patient_id = ?"
+                                                + " AND status IN ('ACTIVE','PAUSED')",
+                                        Long.class,
+                                        patientId));
         Map<?, ?> implant = firstImplant(admin, patientId);
         List<Map<String, Object>> leadActions = new ArrayList<>();
         for (Object lead : (List<?>) implant.get("leads")) {
@@ -266,11 +276,36 @@ class DevicePlanMappingIT {
                         "demoa",
                         () ->
                                 jdbc.queryForList(
-                                        "SELECT plan_code, status FROM fu_enrollment WHERE"
-                                                + " patient_id = ? AND status IN ('ACTIVE','PAUSED')",
+                                        "SELECT plan_code, status, start_date FROM fu_enrollment"
+                                                + " WHERE patient_id = ? AND status IN"
+                                                + " ('ACTIVE','PAUSED')",
                                         patientId));
-        assertEquals(1, enrollments.size(), "不产生双计划并行任务（原入组结束随 E21-T06）");
-        assertEquals(PACER_CODE, enrollments.get(0).get("plan_code"));
+        assertEquals(1, enrollments.size(), "不产生双计划并行任务");
+        assertEquals(ICD_CODE, enrollments.get(0).get("plan_code"), "升级切换转入 ICD 计划");
+        assertEquals(
+                java.sql.Date.valueOf("2026-03-02"),
+                enrollments.get(0).get("start_date"),
+                "起算日 = 升级日期");
+        // 原普通入组结束：SWITCHED + 切换原因（C-FU-007；详细行为由 PlanSwitchIT 锁定）
+        Map<String, Object> ended =
+                runInTenant(
+                        "demoa",
+                        () ->
+                                jdbc.queryForObject(
+                                        "SELECT status, switch_reason FROM fu_enrollment WHERE id = ?",
+                                        DevicePlanMappingIT::rowOf,
+                                        pacerEnrollmentId));
+        assertEquals("SWITCHED", ended.get("status"), "原入组结束（E21-T06）");
+        assertTrue(
+                String.valueOf(ended.get("switch_reason")).contains("升级"), "switch_reason 记切换原因");
+    }
+
+    private static Map<String, Object> rowOf(java.sql.ResultSet rs, int rowNum)
+            throws java.sql.SQLException {
+        Map<String, Object> row = new HashMap<>();
+        row.put("status", rs.getString("status"));
+        row.put("switch_reason", rs.getString("switch_reason"));
+        return row;
     }
 
     // ---------------------------------------------------------------- 映射配置接口

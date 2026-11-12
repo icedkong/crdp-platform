@@ -72,19 +72,27 @@ public class ImplantService {
     private final AuditLogger audit;
     private final com.crdp.followup.plan.app.DevicePlanMappingService planMappings;
 
+    private final com.crdp.followup.plan.app.PlanSwitchService planSwitch;
+
+    private final com.crdp.followup.task.app.StartDateRecalculationService startDateRecalc;
+
     public ImplantService(
             ImplantGateway gateway,
             ImplantMapper mapper,
             ImplantFeatureMapper features,
             ImplantDictPort dicts,
             AuditLogger audit,
-            com.crdp.followup.plan.app.DevicePlanMappingService planMappings) {
+            com.crdp.followup.plan.app.DevicePlanMappingService planMappings,
+            com.crdp.followup.plan.app.PlanSwitchService planSwitch,
+            com.crdp.followup.task.app.StartDateRecalculationService startDateRecalc) {
         this.gateway = gateway;
         this.mapper = mapper;
         this.features = features;
         this.dicts = dicts;
         this.audit = audit;
         this.planMappings = planMappings;
+        this.planSwitch = planSwitch;
+        this.startDateRecalc = startDateRecalc;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -338,10 +346,21 @@ public class ImplantService {
                         .result(AuditResult.SUCCESS)
                         .build());
         // E21-T05 / C-FU-003：保存在用（新植 / 接替在用）植入记录后按器械类型映射自动入组，起算日 = 植入日期；
-        // 补录早于在用的历史器械（REPLACED）不触发。业务性跳过在映射服务内部消化，系统级异常同事务回滚
+        // 补录早于在用的历史器械（REPLACED）不触发。E21-T06 / C-FU-007：升级 / 更换类型且已有在组入组时先走计划切换
+        // （结束原入组 + 终止未完成任务 + 按新类型重新入组，SW-2 / SW-3 / SW-4），否则回落自动入组（SW-1 首次植入等）。
+        // 业务性跳过在映射服务内部消化，系统级异常同事务回滚
         if (ImplantCodes.STATUS_ACTIVE.equals(row.getStatus())) {
-            planMappings.autoEnrollByDeviceType(
-                    patientId, normalized.deviceType(), normalized.implantDate());
+            if (!planSwitch
+                    .onActiveImplantAdded(
+                            patientId,
+                            row.getId(),
+                            normalized.implantType(),
+                            normalized.deviceType(),
+                            normalized.implantDate())
+                    .switched()) {
+                planMappings.autoEnrollByDeviceType(
+                        patientId, normalized.deviceType(), normalized.implantDate());
+            }
         }
         return toRowView(row);
     }
@@ -432,6 +451,23 @@ public class ImplantService {
                         .result(AuditResult.SUCCESS)
                         .build());
 
+        // E21-T06 / C-FU-007（SW-6 器械类型更正）与 C 规格 §4「植入日期修改后，未开始的任务按新日期重算（沿用 A-FU-011）」：
+        // 只针对在用记录——更正起搏器类型走计划切换（按新类型重新入组、起算仍按本记录植入日期、未开始任务随重新入组重算、已完成记录不变）；
+        // 仅改植入日期接入 E14-T07 起算重算入口（类型与日期同时更正时，重新入组已用新日期快照，无需重算）。
+        boolean activeRecord = ImplantCodes.STATUS_ACTIVE.equals(existing.status());
+        boolean typeCorrected = !equalsNullable(existing.deviceType(), normalized.deviceType());
+        boolean dateChanged = !existing.implantDate().equals(normalized.implantDate());
+        if (activeRecord && typeCorrected) {
+            planSwitch.onDeviceTypeCorrected(
+                    existing.patientId(),
+                    implantId,
+                    existing.deviceType(),
+                    normalized.deviceType(),
+                    normalized.implantDate());
+        } else if (activeRecord && dateChanged) {
+            startDateRecalc.recalculateOnBaseDateChange(existing.patientId(), userId);
+        }
+
         return listUnchecked(existing.patientId()).items().stream()
                 .filter(item -> item.id().equals(String.valueOf(implantId)))
                 .findFirst()
@@ -459,8 +495,9 @@ public class ImplantService {
      *   <li>newLeads 新植：新行落库，植入日期缺省 = 手术日期（电极修正的新电极从修正日期起比较参数）。
      * </ul>
      *
-     * <p>baseVersion 乐观锁与「目标必须在用」为 40900；无导线新器械不可携带电极（40001）。按器械类型映射自动入组已随 E21-T05 接入
-     * （电极修正不切计划）；原入组结束与任务终止等切换规则随 E21-T06（C-FU-007）。成功写 IMPLANT_REPLACE 审计。
+     * <p>baseVersion 乐观锁与「目标必须在用」为 40900；无导线新器械不可携带电极（40001）。按器械类型映射自动入组已随 E21-T05 接入 （电极修正不切计划）；升级
+     * / 更换的计划切换（结束原入组、终止未完成任务、按新类型重新入组起算 = 手术日期）已随 E21-T06 接入（C-FU-007 切换表 SW-2 / SW-3 / SW-4 /
+     * SW-5）。成功写 IMPLANT_REPLACE 审计。
      */
     @Transactional
     public ImplantView replace(long implantId, ReplaceRequest request) {
@@ -588,10 +625,20 @@ public class ImplantService {
                         .result(AuditResult.SUCCESS)
                         .build());
         // E21-T05 / C-FU-003：更换 / 升级 / 其他产生新在用器械，按新器械类型映射自动入组（电极修正不切计划，
-        // C-FU-007 切换表）；患者已在其他计划族在组时映射服务跳过（原入组结束与任务终止随 E21-T06）
+        // C-FU-007 切换表 SW-5）。E21-T06 / C-FU-007：升级 / 更换且已有在组入组时先走计划切换——结束原入组
+        // + 终止未完成任务 + 按新类型重新入组（SW-2 / SW-3 / SW-4），否则回落自动入组
         if (!ImplantCodes.TYPE_LEAD_REVISION.equals(type)) {
-            planMappings.autoEnrollByDeviceType(
-                    target.patientId(), normalized.deviceType(), normalized.implantDate());
+            if (!planSwitch
+                    .onActiveImplantAdded(
+                            target.patientId(),
+                            row.getId(),
+                            type,
+                            normalized.deviceType(),
+                            normalized.implantDate())
+                    .switched()) {
+                planMappings.autoEnrollByDeviceType(
+                        target.patientId(), normalized.deviceType(), normalized.implantDate());
+            }
         }
 
         return listUnchecked(target.patientId()).items().stream()
@@ -604,8 +651,8 @@ public class ImplantService {
 
     /**
      * 取出（POST /implants/{id}/explant）：在用记录置「已取出」，结束日期 = 取出日期，理由缺省「器械取出」； 在用电极须逐根显式标废弃留置 /
-     * 已拔除（不产生沿用电极，行保留在旧记录下）。取出后患者无在用器械，再植入走登记 / 新建。 计划侧（入组结束、未完成任务处理）随 E21-T06 切换规则接入。 成功写
-     * IMPLANT_EXPLANT 审计。
+     * 已拔除（不产生沿用电极，行保留在旧记录下）。取出后患者无在用器械，再植入走登记 / 新建。 计划侧（结束全部在组入组、终止未完成任务、不再创建任务）已随 E21-T06
+     * 接入（C-FU-007 切换表 SW-9）。成功写 IMPLANT_EXPLANT 审计。
      */
     @Transactional
     public ImplantView explant(long implantId, ExplantRequest request) {
@@ -667,6 +714,9 @@ public class ImplantService {
                                                 date.toString())))
                         .result(AuditResult.SUCCESS)
                         .build());
+
+        // E21-T06 / C-FU-007（SW-9）：取出且未再植入——同一事务结束全部在组入组并终止未完成任务，之后不再创建任务
+        planSwitch.onImplantExplanted(target.patientId(), implantId, date);
 
         return listUnchecked(target.patientId()).items().stream()
                 .filter(item -> item.id().equals(String.valueOf(implantId)))
