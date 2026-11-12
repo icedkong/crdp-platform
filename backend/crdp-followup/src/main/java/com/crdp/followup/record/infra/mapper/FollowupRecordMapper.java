@@ -23,6 +23,9 @@ import org.apache.ibatis.annotations.Update;
  *
  * <p>E21-T11 / C-FU-008（OQ-130③、OQ-134②）：器械维度列 implant_id（按随访日期匹配当时在用的器械，创建 /
  * 提交时解析落列），对比标红「上一次」按同一器械过滤（CompareSourceMapper 候选行随行带出）。
+ *
+ * <p>E21-T09 / C-FU-018：随访序号列 sequence_no（同一患者已提交记录按有效随访日期升序 1..N； 提交 / 修改 / 删除后由
+ * FollowupSequenceService 同一事务重排并写 fe_field_history）。
  */
 @Mapper
 public interface FollowupRecordMapper {
@@ -166,7 +169,10 @@ public interface FollowupRecordMapper {
             """)
     List<RecordRowRaw> findTasklessByPatient(@Param("patientId") long patientId);
 
-    /** 患者随访记录元信息行（E21-T11：重复提示 C-FU-024 与随访序号 C-FU-008 的派生口径；data 供表单随访日期回退）。 */
+    /**
+     * 患者随访记录元信息行（E21-T11：重复提示 C-FU-024 与随访序号 C-FU-008 的派生口径；data 供表单随访日期回退； sequenceNo 供 E21-T09 /
+     * C-FU-018 重排比较）。
+     */
     record PatientRecordMetaRow(
             long id,
             Long taskId,
@@ -175,7 +181,8 @@ public interface FollowupRecordMapper {
             String formCode,
             int templateVersion,
             String status,
-            String data) {}
+            String data,
+            Integer sequenceNo) {}
 
     /** 患者的在册记录元信息（DRAFT + SUBMITTED，软删行排除；重复提示含草稿——同一日期已有草稿同样提示）。 */
     @com.crdp.framework.datascope.DataScope(resource = "patient")
@@ -183,12 +190,29 @@ public interface FollowupRecordMapper {
             """
             SELECT id, task_id AS taskId, source, visit_date AS visitDate,
                    form_code AS formCode, template_version AS templateVersion,
-                   status, data
+                   status, data, sequence_no AS sequenceNo
             FROM fu_record
             WHERE patient_id = #{patientId} AND deleted = 0
             ORDER BY visit_date ASC, id ASC
             """)
     List<PatientRecordMetaRow> findPatientRecordMeta(@Param("patientId") long patientId);
+
+    /** 单条记录的落库随访序号（E21-T09 / C-FU-018 详情读侧：开关开启的已提交记录优先落库值； 未编号 / 越范围 / 已软删 null——回落派生预演由调用方处理）。 */
+    @com.crdp.framework.datascope.DataScope(resource = "patient")
+    @Select("SELECT sequence_no FROM fu_record WHERE id = #{id} AND deleted = 0")
+    Integer findRecordSequenceNo(@Param("id") long id);
+
+    /**
+     * 写一条重排后的随访序号（E21-T09 / C-FU-018）。只写派生列 sequence_no：不动 version（重算不是编辑， 不触发乐观锁）、不动
+     * updated_by；{@code @IgnoreScope} 原因与对比标红重算同款（E17-T04）：序号是派生数据、不输出患者行， 触发入口（提交 / 修改 /
+     * 删除）已对患者做过数据范围校验（40400）。
+     */
+    @com.crdp.framework.datascope.IgnoreScope(
+            reason =
+                    "随访序号自动重排（E21-T09 / C-FU-018）只写派生列 sequence_no：不触碰业务列与 version；"
+                            + "触发入口（记录提交 / 修改 / 删除）已对患者做过数据范围校验（40400）")
+    @Update("UPDATE fu_record SET sequence_no = #{sequenceNo} WHERE id = #{id} AND deleted = 0")
+    int updateSequenceNo(@Param("id") long id, @Param("sequenceNo") Integer sequenceNo);
 
     /** 患者随访编号（C-PAT-003 / E21-T10；A / B 租户与历史患者未生成时 null）。 */
     @com.crdp.framework.datascope.DataScope(resource = "patient")

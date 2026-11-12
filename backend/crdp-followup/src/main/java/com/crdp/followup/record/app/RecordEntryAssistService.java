@@ -95,7 +95,9 @@ public class RecordEntryAssistService {
 
     /**
      * 随访序号（同一患者按有效随访日期升序，1 起；同日按 id 小者为先）：1 + 有效日期早于本次的已提交条数（同日 id 更小者也计为先）； 录入中的 DRAFT
-     * 用本次有效日期（visit_date ?? 任务计划日期）预演落点，完整重排与变更历史随 E21-T09 / C-FU-018。 无法定本次日期返回 null。
+     * 用本次有效日期（visit_date ?? 任务计划日期）预演落点。E21-T09 / C-FU-018 起已提交记录优先读 落库列（FollowupSequenceService
+     * 重排维护，{@link #submittedRowsOrderedByEffectiveDate} 同一定序口径）；本派生口供草稿落点预演 与开关关闭租户（A /
+     * B）读侧。无法定本次日期返回 null。
      */
     public Integer sequenceNoOf(long patientId, long recordId, LocalDate currentEffective) {
         if (currentEffective == null) {
@@ -115,6 +117,41 @@ public class RecordEntryAssistService {
             }
         }
         return before + 1;
+    }
+
+    // ---------------------------------------------------------------- 重排定序（E21-T09 / C-FU-018）
+
+    /**
+     * 已提交记录按有效随访日期升序的元信息行（同日按 id 小者为先；与 {@link #sequenceNoOf} 派生预演同一定序口径）。 供 {@code
+     * FollowupSequenceService} 重排 1..N 编号；草稿与无法定有效日期的行不在列表（草稿不占号、无日期行不参与定序）。
+     */
+    public List<PatientRecordMetaRow> submittedRowsOrderedByEffectiveDate(long patientId) {
+        List<PatientRecordMetaRow> ordered = new ArrayList<>();
+        Map<LocalDate, List<PatientRecordMetaRow>> byDate = effectiveDatesOf(patientId);
+        for (LocalDate date : byDate.keySet().stream().sorted().toList()) {
+            List<PatientRecordMetaRow> sameDay =
+                    new ArrayList<>(byDate.getOrDefault(date, List.of()));
+            sameDay.sort(java.util.Comparator.comparingLong(PatientRecordMetaRow::id));
+            for (PatientRecordMetaRow row : sameDay) {
+                if (isSubmitted(row)) {
+                    ordered.add(row);
+                }
+            }
+        }
+        return ordered;
+    }
+
+    /**
+     * 患者全部已提交记录元信息行（含无法定有效日期的行——陈旧序号清理用；草稿排除）。 供 {@code FollowupSequenceService} 识别「不在定序列表但残留序号」的行。
+     */
+    public List<PatientRecordMetaRow> submittedRows(long patientId) {
+        List<PatientRecordMetaRow> submitted = new ArrayList<>();
+        for (PatientRecordMetaRow row : recordMapper.findPatientRecordMeta(patientId)) {
+            if (isSubmitted(row)) {
+                submitted.add(row);
+            }
+        }
+        return submitted;
     }
 
     // ---------------------------------------------------------------- 内部（有效随访日期派生）

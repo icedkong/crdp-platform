@@ -72,6 +72,7 @@ public class RecordEntryService {
     private final com.crdp.followup.record.infra.mapper.FollowupRecordMapper recordMapper;
     private final com.crdp.followup.record.infra.mapper.RecordFeatureMapper features;
     private final com.crdp.followup.plan.app.PlanSwitchService planSwitch;
+    private final FollowupSequenceService sequences;
 
     public RecordEntryService(
             FollowupRecordService recordService,
@@ -89,7 +90,8 @@ public class RecordEntryService {
             RecordEntryAssistService entryAssist,
             com.crdp.followup.record.infra.mapper.FollowupRecordMapper recordMapper,
             com.crdp.followup.record.infra.mapper.RecordFeatureMapper features,
-            com.crdp.followup.plan.app.PlanSwitchService planSwitch) {
+            com.crdp.followup.plan.app.PlanSwitchService planSwitch,
+            FollowupSequenceService sequences) {
         this.recordService = recordService;
         this.formService = formService;
         this.fieldHistory = fieldHistory;
@@ -106,6 +108,7 @@ public class RecordEntryService {
         this.recordMapper = recordMapper;
         this.features = features;
         this.planSwitch = planSwitch;
+        this.sequences = sequences;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -136,8 +139,10 @@ public class RecordEntryService {
      * previous（A-FU-027 上一次记录解析：上一次已提交随访，无则基线回落；功能关闭或无启用规则为 null）； E17-T03 起附
      * compareRules（该表单启用规则，前端实时标红与后端保存复算共用同一组规则，tech-plan §11）；E21-T03 起附 device （器械上下文：按 visitDate
      * 匹配当时在用的器械，任务录入回落当前器械；页面以 {@code { device: … }}} 传入 FormRenderer 的 context
-     * 驱动按器械条件显示，C-FU-009）；E21-T11 起附 visitNo（患者随访编号）、sequenceNo（随访序号派生，C-FU-008 自动带入——完整重排随
-     * E21-T09）与 entryDefaults（录入缺省：随访医生 = 当前用户；随访方式缺省取患者默认随访方式，患者表单字段随 E23-T20 字典落地后接入）。
+     * 驱动按器械条件显示，C-FU-009）；E21-T11 起附 visitNo（患者随访编号）、sequenceNo（随访序号，C-FU-008 自动带入）与
+     * entryDefaults（录入缺省：随访医生 = 当前用户；随访方式缺省取患者默认随访方式，患者表单字段随 E23-T20 字典落地后接入）；E21-T09 / C-FU-018 起
+     * sequenceNo 开关开启（record_sequence_no）的已提交记录优先读重排落库值（fu_record.sequence_no）， 草稿与关闭租户（A /
+     * B）维持派生预演（FollowupSequenceService）。
      */
     public record RecordDetailView(
             String id,
@@ -197,7 +202,8 @@ public class RecordEntryService {
     /**
      * 记录详情（40400：记录不存在；context 为 null = 记录未关联任务或越范围不可见，此时附 patient 摘要）。 E17-T03：previous +
      * compareRules 成对下发（功能开关关闭或无启用规则均为 null，记录页正常返回）； E21-T03：device 随记录下发（implant 开关关闭或无匹配器械为
-     * null，提交侧用同一上下文清空隐藏字段）；E21-T11：visitNo / sequenceNo / entryDefaults（C-FU-008 自动带入）。
+     * null，提交侧用同一上下文清空隐藏字段）；E21-T11：visitNo / sequenceNo / entryDefaults（C-FU-008 自动带入）；
+     * E21-T09：sequenceNo 读侧改为 {@link FollowupSequenceService#sequenceNoOfDetail}（落库值优先）。
      */
     public RecordDetailView detail(long recordId) {
         FollowupRecordService.RecordView record = recordService.record(recordId);
@@ -221,9 +227,8 @@ public class RecordEntryService {
                         record.id(), record.patientId(), record.formCode(), record.visitDate()),
                 enabledRules.isEmpty() ? null : enabledRules,
                 entryAssist.visitNoOf(record.patientId()),
-                entryAssist.sequenceNoOf(
-                        record.patientId(),
-                        record.id(),
+                sequences.sequenceNoOfDetail(
+                        record,
                         record.visitDate() != null
                                 ? record.visitDate()
                                 : (context == null ? null : context.planDate())),
@@ -256,6 +261,11 @@ public class RecordEntryService {
         // 排在后面的记录「上一次」变化；无启用规则 / 无命中置 NULL。RECORD_SUBMIT 审计已含本次提交事实，重算不单独写审计。
         compareHighlights.refreshSubmittedRecords(
                 outcome.view().patientId(), outcome.view().formCode());
+        // 随访序号自动重排（E21-T09 / C-FU-018「补录插入后序号自动重排」）：补录插入较早日期后排在插入点之后的
+        // 记录序号整体 +1，内部记录号不变，重排逐行入变更历史（虚拟稳定键 sequence_no）；开关关闭租户跳过
+        sequences.resequence(
+                outcome.view().patientId(),
+                FollowupSequenceService.reasonForSubmit(outcome.view().source()));
         // 字段历史（E11-T06：提交时比较 DRAFT→SUBMITTED 逐字段留痕；隐藏字段清空同样落 diff；E15-T07 起
         // 载体 fu_record，record_type = FU_RECORD）
         List<FieldHistoryService.FieldChange> changes =
@@ -376,6 +386,9 @@ public class RecordEntryService {
         // 对比标红复算（修改参数后重新计算，E17-T04 同一事务；RECORD_UPDATE 审计已含修改事实）
         compareHighlights.refreshSubmittedRecords(
                 outcome.view().patientId(), outcome.view().formCode());
+        // 随访序号重排（E21-T09 / C-FU-018）：表单随访日期字段可能改早 / 改晚，同一事务重排并入变更历史
+        sequences.resequence(
+                outcome.view().patientId(), FollowupSequenceService.REASON_UPDATE_SUBMITTED);
         // 字段级历史（C-FU-026「修改留字段级历史」：提交前值 → 修改后值，原因入留痕行）
         List<FieldHistoryService.FieldChange> changes =
                 fieldHistory.logChanges(
@@ -435,6 +448,8 @@ public class RecordEntryService {
             throw new ApiException(404, 40400, "随访记录不存在（或已被删除）");
         }
         recordMapper.clearTaskRecordLink(recordId);
+        // 随访序号重排（E21-T09 / C-FU-018）：软删行出册后排在后面的记录序号回退，同一事务重排并入变更历史
+        sequences.resequence(record.patientId(), FollowupSequenceService.REASON_DELETE);
         audit.append(
                 AuditEntry.operation("followup", "RECORD_DELETE")
                         .objectType("FU_RECORD")
