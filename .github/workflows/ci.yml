@@ -175,6 +175,13 @@ jobs:
       # 版由人按 W39 前补齐（OQ-133）。
       - name: 等保测评资料校验（E22-T13）
         run: python3 scripts/check_mlps_docs.py
+      # E22-T14：配合测评机构现场测评（W39–W43）。入库工具自检（不联网、dry-run /
+      # MLPS-ID 幂等 / 周次窗口约束 / 虚构数据护栏）+ 配合手册 / 测评问题清单模板 /
+      # 分级映射与整改路由 / 索引接线防漂移校验；现场测评本身由人执行（OQ-137）。
+      - name: 现场测评配合校验（E22-T14）
+        run: |
+          python3 scripts/mlps_onsite_intake.py --selftest
+          python3 scripts/check_mlps_onsite.py
       - name: 关闭依赖容器
         if: always()
         run: docker compose down -v

@@ -1,0 +1,3 @@
+finding_id,title,category,control_point,conclusion,risk_level,asset_type,description,evidence_ref,impact,assessor_suggestion,fix_suggestion
+MLPS-W40-001,上传文件未部署病毒扫描（示例）,安全计算环境,恶意代码防范,部分符合,中,backend,上传类型白名单与大小限制已配置，但未见病毒扫描查杀记录（示例发现，对应自查偏差 D-01 口径）。,测评记录表 A-40-12 / 报告 §6.3,恶意文件可能经上传通道进入归档存储。,部署主机侧或云沙箱查杀并覆盖上传通道。,按 tech-plan §10 方案补云查杀任务（E22-T15，W44 整改窗口）。
+MLPS-W41-002,安全管理制度汇编未签署发布（示例）,安全管理制度,内容与发布,不符合,高,management,制度汇编仅有底稿，未见公司签署发布记录与培训记录（示例发现，对应自查 §3 部分符合项）。,测评记录表 B-41-05 / 报告 §7.1,管理类控制点缺少生效制度支撑，影响综合结论。,完成制度签署发布并留存评审与培训记录。,以 management-policies.md 为底稿走公司签署发布流程（M-14）并补培训记录（管理会诊、产品牵头）。
