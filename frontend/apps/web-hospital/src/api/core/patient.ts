@@ -27,6 +27,7 @@ import type {
   AuditPage,
   BatchResult,
   DoctorOptions,
+  ParamTrendView,
   PatientContactInfo,
   PatientCreatedResult,
   PatientDuplicateCheckResult,
@@ -142,6 +143,18 @@ export function fetchPatientContactInfo(patientId: number | string) {
 export function fetchPatientStatusHistory(patientId: number | string) {
   return requestClient.get<PatientStatusHistoryRow[]>(
     apiPath(`/followup/patients/${patientId}/status-history`),
+  );
+}
+
+/**
+ * E21-T13 / C-FU-012：患者程控参数趋势（GET /patients/{id}/param-trend，权限
+ * followup:patient:view + 开关 param_trend；patient.md §7 契约，后端接口随 C
+ * 后续任务落地，前端按文档先行）。分隔线（器械更换 / 升级）不入本接口——由植入
+ * 记录清单（implant.ts fetchPatientImplants）在页面侧推导。
+ */
+export function fetchPatientParamTrend(patientId: number | string) {
+  return requestClient.get<ParamTrendView>(
+    apiPath(`/followup/patients/${patientId}/param-trend`),
   );
 }
 

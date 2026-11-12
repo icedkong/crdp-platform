@@ -566,7 +566,6 @@ export {
   visitNoError,
   visitNoHelpText,
 } from './patient-registration';
-
 export type {
   DuplicateNotice,
   DuplicatePatientSummary,
@@ -602,6 +601,26 @@ export type {
   PatientSortSpec,
   PatientWardOption,
 } from './patient-search';
+export {
+  TREND_BATTERY_PARAMS,
+  TREND_CHAMBER_OPTIONS,
+  TREND_KIND_OPTIONS,
+  TREND_PARAM_CATALOG,
+  trendKindParamKeys,
+  trendSeriesFor,
+  trendTableRows,
+  trendVisitDates,
+} from './patient-trend';
+
+export type {
+  ParamTrendChamber,
+  ParamTrendKind,
+  ParamTrendPoint,
+  ParamTrendRow,
+  ParamTrendSeries,
+  ParamTrendView,
+  SelectedTrendSeries,
+} from './patient-trend';
 
 export {
   API_ACTION_TYPE_TEXT,
