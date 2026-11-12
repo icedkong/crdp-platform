@@ -54,7 +54,7 @@ class RecordEntryAssistServiceTest {
     private static PatientRecordMetaRow row(
             long id, Long taskId, String source, LocalDate visitDate, String data) {
         return new PatientRecordMetaRow(
-                id, taskId, source, visitDate, "C_PROGRAM_FU", 1, "SUBMITTED", data);
+                id, taskId, source, visitDate, "C_PROGRAM_FU", 1, "SUBMITTED", data, null);
     }
 
     /** 模板带随访日期字段（编码 followup_date → 稳定键 f214，与 death 定位同法）。 */
@@ -191,7 +191,8 @@ class RecordEntryAssistServiceTest {
                                         "C_PROGRAM_FU",
                                         1,
                                         "DRAFT",
-                                        "{}")));
+                                        "{}",
+                                        null)));
 
         assertEquals(1, service.sequenceNoOf(PATIENT, 701L, LocalDate.of(2025, 1, 10)));
         assertEquals(
@@ -207,6 +208,73 @@ class RecordEntryAssistServiceTest {
         when(recordMapper.findPatientRecordMeta(PATIENT)).thenReturn(List.of());
 
         assertNull(service.sequenceNoOf(PATIENT, 701L, null));
+    }
+
+    // ---------------------------------------------- 重排定序（E21-T09 / C-FU-018，供
+    // FollowupSequenceService）
+
+    /** 已提交行按有效随访日期升序（同日 id 小者为先）；草稿与无法定日期的行不在定序列表。 */
+    @Test
+    void submittedRowsOrderedByEffectiveDateSortsAndFilters() {
+        stubFollowupDateField();
+        when(recordMapper.findPatientRecordMeta(PATIENT))
+                .thenReturn(
+                        List.of(
+                                // visit_date 列乱序输入
+                                row(704L, null, "BACKFILL", JUNE_2025, "{}"),
+                                // 任务录入：visit_date 为 NULL，随访日期在表单字段（f214）
+                                row(702L, 9001L, "TASK", null, "{\"f214\":\"2025-02-01\"}"),
+                                row(701L, null, "BACKFILL", LocalDate.of(2025, 1, 10), "{}"),
+                                row(703L, null, "BACKFILL", JUNE_2025, "{}"),
+                                // 草稿不进定序列表
+                                new PatientRecordMetaRow(
+                                        705L,
+                                        null,
+                                        "BACKFILL",
+                                        JULY_2025,
+                                        "C_PROGRAM_FU",
+                                        1,
+                                        "DRAFT",
+                                        "{}",
+                                        null),
+                                // 任务录入且计划日期不可解析（无任务行）→ 不进定序列表
+                                row(706L, 9002L, "TASK", null, "{}")));
+        when(taskQueryMapper.findPlanDatesByIds(List.of(9002L))).thenReturn(List.of());
+
+        List<PatientRecordMetaRow> ordered = service.submittedRowsOrderedByEffectiveDate(PATIENT);
+
+        assertEquals(
+                List.of(701L, 702L, 703L, 704L),
+                ordered.stream().map(PatientRecordMetaRow::id).toList(),
+                "升序、同日 id 小者在前；草稿与无日期行不在列");
+    }
+
+    /** 患者全部已提交行（含无法定日期的行——陈旧序号清理用）。 */
+    @Test
+    void submittedRowsReturnsAllSubmittedIncludingUndateable() {
+        when(recordMapper.findPatientRecordMeta(PATIENT))
+                .thenReturn(
+                        List.of(
+                                row(701L, null, "BACKFILL", JUNE_2025, "{}"),
+                                row(706L, 9002L, "TASK", null, "{}"),
+                                new PatientRecordMetaRow(
+                                        705L,
+                                        null,
+                                        "BACKFILL",
+                                        JULY_2025,
+                                        "C_PROGRAM_FU",
+                                        1,
+                                        "DRAFT",
+                                        "{}",
+                                        null)));
+        when(taskQueryMapper.findPlanDatesByIds(List.of(9002L))).thenReturn(List.of());
+
+        List<PatientRecordMetaRow> submitted = service.submittedRows(PATIENT);
+
+        assertEquals(
+                List.of(701L, 706L),
+                submitted.stream().map(PatientRecordMetaRow::id).toList(),
+                "草稿排除、无日期已提交行保留");
     }
 
     // ---------------------------------------------------------------- 随访编号（C-FU-008 自动带入）

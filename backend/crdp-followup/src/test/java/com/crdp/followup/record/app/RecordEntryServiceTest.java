@@ -71,6 +71,7 @@ class RecordEntryServiceTest {
             mock(com.crdp.followup.record.infra.mapper.RecordFeatureMapper.class);
     private final com.crdp.followup.plan.app.PlanSwitchService planSwitch =
             mock(com.crdp.followup.plan.app.PlanSwitchService.class);
+    private final FollowupSequenceService sequences = mock(FollowupSequenceService.class);
 
     private final RecordEntryService service =
             new RecordEntryService(
@@ -89,7 +90,8 @@ class RecordEntryServiceTest {
                     entryAssist,
                     recordMapper,
                     features,
-                    planSwitch);
+                    planSwitch,
+                    sequences);
 
     private static FollowupTaskQueryMapper.TaskRowRaw taskRow(String status) {
         return new FollowupTaskQueryMapper.TaskRowRaw(
@@ -213,6 +215,19 @@ class RecordEntryServiceTest {
         RecordEntryService.RecordDetailView view = service.detail(701L);
 
         assertNull(view.device(), "无器械上下文时 device 为 null");
+    }
+
+    /**
+     * E21-T09 / C-FU-018：详情 sequenceNo 改经 FollowupSequenceService（开关开启的已提交记录优先读重排落库值），
+     * 有效日期口径不变（visit_date ?? 任务计划日期）。
+     */
+    @Test
+    void detailResolvesSequenceNoViaSequenceService() {
+        when(recordService.record(701L)).thenReturn(record("DRAFT", Map.of("f214", "2026-11-05")));
+        when(taskQueryMapper.taskContextByRecordId(701L)).thenReturn(taskRow("IN_PROGRESS"));
+        when(sequences.sequenceNoOfDetail(any(), eq(LocalDate.of(2026, 11, 5)))).thenReturn(4);
+
+        assertEquals(4, service.detail(701L).sequenceNo());
     }
 
     @Test
@@ -369,6 +384,8 @@ class RecordEntryServiceTest {
         verify(audit).append(any());
         // E17-T04：提交后同一事务重算该患者该表单已提交记录的 fu_record.highlight（保存复算落库）
         verify(compareHighlights).refreshSubmittedRecords(301L, "A_ANNUAL_FU");
+        // E21-T09 / C-FU-018：提交后同一事务重排该患者随访序号（任务录入来源的非补录措辞）
+        verify(sequences).resequence(301L, "提交随访记录，随访序号自动重排（C-FU-018）");
     }
 
     @Test
@@ -462,6 +479,8 @@ class RecordEntryServiceTest {
 
         // E21-T06 / C-FU-007：提交后同事务触发计划切换判定（ERI 标记 / 医生指定），随访日期取 visit_date
         verify(planSwitch).onRecordSubmitted(301L, 701L, LocalDate.of(2026, 11, 5), data);
+        // E21-T09 / C-FU-018：补录插入触发的重排用补录措辞（验收「补录插入后序号自动重排」）
+        verify(sequences).resequence(301L, "补录插入随访记录，随访序号自动重排（C-FU-018）");
     }
 
     @Test
@@ -697,6 +716,8 @@ class RecordEntryServiceTest {
                         eq(ChangeSource.USER),
                         eq("修改已提交随访记录：抄录错误"));
         verify(compareHighlights).refreshSubmittedRecords(301L, "A_ANNUAL_FU");
+        // E21-T09 / C-FU-018：修改已提交记录后同一事务重排（表单随访日期字段可能改早 / 改晚）
+        verify(sequences).resequence(301L, FollowupSequenceService.REASON_UPDATE_SUBMITTED);
         verify(audit).append(any());
     }
 
@@ -711,6 +732,8 @@ class RecordEntryServiceTest {
 
         verify(recordMapper).softDelete(701L, "重复录入", 7L);
         verify(recordMapper).clearTaskRecordLink(701L);
+        // E21-T09 / C-FU-018：软删出册后同一事务重排（后面记录序号回退）
+        verify(sequences).resequence(301L, FollowupSequenceService.REASON_DELETE);
         verify(audit).append(any());
     }
 
