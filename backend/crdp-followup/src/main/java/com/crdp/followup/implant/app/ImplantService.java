@@ -34,7 +34,8 @@ import org.springframework.transaction.annotation.Transactional;
  * §1）。
  *
  * <p>C 规格 §2 / §4：器械信息从患者登记拆出，患者 → 植入记录（1:N）→ 电极（可多根、可跨器械沿用）。本任务（T01）覆盖新建与编辑；更换 / 升级 / 电极修正 /
- * 取出的专用流程与计划切换（C-PAT-006、C-FU-007）随 E21-T02 及后续任务。
+ * 取出的专用流程与计划切换（C-PAT-006、C-FU-007）随 E21-T02 及后续任务。 E21-T05 / C-FU-003：保存后<b>在用</b>的植入记录（新建、登记同建、 更换
+ * / 升级 / 其他专用流程；电极修正与历史补录除外）按器械类型映射自动入组（{@code DevicePlanMappingService}），起算日 = 植入日期。
  *
  * <p>E21-T04（C-FLD-002、C-FLD-003）：起搏器类型、品牌、<b>统一起搏模式</b>（患者登记表与程控记录表两套
  * 选项合并为一个字典，植入记录与程控记录共用，Q08）、植入指征、电极植入部位（按腔室）改读业务字典 （平台库 V70 预置，租户经 cfg_dict 停用平台项 /
@@ -69,18 +70,21 @@ public class ImplantService {
     private final ImplantFeatureMapper features;
     private final ImplantDictPort dicts;
     private final AuditLogger audit;
+    private final com.crdp.followup.plan.app.DevicePlanMappingService planMappings;
 
     public ImplantService(
             ImplantGateway gateway,
             ImplantMapper mapper,
             ImplantFeatureMapper features,
             ImplantDictPort dicts,
-            AuditLogger audit) {
+            AuditLogger audit,
+            com.crdp.followup.plan.app.DevicePlanMappingService planMappings) {
         this.gateway = gateway;
         this.mapper = mapper;
         this.features = features;
         this.dicts = dicts;
         this.audit = audit;
+        this.planMappings = planMappings;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -333,6 +337,12 @@ public class ImplantService {
                                                 "leadCount", normalized.leads().size())))
                         .result(AuditResult.SUCCESS)
                         .build());
+        // E21-T05 / C-FU-003：保存在用（新植 / 接替在用）植入记录后按器械类型映射自动入组，起算日 = 植入日期；
+        // 补录早于在用的历史器械（REPLACED）不触发。业务性跳过在映射服务内部消化，系统级异常同事务回滚
+        if (ImplantCodes.STATUS_ACTIVE.equals(row.getStatus())) {
+            planMappings.autoEnrollByDeviceType(
+                    patientId, normalized.deviceType(), normalized.implantDate());
+        }
         return toRowView(row);
     }
 
@@ -449,8 +459,8 @@ public class ImplantService {
      *   <li>newLeads 新植：新行落库，植入日期缺省 = 手术日期（电极修正的新电极从修正日期起比较参数）。
      * </ul>
      *
-     * <p>baseVersion 乐观锁与「目标必须在用」为 40900；无导线新器械不可携带电极（40001）。随访计划重新起算（C-FU-007）随 E21-T05 / T06
-     * 的映射与切换规则接入。成功写 IMPLANT_REPLACE 审计。
+     * <p>baseVersion 乐观锁与「目标必须在用」为 40900；无导线新器械不可携带电极（40001）。按器械类型映射自动入组已随 E21-T05 接入
+     * （电极修正不切计划）；原入组结束与任务终止等切换规则随 E21-T06（C-FU-007）。成功写 IMPLANT_REPLACE 审计。
      */
     @Transactional
     public ImplantView replace(long implantId, ReplaceRequest request) {
@@ -577,6 +587,12 @@ public class ImplantService {
                                                         normalized.implantDate().toString())))
                         .result(AuditResult.SUCCESS)
                         .build());
+        // E21-T05 / C-FU-003：更换 / 升级 / 其他产生新在用器械，按新器械类型映射自动入组（电极修正不切计划，
+        // C-FU-007 切换表）；患者已在其他计划族在组时映射服务跳过（原入组结束与任务终止随 E21-T06）
+        if (!ImplantCodes.TYPE_LEAD_REVISION.equals(type)) {
+            planMappings.autoEnrollByDeviceType(
+                    target.patientId(), normalized.deviceType(), normalized.implantDate());
+        }
 
         return listUnchecked(target.patientId()).items().stream()
                 .filter(item -> item.id().equals(String.valueOf(row.getId())))

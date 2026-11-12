@@ -78,6 +78,9 @@ public final class ConfigImportSpecs {
                             List.of(),
                             Map.of("plan_id", "fu_plan", "parent_id", "fu_plan_node"),
                             false),
+                    // ---- followup：器械→计划映射（E21-T05 / C-FU-003；device_type 唯一合并，
+                    //      plan_code 为计划族编码引用不改写——fu_plan 整包同序导入后自然一致）----
+                    ConfigImportSpec.copy("fu_plan_mapping", List.of("device_type")),
                     // ---- followup：通知设置（事件规则合并；单行设置表按固定 id upsert）----
                     ConfigImportSpec.copy("ntf_rule", List.of("event_type")),
                     new ConfigImportSpec(

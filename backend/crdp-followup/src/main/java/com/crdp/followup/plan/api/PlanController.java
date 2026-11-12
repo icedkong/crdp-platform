@@ -1,6 +1,7 @@
 package com.crdp.followup.plan.api;
 
 import com.crdp.followup.plan.app.BatchEnrollmentService;
+import com.crdp.followup.plan.app.DevicePlanMappingService;
 import com.crdp.followup.plan.app.PlanEnrollmentService;
 import com.crdp.followup.plan.app.PlanService;
 import com.crdp.followup.plan.domain.PlanNodeRule;
@@ -39,13 +40,17 @@ public class PlanController {
 
     private final BatchEnrollmentService batchService;
 
+    private final DevicePlanMappingService deviceMappingService;
+
     public PlanController(
             PlanService service,
             PlanEnrollmentService enrollmentsService,
-            BatchEnrollmentService batchService) {
+            BatchEnrollmentService batchService,
+            DevicePlanMappingService deviceMappingService) {
         this.service = service;
         this.enrollmentsService = enrollmentsService;
         this.batchService = batchService;
+        this.deviceMappingService = deviceMappingService;
     }
 
     @Operation(summary = "计划列表（A-FU-016/018）：名称、编码、版本、状态（含派生「随访中」RUNNING）、" + "在组人数；每族最新版本在前")
@@ -246,6 +251,38 @@ public class PlanController {
 
     /** 暂停 / 移出原因体（A-PAT-011 须选原因：拒绝随访 / 外地随访 / 其他）。 */
     public record ReasonRequest(@Size(max = 255) String reason) {}
+
+    // ---------------------------------------------------------------- 器械→计划映射（E21-T05 / C-FU-003）
+
+    @Operation(
+            summary =
+                    "器械→计划映射（E21-T05 / C-FU-003，仅医院 C——implant 开关关闭 40301）："
+                            + "全部字典起搏器类型按字典序（含未映射项，planCode 为 null）与计划族名一并下发；"
+                            + "保存植入记录后按映射自动入组，起算日 = 植入日期")
+    @GetMapping("/device-mapping")
+    @RequireModule("followup")
+    @RequiresPermission("followup:plan:edit")
+    public ApiResponse<DevicePlanMappingService.MappingView> deviceMapping() {
+        return ApiResponse.ok(deviceMappingService.mapping());
+    }
+
+    @Operation(
+            summary =
+                    "保存器械→计划映射（整体替换）：{ items: [{ deviceType, planCode?, enabled }] }；"
+                            + "planCode 留空 = 删除该类型映射；字典外类型 / 重复类型 / 不存在的计划族 40001；"
+                            + "写 PLAN_MAPPING_SAVE 审计")
+    @PutMapping("/device-mapping")
+    @RequireModule("followup")
+    @RequiresPermission("followup:plan:edit")
+    public ApiResponse<DevicePlanMappingService.MappingView> saveDeviceMapping(
+            @RequestBody DeviceMappingSaveRequest request) {
+        return ApiResponse.ok(
+                deviceMappingService.save(
+                        request == null || request.items() == null ? List.of() : request.items()));
+    }
+
+    /** 映射保存请求体（整体替换；planCode 留空 = 删除该类型映射）。 */
+    public record DeviceMappingSaveRequest(List<DevicePlanMappingService.MappingInput> items) {}
 
     // ---------------------------------------------------------------- 批量入组（E13-T07 / A-PAT-016）
 

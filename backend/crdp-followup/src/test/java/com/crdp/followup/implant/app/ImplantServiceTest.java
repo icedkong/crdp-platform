@@ -57,9 +57,11 @@ class ImplantServiceTest {
     private final ImplantFeatureMapper features = mock(ImplantFeatureMapper.class);
     private final ImplantDictPort dicts = mock(ImplantDictPort.class);
     private final AuditLogger audit = mock(AuditLogger.class);
+    private final com.crdp.followup.plan.app.DevicePlanMappingService planMappings =
+            mock(com.crdp.followup.plan.app.DevicePlanMappingService.class);
 
     private final ImplantService service =
-            new ImplantService(gateway, mapper, features, dicts, audit);
+            new ImplantService(gateway, mapper, features, dicts, audit, planMappings);
 
     private final AtomicLong idSeq = new AtomicLong(500);
 
@@ -169,6 +171,50 @@ class ImplantServiceTest {
         assertEquals("REPLACED", captor.getValue().getStatus(), "补录早于在用器械的历史记录落已更换");
         assertEquals(LocalDate.parse("2026-03-02"), captor.getValue().getEndDate());
         verify(mapper, never()).supersedeActive(anyLong(), any(), anyString(), anyLong());
+    }
+
+    // ---------------------------------------------------------------- 计划映射自动入组钩子（E21-T05 /
+    // C-FU-003）
+
+    @Test
+    void activeImplantCreateTriggersAutoEnrollmentByDeviceType() {
+        when(gateway.activeImplantOf(PATIENT_ID)).thenReturn(null);
+        when(gateway.implantsOf(PATIENT_ID))
+                .thenReturn(List.of(implant(501L, "ACTIVE", "2018-05-10")));
+        when(gateway.leadsOf(PATIENT_ID)).thenReturn(List.of());
+        when(mapper.findLinksOfPatient(PATIENT_ID)).thenReturn(List.of());
+
+        service.create(PATIENT_ID, payload("FIRST", "2018-05-10", "DDD", List.of()));
+
+        // 保存后（在用）植入记录 → 按器械类型映射自动入组，起算日 = 植入日期（C-FU-003）
+        verify(planMappings)
+                .autoEnrollByDeviceType(PATIENT_ID, "DDD", LocalDate.parse("2018-05-10"));
+    }
+
+    @Test
+    void backdatedHistoricalImplantDoesNotTriggerAutoEnrollment() {
+        ImplantRow current = implant(501L, "ACTIVE", "2026-03-02");
+        when(gateway.activeImplantOf(PATIENT_ID)).thenReturn(current);
+        when(gateway.implantsOf(PATIENT_ID)).thenReturn(List.of(current));
+        when(gateway.leadsOf(PATIENT_ID)).thenReturn(List.of());
+        when(mapper.findLinksOfPatient(PATIENT_ID)).thenReturn(List.of());
+
+        service.create(PATIENT_ID, payload("FIRST", "2018-05-10", "SSI", List.of()));
+
+        // 补录早于在用的历史器械（落已更换）不是当前器械，不触发自动入组
+        verify(planMappings, never()).autoEnrollByDeviceType(anyLong(), anyString(), any());
+    }
+
+    @Test
+    void registrationFirstImplantTriggersAutoEnrollment() {
+        when(gateway.activeImplantOf(PATIENT_ID)).thenReturn(null);
+
+        // C-PAT-001 登记同建首条植入记录：入组随 E21-T05 在同一事务接入（C-FU-003）
+        service.createForRegistration(
+                PATIENT_ID, payload("FIRST", "2026-01-05", "ICD", List.of()), OPERATOR_ID);
+
+        verify(planMappings)
+                .autoEnrollByDeviceType(PATIENT_ID, "ICD", LocalDate.parse("2026-01-05"));
     }
 
     @Test

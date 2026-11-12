@@ -54,6 +54,13 @@ public final class ConfigTableRegistry {
                     // ---- followup：计划模板（A-FLD-014「随访计划模板」）----
                     entry("fu_plan", "followup", "随访计划模板", "计划版本（code + version，每版本一行）"),
                     entry("fu_plan_node", "followup", "随访计划模板", "子计划与节点参数（偏移、提醒、窗口、周期）"),
+                    // ---- followup：器械→计划映射（E21-T05 / C-FU-003；device_type 唯一，
+                    //      plan_code 为计划族编码引用不改写——fu_plan 整包同序导入后自然一致）----
+                    entry(
+                            "fu_plan_mapping",
+                            "followup",
+                            "随访计划模板",
+                            "器械类型→计划族映射（医院 C 按器械类型自动入组，C-FU-003）"),
                     // ---- followup：通知设置（A-FLD-014「通知设置」）----
                     entry("ntf_rule", "followup", "通知设置", "通知规则（逾期、报告单归档等事件的提醒规则）"),
                     entry("ntf_setting", "followup", "通知设置", "通知渠道与全局设置"),

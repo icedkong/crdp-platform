@@ -258,7 +258,7 @@ public class FollowupTaskCreationService {
                         : resolveAndBackfillStartDate(enrollment);
         if (startDate == null) {
             log.debug(
-                    "起算日期不可解析（IMPLANT_DATE 随 E21、CUSTOM 未定义或字段值为空），入组暂不建任务 enrollment={}",
+                    "起算日期不可解析（CUSTOM 未定义、字段值为空或 IMPLANT_DATE 无在用器械），入组暂不建任务 enrollment={}",
                     enrollment.id());
             return new CreationCounts(0, 0, 0);
         }

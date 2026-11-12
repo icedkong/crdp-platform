@@ -305,7 +305,8 @@ public class PatientRegistrationService {
 
         // E14-T05 / Q35 自动入组：出院登记后自动加入预置计划（auto_enroll 的已发布计划），
         // 出院状态为死亡由 plan 侧判定不加入；登记是主操作，自动入组故障不回滚登记（记 FAIL 审计提示人工入组）。
-        // 医院 C 的入组按器械类型映射（C-FU-003）随 E21-T05，此处不套用 A 预置计划
+        // 医院 C 不套用 A 预置计划：入组按器械类型映射（C-FU-003）已随 E21-T05 接入——
+        // createForRegistration 保存在用首条植入记录后在同一事务内经 DevicePlanMappingService 自动入组
         if (!cMode) {
             autoEnrollQuietly(row.getId(), dischargeStatus);
         } else {
