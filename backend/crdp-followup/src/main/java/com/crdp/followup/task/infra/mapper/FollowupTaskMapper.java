@@ -97,6 +97,31 @@ public interface FollowupTaskMapper {
             "UPDATE fu_enrollment SET start_date = #{startDate} WHERE id = #{id} AND start_date IS NULL")
     int backfillStartDate(@Param("id") long id, @Param("startDate") LocalDate startDate);
 
+    /**
+     * 入组的上次实际随访日期快照（E21-T07 / C-FU-006：滚动循环节点 LAST_VISIT 的排期基准，followup V93）。 记录提交时单调推进（只增不减）；
+     * 只取单列日期，无患者数据输出。
+     */
+    @IgnoreScope(reason = "滚动循环排期（E21-T07）读取入组快照列：只取日期值，不输出患者数据；" + "与 next_plan_date 缓存同口径")
+    @Select("SELECT last_visit_date FROM fu_enrollment WHERE id = #{id}")
+    LocalDate findLastVisitDate(@Param("id") long id);
+
+    /** 入组已排任务行的节点 / 次数 / 计划日期（E21-T07 滚动循环推进状态：按节点、次数升序）。只取排期依据列，无患者数据输出。 */
+    record TaskOccurrenceRow(long nodeId, int occurrence, LocalDate planDate) {}
+
+    /** 入组全部任务行的节点 / 次数 / 计划日期（E21-T07：滚动节点「已排最大次数 + 1、最新一次计划日期」；起算重算的 next 缓存共用）。 */
+    @IgnoreScope(
+            reason =
+                    "滚动循环排期（E21-T07）读取入组任务行的次数与计划日期：排期依据列，"
+                            + "不输出患者或任务明细；任务查询侧（E15-T01）按 @DataScope 出行")
+    @Select(
+            """
+            SELECT node_id AS nodeId, occurrence, plan_date AS planDate
+            FROM fu_task
+            WHERE enrollment_id = #{enrollmentId}
+            ORDER BY node_id, occurrence
+            """)
+    List<TaskOccurrenceRow> findTaskOccurrences(@Param("enrollmentId") long enrollmentId);
+
     /** 负责人解析（只取 id）：责任医生（A-PAT-017）与病区默认负责人（OQ-60）。 */
     @IgnoreScope(reason = "调度解析任务负责人（A-FU-009 回落链）：只取两个 id，不输出患者数据")
     @Select(

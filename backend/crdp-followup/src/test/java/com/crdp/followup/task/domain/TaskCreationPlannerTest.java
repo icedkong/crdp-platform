@@ -9,6 +9,7 @@ import com.crdp.followup.task.domain.TaskCreationPlanner.PlanResult;
 import com.crdp.followup.task.domain.TaskCreationPlanner.PlannedTask;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /** E14-T04 / A-FU-001、C-FU-004、A-NFR-006 排期纯函数单测（验收：任务在提醒开始日与窗口开始日较早一天创建）。 全部虚构数据。 */
@@ -261,7 +262,7 @@ class TaskCreationPlannerTest {
 
     @Test
     void lastVisitBasisSchedulesOnlyFirstOccurrence() {
-        // C 常规随访按上次实际随访日期滚动：无已提交记录（fu_record 随 E15）时只排第 1 次（基准回落起算日期）
+        // 无循环输入（LoopBasis.none()，A / B 计划口径）：滚动节点首次回落起算日期，也只排这一次
         NodeDef rolling =
                 node("CYCLE", null, 1, "YEAR", "LAST_VISIT", 1, "YEAR", 7, 7, 7, null, null);
         PlanResult result =
@@ -272,8 +273,9 @@ class TaskCreationPlannerTest {
                         LocalDate.of(2030, 1, 1),
                         LocalDate.of(2026, 4, 1),
                         null);
-        assertEquals(1, result.due().size(), "滚动基准只排第 1 次（后续按实际随访日期，随 E15 接入）");
+        assertEquals(1, result.due().size(), "滚动基准一次只排「下一次」（回落起算日期）");
         assertEquals(1, result.due().get(0).occurrence());
+        assertEquals(LocalDate.of(2027, 3, 15), result.due().get(0).planDate(), "首次 = 起算 + 偏移");
     }
 
     @Test
@@ -301,6 +303,221 @@ class TaskCreationPlannerTest {
                         LocalDate.of(2026, 1, 20),
                         null);
         assertEquals(3, eri.due().size(), "ERI 模式下照排");
+    }
+
+    // ---------------------------------------------------------------- E21-T07 / C-FU-006 滚动循环（ERI
+    // 期 + 常规）
+
+    /** C 预置形态（V91）：固定术后节点（enroll_mode 空）+ 常规滚动（NORMAL）+ ERI 滚动（ERI）。 */
+    private static NodeDef fixedPostopNode(long nodeId, int offsetMonths) {
+        return new NodeDef(
+                nodeId,
+                SUBPLAN_ID,
+                "NODE",
+                null,
+                null,
+                null,
+                null,
+                "PLAN_START",
+                null,
+                null,
+                offsetMonths,
+                "MONTH",
+                7,
+                "DAY",
+                30,
+                "DAY",
+                30,
+                "DAY");
+    }
+
+    private static NodeDef rollingNode(
+            long nodeId, String enrollMode, int offsetMonths, int window) {
+        return new NodeDef(
+                nodeId,
+                SUBPLAN_ID,
+                "NODE",
+                null,
+                null,
+                null,
+                null,
+                "LAST_VISIT",
+                enrollMode,
+                null,
+                offsetMonths,
+                "MONTH",
+                window,
+                "DAY",
+                window,
+                "DAY",
+                window,
+                "DAY");
+    }
+
+    @Test
+    void eriModeSchedulesOnlyEriLoopNodes() {
+        // C-FU-006「后续节点切换为 ERI 期随访循环」（OQ-138⑦）：ERI 模式下固定与常规节点不再排，仅 ERI 循环节点接管
+        List<NodeDef> nodes =
+                List.of(
+                        subplan("FIXED", 1, null, null),
+                        fixedPostopNode(201L, 12),
+                        subplan("CYCLE", null, 12, "MONTH"),
+                        rollingNode(202L, "NORMAL", 12, 30),
+                        rollingNode(203L, "ERI", 1, 7));
+        PlanResult result =
+                TaskCreationPlanner.plan(
+                        nodes,
+                        "ERI",
+                        LocalDate.of(2024, 6, 1),
+                        LocalDate.of(2027, 3, 1),
+                        LocalDate.of(2024, 6, 5),
+                        null,
+                        new TaskCreationPlanner.LoopBasis(LocalDate.of(2027, 2, 1), Map.of()));
+        assertTrue(
+                result.due().stream().allMatch(task -> task.nodeId() == 203L),
+                "ERI 模式只排 ERI 期循环节点（203）");
+        assertEquals(
+                1,
+                result.due().stream().filter(task -> task.nodeId() == 203L).count(),
+                "ERI 循环节点照排（第 1 次 = 2027-02-01 + 1 个月，开启日 02-22 ≤ 03-01）");
+        assertEquals(LocalDate.of(2027, 3, 1), result.due().get(0).planDate());
+    }
+
+    @Test
+    void eriLoopRollsFromLastVisitSnapshot() {
+        // 标 ERI 后切循环（验收）：eri_since 那次随访即滚动基准 → 第 1 次 = 随访日期 + 1 个月、窗口前后 7 天
+        NodeDef eriLoop = rollingNode(203L, "ERI", 1, 7);
+        LocalDate eriVisit = LocalDate.of(2027, 2, 10);
+        PlanResult result =
+                TaskCreationPlanner.plan(
+                        planOf(eriLoop, subplan("CYCLE", null, 1, "MONTH")),
+                        "ERI",
+                        LocalDate.of(2024, 6, 1),
+                        LocalDate.of(2027, 2, 8), // 开启日（03-03）之前：只进 next 缓存
+                        LocalDate.of(2024, 6, 5),
+                        null,
+                        new TaskCreationPlanner.LoopBasis(eriVisit, Map.of()));
+        assertTrue(result.due().isEmpty(), "开启日未到不创建");
+        assertEquals(LocalDate.of(2027, 3, 10), result.next().planDate(), "第 1 次 = 随访日期 + 1 个月");
+        assertEquals(LocalDate.of(2027, 3, 3), result.next().windowStart(), "窗口前 7 天");
+        assertEquals(LocalDate.of(2027, 3, 17), result.next().windowEnd(), "窗口后 7 天");
+        assertEquals(1, result.next().occurrence());
+
+        // 开启日当天（03-03）：创建第 1 次
+        PlanResult opened =
+                TaskCreationPlanner.plan(
+                        planOf(eriLoop, subplan("CYCLE", null, 1, "MONTH")),
+                        "ERI",
+                        LocalDate.of(2024, 6, 1),
+                        LocalDate.of(2027, 3, 3),
+                        LocalDate.of(2024, 6, 5),
+                        null,
+                        new TaskCreationPlanner.LoopBasis(eriVisit, Map.of()));
+        assertEquals(1, opened.due().size(), "开启日当天创建 ERI 循环任务");
+        assertEquals(TaskCreationPlanner.CREATE_NORMAL, opened.due().get(0).createType());
+    }
+
+    @Test
+    void eriLoopAdvancesFromEachSubmittedVisit() {
+        // 第 1 次已排（计划日 03-10）、后续随访 03-12 提交 → 第 2 次 = 03-12 + 1 个月（不是 03-10 + 周期）
+        NodeDef eriLoop = rollingNode(203L, "ERI", 1, 7);
+        PlanResult result =
+                TaskCreationPlanner.plan(
+                        planOf(eriLoop, subplan("CYCLE", null, 1, "MONTH")),
+                        "ERI",
+                        LocalDate.of(2024, 6, 1),
+                        LocalDate.of(2027, 4, 10),
+                        LocalDate.of(2024, 6, 5),
+                        null,
+                        new TaskCreationPlanner.LoopBasis(
+                                LocalDate.of(2027, 3, 12),
+                                Map.of(
+                                        203L,
+                                        new TaskCreationPlanner.LoopBasis.NodeLoopState(
+                                                2, LocalDate.of(2027, 3, 10)))));
+        assertEquals(1, result.due().size(), "滚动一次只排「下一次」");
+        assertEquals(2, result.due().get(0).occurrence(), "下次次数 = 已排最大次数 + 1");
+        assertEquals(
+                LocalDate.of(2027, 4, 12), result.due().get(0).planDate(), "第 2 次 = 上次随访 + 1 个月");
+    }
+
+    @Test
+    void rollingLoopAdvancesByCycleWhenVisitMissed() {
+        // 第 1 次计划日 03-10、无后续随访（快照仍是 02-10）：第 2 次 = 03-10 + 1 个月——错过未执行的次数同样按周期前移，循环不停摆
+        NodeDef eriLoop = rollingNode(203L, "ERI", 1, 7);
+        PlanResult result =
+                TaskCreationPlanner.plan(
+                        planOf(eriLoop, subplan("CYCLE", null, 1, "MONTH")),
+                        "ERI",
+                        LocalDate.of(2024, 6, 1),
+                        LocalDate.of(2027, 4, 10),
+                        LocalDate.of(2024, 6, 5),
+                        null,
+                        new TaskCreationPlanner.LoopBasis(
+                                LocalDate.of(2027, 2, 10),
+                                Map.of(
+                                        203L,
+                                        new TaskCreationPlanner.LoopBasis.NodeLoopState(
+                                                2, LocalDate.of(2027, 3, 10)))));
+        assertEquals(
+                LocalDate.of(2027, 4, 10),
+                result.due().get(0).planDate(),
+                "第 2 次 = 已排第 1 次计划日 + 周期");
+        assertEquals(LocalDate.of(2027, 4, 3), result.due().get(0).windowStart());
+    }
+
+    @Test
+    void rollingFirstOccurrenceSuppressedWhenCoincidingWithFixedNode() {
+        // OQ-139② 首次抑制：常规随访首次回落 = 植入 + 12 个月，与「术后1年」固定节点计划日重合 → 由固定节点承担，滚动不排首次
+        List<NodeDef> nodes =
+                List.of(
+                        subplan("FIXED", 1, null, null),
+                        fixedPostopNode(201L, 12),
+                        subplan("CYCLE", null, 12, "MONTH"),
+                        rollingNode(202L, "NORMAL", 12, 30));
+        PlanResult result =
+                TaskCreationPlanner.plan(
+                        nodes,
+                        "NORMAL",
+                        LocalDate.of(2026, 5, 20),
+                        LocalDate.of(2030, 1, 1),
+                        LocalDate.of(2026, 5, 25),
+                        null);
+        assertTrue(
+                result.due().stream().noneMatch(task -> task.nodeId() == 202L),
+                "与固定节点重合的常规首次被抑制（术后1年承担）");
+        assertTrue(
+                result.due().stream().anyMatch(task -> task.nodeId() == 201L),
+                "固定节点照常排（2027-05-20，窗口未在入组前结束）");
+    }
+
+    @Test
+    void rollingFirstOccurrenceFromBasisWhenNotCoinciding() {
+        // 常规间隔改为 8 个月（可设 6–12）：首次 = 植入 + 8 个月，不与任何固定节点重合 → 照排
+        List<NodeDef> nodes =
+                List.of(
+                        subplan("FIXED", 1, null, null),
+                        fixedPostopNode(201L, 12),
+                        subplan("CYCLE", null, 8, "MONTH"),
+                        rollingNode(202L, "NORMAL", 8, 30));
+        PlanResult result =
+                TaskCreationPlanner.plan(
+                        nodes,
+                        "NORMAL",
+                        LocalDate.of(2026, 5, 20),
+                        LocalDate.of(2027, 3, 1),
+                        LocalDate.of(2026, 5, 25),
+                        null);
+        assertEquals(
+                1, result.due().stream().filter(task -> task.nodeId() == 202L).count(), "不重合的首次照排");
+        assertEquals(
+                LocalDate.of(2027, 1, 20),
+                result.due().stream()
+                        .filter(task -> task.nodeId() == 202L)
+                        .findFirst()
+                        .orElseThrow()
+                        .planDate(),
+                "首次 = 起算 + 8 个月");
     }
 
     // ---------------------------------------------------------------- 多节点 / 跨年闰日

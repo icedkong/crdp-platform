@@ -274,8 +274,9 @@ class TenantOnboardingServiceMySqlIT {
                 // E23-T20 增加 V89（fe_field / fe_form_version_field 字典绑定与带入标记两列）、
                 // V90（医院 C 字段字典）与 V91（医院 C 两套预置计划）。
                 // E21-T13 增加 V92（cfg_feature 参数趋势开关 param_trend，默认 0）。
+                // E21-T07 增加 V93（fu_enrollment.last_visit_date 滚动循环排期基准快照）。
                 // 此处随迁移清单维护
-                java.util.stream.IntStream.rangeClosed(1, 92).mapToObj(String::valueOf).toList(),
+                java.util.stream.IntStream.rangeClosed(1, 93).mapToObj(String::valueOf).toList(),
                 root.queryForList(
                         "SELECT version FROM "
                                 + DB

@@ -71,6 +71,7 @@ class PlanSwitchIT {
 
     @Autowired private TestRestTemplate rest;
     @Autowired private JdbcTemplate jdbc;
+    @Autowired private com.crdp.followup.task.app.FollowupTaskCreationService creationService;
 
     /** V86 预置映射行快照（PUT 整体替换前留存，收尾还原）。 */
     private List<Map<String, Object>> mappingSnapshot;
@@ -165,7 +166,12 @@ class PlanSwitchIT {
                     jdbc.update("DELETE FROM fe_option WHERE set_code = ?", ERI_SET);
                     jdbc.update("DELETE FROM fe_option_set WHERE code = ?", ERI_SET);
                     jdbc.update("DELETE FROM fe_form WHERE code = ?", FORM_CODE);
+                    // E21-T07 起本 IT 会跑任务创建作业（历史逻辑日）：清执行记录，避免补跑区间影响其他 IT
+                    jdbc.update("DELETE FROM job_tenant_run WHERE job_code = 'fu-task-create'");
                 });
+        runInTenant(
+                "demob",
+                () -> jdbc.update("DELETE FROM job_tenant_run WHERE job_code = 'fu-task-create'"));
     }
 
     @AfterAll
@@ -507,6 +513,204 @@ class PlanSwitchIT {
                 "取出不落患者级「已终止」（与 A-FU-008 移出区分）");
     }
 
+    // ---------------------------------------------------------------- E21-T07 / C-FU-006 接近 ERI
+    // 加密随访循环
+
+    @Test
+    void eriLoopSchedulesMonthlyFromVisitDateAndEndsOnReplacement() {
+        LocalDate today = LocalDate.now();
+        enableImplant();
+        String admin = adminToken();
+        publishedEriLoopPlan(admin, PACER_CODE);
+        publishedPlan(admin, ICD_CODE, "示例 IT ICD/CRT-D 术后随访");
+        assertEquals(
+                0, code(put("/api/hospital/followup/plans/device-mapping", admin, mappingBody())));
+
+        // 植入 T−6 月 −40 天（历史患者，C-PAT-008）：固定「术后 6 个月」窗口在入组前已结束（SKIP，Q14）、
+        // 常规随访首次回落与固定节点重合被抑制（OQ-139②）；把入组 created_at 回拨到植入日，复现「早已建档」的时间线
+        LocalDate implant = today.minusMonths(6).minusDays(40);
+        long patientId = registerPatient(admin, "10", "DDD", implant.toString());
+        long enrollmentId = enrollmentIdOf(patientId);
+        assertEquals(
+                0,
+                runInTenant(
+                        "demoa",
+                        () ->
+                                jdbc.queryForObject(
+                                        "SELECT COUNT(*) FROM fu_task WHERE enrollment_id = ?",
+                                        Integer.class,
+                                        enrollmentId)),
+                "入组当天无任务（固定节点已过窗口、常规首次抑制）");
+        runInTenant(
+                "demoa",
+                () ->
+                        jdbc.update(
+                                "UPDATE fu_enrollment SET created_at = ? WHERE id = ?",
+                                java.sql.Timestamp.valueOf(implant.atStartOfDay()),
+                                enrollmentId));
+
+        // 标 ERI（SW-7 路径）：mode → ERI、eri_since = 该次随访日期，last_visit_date 快照同值（V93）
+        LocalDate eriVisit = today.minusMonths(2);
+        submitBackfillRecord(admin, patientId, eriVisit, Map.of("f323", 1));
+        Map<String, Object> eriRow = enrollmentRow(enrollmentId);
+        assertEquals("ERI", eriRow.get("mode"), "标 ERI 后切循环（C-FU-006）");
+        assertEquals(java.sql.Date.valueOf(eriVisit), eriRow.get("eri_since"));
+        assertEquals(
+                java.sql.Date.valueOf(eriVisit),
+                eriRow.get("last_visit_date"),
+                "滚动基准快照 = 该次随访日期（E21-T07）");
+
+        // ERI 循环第 1 次 = 随访日期 + 1 个月、窗口前后 7 天；开启日（计划 −7 天）跑作业即创建
+        LocalDate firstPlan = eriVisit.plusMonths(1);
+        creationService.runForDate(firstPlan.minusDays(7));
+        Map<String, Object> firstEriTask = eriLoopTask(enrollmentId, 1, "ERI 期循环第 1 次任务应创建");
+        assertEquals(java.sql.Date.valueOf(firstPlan), firstEriTask.get("plan_date"));
+        assertEquals(
+                java.sql.Date.valueOf(firstPlan.minusDays(7)), firstEriTask.get("window_start"));
+        assertEquals(java.sql.Date.valueOf(firstPlan.plusDays(7)), firstEriTask.get("window_end"));
+        assertEquals("PENDING", firstEriTask.get("status"));
+        assertEquals(
+                1,
+                runInTenant(
+                        "demoa",
+                        () ->
+                                jdbc.queryForObject(
+                                        "SELECT COUNT(*) FROM fu_task WHERE enrollment_id = ?",
+                                        Integer.class,
+                                        enrollmentId)),
+                "ERI 模式只排 ERI 循环节点（固定 / 常规不再创建，OQ-138⑦）");
+
+        // 第 2 次随访（窗口内、晚于第 1 次计划日）后循环从该次随访滚动：第 2 次 = 该次 + 1 个月（不是第 1 次计划日 + 周期）
+        LocalDate secondVisit = today.minusDays(25);
+        submitBackfillRecord(admin, patientId, secondVisit, Map.of("f323", 1));
+        assertEquals(
+                java.sql.Date.valueOf(secondVisit),
+                enrollmentRow(enrollmentId).get("last_visit_date"),
+                "快照随每次随访单调推进");
+        LocalDate secondPlan = secondVisit.plusMonths(1);
+        creationService.runForDate(secondPlan.minusDays(7));
+        Map<String, Object> secondEriTask =
+                eriLoopTask(enrollmentId, 2, "ERI 期循环第 2 次任务应按上次随访滚动创建");
+        assertEquals(java.sql.Date.valueOf(secondPlan), secondEriTask.get("plan_date"));
+        long pacerPlanId = ((Number) enrollmentRow(enrollmentId).get("plan_id")).longValue();
+        assertEquals(
+                2,
+                runInTenant(
+                        "demoa",
+                        () ->
+                                jdbc.queryForObject(
+                                        "SELECT COUNT(*) FROM fu_task WHERE enrollment_id = ?"
+                                                + " AND node_id = (SELECT id FROM fu_plan_node"
+                                                + " WHERE plan_id = ? AND node_type = 'NODE'"
+                                                + " AND name = 'ERI期随访（示例）')",
+                                        Integer.class,
+                                        enrollmentId,
+                                        pacerPlanId)),
+                "ERI 循环共 2 次");
+
+        // 更换器械（同类型电池更换，SW-4）：ERI 期循环结束——原入组 SWITCHED、未完成任务终止，新入组常规模式不再排 ERI 循环
+        String replaceDate = today.minusDays(1).toString();
+        replace(admin, patientId, "REPLACE", replaceDate, "DDD");
+        assertEquals("SWITCHED", enrollmentRow(enrollmentId).get("status"), "更换器械后 ERI 循环入组结束");
+        long terminated =
+                runInTenant(
+                        "demoa",
+                        () ->
+                                jdbc.queryForObject(
+                                        "SELECT COUNT(*) FROM fu_task WHERE enrollment_id = ?"
+                                                + " AND status = 'TERMINATED'",
+                                        Integer.class,
+                                        enrollmentId));
+        assertEquals(2, terminated, "两次 ERI 循环任务随切换终止并记录原因（C-FU-007）");
+        Map<String, Object> current = enrollmentOf(patientId);
+        assertNotNull(current, "同类型更换重新入组（计划类型不变）");
+        assertEquals("NORMAL", current.get("mode"), "新入组回到常规模式（ERI 循环结束）");
+        long currentEnrollmentId = ((Number) current.get("id")).longValue();
+
+        creationService.runForDate(today);
+        assertEquals(
+                0,
+                runInTenant(
+                        "demoa",
+                        () ->
+                                jdbc.queryForObject(
+                                        "SELECT COUNT(*) FROM fu_task WHERE enrollment_id = ?"
+                                                + " AND node_id = (SELECT id FROM fu_plan_node"
+                                                + " WHERE plan_id = ? AND node_type = 'NODE'"
+                                                + " AND name = 'ERI期随访（示例）')",
+                                        Integer.class,
+                                        currentEnrollmentId,
+                                        current.get("plan_id"))),
+                "更换器械后不再创建 ERI 循环任务（验收「更换器械后结束」）");
+        assertEquals(
+                0,
+                runInTenant(
+                        "demoa",
+                        () ->
+                                jdbc.queryForObject(
+                                        "SELECT COUNT(*) FROM fu_task WHERE enrollment_id = ?",
+                                        Integer.class,
+                                        currentEnrollmentId)),
+                "新入组术后节点与常规首次均未到开启日 / 被抑制，无任务");
+    }
+
+    @Test
+    void eriClearedRoutineLoopRollsFromLastVisit() {
+        // SW-8 解除 + E21-T07 常规滚动：ERI 更正为正常后回常规模式，常规随访从上次实际随访日期滚动（+6 个月）
+        LocalDate today = LocalDate.now();
+        enableImplant();
+        String admin = adminToken();
+        publishedEriLoopPlan(admin, PACER_CODE);
+        publishedPlan(admin, ICD_CODE, "示例 IT ICD/CRT-D 术后随访");
+        assertEquals(
+                0, code(put("/api/hospital/followup/plans/device-mapping", admin, mappingBody())));
+
+        LocalDate implant = today.minusMonths(8).minusDays(10);
+        long patientId = registerPatient(admin, "11", "DDD", implant.toString());
+        long enrollmentId = enrollmentIdOf(patientId);
+
+        // 先标 ERI 再更正为正常（f323 = 0 且电池寿命不低，OQ-137）：模式回 NORMAL，快照停在解除那次随访
+        LocalDate eriVisit = today.minusMonths(6).minusDays(10);
+        submitBackfillRecord(admin, patientId, eriVisit, Map.of("f323", 1));
+        assertEquals("ERI", enrollmentRow(enrollmentId).get("mode"));
+        LocalDate clearedVisit = today.minusMonths(6).plusDays(13);
+        submitBackfillRecord(admin, patientId, clearedVisit, Map.of("f323", 0));
+        Map<String, Object> restored = enrollmentRow(enrollmentId);
+        assertEquals("NORMAL", restored.get("mode"), "ERI 标记解除恢复常规间隔（SW-8）");
+        assertEquals(java.sql.Date.valueOf(clearedVisit), restored.get("last_visit_date"));
+
+        // 常规随访第 1 次 = 解除那次随访 + 6 个月（可设 3–6 / 6–12 个月由租户在计划版本调整，A-FU-018）；开启日（−14 天）创建
+        LocalDate routinePlan = clearedVisit.plusMonths(6);
+        creationService.runForDate(routinePlan.minusDays(14));
+        Map<String, Object> routineTask =
+                runInTenant(
+                        "demoa",
+                        () ->
+                                jdbc.queryForObject(
+                                        "SELECT t.* FROM fu_task t JOIN fu_plan_node n"
+                                                + " ON n.id = t.node_id"
+                                                + " WHERE t.enrollment_id = ? AND n.name ="
+                                                + " '常规随访（示例）'",
+                                        PlanSwitchIT::resultMap,
+                                        enrollmentId));
+        assertNotNull(routineTask, "常规随访按上次随访滚动创建（E21-T07）");
+        assertEquals(java.sql.Date.valueOf(routinePlan), routineTask.get("plan_date"));
+        assertEquals(1, ((Number) routineTask.get("occurrence")).intValue());
+        assertEquals(
+                0,
+                runInTenant(
+                        "demoa",
+                        () ->
+                                jdbc.queryForObject(
+                                        "SELECT COUNT(*) FROM fu_task t JOIN fu_plan_node n"
+                                                + " ON n.id = t.node_id"
+                                                + " WHERE t.enrollment_id = ? AND n.name ="
+                                                + " 'ERI期随访（示例）'",
+                                        Integer.class,
+                                        enrollmentId)),
+                "常规模式不排 ERI 循环节点");
+    }
+
     // ---------------------------------------------------------------- 辅助
 
     private void enableImplant() {
@@ -576,6 +780,114 @@ class PlanSwitchIT {
                 code(post("/api/hospital/followup/plans/" + planId + "/publish", token, Map.of())),
                 "发布失败");
         return planId;
+    }
+
+    /**
+     * E21-T07 用 C 预置形态计划（V91 同构）：FIXED×1「术后6个月」（PLAN_START +6 月、±30 天）+「常规随访」滚动（LAST_VISIT +6 月、±14
+     * 天、enroll_mode NORMAL）+「ERI期随访」滚动（LAST_VISIT +1 月、±7 天、enroll_mode ERI）。 节点名被用例按名定位，勿改。
+     */
+    private long publishedEriLoopPlan(String token, String code) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("code", code);
+        body.put("name", "示例 IT 起搏器术后随访（含 ERI 循环）");
+        body.put("startDateField", "IMPLANT_DATE");
+        body.put("cycleType", "ONGOING");
+        body.put("autoEnroll", false);
+        long planId = idOf(post("/api/hospital/followup/plans", token, body));
+
+        List<Map<String, Object>> nodes = new ArrayList<>();
+        Map<String, Object> s1 = new HashMap<>();
+        s1.put("key", "s1");
+        s1.put("name", "术后随访（示例）");
+        s1.put("repeatMode", "FIXED");
+        s1.put("repeatCount", 1);
+        s1.put("sortNo", 10);
+        nodes.add(s1);
+        nodes.add(eriLoopNode("n1", "s1", "术后6个月（示例）", "PLAN_START", 6, 14, 30, 30, null));
+        Map<String, Object> s2 = new HashMap<>();
+        s2.put("key", "s2");
+        s2.put("name", "常规随访（示例）");
+        s2.put("repeatMode", "CYCLE");
+        s2.put("cycleValue", 6);
+        s2.put("cycleUnit", "MONTH");
+        s2.put("sortNo", 20);
+        nodes.add(s2);
+        nodes.add(eriLoopNode("n2", "s2", "常规随访（示例）", "LAST_VISIT", 6, 14, 14, 14, "NORMAL"));
+        Map<String, Object> s3 = new HashMap<>();
+        s3.put("key", "s3");
+        s3.put("name", "ERI期随访（示例）");
+        s3.put("repeatMode", "CYCLE");
+        s3.put("cycleValue", 1);
+        s3.put("cycleUnit", "MONTH");
+        s3.put("sortNo", 30);
+        nodes.add(s3);
+        nodes.add(eriLoopNode("n3", "s3", "ERI期随访（示例）", "LAST_VISIT", 1, 7, 7, 7, "ERI"));
+        assertEquals(
+                0,
+                code(
+                        put(
+                                "/api/hospital/followup/plans/" + planId + "/nodes",
+                                token,
+                                Map.of("baseVersion", 0, "nodes", nodes))),
+                "保存 ERI 循环计划节点失败");
+        assertEquals(
+                0,
+                code(post("/api/hospital/followup/plans/" + planId + "/publish", token, Map.of())),
+                "发布失败");
+        return planId;
+    }
+
+    /** 该入组 ERI 循环节点第 occurrence 次任务行（无则断言失败并返回 null）。 */
+    private Map<String, Object> eriLoopTask(long enrollmentId, int occurrence, String message) {
+        Map<String, Object> row =
+                runInTenant(
+                        "demoa",
+                        () ->
+                                jdbc.query(
+                                        "SELECT t.* FROM fu_task t JOIN fu_plan_node n"
+                                                + " ON n.id = t.node_id"
+                                                + " WHERE t.enrollment_id = ? AND n.name ="
+                                                + " 'ERI期随访（示例）' AND t.occurrence = ?",
+                                        rs -> rs.next() ? resultMap(rs, 0) : null,
+                                        enrollmentId,
+                                        occurrence));
+        assertNotNull(row, message);
+        return row;
+    }
+
+    /** ERI 循环计划的节点行（单位恒为 MONTH / DAY，enrollMode 可空）。 */
+    private static Map<String, Object> eriLoopNode(
+            String key,
+            String parentKey,
+            String name,
+            String basis,
+            int offsetMonths,
+            int remindDays,
+            int windowBefore,
+            int windowAfter,
+            String enrollMode) {
+        Map<String, Object> node = new HashMap<>();
+        node.put("key", key);
+        node.put("parentKey", parentKey);
+        node.put("name", name);
+        node.put("basis", basis);
+        node.put("offsetValue", offsetMonths);
+        node.put("offsetUnit", "MONTH");
+        node.put("remindValue", remindDays);
+        node.put("remindUnit", "DAY");
+        node.put("windowBeforeValue", windowBefore);
+        node.put("windowBeforeUnit", "DAY");
+        node.put("windowAfterValue", windowAfter);
+        node.put("windowAfterUnit", "DAY");
+        node.put("taskType", "FORM");
+        node.put("ownerType", "WARD_DEFAULT");
+        node.put("formCode", "fu_postop_v1");
+        node.put("passedWindowAction", "SKIP");
+        if (enrollMode != null) {
+            node.put("enrollMode", enrollMode);
+        }
+        node.put("sortNo", 10);
+        return node;
     }
 
     /** C 登记并返回患者 id（implant 开关开启时同建首条植入记录，ImplantRecordIT 同款请求体）。 */
