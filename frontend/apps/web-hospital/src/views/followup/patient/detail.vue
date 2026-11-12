@@ -97,6 +97,7 @@ import FollowupTimeline from '#/components/followup/followup-timeline.vue';
 import ImplantSection from '#/components/followup/implant-section.vue';
 import InlineAttachmentStrip from '#/components/followup/inline-attachment-strip.vue';
 import MobileUploadQrModal from '#/components/followup/mobile-upload-qr.vue';
+import ParamTrend from '#/components/followup/param-trend.vue';
 import PatientHeader from '#/components/followup/patient-header.vue';
 import ReasonModal from '#/components/followup/reason-modal.vue';
 import {
@@ -152,6 +153,7 @@ defineOptions({ name: 'FollowupPatientDetail' });
  *
  * G3（M3 审查）/ pages.md §4.1：报告单页签随功能开关 report 显隐
  * （GET /auth/features，components.md §1.3 useFeature；后端仍按开关 40301 兜底）；
+ * E21-T13 / C-FU-012：参数趋势页签随 param_trend 开关显隐（折线图 + 历次参数表）；
  * 「操作日志」页签总是显示（只读，pages.md §4.9：时间 / 操作人 / 操作 / 详情，分页 20）。
  *
  * E24-T04 / NFR-RESP-002（pages.md §4.10 手机行）：页签横向滚动；沟通记录、
@@ -165,6 +167,8 @@ const { hasPermission } = usePermission();
 // G3：报告单页签按租户功能开关 report 显隐（E19-T04 useFeature；关闭后后端 40301）
 const { isEnabled: isFeatureEnabled } = useFeature();
 const reportTabVisible = computed(() => isFeatureEnabled('report'));
+// E21-T13 / C-FU-012：参数趋势页签随 param_trend 开关显隐（关闭直接隐藏，后端 40301 兜底）
+const trendTabVisible = computed(() => isFeatureEnabled('param_trend'));
 // E21-T01 / C-PAT-004、C-PAT-005：基线资料页签的植入记录区块随 implant 开关显隐
 // （pages.md §4.4；关闭直接隐藏，后端仍按开关 40301 兜底）
 const implantSectionVisible = computed(() => isFeatureEnabled('implant'));
@@ -181,17 +185,27 @@ const timeline = ref<PatientTimelineEntry[]>([]);
 const initialTab = Array.isArray(route.query.tab)
   ? route.query.tab[0]
   : route.query.tab;
-const tab = ref(initialPatientDetailTab(initialTab, reportTabVisible.value));
-
-/** 页签清单（G3：报告单开关关闭直接隐藏，其余总是显示；测试见 detail-tabs-logic.spec.ts）。 */
-const visibleTabs = computed(() =>
-  visiblePatientDetailTabs(reportTabVisible.value),
+const tab = ref(
+  initialPatientDetailTab(
+    initialTab,
+    reportTabVisible.value,
+    trendTabVisible.value,
+  ),
 );
 
-// G3：开关关闭时报告单页签不渲染——?tab=reports 直链 / 关闭瞬间的当前页签回落基线资料
-watch([tab, reportTabVisible], ([current, visible]) => {
-  if (current === 'reports' && !visible) tab.value = 'baseline';
-});
+/** 页签清单（G3：报告单 / 参数趋势开关关闭直接隐藏，其余总是显示；测试见 detail-tabs-logic.spec.ts）。 */
+const visibleTabs = computed(() =>
+  visiblePatientDetailTabs(reportTabVisible.value, trendTabVisible.value),
+);
+
+// G3：开关关闭时页签不渲染——?tab= 直链 / 关闭瞬间的当前页签回落基线资料
+watch(
+  [tab, reportTabVisible, trendTabVisible],
+  ([current, reportOn, trendOn]) => {
+    if (current === 'reports' && !reportOn) tab.value = 'baseline';
+    if (current === 'trend' && !trendOn) tab.value = 'baseline';
+  },
+);
 
 // ---------------------------------------------------------------- E13-T02 基线分节与锁定
 
@@ -1584,6 +1598,12 @@ const timelineLegendNote =
           </p>
         </div>
       </div>
+    </div>
+
+    <!-- E21-T13 / C-FU-012：参数趋势页签（折线图 + 历次参数表；组件内自加载，
+         页签渲染即激活；左栏无附件导航，pages.md §4.1「无」） -->
+    <div v-else-if="tab === 'trend'" class="main" data-testid="trend-panel">
+      <ParamTrend :patient-id="patientId" />
     </div>
 
     <div
