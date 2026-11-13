@@ -22,6 +22,7 @@ import {
   recordRouteTarget,
   scopeOfQuery,
   statusOfQuery,
+  taskColumns,
 } from './logic';
 
 const row = (over: Partial<TaskRow>): TaskRow => ({
@@ -277,5 +278,69 @@ describe('dateRangeOfQuery / 窗口与完成时间钻取（E19-T03 首页任务�
       windowFrom: '2026-11-08',
       windowTo: '2026-11-08',
     });
+  });
+});
+
+/* ----------------------------------------------------------------------
+ * E21-T23 / C-FU-020 · 列定义：implant 开关开启（医院 C）的桌面列表插入
+ * 当前器械类型 / 随访时间点 / 上次标红三列；A / B 与平板主要列不插。
+ */
+describe('taskColumns（E21-T23 / C-FU-020 C 三列）', () => {
+  it('桌面 + implant 开启：在节点后插入当前器械类型 / 随访时间点 / 上次标红三列', () => {
+    const columns = taskColumns({ implantEnabled: true, tablet: false });
+    const names = columns.map((column) => column.dataIndex);
+    expect(names).toEqual([
+      'index',
+      'patientName',
+      'wardName',
+      'nodeName',
+      'deviceType',
+      'timepoint',
+      'lastHighlightCount',
+      'planDate',
+      'window',
+      'status',
+      'assigneeName',
+      'lastContact',
+      'action',
+    ]);
+    expect(
+      columns.find((column) => column.dataIndex === 'deviceType')?.title,
+    ).toBe('当前器械类型');
+    expect(
+      columns.find((column) => column.dataIndex === 'timepoint')?.title,
+    ).toBe('随访时间点');
+  });
+
+  it('桌面 + implant 关闭（A / B）：三列不出，列序与 E21 前一致', () => {
+    const names = taskColumns({
+      implantEnabled: false,
+      tablet: false,
+    }).map((column) => column.dataIndex);
+    expect(names).not.toContain('deviceType');
+    expect(names).not.toContain('timepoint');
+    expect(names).not.toContain('lastHighlightCount');
+    expect(names).toEqual([
+      'index',
+      'patientName',
+      'wardName',
+      'nodeName',
+      'planDate',
+      'window',
+      'status',
+      'assigneeName',
+      'lastContact',
+      'action',
+    ]);
+  });
+
+  it('平板保留主要列：implant 开启也不插 C 三列', () => {
+    const names = taskColumns({ implantEnabled: true, tablet: true }).map(
+      (column) => column.dataIndex,
+    );
+    expect(names).not.toContain('deviceType');
+    expect(names).not.toContain('timepoint');
+    expect(names).not.toContain('lastHighlightCount');
+    expect(names.at(-1)).toBe('action');
   });
 });

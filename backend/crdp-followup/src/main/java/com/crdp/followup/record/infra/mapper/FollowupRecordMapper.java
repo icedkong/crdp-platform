@@ -169,6 +169,47 @@ public interface FollowupRecordMapper {
             """)
     List<RecordRowRaw> findTasklessByPatient(@Param("patientId") long patientId);
 
+    // ---------------------------------------------------------------- 对比标红命中计数（E21-T23 /
+    // C-FU-020、C-FU-023）
+
+    /** 各患者「上次随访标红项数」行（hitCount = JSON_LENGTH(highlight)，最近记录无命中为 NULL）。 */
+    record PatientHighlightRow(long patientId, Integer hitCount) {}
+
+    /**
+     * 各患者最近一条已提交随访记录的标红命中数（E21-T23 / C-FU-020 任务列表 C 列「上次随访标红项数」）： 最近 = 有效随访日期 visit_date 最大（NULL
+     * 最后，OQ-146⑤ 同口径近似）、同日 id 大者；软删行不在册（deleted = 0，V87）。 任务列表只出计数，命中明细不拆。
+     */
+    @com.crdp.framework.datascope.DataScope(resource = "patient")
+    @Select(
+            """
+            <script>
+            SELECT patientId, hitCount FROM (
+              SELECT r.patient_id AS patientId, JSON_LENGTH(r.highlight) AS hitCount,
+                     ROW_NUMBER() OVER (PARTITION BY r.patient_id
+                                        ORDER BY r.visit_date IS NULL, r.visit_date DESC, r.id DESC) AS rn
+              FROM fu_record r
+              WHERE r.status = 'SUBMITTED' AND r.deleted = 0
+                AND r.patient_id IN
+                <foreach collection="patientIds" item="item" open="(" separator="," close=")">#{item}</foreach>
+            ) ranked WHERE rn = 1
+            </script>
+            """)
+    List<PatientHighlightRow> latestSubmittedHighlightCounts(
+            @Param("patientIds") List<Long> patientIds);
+
+    /** 单条记录的标红命中数行（E21-T23 / C-FU-023 时间轴节点「标红 n」）。 */
+    record RecordHighlightRow(long id, Integer hitCount) {}
+
+    /** 患者各记录的标红命中数（只取 highlight 非空行——E17-T04 命中数组；软删行不在册）。 */
+    @com.crdp.framework.datascope.DataScope(resource = "patient")
+    @Select(
+            """
+            SELECT id, JSON_LENGTH(highlight) AS hitCount
+            FROM fu_record
+            WHERE patient_id = #{patientId} AND deleted = 0 AND highlight IS NOT NULL
+            """)
+    List<RecordHighlightRow> findHighlightCountsByPatient(@Param("patientId") long patientId);
+
     /**
      * 患者随访记录元信息行（E21-T11：重复提示 C-FU-024 与随访序号 C-FU-008 的派生口径；data 供表单随访日期回退； sequenceNo 供 E21-T09 /
      * C-FU-018 重排比较）。

@@ -1,6 +1,7 @@
 package com.crdp.server.followup;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -635,6 +636,74 @@ class CSwitchAcceptanceIT {
     }
 
     // ---------------------------------------------------------------- C-ACC-18 机器面：切换后时间轴连续
+
+    /** E21-T23（C-FU-020 / C-FU-023）：时间轴器械事件菱形 + 标红项数、任务列表 C 三列（随包产品配置链端到端）。 */
+    @Test
+    void timelineAndTaskListCarryCColumnsAcrossPlanSwitch() {
+        String admin = adminToken();
+        LocalDate today = LocalDate.now();
+        LocalDate implant = today.minusMonths(6);
+        long patientId = registerPatient(admin, "23", "DDD", implant);
+
+        // 一条已提交补录记录；直接注入 E17-T04 语义的命中数组（提交重算由 CompareHighlightIT 锁定，此处锁 E21-T23 读取侧）
+        String recordId = submitProgramRecord(admin, patientId, today.minusDays(40), Map.of(), 6);
+        runInTenant(
+                "demoa",
+                () ->
+                        jdbc.update(
+                                "UPDATE fu_record SET highlight = ? WHERE id = ?",
+                                "[{\"ruleId\":9001,\"key\":\"f310\",\"message\":\"示例标红（E21-T23 用例）\"}]",
+                                Long.parseLong(recordId)));
+
+        LocalDate upgrade = today.minusDays(5);
+        replace(admin, patientId, "UPGRADE", upgrade, "CRT_D");
+
+        Map<?, ?> timeline =
+                data(
+                        get(
+                                "/api/hospital/followup/patients/"
+                                        + patientId
+                                        + "/followup-timeline",
+                                admin));
+        List<Map<?, ?>> items = (List<Map<?, ?>>) timeline.get("items");
+
+        // 器械事件（菱形）：首次植入（入组语境）与升级（转入语境，C-FU-007）都插在时间线上
+        List<Map<?, ?>> events = nodesOf(items, "IMPLANT");
+        assertEquals(2, events.size(), "每条植入记录一个器械事件节点");
+        assertEquals("首次植入 · 双腔起搏器(DDD)", events.get(0).get("label"));
+        assertEquals("入组“普通起搏器术后随访”", events.get(0).get("note"));
+        assertEquals("升级 · CRT-D", events.get(1).get("label"));
+        assertTrue(
+                String.valueOf(events.get(1).get("note")).contains("ICD/CRT-D 术后随访"),
+                "升级 note 带转入语境：" + events.get(1).get("note"));
+
+        // 补录节点带标红项数（C-FU-023「各次随访……每次的标红项数」，含补录）
+        Map<?, ?> backfill = nodeOf(items, "BACKFILL");
+        assertNotNull(backfill, "补录记录在轴上");
+        assertEquals(1, backfill.get("highlightCount"), "标红项数 = 注入命中数");
+
+        // 任务列表 C 三列（C-FU-020）：当前器械 / 随访时间点 / 上次随访标红项数
+        Map<?, ?> searched =
+                data(
+                        post(
+                                "/api/hospital/followup/tasks/search",
+                                admin,
+                                Map.of("scope", "ALL", "pageNo", 1, "pageSize", 100)));
+        List<Map<?, ?>> rows =
+                ((List<Map<?, ?>>) searched.get("items"))
+                        .stream()
+                                .filter(
+                                        row ->
+                                                String.valueOf(row.get("patientId"))
+                                                        .equals(String.valueOf(patientId)))
+                                .collect(java.util.stream.Collectors.toList());
+        assertFalse(rows.isEmpty(), "该患者任务在列表中");
+        for (Map<?, ?> row : rows) {
+            assertEquals("CRT-D", row.get("deviceType"), "当前器械类型 = 升级后在用 CRT-D 字典显示名");
+            assertNotNull(row.get("timepoint"), "随访时间点 = 任务节点名（如术后1个月 / ERI期随访）");
+            assertEquals(1, row.get("lastHighlightCount"), "上次随访标红项数 = 注入命中数");
+        }
+    }
 
     @Test
     void timelineStaysContinuousAcrossPlanSwitch() {

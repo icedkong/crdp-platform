@@ -45,7 +45,9 @@ import org.springframework.stereotype.Service;
  *
  * <p>时间轴（A-PAT-013「按时间顺序展示出院、每年随访、计划外随访、事件、死亡」；A-FU-023 / C-FU-023）：数据源为出院登记（pt_patient）、状态变更事件
  * （pt_status_history，登记初始行不重复展示）与随访节点（E15-T07 起并入本入口：fu_task 任务节点按子计划次数聚合完成进度 x / y、末尾按入组追加
- * 「下次计划日期」计划中节点、无任务的历史补录记录单独标识）；计划外随访随 E15-T06、终点事件随 E17、C 器械事件随 E21。
+ * 「下次计划日期」计划中节点、无任务的历史补录记录单独标识）；计划外随访随 E15-T06、终点事件随 E17；E21-T23 起各随访节点附
+ * highlightCount（fu_record.highlight 命中数，compare_highlight 读取侧过滤）并按植入记录追加 C 器械事件节点（kind =
+ * IMPLANT，前端菱形 ◆：首次植入 / 升级 / 更换 / 电极修正 / 其他 + 入组语境 note）。
  *
  * <p>姓名 / 病案号只输出脱敏值（AGENTS.md §5.3，明文走 E07-T05 专用接口）；越范围 / 不存在的患者一律 40400（§5.2，不暴露对象存在）。
  */
@@ -75,6 +77,12 @@ public class PatientOverviewService {
 
     /** 电子化状态 / 补录进度的功能开关（E21-T22：关闭时概览不下发待录入扫描件数）。 */
     private static final String FEATURE_SCAN_PROGRESS = "scan_progress";
+
+    /**
+     * 对比标红的功能开关（E21-T23 / C-FU-023 时间轴「标红 n」读取侧过滤；followup.md §4 关闭后存量 highlight 不清理）。 无行视为默认开 （与
+     * CompareFeatureMapper 同口径，tech-plan §10）——与 {@code implant} 系列（无行默认关）相反，语义由本类判定。
+     */
+    private static final String FEATURE_COMPARE_HIGHLIGHT = "compare_highlight";
 
     /**
      * 业务日期按北京时间（AGENTS.md §6）：时间轴「完成日期」从 completed_at（服务器墙钟）换算北京业务日， 与窗口 / 计划日期同口径——CI 容器是 UTC，直接
@@ -179,9 +187,10 @@ public class PatientOverviewService {
      * @param kind DISCHARGE 出院 / STATUS 状态变更（含死亡）/ FOLLOWUP 每年随访（任务节点，E15-T07；REMINDER 站内提醒任务 随
      *     E15-T06 同为任务节点、note 标「无需填表」）/ BACKFILL 历史补录（无任务 的补录记录，A-FU-014、C-FU-013）/ UNPLANNED
      *     计划外随访（无任务记录按 source 分流，E15-T06 / C-FU-022）/ PLANNED 下次计划日期（「计划中 / 待开始」，实时计算不落库，
-     *     A-FU-001）；EVENT 终点事件与 C 器械事件随 E17 / E21
+     *     A-FU-001）/ IMPLANT C 器械事件（E21-T23 / C-FU-023：首次植入 / 升级 / 更换 / 电极修正 / 其他，前端菱形 ◆， {@code
+     *     implant} 开关关闭不出）；EVENT 终点事件随 E17
      * @param label 数据驱动的节点名（DISCHARGE「出院」；STATUS / PLANNED 为空，由前端映射文案；FOLLOWUP =
-     *     节点名；BACKFILL「历史补录」、UNPLANNED「计划外随访」）
+     *     节点名；BACKFILL「历史补录」、UNPLANNED「计划外随访」；IMPLANT「{动作} · {器械类型显示名}」如「首次植入 · 双腔(DDD)」）
      * @param status STATUS = 患者随访状态码（components.md §2 patient 域）；FOLLOWUP = 任务状态（PENDING /
      *     IN_PROGRESS / COMPLETED / OVERDUE / LOST_CANDIDATE / LOST / TERMINATED /
      *     SKIPPED_SUSPENDED）；BACKFILL / UNPLANNED = COMPLETED（已提交） 或 IN_PROGRESS（草稿未提交）；PLANNED =
@@ -235,7 +244,8 @@ public class PatientOverviewService {
     /**
      * 患者时间轴：出院节点 + 状态变更事件 + 随访节点（任务 / 补录 / 下次计划日期），按时间顺序（旧 → 新，components.md §9 线框口径）。 E15-T07
      * 起在同一入口并入随访记录数据（patient.md §7）：任务节点按（入组 × 节点 × 第 N 次）聚合显示完成进度 x / y；末尾按入组追加
-     * 「下次计划日期」节点（计划中，A-FU-001 实时计算——缓存由调度 / 起算日期重算维护）；无任务的历史补录记录单独成节点（补录标识）。
+     * 「下次计划日期」节点（计划中，A-FU-001 实时计算——缓存由调度 / 起算日期重算维护）；无任务的历史补录记录单独成节点（补录标识）。 E21-T23 / C-FU-023
+     * 起随访节点附标红项数、{@code implant} 开关开启时按植入记录追加器械事件节点（菱形，切换计划后时间轴连续的展示位）。
      */
     public TimelineView timelineOf(long patientId) {
         PatientOverviewMapper.OverviewRow row = requireOverview(patientId);
@@ -258,6 +268,7 @@ public class PatientOverviewService {
                             history.reason()));
         }
         appendFollowupNodes(patientId, items);
+        appendDeviceEvents(patientId, items);
         // 计划外随访（E15-T06）、终点事件（E17）与 C 器械事件（E21）在同一入口并入
         items.sort(
                 Comparator.comparing(
@@ -271,6 +282,8 @@ public class PatientOverviewService {
     private void appendFollowupNodes(long patientId, List<TimelineEntryView> items) {
         List<FollowupTaskQueryMapper.TimelineTaskRow> tasks =
                 taskQueryMapper.timelineTasks(patientId);
+        // 各记录的标红命中数（E21-T23 / C-FU-023「每次的标红项数」；compare_highlight 关闭 → 空 Map：读取侧过滤）
+        Map<Long, Integer> highlightCounts = highlightCountsOf(patientId);
         // （入组 × 节点 × 第 N 次）一组 = 一个子计划次数（A-FU-023「完成进度 x/y」）：组内主任务数 = y、已完成数 = x
         Map<String, int[]> progress = new LinkedHashMap<>();
         for (FollowupTaskQueryMapper.TimelineTaskRow task : tasks) {
@@ -306,7 +319,7 @@ public class PatientOverviewService {
                             cell[0],
                             cell[1],
                             canOpen(task),
-                            null));
+                            task.recordId() == null ? null : highlightCounts.get(task.recordId())));
         }
         // 无任务记录（A-FU-014 / C-FU-013 历史补录；E15-T06 起含 C-FU-022 计划外随访——按 source 分流成节点）
         for (FollowupRecordMapper.RecordRowRaw record :
@@ -332,7 +345,7 @@ public class PatientOverviewService {
                             submitted ? 1 : 0,
                             1,
                             true,
-                            null));
+                            highlightCounts.get(record.id())));
         }
         // 各在组入组的「下次计划日期」（A-FU-001：未来年度只在时间轴上显示，计划中 / 待开始，不落库）
         for (FollowupTaskQueryMapper.TimelineEnrollmentRow enrollment :
@@ -369,6 +382,103 @@ public class PatientOverviewService {
                             false,
                             null));
         }
+    }
+
+    // ---------------------------------------------------------------- C 器械事件与标红计数（E21-T23 /
+    // C-FU-023）
+
+    /**
+     * C 器械事件节点（components.md §9 菱形 ◆）：每条植入记录一个节点，按植入日期插进时间线—— 植入、更换与各次随访在同一时间轴上连续（C-FU-007
+     * 切换后旧任务保留为历史、下次计划日期来自新入组，切换连续性由任务 / 入组节点承载）。 {@code implant} 开关关闭（A / B）不追加，行为与 E21
+     * 前一致；信息节点不可点（canOpen false）。
+     */
+    private void appendDeviceEvents(long patientId, List<TimelineEntryView> items) {
+        if (!Boolean.TRUE.equals(features.findEnabled(FEATURE_IMPLANT))) {
+            return;
+        }
+        List<ImplantRow> implants = implantGateway.implantsOf(patientId);
+        if (implants.isEmpty()) {
+            return;
+        }
+        List<FollowupTaskQueryMapper.EnrollmentHistoryRow> enrollments =
+                taskQueryMapper.enrollmentHistory(patientId);
+        for (ImplantRow implant : implants) {
+            if (implant.implantDate() == null) {
+                continue;
+            }
+            String action = implantActionText(implant.implantType());
+            String typeLabel = deviceTypeLabel(implant.deviceType());
+            items.add(
+                    new TimelineEntryView(
+                            "IMPLANT",
+                            implant.implantDate(),
+                            typeLabel == null ? action : action + " · " + typeLabel,
+                            null,
+                            implantEventNote(
+                                    implant.implantType(),
+                                    implant.implantDate(),
+                                    action,
+                                    enrollments)));
+        }
+    }
+
+    /** 植入类型动作文案（pt_implant.implant_type，V81：FIRST / REPLACE / UPGRADE / LEAD_REVISION / OTHER）。 */
+    private static String implantActionText(String implantType) {
+        return switch (implantType == null ? "" : implantType) {
+            case "FIRST" -> "首次植入";
+            case "REPLACE" -> "更换";
+            case "UPGRADE" -> "升级";
+            case "LEAD_REVISION" -> "电极修正";
+            case "OTHER" -> "其他";
+            default -> implantType;
+        };
+    }
+
+    /**
+     * 器械事件 note（components.md §9 例：「入组“普通起搏器术后随访”」/「转入“ICD/CRT-D 术后随访”，从升级日重新起算」）： 入组语境按 start_date
+     * = 植入日期归属（E21-T05 自动入组与 E21-T06 切换重入组的起算快照都是植入日期）； 电极修正不切换计划（C-FU-007 / SW-5）；无匹配入组 （映射缺配置 /
+     * 计划未发布）note 为 null。
+     */
+    private static String implantEventNote(
+            String implantType,
+            LocalDate implantDate,
+            String action,
+            List<FollowupTaskQueryMapper.EnrollmentHistoryRow> enrollments) {
+        if ("LEAD_REVISION".equals(implantType)) {
+            return "电极修正：不切换随访计划（C-FU-007）";
+        }
+        FollowupTaskQueryMapper.EnrollmentHistoryRow started = null;
+        for (FollowupTaskQueryMapper.EnrollmentHistoryRow row : enrollments) {
+            if (implantDate.equals(row.startDate())
+                    && (started == null || row.id() < started.id())) {
+                started = row;
+            }
+        }
+        if (started == null || started.planName() == null) {
+            return null;
+        }
+        boolean firstEnrollment = !enrollments.isEmpty() && started.id() == enrollments.get(0).id();
+        if (firstEnrollment) {
+            return "入组“" + started.planName() + "”";
+        }
+        return "转入“" + started.planName() + "”，从" + action + "日重新起算";
+    }
+
+    /**
+     * 各记录的标红命中数（E21-T23 / C-FU-023「每次的标红项数」）：compare_highlight 关闭 → 空 Map（读取侧过滤， followup.md
+     * §4——关闭后存量 highlight 不清理、由读取侧按开关过滤）；无命中行不在结果里（节点 highlightCount 为 null，前端不显示「标红 n」）。
+     */
+    private Map<Long, Integer> highlightCountsOf(long patientId) {
+        // 无行（null）视为默认开——与 CompareFeatureMapper 同口径（tech-plan §10 对比标红 A 默认开）
+        if (Boolean.FALSE.equals(features.findEnabled(FEATURE_COMPARE_HIGHLIGHT))) {
+            return Map.of();
+        }
+        Map<Long, Integer> counts = new LinkedHashMap<>();
+        for (FollowupRecordMapper.RecordHighlightRow row :
+                recordMapper.findHighlightCountsByPatient(patientId)) {
+            counts.put(row.id(), row.hitCount() == null ? 0 : row.hitCount());
+        }
+        return counts;
     }
 
     /** 任务节点备注（components.md §9：补录 / 逾期完成 / 跟进 / 站内提醒等的展示口径由状态与标记派生）。 */
@@ -652,9 +762,12 @@ public class PatientOverviewService {
         return List.copyOf(actions);
     }
 
-    /** 时间轴同类节点稳定次序：出院在状态事件之前（登记日同时有状态变更时）。 */
+    /** 时间轴同类节点稳定次序：出院在状态事件之前（登记日同时有状态变更时）；E21-T23 起器械事件在同日随访节点之前（植入当天在随访之前）。 */
     private static int kindRank(TimelineEntryView entry) {
-        return "DISCHARGE".equals(entry.kind()) ? 0 : 1;
+        if ("DISCHARGE".equals(entry.kind())) {
+            return 0;
+        }
+        return "IMPLANT".equals(entry.kind()) ? 1 : 2;
     }
 
     /**

@@ -85,6 +85,10 @@ class PatientOverviewServiceTest {
         when(crypto.decrypt(anyString()))
                 .thenAnswer(
                         invocation -> invocation.getArgument(0).toString().replace("CIPHER:", ""));
+        // E21-T23：时间轴随访节点默认会取标红命中数（compare_highlight 无行视为默认开）——空清单 = 各节点无标红
+        org.mockito.Mockito.lenient()
+                .when(recordMapper.findHighlightCountsByPatient(anyLong()))
+                .thenReturn(List.of());
     }
 
     @AfterEach
@@ -804,6 +808,177 @@ class PatientOverviewServiceTest {
         assertEquals("DEAD", death.status(), "状态文案由前端 PATIENT_STATUS_TEXT 映射");
         assertEquals(LocalDate.of(2026, 9, 1), death.date());
         assertEquals("心源性死亡", death.note());
+    }
+
+    // ---------------------------------------------------------------- C 器械事件与标红项数（E21-T23 /
+    // C-FU-023）
+
+    /** 在用植入记录（E21-T01 行结构；患者 101）。 */
+    private static ImplantRow implantRowOf(
+            String implantType, LocalDate implantDate, String deviceType) {
+        return new ImplantRow(
+                21L,
+                PATIENT_ID,
+                implantType,
+                implantDate,
+                deviceType,
+                "MEDTRONIC",
+                "示例型号 S-01",
+                "DEMO-SN-3001",
+                "DDD",
+                "虚构示例医院",
+                "示例医生",
+                "SSS",
+                null,
+                null,
+                "ACTIVE",
+                null,
+                null,
+                0,
+                OPERATOR_ID,
+                OPERATOR_ID);
+    }
+
+    @Test
+    void timelineAppendsDeviceEventsAsDiamondNodesWhenImplantEnabled() {
+        when(gateway.findOverview(PATIENT_ID)).thenReturn(row("ACTIVE"));
+        when(features.findEnabled("implant")).thenReturn(true);
+        when(implantGateway.implantsOf(PATIENT_ID))
+                .thenReturn(
+                        List.of(
+                                implantRowOf("FIRST", LocalDate.of(2026, 1, 5), "DDD"),
+                                implantRowOf("UPGRADE", LocalDate.of(2026, 11, 1), "CRT_D")));
+        when(implantDicts.items("pacemaker_type"))
+                .thenReturn(
+                        List.of(
+                                new ImplantDictPort.DictItem("DDD", "双腔(DDD)", 10, true),
+                                new ImplantDictPort.DictItem("CRT_D", "CRT-D", 20, true)));
+        when(taskQueryMapper.enrollmentHistory(PATIENT_ID))
+                .thenReturn(
+                        List.of(
+                                new FollowupTaskQueryMapper.EnrollmentHistoryRow(
+                                        501L, "普通起搏器术后随访", LocalDate.of(2026, 1, 5), "SWITCHED"),
+                                new FollowupTaskQueryMapper.EnrollmentHistoryRow(
+                                        502L,
+                                        "ICD/CRT-D 术后随访",
+                                        LocalDate.of(2026, 11, 1),
+                                        "ACTIVE")));
+
+        PatientOverviewService.TimelineView timeline = service.timelineOf(PATIENT_ID);
+
+        List<PatientOverviewService.TimelineEntryView> events =
+                timeline.items().stream().filter(item -> "IMPLANT".equals(item.kind())).toList();
+        assertEquals(2, events.size(), "每条植入记录一个器械事件节点（components.md §9 菱形）");
+        PatientOverviewService.TimelineEntryView first = events.get(0);
+        assertEquals(LocalDate.of(2026, 1, 5), first.date());
+        assertEquals("首次植入 · 双腔(DDD)", first.label(), "「{动作} · {器械类型显示名}」");
+        assertEquals("入组“普通起搏器术后随访”", first.note(), "首次入组语境（start_date = 植入日期归属）");
+        assertNull(first.status(), "信息节点无任务状态");
+        assertFalse(Boolean.TRUE.equals(first.canOpen()), "器械事件不可进入录入（canOpen 非 true）");
+        PatientOverviewService.TimelineEntryView upgrade = events.get(1);
+        assertEquals(LocalDate.of(2026, 11, 1), upgrade.date());
+        assertEquals("升级 · CRT-D", upgrade.label());
+        assertEquals("转入“ICD/CRT-D 术后随访”，从升级日重新起算", upgrade.note(), "切换语境（C-FU-007）");
+    }
+
+    @Test
+    void timelineSkipsDeviceEventsWhenImplantDisabled() {
+        when(gateway.findOverview(PATIENT_ID)).thenReturn(row("ACTIVE"));
+        when(features.findEnabled("implant")).thenReturn(null);
+
+        PatientOverviewService.TimelineView timeline = service.timelineOf(PATIENT_ID);
+
+        assertEquals(
+                0,
+                timeline.items().stream().filter(item -> "IMPLANT".equals(item.kind())).count(),
+                "implant 开关关闭（A / B）不出器械事件节点（AGENTS §5.7）");
+        verify(implantGateway, never()).implantsOf(anyLong());
+    }
+
+    @Test
+    void timelineMarksHighlightCountOnFollowupAndBackfillNodes() {
+        when(gateway.findOverview(PATIENT_ID)).thenReturn(row("ACTIVE"));
+        // compare_highlight 无行（null）视为默认开（tech-plan §10）——Mockito 对 Boolean 缺省 false，须显式置 null
+        when(features.findEnabled("compare_highlight")).thenReturn(null);
+        when(taskQueryMapper.timelineTasks(PATIENT_ID))
+                .thenReturn(
+                        List.of(
+                                taskRowOf(
+                                        9001L,
+                                        1,
+                                        "COMPLETED",
+                                        "ON_TIME",
+                                        LocalDate.of(2026, 11, 5),
+                                        701L,
+                                        LocalDateTime.of(2026, 11, 2, 10, 0))));
+        when(recordMapper.findTasklessByPatient(PATIENT_ID))
+                .thenReturn(
+                        List.of(
+                                new FollowupRecordMapper.RecordRowRaw(
+                                        801L,
+                                        PATIENT_ID,
+                                        null,
+                                        "BACKFILL",
+                                        LocalDate.of(2025, 6, 10),
+                                        null,
+                                        "C_PROGRAM_FU",
+                                        1,
+                                        "SUBMITTED",
+                                        2,
+                                        "{}",
+                                        "{}",
+                                        OPERATOR_ID,
+                                        LocalDateTime.of(2025, 7, 1, 9, 0),
+                                        OPERATOR_ID,
+                                        LocalDateTime.of(2025, 7, 1, 9, 0))));
+        when(recordMapper.findHighlightCountsByPatient(PATIENT_ID))
+                .thenReturn(
+                        List.of(
+                                new FollowupRecordMapper.RecordHighlightRow(701L, 2),
+                                new FollowupRecordMapper.RecordHighlightRow(801L, 1)));
+
+        PatientOverviewService.TimelineView timeline = service.timelineOf(PATIENT_ID);
+
+        PatientOverviewService.TimelineEntryView followup =
+                timeline.items().stream()
+                        .filter(item -> "FOLLOWUP".equals(item.kind()))
+                        .findFirst()
+                        .orElseThrow();
+        assertEquals(2, followup.highlightCount(), "任务节点标红项数（fu_record.highlight 命中数）");
+        PatientOverviewService.TimelineEntryView backfill =
+                timeline.items().stream()
+                        .filter(item -> "BACKFILL".equals(item.kind()))
+                        .findFirst()
+                        .orElseThrow();
+        assertEquals(1, backfill.highlightCount(), "补录节点同样带标红项数（C-FU-023 含补录）");
+    }
+
+    @Test
+    void timelineFiltersHighlightCountWhenCompareSwitchDisabled() {
+        when(gateway.findOverview(PATIENT_ID)).thenReturn(row("ACTIVE"));
+        when(taskQueryMapper.timelineTasks(PATIENT_ID))
+                .thenReturn(
+                        List.of(
+                                taskRowOf(
+                                        9001L,
+                                        1,
+                                        "COMPLETED",
+                                        "ON_TIME",
+                                        LocalDate.of(2026, 11, 5),
+                                        701L,
+                                        LocalDateTime.of(2026, 11, 2, 10, 0))));
+        when(features.findEnabled("compare_highlight")).thenReturn(false);
+
+        PatientOverviewService.TimelineView timeline = service.timelineOf(PATIENT_ID);
+
+        assertNull(
+                timeline.items().stream()
+                        .filter(item -> "FOLLOWUP".equals(item.kind()))
+                        .findFirst()
+                        .orElseThrow()
+                        .highlightCount(),
+                "compare_highlight 关闭：读取侧过滤（followup.md §4），不出计数");
+        verify(recordMapper, never()).findHighlightCountsByPatient(anyLong());
     }
 
     @Test

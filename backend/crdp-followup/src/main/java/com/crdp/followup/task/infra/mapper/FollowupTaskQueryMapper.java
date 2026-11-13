@@ -445,4 +445,20 @@ public interface FollowupTaskQueryMapper {
             ORDER BY nextPlanDate ASC, e.id ASC
             """)
     List<TimelineEnrollmentRow> timelineEnrollments(@Param("patientId") long patientId);
+
+    /** 患者入组史行（E21-T23 / C-FU-023 器械事件 note 的入组语境）：含终态（SWITCHED / REMOVED），按 id 升序 = 入组先后。 */
+    record EnrollmentHistoryRow(long id, String planName, LocalDate startDate, String status) {}
+
+    /** 患者全部入组（含终态；@DataScope 出行——时间轴器械事件按 start_date = 植入日期归属入组）。 */
+    @com.crdp.framework.datascope.DataScope(resource = "patient")
+    @Select(
+            """
+            SELECT e.id, p.name AS planName, e.start_date AS startDate, e.status
+            FROM fu_enrollment e
+            JOIN pt_patient pt ON pt.id = e.patient_id AND pt.deleted = 0
+            LEFT JOIN fu_plan p ON p.id = e.plan_id
+            WHERE e.patient_id = #{patientId}
+            ORDER BY e.id ASC
+            """)
+    List<EnrollmentHistoryRow> enrollmentHistory(@Param("patientId") long patientId);
 }

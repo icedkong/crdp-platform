@@ -247,3 +247,60 @@ export function queueFilterOfQuery(query: Record<string, unknown>): {
 
 /** 空态文案（有 followup:plan:edit 才显示「去新建计划」按钮，pages.md §7）。 */
 export const TASK_EMPTY_TEXT = '暂无随访任务 · 去新建计划';
+
+// ---------------------------------------------------------------- 列定义（pages.md §7；E21-T23 C 三列）
+
+/** 表格列（与 a-table columns 同构；窄列宽固定，患者 / 节点自适应）。 */
+export interface TaskColumn {
+  align?: 'right';
+  dataIndex: string;
+  fixed?: 'right';
+  title: string;
+  width?: number;
+}
+
+/**
+ * 列表列（E21-T23 / C-FU-020）：桌面列表在 `implant` 开关开启（医院 C）时插入三列——
+ * 当前器械类型（deviceType）、随访时间点（timepoint = 任务节点名）、上次随访标红项数
+ * （lastHighlightCount，>0 红色显示）；A / B 与平板主要列、手机卡片不插（pages.md §7
+ * 「C 增加列」+ 平板保留主要列）。
+ */
+export function taskColumns(options: {
+  implantEnabled: boolean;
+  tablet: boolean;
+}): TaskColumn[] {
+  if (options.tablet) {
+    return [
+      { dataIndex: 'patientName', title: '患者' },
+      { dataIndex: 'wardName', title: '病区', width: 110 },
+      { dataIndex: 'nodeName', title: '节点', width: 100 },
+      { dataIndex: 'planDate', title: '计划日期', width: 104 },
+      { dataIndex: 'window', title: '窗口', width: 140 },
+      { dataIndex: 'status', title: '状态', width: 140 },
+      { dataIndex: 'assigneeName', title: '负责人', width: 100 },
+      { dataIndex: 'action', fixed: 'right', title: '操作', width: 150 },
+    ];
+  }
+  const columns: TaskColumn[] = [
+    { dataIndex: 'index', title: '#', width: 48 },
+    { dataIndex: 'patientName', title: '患者' },
+    { dataIndex: 'wardName', title: '病区', width: 120 },
+    { dataIndex: 'nodeName', title: '节点', width: 110 },
+  ];
+  if (options.implantEnabled) {
+    columns.push(
+      { dataIndex: 'deviceType', title: '当前器械类型', width: 130 },
+      { dataIndex: 'timepoint', title: '随访时间点', width: 110 },
+      { dataIndex: 'lastHighlightCount', title: '上次标红', width: 90 },
+    );
+  }
+  columns.push(
+    { dataIndex: 'planDate', title: '计划日期', width: 110 },
+    { dataIndex: 'window', title: '窗口', width: 150 },
+    { dataIndex: 'status', title: '状态', width: 150 },
+    { dataIndex: 'assigneeName', title: '负责人', width: 110 },
+    { dataIndex: 'lastContact', title: '最近联系', width: 96 },
+    { dataIndex: 'action', fixed: 'right', title: '操作', width: 168 },
+  );
+  return columns;
+}

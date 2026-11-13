@@ -49,9 +49,13 @@ export interface TaskRow {
   assigneeName?: null | string;
   completeKind?: TaskCompleteKind;
   createType?: null | string;
+  /** 当前器械类型（E21-T23 / C-FU-020：在用植入记录的字典显示名；implant 关闭为 null）。 */
+  deviceType?: null | string;
   /** 已关联的草稿记录（开始录入后；pages.md §5 统一用 recordId）。 */
   id: string;
   lastContactResult?: null | string;
+  /** 上次随访标红项数（E21-T23 / C-FU-020：最近一条已提交记录命中数；无已提交记录 / compare 关闭为 null）。 */
+  lastHighlightCount?: null | number;
   legacyNo?: null | string;
   mrn: string;
   /** 下次计划日期缓存（fu_enrollment.next_plan_date，「下次随访 · 计划 …」）。 */
@@ -65,6 +69,8 @@ export interface TaskRow {
   recordId?: null | string;
   status: TaskStatus;
   taskType: string;
+  /** 随访时间点（E21-T23 / C-FU-020：任务节点名——C 预置节点即时间点；implant 关闭为 null）。 */
+  timepoint?: null | string;
   wardName?: null | string;
   windowEnd: string;
   windowStart: string;
