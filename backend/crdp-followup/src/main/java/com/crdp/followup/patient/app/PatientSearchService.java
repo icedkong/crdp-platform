@@ -158,10 +158,11 @@ public class PatientSearchService {
     /** 分页结果（统一分页口径）。 */
     public record PatientPage(List<PatientRowView> items, long total, int pageNo, int pageSize) {}
 
-    /** 筛选候选：病区（启用项；行级隔离仍按数据范围，候选本身不敏感）。 */
+    /** 筛选候选：病区 / 科室（启用项；行级隔离仍按数据范围，候选本身不敏感）。 */
     public record WardOptionView(long id, String name) {}
 
-    public record FilterOptionsView(List<WardOptionView> wards) {}
+    /** 病区 + 科室候选（E21-T21 / C-WARD-006：转科室弹窗与列表科室筛选共用，科室为启用项）。 */
+    public record FilterOptionsView(List<WardOptionView> wards, List<WardOptionView> depts) {}
 
     // ---------------------------------------------------------------- 检索（A-PAT-001、A-PAT-002）
 
@@ -315,13 +316,17 @@ public class PatientSearchService {
         throw invalid("completenessDrill.kind（BASELINE / FOLLOWUP）");
     }
 
-    /** 筛选候选（列表页病区下拉；随访状态等枚举文案由前端 enums 维护）。 */
+    /** 筛选候选（列表页病区下拉；E21-T21 起同时下发科室，转科室弹窗共用；随访状态等枚举文案由前端 enums 维护）。 */
     public FilterOptionsView filterOptions() {
         List<WardOptionView> wards =
                 patientMapper.findWards().stream()
                         .map(item -> new WardOptionView(item.id(), item.name()))
                         .toList();
-        return new FilterOptionsView(wards);
+        List<WardOptionView> depts =
+                patientMapper.findDepts().stream()
+                        .map(item -> new WardOptionView(item.id(), item.name()))
+                        .toList();
+        return new FilterOptionsView(wards, depts);
     }
 
     // ---------------------------------------------------------------- 内部

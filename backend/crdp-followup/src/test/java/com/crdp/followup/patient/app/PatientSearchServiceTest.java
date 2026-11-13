@@ -600,6 +600,23 @@ class PatientSearchServiceTest {
         assertEquals("示例二病区", options.wards().get(0).name());
     }
 
+    /** E21-T21 / C-WARD-006：候选同时下发启用科室（转科室弹窗与列表科室筛选共用源）。 */
+    @Test
+    void filterOptionsAlsoListsEnabledDepts() {
+        when(patientMapper.findWards()).thenReturn(List.of());
+        when(patientMapper.findDepts())
+                .thenReturn(
+                        List.of(
+                                new PatientMapper.OptionRow(7L, "示例心内科"),
+                                new PatientMapper.OptionRow(8L, "示例心外科")));
+
+        PatientSearchService.FilterOptionsView options = service.filterOptions();
+
+        assertEquals(2, options.depts().size());
+        assertEquals(7L, options.depts().get(0).id());
+        assertEquals("示例心内科", options.depts().get(0).name());
+    }
+
     // ---------------------------------------------------------------- 辅助
 
     private void assertInvalid(PatientSearchService.SearchRequest request, String messagePart) {

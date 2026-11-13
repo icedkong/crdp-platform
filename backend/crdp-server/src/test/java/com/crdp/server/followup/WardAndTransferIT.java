@@ -73,7 +73,27 @@ class WardAndTransferIT {
                         jdbc.update(
                                 "DELETE h FROM pt_ward_history h JOIN pt_patient p ON p.id = h.patient_id"
                                         + " WHERE p.legacy_no LIKE 'IT-E13T08-%'");
+                        jdbc.update(
+                                "DELETE h FROM pt_dept_history h JOIN pt_patient p ON p.id = h.patient_id"
+                                        + " WHERE p.legacy_no LIKE 'IT-E13T08-%'");
+                        // E21-T21 C 口径登记同建首条植入记录（C-PAT-001）：连带清理电极与器械行
+                        jdbc.update(
+                                "DELETE il FROM pt_implant_lead il"
+                                        + " JOIN pt_implant i ON i.id = il.implant_id"
+                                        + " JOIN pt_patient p ON p.id = i.patient_id"
+                                        + " WHERE p.legacy_no LIKE 'IT-E13T08-%'");
+                        jdbc.update(
+                                "DELETE l FROM pt_lead l"
+                                        + " JOIN pt_patient p ON p.id = l.patient_id"
+                                        + " WHERE p.legacy_no LIKE 'IT-E13T08-%'");
+                        jdbc.update(
+                                "DELETE i FROM pt_implant i"
+                                        + " JOIN pt_patient p ON p.id = i.patient_id"
+                                        + " WHERE p.legacy_no LIKE 'IT-E13T08-%'");
                         jdbc.update("DELETE FROM pt_patient WHERE legacy_no LIKE 'IT-E13T08-%'");
+                        // E21-T21 用例开启的开关还原为种子默认（关闭），A / B 口径不受影响
+                        jdbc.update(
+                                "UPDATE cfg_feature SET enabled = 0 WHERE feature_code = 'implant'");
                         jdbc.update(
                                 "DELETE ur FROM sys_user_role ur JOIN sys_user u ON u.id = ur.user_id"
                                         + " WHERE u.username = 'IT-U-T8-NT'");
@@ -366,6 +386,204 @@ class WardAndTransferIT {
                 });
     }
 
+    // ---------------------------------------------------------------- 转科室（E21-T21 / C-WARD-006）
+
+    /**
+     * E21-T21 端到端（tasks.csv 验收：科室与病区条件 OR 生效）。demoa 开 cfg_feature.implant = 医院 C 口径，用 V137 预置的 C 科室
+     * / 病区 / 用户（demoa 库同样落位，OQ-93 ②）：
+     *
+     * <ol>
+     *   <li>登记 C 患者（心内科 + 心内一病区）：负责科室的科主任与负责病区的医生都可见（两分支 OR）；
+     *   <li>转科室（心内 → 心外，同一 transfer 入口携带 deptId）：原科室科主任立即不可见、新科室科主任可见；
+     *   <li>病区分支不受转科室影响：心内一病区医生仍可见（OR 各分支独立生效——验收原文）；
+     *   <li>科室历史（pt_dept_history）与 PATIENT_TRANSFER 审计保留；demob（implant 关闭 = A / B 口径）携带 deptId →
+     *       40001。
+     * </ol>
+     */
+    @Test
+    void deptTransferKeepsWardBranchVisibleAndHidesOldDeptUsers() {
+        String admin = adminToken();
+        runInTenant(
+                "demoa",
+                () ->
+                        jdbc.update(
+                                "UPDATE cfg_feature SET enabled = 1 WHERE feature_code = 'implant'"));
+        long cardioDept = deptIdByCode("DEPT-C-CARDIO");
+        long cvsDept = deptIdByCode("DEPT-C-CVS");
+        long card1Ward = wardIdByCode("W-C-CARD1");
+        String mrn = "IT-MRN-T8051";
+
+        // C 口径登记（implant 开启 → 最小必填含出生日期、科室、病区与首条植入记录，C-PAT-001）
+        Map<String, Object> implant = new HashMap<>();
+        implant.put("implantType", "FIRST");
+        implant.put("implantDate", "2026-09-08");
+        implant.put("deviceType", "DDD");
+        implant.put("brand", "MEDTRONIC");
+        implant.put("model", "示例型号 T21-01");
+        implant.put("serialNo", "DEMO-SN-T21-01");
+        implant.put("pacingMode", "DDD");
+        implant.put("hospital", "虚构示例医院");
+        implant.put("doctor", "示例医生");
+        implant.put("indication", "SSS");
+        implant.put(
+                "leads",
+                List.of(
+                        Map.of("chamber", "RA", "position", "RA_APPENDAGE"),
+                        Map.of("chamber", "RV", "position", "RV_APEX")));
+        Map<String, Object> body = new HashMap<>();
+        body.put("medicalRecordNo", mrn);
+        body.put("name", "严一心（C 示例）");
+        body.put("gender", "F");
+        body.put("birthDate", "1955-01-01");
+        body.put("deptId", cardioDept);
+        body.put("wardId", card1Ward);
+        body.put("legacyNo", LEGACY + "-" + mrn);
+        body.put("implant", implant);
+        assertEquals(0, codeOf(post("/api/hospital/followup/patients", admin, body)), "C 登记失败");
+        long patientId = patientIdByMrn(mrn);
+
+        String cardioDirector = hospitalToken("demoa", "c.cardio.dir", PASSWORD);
+        String card1Doctor = hospitalToken("demoa", "c.card1.doc01", PASSWORD);
+        String cvsDirector = hospitalToken("demoa", "c.cvs.dir", PASSWORD);
+        assertEquals(
+                0,
+                codeOf(
+                        get(
+                                "/api/hospital/followup/patients/" + patientId + "/summary",
+                                cardioDirector)),
+                "转科前：负责心内科的科主任可见（科室分支）");
+        assertEquals(
+                0,
+                codeOf(
+                        get(
+                                "/api/hospital/followup/patients/" + patientId + "/summary",
+                                card1Doctor)),
+                "转科前：负责心内一病区的医生可见（病区分支，与科室分支 OR）");
+        assertEquals(
+                40400,
+                codeOf(
+                        get(
+                                "/api/hospital/followup/patients/" + patientId + "/summary",
+                                cvsDirector)),
+                "转科前：他科室科主任不可见");
+
+        // 转科室：同一入口携带 deptId（C-WARD-006「沿用 A-WARD-005」；病区不变）
+        Map<?, ?> transferred =
+                post(
+                        "/api/hospital/followup/patients/" + patientId + "/transfer",
+                        admin,
+                        Map.of("deptId", cvsDept, "reason", "患者转科至心外科（示例）"));
+        assertEquals(0, codeOf(transferred), "转科室失败：" + transferred);
+        assertEquals("心外科（C 示例）", data(transferred).get("deptName"), "响应带新科室名称");
+        assertEquals(
+                String.valueOf(card1Ward),
+                String.valueOf(data(transferred).get("wardId")),
+                "病区不变原样回显");
+
+        // 验收原文：科室与病区条件 OR 生效——转科室只影响科室分支
+        assertEquals(
+                40400,
+                codeOf(
+                        get(
+                                "/api/hospital/followup/patients/" + patientId + "/summary",
+                                cardioDirector)),
+                "转科室后原科室科主任立即不可见");
+        assertEquals(
+                0,
+                codeOf(
+                        get(
+                                "/api/hospital/followup/patients/" + patientId + "/summary",
+                                card1Doctor)),
+                "转科室后病区医生仍可见（病区分支不受转科室影响，OR 各自独立）");
+        assertEquals(
+                0,
+                codeOf(
+                        get(
+                                "/api/hospital/followup/patients/" + patientId + "/summary",
+                                cvsDirector)),
+                "新科室科主任可见");
+
+        // 科室历史（C-WARD-006「保留转科历史」）
+        Map<?, ?> history =
+                get("/api/hospital/followup/patients/" + patientId + "/dept-history", admin);
+        assertEquals(0, codeOf(history));
+        List<?> items = (List<?>) data(history).get("items");
+        assertEquals(1, items.size(), "转科室历史一条");
+        Map<?, ?> entry = (Map<?, ?>) items.get(0);
+        assertEquals("心内科（C 示例）", entry.get("fromDeptName"));
+        assertEquals("心外科（C 示例）", entry.get("toDeptName"));
+        assertEquals("患者转科至心外科（示例）", entry.get("reason"));
+        assertEquals(
+                40400,
+                codeOf(
+                        get(
+                                "/api/hospital/followup/patients/" + patientId + "/dept-history",
+                                cardioDirector)),
+                "原科室科主任查不到转科室历史（不暴露存在）");
+
+        runInTenant(
+                "demoa",
+                () -> {
+                    Map<String, Object> patient =
+                            jdbc.queryForMap(
+                                    "SELECT dept_id, ward_id, version FROM pt_patient WHERE id = ?",
+                                    patientId);
+                    assertEquals(cvsDept, ((Number) patient.get("dept_id")).longValue(), "科室归属列已改");
+                    assertEquals(
+                            card1Ward, ((Number) patient.get("ward_id")).longValue(), "病区归属列未动");
+                    assertTrue(((Number) patient.get("version")).longValue() >= 1, "乐观锁版本递增");
+                    Integer deptHistoryRows =
+                            jdbc.queryForObject(
+                                    "SELECT COUNT(*) FROM pt_dept_history WHERE patient_id = ?"
+                                            + " AND from_dept_id = ? AND to_dept_id = ?",
+                                    Integer.class,
+                                    patientId,
+                                    cardioDept,
+                                    cvsDept);
+                    assertEquals(1, deptHistoryRows, "pt_dept_history 只追加一行");
+                    Integer wardHistoryRows =
+                            jdbc.queryForObject(
+                                    "SELECT COUNT(*) FROM pt_ward_history WHERE patient_id = ?",
+                                    Integer.class,
+                                    patientId);
+                    assertEquals(0, wardHistoryRows, "只转科室不写病区历史（两维度独立）");
+                });
+
+        // demob（implant 关闭 = A / B 口径）：携带 deptId → 40001（转科室为 C 口径）
+        String demobAdmin = hospitalToken("demob", "nurse.demo", PASSWORD);
+        String mrnB = "IT-MRN-T8052";
+        Map<String, Object> bodyB = new HashMap<>();
+        bodyB.put("medicalRecordNo", mrnB);
+        bodyB.put("name", "测试患者（示例）");
+        bodyB.put("gender", "M");
+        bodyB.put("wardId", wardIdByCodeIn("demob", "W-DEMO-1"));
+        bodyB.put("surgeryDate", "2026-10-08");
+        bodyB.put("admissionDate", "2026-10-01");
+        bodyB.put("dischargeDate", "2026-10-15");
+        bodyB.put("dischargeStatus", 1);
+        bodyB.put("legacyNo", LEGACY + "-" + mrnB);
+        assertEquals(
+                0,
+                codeOf(post("/api/hospital/followup/patients", demobAdmin, bodyB)),
+                "demob 登记失败");
+        long patientB =
+                runInTenant(
+                        "demob",
+                        () ->
+                                jdbc.queryForObject(
+                                        "SELECT id FROM pt_patient WHERE legacy_no = ?",
+                                        Long.class,
+                                        LEGACY + "-" + mrnB));
+        assertEquals(
+                40001,
+                codeOf(
+                        post(
+                                "/api/hospital/followup/patients/" + patientB + "/transfer",
+                                demobAdmin,
+                                Map.of("deptId", 1L, "reason", "A 口径不接收转科室（示例）"))),
+                "implant 开关关闭携带 deptId → 40001");
+    }
+
     // ---------------------------------------------------------------- 校验与权限
 
     @Test
@@ -576,6 +794,12 @@ class WardAndTransferIT {
     private long wardIdByCode(String code) {
         return runInTenant(
                 "demoa",
+                () -> jdbc.queryForObject("SELECT id FROM ward WHERE code = ?", Long.class, code));
+    }
+
+    private long wardIdByCodeIn(String tenant, String code) {
+        return runInTenant(
+                tenant,
                 () -> jdbc.queryForObject("SELECT id FROM ward WHERE code = ?", Long.class, code));
     }
 

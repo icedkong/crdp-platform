@@ -6,6 +6,7 @@ import type {
 import { describe, expect, it } from 'vitest';
 
 import {
+  applyRegistrationDefaults,
   buildDuplicateCheckPayload,
   buildRegistrationPayload,
   canCheckDuplicate,
@@ -199,5 +200,33 @@ describe('e21-T10 随访编号（C-PAT-003：留空自动生成，历史患者�
       '留空按「105-建档年份-年内流水号」自动生成（如 105-2026-001）；历史患者可填纸质原编号，本院唯一',
     );
     expect(visitNoHelpText(null)).toBe('随访编号');
+  });
+});
+
+describe('e21-T21 登记默认归属（C-WARD-002：默认为录入人所属科室病区）', () => {
+  it('只填充未选择的字段，不覆盖录入人已选值；无默认不改动', () => {
+    const form: PatientRegistrationForm = {
+      medicalRecordNo: '',
+      name: '',
+      gender: undefined,
+      wardId: null,
+      deptId: null,
+    };
+    applyRegistrationDefaults(form, { wardId: 3, deptId: 7 });
+    expect(form.wardId).toBe(3);
+    expect(form.deptId).toBe(7);
+
+    // 录入人已选（含清空过的 null）不被覆盖
+    form.wardId = 4;
+    applyRegistrationDefaults(form, { wardId: 3, deptId: 7 });
+    expect(form.wardId).toBe(4);
+
+    // 后端未下发默认（A / B 或多值归属）→ 表单不动
+    const untouched: PatientRegistrationForm = { wardId: 5, deptId: null };
+    applyRegistrationDefaults(untouched, null);
+    applyRegistrationDefaults(untouched, undefined);
+    applyRegistrationDefaults(untouched, { wardId: null, deptId: null });
+    expect(untouched.wardId).toBe(5);
+    expect(untouched.deptId).toBeNull();
   });
 });

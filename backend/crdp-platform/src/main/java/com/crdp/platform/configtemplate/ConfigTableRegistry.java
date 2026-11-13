@@ -127,6 +127,8 @@ public final class ConfigTableRegistry {
                     "pt_contact",
                     "pt_status_history",
                     "pt_ward_history",
+                    // 转科室历史（医院 C 患者数据，E21-T21；绝不随配置模板导出）
+                    "pt_dept_history",
                     "pt_patient_summary",
                     // 植入记录与电极（医院 C 患者数据，E21-T01；绝不随配置模板导出）
                     "pt_implant",

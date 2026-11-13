@@ -46,6 +46,8 @@ export interface PatientWardOption {
 }
 
 export interface PatientFilterOptions {
+  /** 科室候选（启用项；E21-T21 / C-WARD-006 起随病区一并下发，转科室弹窗共用）。 */
+  depts?: PatientWardOption[];
   wards: PatientWardOption[];
 }
 

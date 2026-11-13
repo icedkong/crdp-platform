@@ -30,6 +30,7 @@ import type {
   ParamTrendView,
   PatientContactInfo,
   PatientCreatedResult,
+  PatientDeptHistory,
   PatientDuplicateCheckResult,
   PatientFilterOptions,
   PatientLostView,
@@ -222,6 +223,13 @@ export function transferPatientWard(
 export function fetchPatientWardHistory(patientId: number | string) {
   return requestClient.get<PatientWardHistory>(
     apiPath(`/followup/patients/${patientId}/ward-history`),
+  );
+}
+
+/** 转科室历史（E21-T21 / C-WARD-006「保留转科历史」；越范围 40400）。 */
+export function fetchPatientDeptHistory(patientId: number | string) {
+  return requestClient.get<PatientDeptHistory>(
+    apiPath(`/followup/patients/${patientId}/dept-history`),
   );
 }
 

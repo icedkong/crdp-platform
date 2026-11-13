@@ -30,6 +30,8 @@ export interface PatientOverview {
   admissionDate?: null | string;
   age?: null | number;
   baselineCompleteness?: null | number;
+  /** 科室归属 id（E21-T21 / C-WARD-002：患者归属一个科室和一个病区；转科室弹窗排除当前科室）。 */
+  deptId?: null | number;
   deptName?: null | string;
   device?: null | Record<string, string>;
   dischargeDate?: null | string;

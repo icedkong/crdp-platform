@@ -520,6 +520,7 @@ class PatientOverviewServiceTest {
                         null,
                         null,
                         null,
+                        null,
                         null);
         when(gateway.findOverview(PATIENT_ID)).thenReturn(row);
 
@@ -635,6 +636,7 @@ class PatientOverviewServiceTest {
                         row.status(),
                         row.wardId(),
                         row.wardName(),
+                        row.deptId(),
                         row.deptName(),
                         row.responsibleName(),
                         row.surgeryDate(),
@@ -699,6 +701,7 @@ class PatientOverviewServiceTest {
                 status,
                 4L,
                 "示例二病区",
+                7L,
                 null,
                 "王医生（示例）",
                 LocalDate.of(2026, 3, 1),

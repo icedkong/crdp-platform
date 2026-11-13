@@ -83,11 +83,36 @@ export interface RegistrationWardOption {
 }
 
 export interface PatientRegistrationOptions {
+  defaults?: null | RegistrationDefaults;
   depts: RegistrationWardOption[];
   dischargeStatuses: RegistrationOptionItem[];
   genders: RegistrationOptionItem[];
   visitNoRule?: null | VisitNoRule;
   wards: RegistrationWardOption[];
+}
+
+/**
+ * 登记默认归属（E21-T21 / C-WARD-002「登记时默认为录入人所属科室病区」）：病区 =
+ * 唯一负责病区；科室 = 主科室（无主科室回落唯一负责科室）；多值归属不猜默认。
+ * implant 开关关闭（A / B）整个对象为 null。
+ */
+export interface RegistrationDefaults {
+  deptId?: null | number;
+  wardId?: null | number;
+}
+
+/** 应用登记默认归属（C-WARD-002）：只填充表单尚未选择的字段，不覆盖录入人已选值。 */
+export function applyRegistrationDefaults(
+  form: PatientRegistrationForm,
+  defaults: null | RegistrationDefaults | undefined,
+): void {
+  if (!defaults) return;
+  if (form.wardId === null || form.wardId === undefined) {
+    form.wardId = defaults.wardId ?? null;
+  }
+  if (form.deptId === null || form.deptId === undefined) {
+    form.deptId = defaults.deptId ?? null;
+  }
 }
 
 /**
