@@ -390,3 +390,25 @@ export function applyEntryDefaults(
   }
   return next;
 }
+
+// ------------------------------------------------------- E21-T14 / C-FU-015 连续补录
+
+/**
+ * 提交成功面板是否提供「继续补录下一次」（pages.md §5.1 提交确认行「补录（C-FU-015）
+ * 提供继续补录下一次」）：补录记录（source=BACKFILL）＋有录入权限＋能定位患者
+ * （taskless 记录的患者摘要）＋implant 开关开启（医院 C；A / B 的补录流无器械与
+ * 时间点建议，不提供连续补录，保持 E15-T07 原貌）。
+ */
+export function canContinueBackfill(input: {
+  canEdit: boolean;
+  implantEnabled: boolean;
+  patientId?: null | string;
+  source?: null | string;
+}): boolean {
+  return (
+    input.source === 'BACKFILL' &&
+    input.canEdit &&
+    Boolean(input.patientId) &&
+    input.implantEnabled
+  );
+}

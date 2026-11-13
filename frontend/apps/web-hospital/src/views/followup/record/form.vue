@@ -14,7 +14,14 @@ import type { CategoryProgress, CompareHit } from '@crdp/rules';
 
 import type { CompareReportPaneReport } from '#/components/followup/compare-report-pane.vue';
 
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+} from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import { useUserStore } from '@vben/stores';
@@ -49,10 +56,12 @@ import {
   startTask,
   submitRecord,
 } from '#/api/core/task';
+import BackfillRecordModal from '#/components/followup/backfill-record-modal.vue';
 import CategoryBar from '#/components/followup/category-bar.vue';
 import {
   COMPARE_QUERY_KEY,
   compareReportIdOf,
+  TRANSCRIBE_QUERY_KEY,
   transcribeActiveOf,
 } from '#/components/followup/compare-entry-logic';
 import CompareReportPane from '#/components/followup/compare-report-pane.vue';
@@ -72,6 +81,7 @@ import { queueFilterOfQuery } from '../task/logic';
 import {
   applyEntryDefaults,
   bannersOf,
+  canContinueBackfill,
   canEditSubmittedRecord,
   deathFieldKey,
   diffChanges,
@@ -248,6 +258,41 @@ const leaveConfirm = ref<{ open: boolean; taskId: null | string }>({
   open: false,
   taskId: null,
 });
+
+// ------------------------------------------- 连续补录（E21-T14 / C-FU-015）
+
+/**
+ * 提交成功面板的「继续补录下一次」：补录记录（source=BACKFILL）＋有录入权限＋能定位
+ * 患者（taskless 患者摘要）＋implant 开关（医院 C；A / B 保持 E15-T07 原貌）。点击打开
+ * 补录弹窗（continuous 形态）填下一份资料的日期，创建后<b>同页切换</b>到新记录（不反复
+ * 打开表单，C-FU-015 验收）；新记录保留患者、器械按新日期匹配、测量值清空（新草稿），
+ * 建议时间点已种入（C-FU-014）。提交成功后按钮自动聚焦：Tab 逐项录入 → Ctrl/⌘+Enter
+ * 提交 → Enter 继续下一次（键盘连续补录）。
+ */
+const continueBackfillOpen = ref(false);
+const backfillPatientId = computed(
+  () => patient.value?.patientId ?? context.value?.patientId ?? null,
+);
+const showContinueBackfill = computed(() =>
+  canContinueBackfill({
+    canEdit: canEdit.value,
+    implantEnabled: isEnabled('implant'),
+    patientId: backfillPatientId.value,
+    source: source.value,
+  }),
+);
+const continueButton = ref<InstanceType<typeof Button> | null>(null);
+
+/** 继续补录创建成功：同页切换到新记录（去掉 compare / transcribe 参数——新记录不对照旧报告单）。 */
+async function handleContinueCreated(newRecordId: string) {
+  const query = { ...route.query };
+  delete query[COMPARE_QUERY_KEY];
+  delete query[TRANSCRIBE_QUERY_KEY];
+  await router.replace({ path: `/followup/record/${newRecordId}`, query });
+  submitted.value = false;
+  showErrors.value = false;
+  await load();
+}
 
 const filter = queueFilterOfQuery(route.query);
 // 已提交记录整体只读；编辑态（edit-session 进入）放开工单（C-FU-026）
@@ -720,6 +765,11 @@ async function doSubmit() {
         source.value,
       ) + transcribeAppendedText(result.transcribedReportId),
     );
+    // 连续补录（C-FU-015）：提交成功后聚焦「继续补录下一次」——Enter 即可开始下一条
+    // （键盘逐项录入：Tab 跳项、Ctrl/⌘+Enter 提交、Enter 继续）
+    if (showContinueBackfill.value) {
+      void nextTick(() => continueButton.value?.$el?.focus());
+    }
   } catch (error) {
     message.error('提交失败，请稍后重试');
     console.error(error);
@@ -920,9 +970,20 @@ function handleJump(key: string) {
     <template #extra>
       <Space>
         <Button @click="backToList">返回任务列表</Button>
+        <!-- E21-T14 / C-FU-015 连续补录：提交成功面板提供「继续补录下一次」（同页切换，
+             不需反复打开表单；提交后自动聚焦，Enter 即可继续） -->
+        <Button
+          v-if="showContinueBackfill"
+          ref="continueButton"
+          data-testid="record-continue-backfill"
+          type="primary"
+          @click="continueBackfillOpen = true"
+        >
+          继续补录下一次
+        </Button>
         <Button
           v-if="queue.nextId"
-          type="primary"
+          :type="showContinueBackfill ? 'default' : 'primary'"
           @click="gotoNeighbor(queue.nextId)"
         >
           下一条
@@ -1294,6 +1355,15 @@ function handleJump(key: string) {
       </Space>
     </Modal>
   </div>
+
+  <!-- E21-T14 / C-FU-015 连续补录：提交成功后「继续补录下一次」打开（同页切换到新记录） -->
+  <BackfillRecordModal
+    continuous
+    :open="continueBackfillOpen"
+    :patient-id="backfillPatientId ?? ''"
+    @created="handleContinueCreated"
+    @update:open="continueBackfillOpen = $event"
+  />
 </template>
 
 <style scoped>

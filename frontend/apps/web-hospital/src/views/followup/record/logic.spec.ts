@@ -16,6 +16,7 @@ import { describe, expect, it } from 'vitest';
 import {
   applyEntryDefaults,
   bannersOf,
+  canContinueBackfill,
   canEditSubmittedRecord,
   deathFieldKey,
   diffChanges,
@@ -506,5 +507,54 @@ describe('e21-T17 转录完成追加文案（C-SCAN-012）', () => {
     expect(transcribeAppendedText('900')).toBe('；报告单已标记为「已电子化」');
     expect(transcribeAppendedText(null)).toBe('');
     expect(transcribeAppendedText(undefined)).toBe('');
+  });
+});
+
+// E21-T14 / C-FU-015：提交成功面板的「继续补录下一次」可见性（implant 开关 = 医院 C）。
+describe('e21-T14 / C-FU-015 连续补录入口', () => {
+  it('补录记录 + 有权限 + implant 开启 + 能定位患者 → 提供', () => {
+    expect(
+      canContinueBackfill({
+        canEdit: true,
+        implantEnabled: true,
+        patientId: '301',
+        source: 'BACKFILL',
+      }),
+    ).toBe(true);
+  });
+
+  it('任务 / 计划外记录、无权限、A / B（implant 关闭）、患者定位失败 → 不提供', () => {
+    expect(
+      canContinueBackfill({
+        canEdit: true,
+        implantEnabled: true,
+        patientId: '301',
+        source: 'TASK',
+      }),
+    ).toBe(false);
+    expect(
+      canContinueBackfill({
+        canEdit: false,
+        implantEnabled: true,
+        patientId: '301',
+        source: 'BACKFILL',
+      }),
+    ).toBe(false);
+    expect(
+      canContinueBackfill({
+        canEdit: true,
+        implantEnabled: false,
+        patientId: '301',
+        source: 'BACKFILL',
+      }),
+    ).toBe(false);
+    expect(
+      canContinueBackfill({
+        canEdit: true,
+        implantEnabled: true,
+        patientId: null,
+        source: 'BACKFILL',
+      }),
+    ).toBe(false);
   });
 });

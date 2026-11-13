@@ -2,6 +2,7 @@ package com.crdp.followup.record.api;
 
 import com.crdp.followup.record.app.RecordBackfillService;
 import com.crdp.followup.record.app.RecordEntryAssistService;
+import com.crdp.followup.record.app.TimepointSuggestionService;
 import com.crdp.framework.security.RequireModule;
 import com.crdp.framework.security.RequiresPermission;
 import com.crdp.framework.web.ApiException;
@@ -33,11 +34,15 @@ public class PatientRecordController {
 
     private final RecordBackfillService service;
     private final RecordEntryAssistService assistService;
+    private final TimepointSuggestionService timepoints;
 
     public PatientRecordController(
-            RecordBackfillService service, RecordEntryAssistService assistService) {
+            RecordBackfillService service,
+            RecordEntryAssistService assistService,
+            TimepointSuggestionService timepoints) {
         this.service = service;
         this.assistService = assistService;
+        this.timepoints = timepoints;
     }
 
     @Operation(
@@ -80,4 +85,25 @@ public class PatientRecordController {
 
     /** 创建请求体（followup.md §3）。 */
     public record CreateBody(String source, LocalDate visitDate, String formCode) {}
+
+    /**
+     * 补录时建议随访时间点（E21-T14 /
+     * C-FU-014）：按随访日期距植入日期的天数建议选项（0–7「术后72小时/出院前」…330–400「术后1年」、其后「每6-12个月」；空档区间无建议）、
+     * 自动关联当时器械（C-PAT-007 区间匹配）、器械接近 ERI 时优先建议「ERI期随访」（在组 mode=ERI 且随访日期 ≥ eri_since）； 附
+     * earliestImplantDate（补录日期下界「不早于植入日期」）。建议值可改选；区间经租户参数 followup.timepoint.ranges 可配。 越范围患者
+     * 40400；visitDate 必填 40001。
+     */
+    @Operation(
+            summary =
+                    "补录时建议随访时间点（C-FU-014）：距植入天数 → 选项编码与显示名（空档区间 / 无器械 / "
+                            + "A-B 表单无字段时无建议），附当时器械与最早植入日期；越范围患者 40400")
+    @GetMapping("/suggest-timepoint")
+    @RequireModule("followup")
+    @RequiresPermission("followup:record:edit")
+    public ApiResponse<TimepointSuggestionService.SuggestionView> suggestTimepoint(
+            @PathVariable("id") long id,
+            @RequestParam("visitDate") LocalDate visitDate,
+            @RequestParam(value = "formCode", required = false) String formCode) {
+        return ApiResponse.ok(timepoints.suggest(id, visitDate, formCode));
+    }
 }
