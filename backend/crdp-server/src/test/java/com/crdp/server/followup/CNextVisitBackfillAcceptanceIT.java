@@ -485,7 +485,10 @@ class CNextVisitBackfillAcceptanceIT {
                                         "source",
                                         "BACKFILL",
                                         "visitDate",
-                                        LocalDate.now().toString(),
+                                        // 校验按北京时间「早于今天」（RecordBackfillService ZONE）；用例必须取北京当天，
+                                        // 否则 UTC 落后北京一日的窗口（00:00–08:00 +08）里「今天」实为北京昨天、被放行
+                                        LocalDate.now(java.time.ZoneId.of("Asia/Shanghai"))
+                                                .toString(),
                                         "formCode",
                                         C_FORM))),
                 "补录随访日期必须是过去的日期（不晚于今天）");
