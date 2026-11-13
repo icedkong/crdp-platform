@@ -12,6 +12,10 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.crdp.followup.dashboard.infra.mapper.DashboardFeatureMapper;
+import com.crdp.followup.implant.app.ImplantDictPort;
+import com.crdp.followup.implant.app.ImplantGateway;
+import com.crdp.followup.implant.infra.mapper.ImplantMapper.ImplantRow;
 import com.crdp.followup.patient.infra.mapper.PatientOverviewMapper;
 import com.crdp.followup.patient.infra.mapper.PatientStatusHistoryMapper;
 import com.crdp.followup.record.infra.mapper.FollowupRecordMapper;
@@ -54,6 +58,10 @@ class PatientOverviewServiceTest {
     private final FollowupTaskQueryMapper taskQueryMapper = mock(FollowupTaskQueryMapper.class);
     private final FollowupRecordMapper recordMapper = mock(FollowupRecordMapper.class);
     private final CryptoService crypto = mock(CryptoService.class);
+    private final PatientOverviewMapper overviewMapper = mock(PatientOverviewMapper.class);
+    private final ImplantGateway implantGateway = mock(ImplantGateway.class);
+    private final ImplantDictPort implantDicts = mock(ImplantDictPort.class);
+    private final DashboardFeatureMapper features = mock(DashboardFeatureMapper.class);
 
     private final PatientOverviewService service =
             new PatientOverviewService(
@@ -62,7 +70,11 @@ class PatientOverviewServiceTest {
                     taskQueryMapper,
                     recordMapper,
                     crypto,
-                    TenantViewFieldGuard.passthrough());
+                    TenantViewFieldGuard.passthrough(),
+                    overviewMapper,
+                    implantGateway,
+                    implantDicts,
+                    features);
 
     @BeforeEach
     void login() {
@@ -423,6 +435,171 @@ class PatientOverviewServiceTest {
         assertNull(view.device(), "C 当前器械随 E21 植入数据开放，A / E21 前恒 null");
     }
 
+    // ---------------------------------------------------------------- C 器械卡片与待录入扫描件数
+    // （E21-T22 / C-PAT-010；验收「功能开关关闭时 A、B 不受影响」）
+
+    /** 在用植入记录行（C-PAT-007：状态在用即当前器械；测试数据全部虚构）。 */
+    private static ImplantRow activeImplant(String deviceType, LocalDate implantDate) {
+        return new ImplantRow(
+                601L,
+                PATIENT_ID,
+                "FIRST",
+                implantDate,
+                deviceType,
+                "BRAND-X（示例）",
+                "MODEL-X（示例）",
+                "SN-DEMO-0001",
+                "DDD",
+                "虚构示例医院",
+                "李医生（示例）",
+                null,
+                null,
+                null,
+                "ACTIVE",
+                null,
+                null,
+                1,
+                OPERATOR_ID,
+                OPERATOR_ID);
+    }
+
+    private void enableFeatures(boolean implant, boolean eriCycle, boolean scanProgress) {
+        when(features.findEnabled("implant")).thenReturn(implant);
+        when(features.findEnabled("eri_cycle")).thenReturn(eriCycle);
+        when(features.findEnabled("scan_progress")).thenReturn(scanProgress);
+    }
+
+    @Test
+    void summaryKeepsDeviceAndScanCountAbsentWhenSwitchesOff() {
+        // 验收位：功能开关关闭（A / B 租户）→ 概览无器械行、无待录入扫描件数，且不发起植入 / 报告查询
+        enableFeatures(false, false, false);
+        when(gateway.findOverview(PATIENT_ID)).thenReturn(row("ACTIVE"));
+        when(implantGateway.activeImplantOf(PATIENT_ID))
+                .thenReturn(activeImplant("CRT_D", LocalDate.of(2025, 6, 10)));
+
+        PatientOverviewService.PatientOverviewView view = service.summaryOf(PATIENT_ID);
+
+        assertNull(view.device(), "implant 关闭：概览不带器械行（A / B 行为与 E21 前一致）");
+        assertNull(view.pendingScanCount(), "scan_progress 关闭：概览不下发待录入扫描件数");
+        verify(implantGateway, never()).activeImplantOf(anyLong());
+        verify(overviewMapper, never()).countPendingDigitizeReports(anyLong());
+    }
+
+    @Test
+    void summaryShowsDeviceCardWithTypeDurationAndEri() {
+        enableFeatures(true, true, false);
+        when(gateway.findOverview(PATIENT_ID)).thenReturn(row("ACTIVE"));
+        when(implantGateway.activeImplantOf(PATIENT_ID))
+                .thenReturn(activeImplant("CRT_D", LocalDate.of(2025, 6, 10)));
+        when(implantDicts.items("pacemaker_type"))
+                .thenReturn(List.of(new ImplantDictPort.DictItem("CRT_D", "CRT-D", 3, true)));
+        when(overviewMapper.findLatestEriRecordData(PATIENT_ID))
+                .thenReturn("{\"f323\":1,\"f324\":3.5}");
+
+        PatientOverviewService.PatientOverviewView view = service.summaryOf(PATIENT_ID);
+
+        assertEquals("CRT-D", view.device().typeLabel(), "类型显示名取业务字典（components.md §4）");
+        assertEquals("接近ERI", view.device().eri(), "ERI 标记取最近含 ERI 字段的已提交记录");
+        assertEquals(
+                PatientOverviewService.implantDurationText(
+                        LocalDate.of(2025, 6, 10),
+                        LocalDate.now(java.time.ZoneId.of("Asia/Shanghai"))),
+                view.device().implantDuration(),
+                "植入时长按北京业务日计算（口径另由静态用例锁定）");
+    }
+
+    @Test
+    void deviceCardHidesEriAndSkipsRecordQueryWhenEriCycleOff() {
+        enableFeatures(true, false, false);
+        when(gateway.findOverview(PATIENT_ID)).thenReturn(row("ACTIVE"));
+        when(implantGateway.activeImplantOf(PATIENT_ID))
+                .thenReturn(activeImplant("DDD", LocalDate.of(2025, 6, 10)));
+        when(implantDicts.items("pacemaker_type")).thenReturn(List.of());
+
+        PatientOverviewService.PatientOverviewView view = service.summaryOf(PATIENT_ID);
+
+        assertEquals("DDD", view.device().typeLabel(), "字典无项回落原码（历史值照常显示）");
+        assertNull(view.device().eri(), "eri_cycle 关闭：器械行不带 ERI 段（components.md §4）");
+        verify(overviewMapper, never()).findLatestEriRecordData(anyLong());
+    }
+
+    @Test
+    void deviceEriLabelFollowsLatestEriRecord() {
+        enableFeatures(true, true, false);
+        when(gateway.findOverview(PATIENT_ID)).thenReturn(row("ACTIVE"));
+        when(implantGateway.activeImplantOf(PATIENT_ID))
+                .thenReturn(activeImplant("CRT_D", LocalDate.of(2025, 6, 10)));
+        when(implantDicts.items("pacemaker_type")).thenReturn(List.of());
+
+        // 状态 2 → 已达ERI(EOI)
+        when(overviewMapper.findLatestEriRecordData(PATIENT_ID)).thenReturn("{\"f323\":2}");
+        assertEquals("已达ERI(EOI)", service.summaryOf(PATIENT_ID).device().eri());
+
+        // 状态 0 + 预计电池寿命 ≤ 1 年 → 视同接近ERI（与 EriEval.marked 同一「视同」口径）
+        when(overviewMapper.findLatestEriRecordData(PATIENT_ID))
+                .thenReturn("{\"f323\":0,\"f324\":0.5}");
+        assertEquals("接近ERI", service.summaryOf(PATIENT_ID).device().eri());
+
+        // 状态 0 + 电池寿命正常 → 正常
+        when(overviewMapper.findLatestEriRecordData(PATIENT_ID))
+                .thenReturn("{\"f323\":0,\"f324\":3}");
+        assertEquals("正常", service.summaryOf(PATIENT_ID).device().eri());
+
+        // 无含 ERI 字段的记录（含 A / B 表单）→ 正常
+        when(overviewMapper.findLatestEriRecordData(PATIENT_ID)).thenReturn(null);
+        assertEquals("正常", service.summaryOf(PATIENT_ID).device().eri());
+    }
+
+    @Test
+    void deviceCardAbsentWhenNoActiveImplant() {
+        enableFeatures(true, true, false);
+        when(gateway.findOverview(PATIENT_ID)).thenReturn(row("ACTIVE"));
+        when(implantGateway.activeImplantOf(PATIENT_ID)).thenReturn(null);
+
+        assertNull(service.summaryOf(PATIENT_ID).device(), "无在用器械（取出后 / 未登记）不出器械行");
+    }
+
+    @Test
+    void pendingScanCountCountsPendingDigitizeReports() {
+        enableFeatures(false, false, true);
+        when(gateway.findOverview(PATIENT_ID)).thenReturn(row("ACTIVE"));
+        when(overviewMapper.countPendingDigitizeReports(PATIENT_ID)).thenReturn(3L);
+
+        assertEquals(
+                3, service.summaryOf(PATIENT_ID).pendingScanCount(), "待录入 = 在册且 PENDING 的报告单数");
+    }
+
+    /** 植入时长文案（components.md §4「植入 1 年 5 个月」；与前端 record/logic implantDurationText 同口径）。 */
+    @Test
+    void implantDurationTextFormatsYearsAndMonths() {
+        assertEquals(
+                "1 年 5 个月",
+                PatientOverviewService.implantDurationText(
+                        LocalDate.of(2025, 6, 10), LocalDate.of(2026, 11, 13)));
+        assertEquals(
+                "不足 1 个月",
+                PatientOverviewService.implantDurationText(
+                        LocalDate.of(2026, 11, 1), LocalDate.of(2026, 11, 13)),
+                "未满一个月");
+        assertEquals(
+                "5 个月",
+                PatientOverviewService.implantDurationText(
+                        LocalDate.of(2026, 6, 1), LocalDate.of(2026, 11, 13)),
+                "不满一年只显示月");
+        assertEquals(
+                "2 年",
+                PatientOverviewService.implantDurationText(
+                        LocalDate.of(2024, 11, 13), LocalDate.of(2026, 11, 13)),
+                "整年无余月");
+        assertNull(
+                PatientOverviewService.implantDurationText(null, LocalDate.of(2026, 11, 13)),
+                "无植入日期不出时长");
+        assertNull(
+                PatientOverviewService.implantDurationText(
+                        LocalDate.of(2026, 12, 1), LocalDate.of(2026, 11, 13)),
+                "晚于今天（防御）不出时长");
+    }
+
     // ---------------------------------------------------------------- 租户视角执行点（E20-T07 /
     // PLT-VIEW-010、011）
 
@@ -455,7 +632,16 @@ class PatientOverviewServiceTest {
 
     private PatientOverviewService serviceOf(TenantViewFieldGuard guard) {
         return new PatientOverviewService(
-                gateway, statusGateway, taskQueryMapper, recordMapper, crypto, guard);
+                gateway,
+                statusGateway,
+                taskQueryMapper,
+                recordMapper,
+                crypto,
+                guard,
+                overviewMapper,
+                implantGateway,
+                implantDicts,
+                features);
     }
 
     @Test

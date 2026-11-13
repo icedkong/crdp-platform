@@ -24,6 +24,19 @@ export interface PatientLatestFollowup {
   survivalStatus?: null | string;
 }
 
+/**
+ * C 当前器械卡片（E21-T22 / C-PAT-010；components.md §4 器械行）：implant 开关开启且有在用器械时
+ * 下发；eri_cycle 关闭时 eri 为 null（前端只隐藏 ERI 段，器械行照常）。
+ */
+export interface PatientDeviceCard {
+  /** ERI 标记：'正常' | '接近ERI' | '已达ERI(EOI)'；eri_cycle 关闭为 null。 */
+  eri?: null | string;
+  /** 植入时长文案（如「1 年 5 个月」「不足 1 个月」），后端按北京业务日计算。 */
+  implantDuration?: null | string;
+  /** 起搏器类型显示名（业务字典 pacemaker_type）。 */
+  typeLabel: string;
+}
+
 /** 患者概览（PatientHeader 数据，components.md §4）：name / patientNo 为脱敏值。 */
 export interface PatientOverview {
   actions: string[];
@@ -33,7 +46,8 @@ export interface PatientOverview {
   /** 科室归属 id（E21-T21 / C-WARD-002：患者归属一个科室和一个病区；转科室弹窗排除当前科室）。 */
   deptId?: null | number;
   deptName?: null | string;
-  device?: null | Record<string, string>;
+  /** C 当前器械卡片（E21-T22 / C-PAT-010）：implant 开关关闭（A / B 租户）为 null。 */
+  device?: null | PatientDeviceCard;
   dischargeDate?: null | string;
   dischargeStatus?: null | number;
   followupCompleteness?: null | number;
@@ -45,6 +59,8 @@ export interface PatientOverview {
   nextVisit?: null | PatientNextVisit;
   patientNo: string;
   patientType?: null | string;
+  /** 本患者待录入扫描件数（E21-T22 / C-PAT-010、C-SCAN-011）：scan_progress 关闭为 null。 */
+  pendingScanCount?: null | number;
   responsibleName?: null | string;
   status: string;
   surgeryDate?: null | string;
@@ -161,6 +177,37 @@ export function latestFollowupText(overview: PatientOverview): string {
 export function completenessText(value: null | number | undefined): string {
   if (value === null || value === undefined) return '—';
   return `${value}%`;
+}
+
+/**
+ * C 器械行文案（E21-T22 / C-PAT-010，components.md §4「当前器械 CRT-D · 植入 1 年 5 个月」）：
+ * device 为 null（implant 开关关闭的 A / B 租户、无在用器械）返回空串——整行不显示。
+ */
+export function deviceText(overview: PatientOverview): string {
+  const device = overview.device;
+  if (!device) return '';
+  const parts = [`当前器械 ${device.typeLabel}`];
+  if (device.implantDuration) parts.push(`植入 ${device.implantDuration}`);
+  return parts.join(' · ');
+}
+
+/**
+ * 器械行 ERI 段文案（C-PAT-010 ERI 标记；components.md §4「ERI：正常」）：eri_cycle 关闭
+ * （eri 为 null）返回空串——只隐藏 ERI 段，器械行照常。
+ */
+export function deviceEriText(overview: PatientOverview): string {
+  const eri = overview.device?.eri;
+  return eri ? `ERI：${eri}` : '';
+}
+
+/**
+ * 待录入扫描件数文案（C-PAT-010、C-SCAN-011）：scan_progress 开关关闭（null）返回空串。
+ * 开启时计数 0 也显示（顶部固定显示该段，0 表示无待录入）。
+ */
+export function pendingScanText(overview: PatientOverview): string {
+  const count = overview.pendingScanCount;
+  if (count === null || count === undefined) return '';
+  return `待录入扫描件 ${count}`;
 }
 
 /** 性别显示（pt_patient.gender M / F，patient.md §1 口径）。 */

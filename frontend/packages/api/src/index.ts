@@ -531,13 +531,17 @@ export type {
   ImportWizardStep,
 } from './patient-import';
 // E13-T05 档案概览与患者时间轴（A-PAT-004、A-PAT-013、C-PAT-010）
+// E21-T22 器械卡片（deviceText / deviceEriText）与待录入扫描件数（pendingScanText）
 export {
   completenessText,
   contactSlotText,
   contactSourceText,
+  deviceEriText,
+  deviceText,
   genderText,
   latestFollowupText,
   nextVisitText,
+  pendingScanText,
   statusSourceText,
   TIMELINE_PLANNED_TEXT,
   timelineEntryLabel,
@@ -546,6 +550,7 @@ export {
 export type {
   PatientContactInfo,
   PatientContactVersion,
+  PatientDeviceCard,
   PatientLatestFollowup,
   PatientLostView,
   PatientNextVisit,
