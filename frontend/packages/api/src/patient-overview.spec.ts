@@ -12,9 +12,12 @@ import {
   completenessText,
   contactSlotText,
   contactSourceText,
+  deviceEriText,
+  deviceText,
   genderText,
   latestFollowupText,
   nextVisitText,
+  pendingScanText,
   statusSourceText,
   timelineEntryLabel,
   timelineProgressText,
@@ -99,6 +102,72 @@ describe('completenessText（基线块，E13-T02 / E15 写入前为空）', () =
   it('有值显示百分比', () => {
     expect(completenessText(92)).toBe('92%');
     expect(completenessText(78.5)).toBe('78.5%');
+  });
+});
+
+// ---------------------------------------------------------------- E21-T22 器械卡片与待录入扫描件数（C-PAT-010）
+
+describe('deviceText / deviceEriText（E21-T22 器械行，implant 开关门控）', () => {
+  it('device 为 null（implant 关闭的 A / B 租户、无在用器械）返回空串——整行不显示', () => {
+    expect(deviceText(overview({ device: null }))).toBe('');
+    expect(deviceEriText(overview({ device: null }))).toBe('');
+  });
+
+  it('器械行显示「当前器械 CRT-D · 植入 1 年 5 个月」+ ERI 段（components.md §4 C 另加行）', () => {
+    const withDevice = overview({
+      device: {
+        eri: '正常',
+        implantDuration: '1 年 5 个月',
+        typeLabel: 'CRT-D',
+      },
+    });
+    expect(deviceText(withDevice)).toBe('当前器械 CRT-D · 植入 1 年 5 个月');
+    expect(deviceEriText(withDevice)).toBe('ERI：正常');
+  });
+
+  it('无植入时长只显示类型（无植入日期防御）', () => {
+    expect(
+      deviceText(
+        overview({ device: { implantDuration: null, typeLabel: 'DDD' } }),
+      ),
+    ).toBe('当前器械 DDD');
+  });
+
+  it('eri_cycle 关闭（eri 为 null）只隐藏 ERI 段，器械行照常', () => {
+    const eriHidden = overview({
+      device: { eri: null, implantDuration: '5 个月', typeLabel: 'ICD' },
+    });
+    expect(deviceText(eriHidden)).toBe('当前器械 ICD · 植入 5 个月');
+    expect(deviceEriText(eriHidden)).toBe('');
+  });
+
+  it('接近 / 已达 ERI 文案原样透传（后端三值口径）', () => {
+    expect(
+      deviceEriText(
+        overview({ device: { eri: '接近ERI', typeLabel: 'CRT-D' } }),
+      ),
+    ).toBe('ERI：接近ERI');
+    expect(
+      deviceEriText(
+        overview({ device: { eri: '已达ERI(EOI)', typeLabel: 'CRT-D' } }),
+      ),
+    ).toBe('ERI：已达ERI(EOI)');
+  });
+});
+
+describe('pendingScanText（C-PAT-010 本患者待录入扫描件数，scan_progress 门控）', () => {
+  it('scan_progress 关闭（null / undefined）返回空串——不显示该段', () => {
+    expect(pendingScanText(overview({ pendingScanCount: null }))).toBe('');
+    expect(pendingScanText(overview({}))).toBe('');
+  });
+
+  it('开启时计数 0 也显示（顶部固定显示该段）', () => {
+    expect(pendingScanText(overview({ pendingScanCount: 0 }))).toBe(
+      '待录入扫描件 0',
+    );
+    expect(pendingScanText(overview({ pendingScanCount: 3 }))).toBe(
+      '待录入扫描件 3',
+    );
   });
 });
 

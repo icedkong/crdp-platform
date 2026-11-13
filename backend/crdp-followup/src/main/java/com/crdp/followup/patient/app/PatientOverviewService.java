@@ -1,6 +1,11 @@
 package com.crdp.followup.patient.app;
 
+import com.crdp.followup.dashboard.infra.mapper.DashboardFeatureMapper;
+import com.crdp.followup.implant.app.ImplantDictPort;
+import com.crdp.followup.implant.app.ImplantGateway;
+import com.crdp.followup.implant.infra.mapper.ImplantMapper.ImplantRow;
 import com.crdp.followup.patient.infra.mapper.PatientOverviewMapper;
+import com.crdp.followup.plan.domain.EriEval;
 import com.crdp.followup.record.infra.mapper.FollowupRecordMapper;
 import com.crdp.followup.task.infra.mapper.FollowupTaskQueryMapper;
 import com.crdp.framework.crypto.CryptoService;
@@ -32,7 +37,10 @@ import org.springframework.stereotype.Service;
  * <ul>
  *   <li>基线——基线资料完整度 + 登记实体列（最小必填集即基线数据，A-PAT-003）；分节补录、锁定与基线档案页签内容随 E13-T02；
  *   <li>计划——下次随访窗口（pt_patient_summary.next_*，E14 入组调度写入，写入前 null 由前端显示占位）；
- *   <li>最近随访——最近随访日期、生存状态、关键指标（EF 等）与终点事件（pt_patient_summary 派生列，E15 提交后重算写入）。
+ *   <li>最近随访——最近随访日期、生存状态、关键指标（EF 等）与终点事件（pt_patient_summary 派生列，E15 提交后重算写入）；
+ *   <li>C 器械卡片与待录入扫描件数（E21-T22 / C-PAT-010）——当前器械、植入时长、ERI 标记（{@code implant} 开关； ERI 段另受 {@code
+ *       eri_cycle}）与本患者待录入扫描件数（{@code scan_progress}）：三个开关关闭（A / B 租户）时 device 为 null、
+ *       pendingScanCount 为 null，概览行为与 E21 前完全一致（AGENTS §5.7，验收「功能开关关闭时 A、B 不受影响」）。
  * </ul>
  *
  * <p>时间轴（A-PAT-013「按时间顺序展示出院、每年随访、计划外随访、事件、死亡」；A-FU-023 / C-FU-023）：数据源为出院登记（pt_patient）、状态变更事件
@@ -59,6 +67,15 @@ public class PatientOverviewService {
     /** 转病区（A-WARD-005，E13-T08）：管理动作，不受随访状态限制（终止患者的病区归属仍可调整）。 */
     private static final String PERM_PATIENT_TRANSFER = "followup:patient:transfer";
 
+    /** 植入记录（器械卡片）的功能开关（E21-T22 / C-PAT-010：关闭时概览无器械行，A / B 行为不变）。 */
+    private static final String FEATURE_IMPLANT = "implant";
+
+    /** ERI 期随访的功能开关（E21-T22：关闭时器械卡片不带 ERI 段，components.md §4）。 */
+    private static final String FEATURE_ERI_CYCLE = "eri_cycle";
+
+    /** 电子化状态 / 补录进度的功能开关（E21-T22：关闭时概览不下发待录入扫描件数）。 */
+    private static final String FEATURE_SCAN_PROGRESS = "scan_progress";
+
     /**
      * 业务日期按北京时间（AGENTS.md §6）：时间轴「完成日期」从 completed_at（服务器墙钟）换算北京业务日， 与窗口 / 计划日期同口径——CI 容器是 UTC，直接
      * toLocalDate() 在北京时间跨日时段（每天 00:00–08:00 北京）会差一天。
@@ -73,6 +90,10 @@ public class PatientOverviewService {
     private final FollowupRecordMapper recordMapper;
     private final CryptoService crypto;
     private final TenantViewFieldGuard viewGuard;
+    private final PatientOverviewMapper overviewMapper;
+    private final ImplantGateway implantGateway;
+    private final ImplantDictPort implantDicts;
+    private final DashboardFeatureMapper features;
 
     public PatientOverviewService(
             PatientOverviewGateway gateway,
@@ -80,13 +101,21 @@ public class PatientOverviewService {
             FollowupTaskQueryMapper taskQueryMapper,
             FollowupRecordMapper recordMapper,
             CryptoService crypto,
-            TenantViewFieldGuard viewGuard) {
+            TenantViewFieldGuard viewGuard,
+            PatientOverviewMapper overviewMapper,
+            ImplantGateway implantGateway,
+            ImplantDictPort implantDicts,
+            DashboardFeatureMapper features) {
         this.gateway = gateway;
         this.statusGateway = statusGateway;
         this.taskQueryMapper = taskQueryMapper;
         this.recordMapper = recordMapper;
         this.crypto = crypto;
         this.viewGuard = viewGuard;
+        this.overviewMapper = overviewMapper;
+        this.implantGateway = implantGateway;
+        this.implantDicts = implantDicts;
+        this.features = features;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -106,7 +135,13 @@ public class PatientOverviewService {
             Map<String, Object> keyIndicators,
             Map<String, String> endpointEvents) {}
 
-    /** C 当前器械摘要（C-PAT-010）；implant 数据随 E21 开放，此前恒 null。 */
+    /**
+     * C 当前器械摘要（E21-T22 / C-PAT-010「顶部显示当前器械、植入时长、ERI 标记」，components.md §4 器械行）。
+     *
+     * <p>{@code implant} 开关关闭（A / B 租户）或无在用器械（取出后）时整体 null；{@code eriCycle} 关闭时 {@code eri} 为
+     * null（前端只隐藏 ERI 段，器械行照常），否则为「正常 / 接近ERI / 已达ERI(EOI)」——取最近一条含 ERI 字段（f323 / f324）的 已提交随访记录按
+     * {@link EriEval} 判定（与接近 ERI 卡片、计划切换 SW-7 / SW-8 同一谓词族；无此类记录视为正常）。
+     */
     public record DeviceView(String typeLabel, String implantDuration, String eri) {}
 
     /** 概览（PatientHeader 数据，components.md §4 / patient.md §2）：name / patientNo 只含脱敏值。 */
@@ -135,6 +170,7 @@ public class PatientOverviewService {
             NextVisitView nextVisit,
             LatestFollowupView latestFollowup,
             DeviceView device,
+            Integer pendingScanCount,
             List<String> actions) {}
 
     /**
@@ -429,8 +465,119 @@ public class PatientOverviewService {
                 row.followupCompleteness(),
                 nextVisitOf(row),
                 latestFollowupOf(row),
-                null,
+                deviceOf(row.id()),
+                pendingScanCountOf(row.id()),
                 actionsOf(row.status(), terminated));
+    }
+
+    // ---------------------------------------------------------------- C 器械卡片与待录入扫描件数（E21-T22 /
+    // C-PAT-010）
+
+    /**
+     * C 当前器械摘要（implant 开关关闭 → null，A / B 概览行为与 E21 前完全一致，AGENTS §5.7）。 器械行三段：类型显示名（业务字典
+     * pacemaker_type，含停用项——历史值照常显示，C-FLD-009；未知编码回落原码）、植入时长（植入日 → 今天，北京业务日）、 ERI 标记 （eri_cycle
+     * 开关关闭为 null）。无在用器械（取出后 / 未登记）不出器械行。
+     */
+    private DeviceView deviceOf(long patientId) {
+        if (!Boolean.TRUE.equals(features.findEnabled(FEATURE_IMPLANT))) {
+            return null;
+        }
+        ImplantRow active = implantGateway.activeImplantOf(patientId);
+        if (active == null) {
+            return null;
+        }
+        String eri =
+                Boolean.TRUE.equals(features.findEnabled(FEATURE_ERI_CYCLE))
+                        ? eriLabelOf(patientId)
+                        : null;
+        return new DeviceView(
+                deviceTypeLabel(active.deviceType()),
+                implantDurationText(active.implantDate(), LocalDate.now(BUSINESS_ZONE)),
+                eri);
+    }
+
+    /** 患者待录入扫描件数（scan_progress 开关关闭 → null，概览不显示该段；A 租户行 digitize_status 恒 NULL 计数恒 0）。 */
+    private Integer pendingScanCountOf(long patientId) {
+        if (!Boolean.TRUE.equals(features.findEnabled(FEATURE_SCAN_PROGRESS))) {
+            return null;
+        }
+        Long count = overviewMapper.countPendingDigitizeReports(patientId);
+        return count == null ? 0 : count.intValue();
+    }
+
+    /**
+     * ERI 标记（C-PAT-010）：最近一条含 ERI 字段（f323 / f324）的已提交随访记录按 {@link EriEval} 判定—— 状态 2 已达ERI(EOI)、1
+     * 接近ERI、0 正常；状态正常 / 缺失但预计电池寿命 ≤ 1 年视同接近ERI（与 marked() 同一「视同」口径）； 无此类记录（含 A / B 表单）视为正常。
+     */
+    private String eriLabelOf(long patientId) {
+        Map<String, Object> data = readData(overviewMapper.findLatestEriRecordData(patientId));
+        String statusCode = EriEval.statusCode(data);
+        if (EriEval.STATUS_EOI.equals(statusCode)) {
+            return "已达ERI(EOI)";
+        }
+        if (EriEval.STATUS_NEAR.equals(statusCode)) {
+            return "接近ERI";
+        }
+        Double batteryLife = EriEval.batteryLife(data);
+        if (batteryLife != null && batteryLife <= EriEval.BATTERY_LIFE_THRESHOLD) {
+            return "接近ERI";
+        }
+        return "正常";
+    }
+
+    /** 起搏器类型显示名（字典 pacemaker_type 含停用项，C-FLD-009；未知编码回落原码，不返回 null）。 */
+    private String deviceTypeLabel(String deviceType) {
+        if (deviceType == null) {
+            return null;
+        }
+        return implantDicts.items(ImplantDictPort.DICT_DEVICE_TYPE).stream()
+                .filter(item -> deviceType.equals(item.itemCode()))
+                .map(ImplantDictPort.DictItem::label)
+                .findFirst()
+                .orElse(deviceType);
+    }
+
+    /**
+     * 植入时长显示（components.md §4「植入 1 年 5 个月」；与前端 record/logic implantDurationText 同口径）： 按日历月计算，目标日
+     * 未到植入日当月口径减一；不足 1 个月显示「不足 1 个月」；无植入日期 null（前端只显示类型）。
+     */
+    static String implantDurationText(LocalDate implantDate, LocalDate today) {
+        if (implantDate == null || today == null) {
+            return null;
+        }
+        long months =
+                (today.getYear() - implantDate.getYear()) * 12L
+                        + (today.getMonthValue() - implantDate.getMonthValue());
+        if (today.getDayOfMonth() < implantDate.getDayOfMonth()) {
+            months--;
+        }
+        if (months < 0) {
+            return null;
+        }
+        if (months == 0) {
+            return "不足 1 个月";
+        }
+        long years = months / 12;
+        long rest = months % 12;
+        if (years <= 0) {
+            return rest + " 个月";
+        }
+        if (rest <= 0) {
+            return years + " 年";
+        }
+        return years + " 年 " + rest + " 个月";
+    }
+
+    /** fu_record.data JSON 容错解析（与 EriListService.readData 同口径：脏数据视作无记录，不阻断概览）。 */
+    private static Map<String, Object> readData(String json) {
+        if (json == null || json.isBlank()) {
+            return Map.of();
+        }
+        try {
+            return JSON.readValue(json, new TypeReference<LinkedHashMap<String, Object>>() {});
+        } catch (Exception invalid) {
+            return Map.of();
+        }
     }
 
     private static NextVisitView nextVisitOf(PatientOverviewMapper.OverviewRow row) {

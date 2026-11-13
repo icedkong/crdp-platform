@@ -5,10 +5,13 @@ import { computed, ref } from 'vue';
 
 import {
   completenessText,
+  deviceEriText,
+  deviceText,
   genderText,
   latestFollowupText,
   nextVisitText,
   PATIENT_STATUS_TEXT,
+  pendingScanText,
 } from '@crdp/api';
 import { StatusTag } from '@crdp/status-tag';
 import { Button, Drawer } from 'ant-design-vue';
@@ -25,6 +28,11 @@ import MaskedField from './masked-field.vue';
  * 操作按钮按 summary.actions（后端按权限 + 状态计算）渲染：E15-T06 起接入
  * 「新建计划外随访」（unplanned，C-FU-022：患者在随访中 + followup:record:edit）；
  * 上传报告单（E16）/ 停止随访（E14 接口待页面接入）随对应任务开放。
+ *
+ * E21-T22 / C-PAT-010 器械卡片（components.md §4 C 另加行）：「当前器械 CRT-D ·
+ * 植入 1 年 5 个月  ERI：正常」——device 由后端按 implant 开关下发（关闭 = null =
+ * A / B 租户不显示该行，AGENTS §5.7）；eri_cycle 关闭时只隐藏 ERI 段；待录入扫描件数
+ * 随 scan_progress 开关（null = 不显示）。
  *
  * E24-T04 / NFR-RESP-002（components.md §4 手机行）：手机折叠为「姓名 + 状态 +
  * 下次随访」+「详情 ▾」展开其余；操作按钮收进「操作」底部抽屉（design-system
@@ -78,12 +86,19 @@ const wardText = computed(() => {
     : ward;
 });
 
-/** 第三行元信息：基线块 / 随访块 / 最近随访块（验收「概览显示基线、计划、最近随访」）。 */
+/** 第三行元信息：基线块 / 随访块 / 最近随访块（验收「概览显示基线、计划、最近随访」）+ C 待录入扫描件数。 */
 const metrics = computed(() => [
   `基线资料完整度 ${completenessText(props.overview.baselineCompleteness)}`,
   `随访资料完整度 ${completenessText(props.overview.followupCompleteness)}`,
   `最近随访 ${latestFollowupText(props.overview)}`,
+  ...(pendingScanText(props.overview) ? [pendingScanText(props.overview)] : []),
 ]);
+
+/** E21-T22 / C-PAT-010 器械行：「当前器械 CRT-D · 植入 1 年 5 个月」；device 为 null（implant 关闭）整行不显示。 */
+const deviceLine = computed(() => deviceText(props.overview));
+
+/** 器械行 ERI 段（eri_cycle 关闭时 eri 为 null → 空串，段隐藏、器械行照常）。 */
+const deviceEri = computed(() => deviceEriText(props.overview));
 
 /**
  * E24-T04 手机操作抽屉按钮列表：与桌面行内按钮同一组、同一显隐口径
@@ -172,6 +187,16 @@ function runAction(event: HeaderAction) {
     </div>
     <div v-if="!isMobile || detailsOpen" class="line">
       <span v-for="item in metrics" :key="item">{{ item }}</span>
+    </div>
+    <!-- E21-T22 / C-PAT-010 器械行：implant 开关关闭（A / B 租户）device 为 null，整行不渲染 -->
+    <div
+      v-if="(!isMobile || detailsOpen) && deviceLine"
+      class="line"
+      data-testid="patient-device-card"
+    >
+      <span>{{ deviceLine }}</span>
+      <!-- eri_cycle 关闭时后端不下发 eri，段隐藏（components.md §4） -->
+      <span v-if="deviceEri" class="meta">{{ deviceEri }}</span>
     </div>
     <!-- E24-T04：桌面行内操作；手机收进「操作」底部抽屉（下方 Drawer） -->
     <div v-if="!isMobile" class="line actions">

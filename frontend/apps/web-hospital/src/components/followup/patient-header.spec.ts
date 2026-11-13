@@ -28,6 +28,7 @@ function overview(patch: Partial<PatientOverview> = {}): PatientOverview {
     age: 62,
     baselineCompleteness: 0.92,
     deptName: '心内科',
+    device: null,
     dischargeDate: '2026-10-28',
     dischargeStatus: 1,
     followupCompleteness: 0.4,
@@ -42,6 +43,7 @@ function overview(patch: Partial<PatientOverview> = {}): PatientOverview {
       windowStart: '2027-10-29',
     },
     patientNo: 'P0001234（示例）',
+    pendingScanCount: null,
     patientType: '重症冠心病',
     responsibleName: '李医生（示例）',
     status: 'ACTIVE',
@@ -147,5 +149,61 @@ describe('e24-t04 PatientHeader：手机折叠头部与操作抽屉', () => {
     expect(drawerText).toContain('联系方式与变更记录');
     expect(drawerText).not.toContain('转病区');
     expect(drawerText).not.toContain('新建计划外随访');
+  });
+});
+
+describe('e21-t22 PatientHeader：C 器械卡片与待录入扫描件数（C-PAT-010）', () => {
+  it('device 为 null（implant 关闭的 A / B 租户）不渲染器械行，概览与 E21 前一致', () => {
+    const wrapper = mountHeader({ device: null, pendingScanCount: null });
+    expect(wrapper.find('[data-testid="patient-device-card"]').exists()).toBe(
+      false,
+    );
+    expect(wrapper.text()).not.toContain('待录入扫描件');
+  });
+
+  it('device 下发时显示「当前器械 · 植入时长」与 ERI 段', () => {
+    const wrapper = mountHeader({
+      device: {
+        eri: '接近ERI',
+        implantDuration: '1 年 5 个月',
+        typeLabel: 'CRT-D',
+      },
+      pendingScanCount: 2,
+    });
+    expect(wrapper.find('[data-testid="patient-device-card"]').exists()).toBe(
+      true,
+    );
+    expect(wrapper.text()).toContain('当前器械 CRT-D · 植入 1 年 5 个月');
+    expect(wrapper.text()).toContain('ERI：接近ERI');
+    expect(wrapper.text()).toContain('待录入扫描件 2');
+  });
+
+  it('eri 为 null（eri_cycle 关闭）只隐藏 ERI 段，器械行照常（components.md §4）', () => {
+    const wrapper = mountHeader({
+      device: { eri: null, implantDuration: '5 个月', typeLabel: 'ICD' },
+    });
+    expect(wrapper.find('[data-testid="patient-device-card"]').exists()).toBe(
+      true,
+    );
+    expect(wrapper.text()).toContain('当前器械 ICD · 植入 5 个月');
+    expect(wrapper.text()).not.toContain('ERI：');
+  });
+
+  it('待录入扫描件数为 0 也显示（scan_progress 开启即固定显示该段）', () => {
+    const wrapper = mountHeader({ pendingScanCount: 0 });
+    expect(wrapper.text()).toContain('待录入扫描件 0');
+  });
+
+  it('手机：器械行随「详情 ▾」折叠展开（与元信息行同口径）', async () => {
+    breakpointState.isMobile = true;
+    const wrapper = mountHeader({
+      device: { eri: '正常', implantDuration: '2 年', typeLabel: 'CRT-D' },
+    });
+    expect(wrapper.text()).not.toContain('当前器械 CRT-D');
+    await wrapper
+      .find('[data-testid="header-details-toggle"]')
+      .trigger('click');
+    expect(wrapper.text()).toContain('当前器械 CRT-D');
+    expect(wrapper.text()).toContain('ERI：正常');
   });
 });

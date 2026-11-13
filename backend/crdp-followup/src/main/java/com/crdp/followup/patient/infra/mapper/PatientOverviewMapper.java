@@ -80,4 +80,48 @@ public interface PatientOverviewMapper {
             WHERE p.id = #{patientId} AND p.deleted = 0
             """)
     OverviewRow findOverview(@Param("patientId") long patientId);
+
+    /**
+     * 患者最近一条含 ERI 字段（f323 / f324，键契约 OQ-130①）的已提交随访记录表单值（E21-T22 / C-PAT-010 概览 ERI 标记）。
+     *
+     * <p>排序键 = 有效随访日期（visit_date ?? 表单随访日期 f303，OQ-134① 同源口径；JSON 路径为稳定键字面量，不是请求参数）。
+     * 不再回落任务计划日期：{@code fu_task} 是受控表，LEFT JOIN 会被数据范围改写器追加 {@code EXISTS(t.patient_id = …)}，
+     * 把无任务记录（历史补录——C 含 ERI 字段记录的主要来源）整体过滤掉；visit_date / f303 已覆盖两类记录。 判定在服务层用 {@code
+     * plan.domain.EriEval}（与接近 ERI 卡片、计划切换 SW-7 / SW-8 同一谓词族）。 A / B 表单无 f323 / f324 键，行天然为空；无返回
+     * null（视为「正常」）。
+     */
+    @DataScope(resource = "patient")
+    @Select(
+            """
+            <script>
+            SELECT r.data
+            FROM fu_record r
+            JOIN pt_patient p ON p.id = r.patient_id AND p.deleted = 0
+            WHERE r.patient_id = #{patientId} AND r.status = 'SUBMITTED' AND r.deleted = 0
+              AND (JSON_EXTRACT(r.data, '$.f323') IS NOT NULL
+                   OR JSON_EXTRACT(r.data, '$.f324') IS NOT NULL)
+            ORDER BY COALESCE(
+                         r.visit_date,
+                         STR_TO_DATE(JSON_UNQUOTE(JSON_EXTRACT(r.data, '$.f303')), '%Y-%m-%d')) DESC,
+                     r.id DESC
+            LIMIT 1
+            </script>
+            """)
+    String findLatestEriRecordData(@Param("patientId") long patientId);
+
+    /**
+     * 患者在册「待录入」扫描件数（E21-T22 / C-PAT-010、C-SCAN-011）：rpt_report 在册（status = 'NORMAL'）且 电子化状态 PENDING
+     * 的行数。条件与首页指标「待录入扫描件数」（DashboardStatsMapper.countReportsByDigitizeStatus）同一条件树按患者收窄； A 租户行
+     * digitize_status 恒 NULL，计数天然为 0（A-ATT-018）。
+     */
+    @DataScope(resource = "patient")
+    @Select(
+            """
+            SELECT COUNT(*)
+            FROM rpt_report r
+            JOIN pt_patient p ON p.id = r.patient_id AND p.deleted = 0
+            WHERE r.patient_id = #{patientId} AND r.status = 'NORMAL'
+              AND r.digitize_status = 'PENDING'
+            """)
+    Long countPendingDigitizeReports(@Param("patientId") long patientId);
 }
