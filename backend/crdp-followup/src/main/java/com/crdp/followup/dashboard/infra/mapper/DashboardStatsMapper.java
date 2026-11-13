@@ -81,7 +81,8 @@ public interface DashboardStatsMapper {
 
     /**
      * 近 N 天含标红参数的已提交随访记录数（C-DASH-001；标红命中由 E17-T04 复算落在 fu_record.highlight）。 「近 N 天提交」以 updated_at
-     * 近似（提交 / 重算都会触碰该列；fu_record 无独立提交时间列，OQ-107）。
+     * 近似（提交 / 重算都会触碰该列；fu_record 无独立提交时间列，OQ-107）；软删行不在册（deleted = 0，V87—— 与 abnormal_records
+     * 卡片列表行同一条件树，E21-T19）。
      */
     @DataScope(resource = "patient")
     @Select(
@@ -90,7 +91,7 @@ public interface DashboardStatsMapper {
             SELECT COUNT(*)
             FROM fu_record r
             JOIN pt_patient p ON p.id = r.patient_id AND p.deleted = 0
-            WHERE r.status = 'SUBMITTED' AND r.highlight IS NOT NULL
+            WHERE r.status = 'SUBMITTED' AND r.deleted = 0 AND r.highlight IS NOT NULL
               AND r.updated_at &gt;= #{since}
             <if test="wardId != null">AND p.ward_id = #{wardId}</if>
             </script>

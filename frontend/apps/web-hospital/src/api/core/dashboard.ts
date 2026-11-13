@@ -1,6 +1,7 @@
 /**
  * E19-T02 / A-DASH-001、A-DASH-002、C-DASH-001；E19-T03 / A-DASH-003、A-DASH-004、A-DASH-005、A-DASH-008、C-DASH-003、008；
- * E19-T04 / A-DASH-006、A-DASH-012、C-DASH-004；E19-T05 / A-DASH-010、A-DASH-011、C-DASH-009：
+ * E19-T04 / A-DASH-006、A-DASH-012、C-DASH-004；E19-T05 / A-DASH-010、A-DASH-011、C-DASH-009；
+ * E21-T19 / C-DASH-002、C-DASH-005、C-DASH-006（医院 C 三卡 device_dist / eri_list / abnormal_records）：
  * 首页卡片接口（docs/api/stats.md §2，后端 DashboardCardController；页面 pages.md §2 首页）。
  *
  * 权限 followup:dashboard:view（按钮 plt_menu 234，平台库 V59 / 种子 V129）；
@@ -11,6 +12,8 @@
  * （患者检索 completenessDrill 与卡片同一计算）。
  */
 import type {
+  AbnormalRecordsParams,
+  AbnormalRecordsView,
   BaselineCompletenessCardView,
   CompletenessParams,
   DashboardLayoutView,
@@ -18,8 +21,12 @@ import type {
   DashboardRoleLayoutsView,
   DashboardUserPrefSave,
   DashboardWardsView,
+  DeviceDistParams,
+  DeviceDistView,
   DoctorWorkloadParams,
   DoctorWorkloadView,
+  EriListParams,
+  EriListView,
   FollowupCompletenessCardView,
   KpiCardView,
   NodeRateCardView,
@@ -132,6 +139,41 @@ export function fetchDashboardWards() {
 export function fetchScanProgressCard(params: ScanProgressParams) {
   return requestClient.get<ScanProgressView>(
     apiPath('/followup/dashboard/cards/scan_progress'),
+    { params },
+  );
+}
+
+/**
+ * 器械类型分布（device_dist，E21-T19 / C-DASH-002）：在随访患者按在用器械类型统计、
+ * 可按品牌拆分。受 implant 开关控制（关闭后端 40301）——布局接口已按开关隐藏卡片。
+ */
+export function fetchDeviceDistCard(params: DeviceDistParams) {
+  return requestClient.get<DeviceDistView>(
+    apiPath('/followup/dashboard/cards/device_dist'),
+    { params },
+  );
+}
+
+/**
+ * 接近 ERI 器械列表（eri_list，E21-T19 / C-DASH-005）：最近一次 ERI 状态为接近 / 已达
+ * 或预计电池寿命 ≤ 阈值的患者，含器械、最近随访日期、下次计划日期。受 eri_cycle 开关
+ * 控制（关闭后端 40301）——布局接口已按开关隐藏卡片，正常不会请求到。
+ */
+export function fetchEriListCard(params: EriListParams) {
+  return requestClient.get<EriListView>(
+    apiPath('/followup/dashboard/cards/eri_list'),
+    { params },
+  );
+}
+
+/**
+ * 异常标红记录（abnormal_records，E21-T19 / C-DASH-006）：近 N 天（days 缺省 30）提交的
+ * 含标红参数的随访记录，显示标红项目与变化率，只做查看。受 implant 开关控制（关闭后端
+ * 40301）——布局接口已按开关隐藏卡片，正常不会请求到。
+ */
+export function fetchAbnormalRecordsCard(params: AbnormalRecordsParams) {
+  return requestClient.get<AbnormalRecordsView>(
+    apiPath('/followup/dashboard/cards/abnormal_records'),
     { params },
   );
 }

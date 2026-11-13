@@ -49,8 +49,11 @@ import StatCard from '#/components/followup/stat-card.vue';
 import { useBreakpoint } from '#/reference/use-breakpoint';
 import { usePermission } from '#/reference/use-permission';
 
+import AbnormalRecordsArea from './abnormal-records-area.vue';
 import CardSettings from './card-settings.vue';
 import CompletenessArea from './completeness-area.vue';
+import DeviceDistArea from './device-dist-area.vue';
+import EriListArea from './eri-list-area.vue';
 import { defaultTrendRange, metricIcon, trendChartOption } from './logic';
 import RateArea from './rate-area.vue';
 import ScanProgressArea from './scan-progress-area.vue';
@@ -61,11 +64,12 @@ defineOptions({ name: 'HospitalDashboard' });
 /**
  * E19-T02 / A-DASH-001、A-DASH-002、C-DASH-001 · E19-T03 / A-DASH-003、004、005、008、C-DASH-003、008 ·
  * E19-T04 / A-DASH-006、A-DASH-012、C-DASH-004 · E19-T05 / A-DASH-010、A-DASH-011、C-DASH-009 ·
- * E19-T06 / A-DASH-013、A-DASH-014 · 首页（pages.md §2）：卡片与顺序由 GET /dashboard/layout
- * 下发（目录 ∩ 功能开关 ∩ 权限 × 角色布局 ∩ 用户隐藏——租户管理员按角色配置后即生效），
- * 布局接口失败时按目录默认布局兜底渲染（不白屏）。任务区（看板 | 任务表切换）、统计区
- * （每年随访率 + 节点随访率）、完整度区（基线 / 随访资料完整度半行并列）各按组内第一张
- * 可见卡片的位置渲染，组内单卡可见时不显示切换 / 只占整行。
+ * E19-T06 / A-DASH-013、A-DASH-014 · E21-T19 / C-DASH-002、005、006（医院 C 三卡：
+ * 器械类型分布、接近 ERI 器械列表、异常标红记录）· 首页（pages.md §2）：卡片与顺序由
+ * GET /dashboard/layout 下发（目录 ∩ 功能开关 ∩ 权限 × 角色布局 ∩ 用户隐藏——租户管理员
+ * 按角色配置后即生效），布局接口失败时按目录默认布局兜底渲染（不白屏）。任务区
+ * （看板 | 任务表切换）、统计区（每年随访率 + 节点随访率）、完整度区（基线 / 随访资料
+ * 完整度半行并列）各按组内第一张可见卡片的位置渲染，组内单卡可见时不显示切换 / 只占整行。
  *
  * 卡片设置（A-DASH-014，P1）：右上角入口，用户在角色允许的卡片内隐藏 / 重新显示、
  * 恢复默认（不能加入角色未允许的卡片、不能调顺序）。病区筛选（A-DASH-005）：头部
@@ -351,6 +355,23 @@ function handleLayoutSaved(view: DashboardLayoutView) {
              关闭时布局不含本卡（目录 ∩ 功能开关），组件渲染即代表开关开启 -->
         <ScanProgressArea
           v-else-if="area.kind === 'scan_progress'"
+          :ward-id="wardId"
+        />
+
+        <!-- 器械类型分布（E21-T19 / C-DASH-002，医院 C）：开关 implant 关闭时布局不含本卡 -->
+        <DeviceDistArea
+          v-else-if="area.kind === 'device_dist'"
+          :ward-id="wardId"
+        />
+
+        <!-- 接近 ERI 器械列表（E21-T19 / C-DASH-005，医院 C）：开关 eri_cycle 关闭时布局
+             不含本卡；total 与指标卡「接近 ERI 器械数」同查询 -->
+        <EriListArea v-else-if="area.kind === 'eri_list'" :ward-id="wardId" />
+
+        <!-- 异常标红记录（E21-T19 / C-DASH-006，医院 C）：开关 implant 关闭时布局不含本卡；
+             点击行进入患者详情随访记录页签定位该记录，只查看不处理 -->
+        <AbnormalRecordsArea
+          v-else-if="area.kind === 'abnormal_records'"
           :ward-id="wardId"
         />
       </template>
