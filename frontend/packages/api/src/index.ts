@@ -1353,6 +1353,7 @@ export type {
   RecordPreviousView,
   RecordSubmitResult,
   RecordTaskContext,
+  RecordTimepointSuggestionView,
   TaskAcknowledgeView,
   TaskAssignItem,
   TaskAssignRequest,

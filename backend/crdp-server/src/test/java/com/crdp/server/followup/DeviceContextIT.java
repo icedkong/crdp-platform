@@ -208,14 +208,47 @@ class DeviceContextIT {
     }
 
     @Test
-    void recordBeforeFirstImplantHasNoDeviceContext() {
+    void recordWithoutActiveImplantHasNoDeviceContext() {
         String admin = adminToken();
         String patientId = registerPatient(admin, "IT-MRN-E21T03-03", "DDD", "2024-06-01", "RA,RV");
 
-        // 随访日期早于首次植入：无匹配器械（device null），ctx 断链 → 条件字段隐藏清空
-        Map<?, ?> record = backfillRecord(admin, patientId, "2024-01-01");
+        // E21-T14 / C-FU-013/014：随访日期早于首次植入的补录创建被 40001 拦下
+        // （C 规格 §5「不早于植入日期、不晚于今天」）——「无器械上下文」改走取出后的患者：
+        Map<?, ?> tooEarly =
+                post(
+                        "/api/hospital/followup/patients/" + patientId + "/records",
+                        admin,
+                        Map.of(
+                                "source",
+                                "BACKFILL",
+                                "visitDate",
+                                "2024-01-01",
+                                "formCode",
+                                "A_ANNUAL_FU"));
+        assertEquals(40001, code(tooEarly), "补录随访日期不能早于植入日期（E21-T14 / C-FU-013/014）");
+
+        // 器械取出（电极逐根显式废弃）后无在用器械：补录取出后的日期 → device null，ctx 断链 → 条件字段隐藏清空
+        Map<?, ?> first = currentImplant(admin, patientId);
+        Map<?, ?> explanted =
+                post(
+                        "/api/hospital/followup/implants/" + first.get("id") + "/explant",
+                        admin,
+                        Map.of(
+                                "baseVersion",
+                                version(first),
+                                "date",
+                                "2025-06-01",
+                                "reason",
+                                "IT 取出（示例）",
+                                "leadActions",
+                                List.of(
+                                        action(leadIdOf(first, "RA"), "ABANDON"),
+                                        action(leadIdOf(first, "RV"), "ABANDON"))));
+        assertEquals(0, code(explanted), "取出失败：" + explanted);
+
+        Map<?, ?> record = backfillRecord(admin, patientId, "2025-08-01");
         assertNull(deviceOf(record).get("implantId"), "无器械上下文：" + deviceOf(record));
-        Map<String, Object> data = baseData("2024-01-01");
+        Map<String, Object> data = baseData("2025-08-01");
         data.put(ATRIAL_KEY, 9.9);
         data.put(ICD_KEY, "不应保留（示例）");
         assertEquals(0, code(submit(record, admin, data)), "无器械时提交不受阻");

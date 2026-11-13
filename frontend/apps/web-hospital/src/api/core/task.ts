@@ -15,6 +15,7 @@ import type {
   RecordDuplicateCheckView,
   RecordEditSessionView,
   RecordSubmitResult,
+  RecordTimepointSuggestionView,
   RecordUpdateResult,
   TaskAcknowledgeView,
   TaskAssignRequest,
@@ -197,6 +198,21 @@ export function createBackfillRecord(
   return requestClient.post(
     apiPath(`/followup/patients/${patientId}/records`),
     data,
+  );
+}
+
+/**
+ * 补录时建议随访时间点（E21-T14 / C-FU-014）：按随访日期距植入天数建议选项（空档区间 /
+ * 无器械 / A-B 表单无字段时无建议）、自动关联当时器械、器械接近 ERI 优先建议「ERI期随访」；
+ * earliestImplantDate 为补录日期下界。失败不拦截（补录弹窗只做提示）。
+ */
+export function fetchTimepointSuggestion(
+  patientId: number | string,
+  visitDate: string,
+) {
+  return requestClient.get<RecordTimepointSuggestionView>(
+    apiPath(`/followup/patients/${patientId}/records/suggest-timepoint`),
+    { params: { visitDate } },
   );
 }
 

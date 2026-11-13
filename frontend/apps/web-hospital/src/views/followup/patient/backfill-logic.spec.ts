@@ -1,21 +1,28 @@
-import type { PatientTimelineEntry } from '@crdp/api';
+import type {
+  PatientTimelineEntry,
+  RecordTimepointSuggestionView,
+} from '@crdp/api';
 
 import { describe, expect, it } from 'vitest';
 
 import {
   backfillDateError,
   defaultBackfillDate,
+  deviceContextText,
   isBackfillDateDisabled,
   resolvePresetVisitDate,
   timelineOpenNeedsStart,
   timelineOpenRoute,
+  timepointSuggestionText,
 } from './backfill-logic';
 
 /**
- * E15-T07 / A-FU-014、C-FU-013 · 历史补录纯逻辑单测。
+ * E15-T07 / A-FU-014、C-FU-013 · 历史补录纯逻辑单测；E21-T14 / C-FU-014 建议随访时间点。
  *
  * 锁定：补录日期必须是过去的日期（今天及以后不可选，后端 40001 兜底）；默认一年前；
- * 时间轴节点打开路由（有 recordId 直达、无 recordId 的任务节点需先 start、计划中不可打开）。
+ * 不早于最早植入日期（有植入记录时，与后端 40001 同口径）；建议时间点 / 当时器械提示行
+ * （无建议、A / B 无器械时整行省略）；时间轴节点打开路由（有 recordId 直达、无 recordId
+ * 的任务节点需先 start、计划中不可打开）。
  */
 const TODAY = new Date('2026-11-05T10:00:00');
 
@@ -36,6 +43,106 @@ describe('补录日期校验（A-FU-014「填写实际随访日期」）', () =>
 
   it('默认日期 = 一年前的同日（年度随访的常见补录场景）', () => {
     expect(defaultBackfillDate(TODAY)).toBe('2025-11-05');
+  });
+});
+
+// E21-T14 / C-FU-014：随访日期不早于最早植入日期（有植入记录时；与后端 40001 同口径）。
+describe('补录日期下界（不早于植入日期）', () => {
+  const earliest = '2024-06-01';
+
+  it('早于最早植入日期不可选 / 给出文案，当日及之后可选', () => {
+    expect(isBackfillDateDisabled('2024-05-31', TODAY, earliest)).toBe(true);
+    expect(isBackfillDateDisabled('2024-06-01', TODAY, earliest)).toBe(false);
+    expect(isBackfillDateDisabled('2026-11-04', TODAY, earliest)).toBe(false);
+    expect(backfillDateError('2024-05-31', TODAY, earliest)).toBe(
+      '补录随访日期不能早于植入日期（2024-06-01）',
+    );
+    expect(backfillDateError('2024-06-01', TODAY, earliest)).toBe('');
+  });
+
+  it('无植入记录（A / B 租户）不设下界', () => {
+    expect(isBackfillDateDisabled('2020-01-01', TODAY, null)).toBe(false);
+    expect(isBackfillDateDisabled('2020-01-01', TODAY, undefined)).toBe(false);
+    expect(backfillDateError('2020-01-01', TODAY, null)).toBe('');
+  });
+});
+
+// E21-T14 / C-FU-014：建议随访时间点 / 当时器械提示行（补录弹窗，全部虚构数据）。
+describe('建议随访时间点提示（C-FU-014）', () => {
+  const device = {
+    chambers: 2,
+    current: false,
+    hasRaLead: true,
+    implantDate: '2024-06-01',
+    implantId: '501',
+    type: 'DDD',
+    typeLabel: '双腔起搏器(DDD)',
+  };
+
+  it('有建议：「建议随访时间点：术后1个月（可改选）」＋当时器械行', () => {
+    const view = {
+      device,
+      daysSinceImplant: 31,
+      eriFollowup: false,
+      patientId: '301',
+      suggestedLabel: '术后1个月',
+      suggestedTimepoint: 2,
+      visitDate: '2024-07-02',
+    } as RecordTimepointSuggestionView;
+    expect(timepointSuggestionText(view)).toBe(
+      '建议随访时间点：术后1个月（可改选）',
+    );
+    expect(deviceContextText(view)).toBe(
+      '当时器械 双腔起搏器(DDD)（2024-06-01 植入）',
+    );
+  });
+
+  it('器械接近 ERI：优先提示 ERI 期随访', () => {
+    const view = {
+      device,
+      daysSinceImplant: 31,
+      eriFollowup: true,
+      patientId: '301',
+      suggestedLabel: 'ERI期随访',
+      suggestedTimepoint: 7,
+      visitDate: '2024-07-02',
+    } as RecordTimepointSuggestionView;
+    expect(timepointSuggestionText(view)).toBe(
+      '建议随访时间点：ERI期随访（器械接近 ERI，可改选）',
+    );
+    expect(deviceContextText(view)).toBe(
+      '当时器械 双腔起搏器(DDD)（2024-06-01 植入） · 接近 ERI',
+    );
+  });
+
+  it('空档区间无建议：提示自选；器械行照常', () => {
+    const view = {
+      device,
+      daysSinceImplant: 15,
+      eriFollowup: false,
+      patientId: '301',
+      suggestedLabel: null,
+      suggestedTimepoint: null,
+      visitDate: '2024-06-16',
+    } as RecordTimepointSuggestionView;
+    expect(timepointSuggestionText(view)).toBe(
+      '该日期在建议区间空档，请自选随访时间点',
+    );
+    expect(deviceContextText(view)).not.toBe('');
+  });
+
+  it('无器械（A / B 租户、取出后）：两行都省略', () => {
+    const view = {
+      device: null,
+      daysSinceImplant: null,
+      eriFollowup: false,
+      patientId: '301',
+      suggestedLabel: null,
+      suggestedTimepoint: null,
+      visitDate: '2025-01-10',
+    } as RecordTimepointSuggestionView;
+    expect(timepointSuggestionText(view)).toBe('');
+    expect(deviceContextText(view)).toBe('');
   });
 });
 

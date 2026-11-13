@@ -271,6 +271,29 @@ export interface BackfillCreateRequest {
   visitDate: string;
 }
 
+/**
+ * 补录时建议随访时间点（E21-T14 / C-FU-014）：按随访日期距当时器械植入日期的天数建议选项
+ * （0–7 术后72小时/出院前、25–45 术后1个月、75–110 术后3个月、150–215 术后6个月、330–400
+ * 术后1年、其后每6-12个月；空档区间与无器械无建议）；在组 ERI 且随访日期 ≥ eri_since 优先
+ * 建议「ERI期随访」。建议值可改选；earliestImplantDate 为补录日期下界（不早于植入日期）。
+ */
+export interface RecordTimepointSuggestionView {
+  /** 天数按该器械的植入日期计算（无器械为 null）。 */
+  daysSinceImplant?: null | number;
+  /** 当时器械（C-PAT-007 区间匹配；implant 关闭 / 无匹配为 null）。 */
+  device?: null | RecordDeviceContext;
+  /** 患者最早植入日期（补录日期下界；无植入记录为 null）。 */
+  earliestImplantDate?: null | string;
+  /** 器械接近 ERI（在组 mode=ERI 且随访日期 ≥ eri_since）。 */
+  eriFollowup: boolean;
+  patientId: string;
+  /** 建议显示名（无建议为 null）。 */
+  suggestedLabel?: null | string;
+  /** 建议选项编码（空档区间 / 无器械 / 表单无 visit_timepoint 字段时为 null）。 */
+  suggestedTimepoint?: null | number | string;
+  visitDate: string;
+}
+
 /** 提交结果（「提交后任务完成」验收位；无关联任务时 taskId / taskStatus 为空）。 */
 export interface RecordSubmitResult {
   completeKind?: TaskCompleteKind;

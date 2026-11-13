@@ -364,4 +364,23 @@ public interface PlanEnrollmentMapper {
             """)
     int advanceLastVisitDate(
             @Param("patientId") long patientId, @Param("visitDate") LocalDate visitDate);
+
+    /**
+     * 在组（ACTIVE / PAUSED）入组的 ERI 模式位与起算日（E21-T14 / C-FU-014 补录建议「ERI期随访」用）：
+     * 只取入组模式位，不输出患者明细；调用入口（补录建议 / 补录创建）已做患者数据范围校验（40400）。 无 ERI 入组返回 null。
+     */
+    @IgnoreScope(
+            reason = "补录建议随访时间点（C-FU-014）：只读在组入组的 ERI 模式位与起算日，不输出患者数据；" + "入口已做患者数据范围校验（40400）")
+    @Select(
+            """
+            SELECT id, mode, eri_since AS eriSince
+            FROM fu_enrollment
+            WHERE patient_id = #{patientId} AND status IN ('ACTIVE', 'PAUSED') AND mode = 'ERI'
+            ORDER BY id DESC
+            LIMIT 1
+            """)
+    EriModeRow findEriMode(@Param("patientId") long patientId);
+
+    /** ERI 模式位（mode = 'ERI' 行；eri_since 记触发那次的随访日期，E21-T07 / C-FU-006）。 */
+    record EriModeRow(long id, String mode, LocalDate eriSince) {}
 }

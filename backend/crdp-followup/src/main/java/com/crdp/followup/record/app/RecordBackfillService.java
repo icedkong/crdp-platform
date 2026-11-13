@@ -8,6 +8,7 @@ import com.crdp.framework.audit.AuditResult;
 import com.crdp.framework.web.ApiException;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.Map;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,12 +21,16 @@ import org.springframework.transaction.annotation.Transactional;
  * 进入随访整页表单（pages.md §5）填写并提交——提交流程与任务录入同一条（{@link RecordEntryService#submit}，无任务
  * 不联动完成）。表单缺省取患者在组计划的 FORM 节点表单（首个；显式传 formCode 时以请求为准）。
  *
+ * <p><b>建议随访时间点（E21-T14 / C-FU-014，随 C 医院接入）</b>：创建时经 {@link TimepointSuggestionService}
+ * 按随访日期距植入天数建议时间点并<b>种进草稿</b>（visit_timepoint 字段，可改选）；随访日期不得早于患者最早植入日期（C 规格 §5「补录一份纸质随访记录」：
+ * 「可填过去日期（不早于植入日期、不晚于今天）」，40001）；无植入记录（A / B 租户、未录植入的 C 患者）无下界。 同一创建接口即「继续补录下一次」（C-FU-015）
+ * 的后端入口：连续补录只是前端在提交成功后带同患者再调本接口（保留患者、器械按新随访日期重新匹配，测量值天然清空——新记录）。
+ *
  * <p><b>计划外随访（UNPLANNED，E15-T06 /
  * C-FU-022「症状就诊、程控调整等直接新建记录，随访时间点选『其他』；不影响后续节点，但填写了下次随访时间时照常覆盖」）</b>： 同一入口、同一条 fu_record（visit_date
  * 必填、允许当天——补录须早于今天，计划外是「现在发生了的就诊」）， 不创建任务、不动入组 next_plan_date 缓存（「不影响后续节点」：时间轴单独成节点、不作对比对象
- * A-FU-027）；须患者在随访中（ACTIVE，pages.md §4.10 已终止置灰）。 C 的「随访时间点选『其他』」是表单字段（随 E21 医院 C 接入）、「下次随访时间覆盖」随
- * C-FU-005（E21），本任务先落数据与展示。 远程监测（REMOTE，C-FU-025）随 E21 开放，本入口 40001。
- * 补录建议随访时间点（C-FU-014）与重复记录提示（C-FU-024）随 C 医院接入（E21 / E23）。
+ * A-FU-027）；须患者在随访中（ACTIVE，pages.md §4.10 已终止置灰）。「随访时间点选『其他』」是表单字段（不做时间点建议，C-FU-022 与补录的 C-FU-014
+ * 分开）。 远程监测（REMOTE，C-FU-025）随 E21 开放，本入口 40001。
  */
 @Service
 public class RecordBackfillService {
@@ -42,6 +47,7 @@ public class RecordBackfillService {
     private final FollowupRecordService recordService;
     private final FollowupRecordMapper recordMapper;
     private final com.crdp.form.record.app.FormService formService;
+    private final TimepointSuggestionService suggestions;
     private final AuditLogger audit;
 
     public RecordBackfillService(
@@ -49,11 +55,13 @@ public class RecordBackfillService {
             FollowupRecordService recordService,
             FollowupRecordMapper recordMapper,
             com.crdp.form.record.app.FormService formService,
+            TimepointSuggestionService suggestions,
             AuditLogger audit) {
         this.patientScope = patientScope;
         this.recordService = recordService;
         this.recordMapper = recordMapper;
         this.formService = formService;
+        this.suggestions = suggestions;
         this.audit = audit;
     }
 
@@ -128,6 +136,22 @@ public class RecordBackfillService {
             String auditAction,
             String auditLabel) {
         String resolved = resolveFormCode(patientId, formCode);
+        // 建议随访时间点（E21-T14 / C-FU-014）：只有补录分支建议（计划外选「其他」）；种进草稿、可改选。
+        // 无建议（空档区间 / 无器械 / 表单无 visit_timepoint 字段〔A / B〕）时 initialData 为空 Map，不动表单。
+        TimepointSuggestionService.SuggestionView suggestion =
+                SOURCE_UNPLANNED.equals(source)
+                        ? null
+                        : suggestions.suggest(patientId, visitDate, resolved);
+        if (suggestion != null
+                && suggestion.earliestImplantDate() != null
+                && visitDate.isBefore(suggestion.earliestImplantDate())) {
+            throw new ApiException(
+                    400,
+                    40001,
+                    "补录随访日期不能早于植入日期（" + suggestion.earliestImplantDate() + "），C-FU-013/014");
+        }
+        Map<String, Object> initialData =
+                suggestion == null ? Map.of() : suggestions.initialData(resolved, suggestion);
         FollowupRecordService.RecordView created =
                 recordService.createDraft(
                         new FollowupRecordService.CreateCommand(
@@ -136,7 +160,7 @@ public class RecordBackfillService {
                                 source,
                                 visitDate,
                                 resolved,
-                                java.util.Map.of(),
+                                initialData,
                                 java.util.Map.of("source", source)));
         audit.append(
                 AuditEntry.operation("followup", auditAction)
