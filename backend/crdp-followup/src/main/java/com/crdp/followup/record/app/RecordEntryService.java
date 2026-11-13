@@ -54,6 +54,15 @@ public class RecordEntryService {
     /** A 规格字段编码：是否死亡（yesno，1 = 是；模板驱动定位稳定键，不硬编码键名）。 */
     static final String FIELD_CODE_DEATH = "death";
 
+    /** C 规格字段编码：随访方式（患者 #19 / 随访 #6，字典 c_visit_method；模板驱动定位稳定键）。 */
+    static final String FIELD_CODE_VISIT_METHOD = "visit_method";
+
+    /**
+     * c_visit_method 选项码「远程监测」（1；followup V90 契约，与 c_eri_status 编码同口径）：REMOTE
+     * 记录的随访方式缺省（C-FU-025「随访方式为『远程监测』时使用同一表单人工录入」）。
+     */
+    static final int VISIT_METHOD_REMOTE = 1;
+
     private static final int DEATH_YES = 1;
 
     private final FollowupRecordService recordService;
@@ -74,6 +83,7 @@ public class RecordEntryService {
     private final com.crdp.followup.plan.app.PlanSwitchService planSwitch;
     private final FollowupSequenceService sequences;
     private final com.crdp.followup.report.app.ReportTranscribeService reportTranscribe;
+    private final com.crdp.followup.patient.app.BaselineGateway baselineGateway;
 
     public RecordEntryService(
             FollowupRecordService recordService,
@@ -93,7 +103,8 @@ public class RecordEntryService {
             com.crdp.followup.record.infra.mapper.RecordFeatureMapper features,
             com.crdp.followup.plan.app.PlanSwitchService planSwitch,
             FollowupSequenceService sequences,
-            com.crdp.followup.report.app.ReportTranscribeService reportTranscribe) {
+            com.crdp.followup.report.app.ReportTranscribeService reportTranscribe,
+            com.crdp.followup.patient.app.BaselineGateway baselineGateway) {
         this.recordService = recordService;
         this.formService = formService;
         this.fieldHistory = fieldHistory;
@@ -112,6 +123,7 @@ public class RecordEntryService {
         this.planSwitch = planSwitch;
         this.sequences = sequences;
         this.reportTranscribe = reportTranscribe;
+        this.baselineGateway = baselineGateway;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -143,8 +155,9 @@ public class RecordEntryService {
      * compareRules（该表单启用规则，前端实时标红与后端保存复算共用同一组规则，tech-plan §11）；E21-T03 起附 device （器械上下文：按 visitDate
      * 匹配当时在用的器械，任务录入回落当前器械；页面以 {@code { device: … }}} 传入 FormRenderer 的 context
      * 驱动按器械条件显示，C-FU-009）；E21-T11 起附 visitNo（患者随访编号）、sequenceNo（随访序号，C-FU-008 自动带入）与
-     * entryDefaults（录入缺省：随访医生 = 当前用户；随访方式缺省取患者默认随访方式，患者表单字段随 E23-T20 字典落地后接入）；E21-T09 / C-FU-018 起
-     * sequenceNo 开关开启（record_sequence_no）的已提交记录优先读重排落库值（fu_record.sequence_no）， 草稿与关闭租户（A /
+     * entryDefaults（录入缺省：随访医生 = 当前用户；随访方式缺省——REMOTE 记录固定「远程监测」、其余取患者默认随访方式 f019，E21-T12 / C-FU-025
+     * 起接入）；E21-T09 / C-FU-018 起 sequenceNo
+     * 开关开启（record_sequence_no）的已提交记录优先读重排落库值（fu_record.sequence_no）， 草稿与关闭租户（A /
      * B）维持派生预演（FollowupSequenceService）。
      */
     public record RecordDetailView(
@@ -171,9 +184,13 @@ public class RecordEntryService {
     public record PatientBriefView(
             String patientId, String patientName, String mrn, String wardName) {}
 
-    /** 录入缺省（C-FU-008「随访医生默认当前用户」；无会话〔定时作业〕为 null 项）。 */
+    /**
+     * 录入缺省（C-FU-008「随访医生默认当前用户」；无会话〔定时作业〕为 null 项）。E21-T12 / C-FU-008、C-FU-025 起附
+     * visitMethod（随访方式缺省，c_visit_method 选项码）：REMOTE 记录固定「远程监测」(1)，其余取患者基线默认随访方式（患者 #19）； 无字段 / 无值 /
+     * A / B 模板为 null（前端不写入）。 前端 {@code applyEntryDefaults} 仅在字段为空时写入，录入中可改选。
+     */
     @JsonInclude(JsonInclude.Include.NON_NULL)
-    public record EntryDefaultsView(String doctorId, String doctorName) {}
+    public record EntryDefaultsView(String doctorId, String doctorName, Integer visitMethod) {}
 
     /** 提交结果：任务终态与完成方式（「提交后任务完成」验收位）+ 字段历史条数与软校验警告；E21-T17 起转录态附 transcribedReportId。 */
     public record SubmitResultView(
@@ -247,19 +264,59 @@ public class RecordEntryService {
                         record.visitDate() != null
                                 ? record.visitDate()
                                 : (context == null ? null : context.planDate())),
-                entryDefaultsOf(),
+                entryDefaultsOf(record),
                 // E21-T32 / C-PAT-018：持久化标红命中（分组条 ▲n 数据面；compare_highlight 关闭为 null）
                 compareHighlights.persistedHits(record.id()));
     }
 
-    /** 录入缺省（C-FU-008：随访医生 = 当前用户；无医院会话〔定时作业旁路〕null）。 */
-    private EntryDefaultsView entryDefaultsOf() {
+    /**
+     * 录入缺省（C-FU-008：随访医生 = 当前用户；无医院会话〔定时作业旁路〕null）。 E21-T12 / C-FU-008、C-FU-025：附随访方式缺省
+     * visitMethod——REMOTE 记录固定「远程监测」，其余取患者基线默认随访方式（患者 #19，选项码原样下发）。
+     */
+    private EntryDefaultsView entryDefaultsOf(FollowupRecordService.RecordView record) {
         return CurrentSession.current()
                 .map(
                         session ->
                                 new EntryDefaultsView(
-                                        String.valueOf(session.userId()), session.displayName()))
+                                        String.valueOf(session.userId()),
+                                        session.displayName(),
+                                        defaultVisitMethodOf(record)))
                 .orElse(null);
+    }
+
+    /**
+     * 随访方式缺省（C-FU-008「随访方式……默认取患者随访方式」、C-FU-025「随访方式为『远程监测』时使用同一表单人工录入」）： REMOTE
+     * 记录固定「远程监测」（c_visit_method 选项码 1，V90 契约）；其余来源在患者基线分节里找模板字段编码 visit_method（患者 #19；C 登记表 f019，A
+     * / B 模板无此字段）取选项码值。 无字段 / 无值 / 越范围（分节空清单）返回 null，前端不写入缺省。
+     */
+    private Integer defaultVisitMethodOf(FollowupRecordService.RecordView record) {
+        if (RecordBackfillService.SOURCE_REMOTE.equals(record.source())) {
+            return VISIT_METHOD_REMOTE;
+        }
+        for (com.crdp.followup.patient.infra.mapper.BaselineSectionMapper.SectionRowRaw section :
+                baselineGateway.sections(record.patientId())) {
+            FormService.SchemaView schema =
+                    formService.schema(section.formCode(), section.templateVersion());
+            if (schema == null) {
+                continue;
+            }
+            String key = null;
+            for (FormService.CategoryView category : schema.categories()) {
+                for (FormService.FieldView field : category.fields()) {
+                    if (FIELD_CODE_VISIT_METHOD.equals(field.code())) {
+                        key = field.key();
+                    }
+                }
+            }
+            if (key == null) {
+                continue;
+            }
+            Object value = readJsonMap(section.data()).get(key);
+            if (value instanceof Number number) {
+                return number.intValue();
+            }
+        }
+        return null;
     }
 
     // ---------------------------------------------------------------- 提交（A-FU-005「提交后任务完成」）
@@ -649,5 +706,21 @@ public class RecordEntryService {
 
     private String decrypt(String cipher) {
         return cipher == null ? null : crypto.decrypt(cipher);
+    }
+
+    /** 分节 data JSON 容错解析（脏数据不阻断详情，返回空 Map）。 */
+    private static Map<String, Object> readJsonMap(String json) {
+        if (json == null || json.isBlank()) {
+            return Map.of();
+        }
+        try {
+            return new com.fasterxml.jackson.databind.ObjectMapper()
+                    .readValue(
+                            json,
+                            new com.fasterxml.jackson.core.type.TypeReference<
+                                    Map<String, Object>>() {});
+        } catch (com.fasterxml.jackson.core.JsonProcessingException invalid) {
+            return Map.of();
+        }
     }
 }

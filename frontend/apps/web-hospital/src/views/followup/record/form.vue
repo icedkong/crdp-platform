@@ -195,12 +195,13 @@ let editSessionReason = '';
 const editReasonModalOpen = ref(false);
 const deleteReasonModalOpen = ref(false);
 const savingEdit = ref(false);
-/** C-FU-008 自动带入（详情下发）：随访编号 / 随访序号 / 录入缺省（随访医生 = 当前用户）。 */
+/** C-FU-008 自动带入（详情下发）：随访编号 / 随访序号 / 录入缺省（随访医生 = 当前用户；E21-T12 起随访方式缺省）。 */
 const visitNo = ref<null | string>(null);
 const sequenceNo = ref<null | number>(null);
 const entryDefaults = ref<null | {
   doctorId: string;
   doctorName: string;
+  visitMethod?: null | number;
 }>(null);
 const schema = ref<FormSchema | null>(null);
 const data = ref<Record<string, unknown>>({});
@@ -573,7 +574,8 @@ async function load() {
     visitNo.value = detail.visitNo ?? null;
     sequenceNo.value = detail.sequenceNo ?? null;
     entryDefaults.value = detail.entryDefaults ?? null;
-    // C-FU-008 自动带入：随访医生默认当前用户（模板含 visit_doctor 字段时写入，字段字典随 E23-T20）
+    // C-FU-008 自动带入：随访医生默认当前用户；E21-T12 起随访方式缺省（REMOTE「远程监测」/ 患者默认，
+    // 模板含对应字段且当前无值时写入）
     if (detail.status === 'DRAFT' && detail.entryDefaults) {
       const prefilled = applyEntryDefaults(
         schema.value,

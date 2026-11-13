@@ -188,6 +188,38 @@ describe('uNPLANNED 节点（E15-T06 / C-FU-022 单独成节点）', () => {
 });
 
 /* ----------------------------------------------------------------------
+ * E21-T12 / C-FU-025 · 远程监测记录节点：与门诊程控来源（任务 / 补录 / 计划外）
+ * 区分展示——「远程监测」标识 + 随访日期 + 同一表单人工录入备注。
+ */
+describe('rEMOTE 节点（E21-T12 / C-FU-025 与程控记录区分）', () => {
+  it('显示远程监测标识、随访日期与「同一表单人工录入」备注，可打开表单', async () => {
+    const wrapper = mountTimeline([
+      {
+        canOpen: true,
+        createType: 'REMOTE',
+        date: '2026-11-02',
+        doneDate: '2026-11-02',
+        kind: 'REMOTE',
+        label: '远程监测',
+        note: '远程监测记录（同一表单人工录入，C-FU-025；首期不对接厂商远程监测平台）',
+        progressDone: 1,
+        progressTotal: 1,
+        recordId: '821',
+        status: 'COMPLETED',
+      },
+    ]);
+    const node = wrapper.find('[data-testid="timeline-node-REMOTE"]');
+    expect(node.exists()).toBe(true);
+    expect(node.text()).toContain('远程监测');
+    expect(node.text()).toContain('随访日期 2026-11-02');
+    expect(node.text()).toContain('同一表单人工录入');
+    expect(node.text()).toContain('已完成');
+    await node.trigger('click');
+    expect(wrapper.emitted('open')).toHaveLength(1);
+  });
+});
+
+/* ----------------------------------------------------------------------
  * E21-T23 / C-FU-023 · C 适配：器械事件菱形 ◆（components.md §9「C 器械事件以菱形
  * 插在时间线上」）与随访节点标红项数（「每次的标红项数」，红色「标红 n」）。
  */

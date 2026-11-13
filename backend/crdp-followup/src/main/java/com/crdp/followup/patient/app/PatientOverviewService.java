@@ -186,11 +186,12 @@ public class PatientOverviewService {
      *
      * @param kind DISCHARGE 出院 / STATUS 状态变更（含死亡）/ FOLLOWUP 每年随访（任务节点，E15-T07；REMINDER 站内提醒任务 随
      *     E15-T06 同为任务节点、note 标「无需填表」）/ BACKFILL 历史补录（无任务 的补录记录，A-FU-014、C-FU-013）/ UNPLANNED
-     *     计划外随访（无任务记录按 source 分流，E15-T06 / C-FU-022）/ PLANNED 下次计划日期（「计划中 / 待开始」，实时计算不落库，
-     *     A-FU-001）/ IMPLANT C 器械事件（E21-T23 / C-FU-023：首次植入 / 升级 / 更换 / 电极修正 / 其他，前端菱形 ◆， {@code
-     *     implant} 开关关闭不出）；EVENT 终点事件随 E17
+     *     计划外随访（无任务记录按 source 分流，E15-T06 / C-FU-022）/ REMOTE 远程监测记录（E21-T12 / C-FU-025：与门诊程控记录区分，
+     *     同一表单人工录入）/ PLANNED 下次计划日期（「计划中 / 待开始」，实时计算不落库， A-FU-001）/ IMPLANT C 器械事件（E21-T23 /
+     *     C-FU-023：首次植入 / 升级 / 更换 / 电极修正 / 其他，前端菱形 ◆， {@code implant} 开关关闭不出）；EVENT 终点事件随 E17
      * @param label 数据驱动的节点名（DISCHARGE「出院」；STATUS / PLANNED 为空，由前端映射文案；FOLLOWUP =
-     *     节点名；BACKFILL「历史补录」、UNPLANNED「计划外随访」；IMPLANT「{动作} · {器械类型显示名}」如「首次植入 · 双腔(DDD)」）
+     *     节点名；BACKFILL「历史补录」、UNPLANNED「计划外随访」、REMOTE「远程监测」；IMPLANT「{动作} · {器械类型显示名}」如「首次植入 ·
+     *     双腔(DDD)」）
      * @param status STATUS = 患者随访状态码（components.md §2 patient 域）；FOLLOWUP = 任务状态（PENDING /
      *     IN_PROGRESS / COMPLETED / OVERDUE / LOST_CANDIDATE / LOST / TERMINATED /
      *     SKIPPED_SUSPENDED）；BACKFILL / UNPLANNED = COMPLETED（已提交） 或 IN_PROGRESS（草稿未提交）；PLANNED =
@@ -321,23 +322,27 @@ public class PatientOverviewService {
                             canOpen(task),
                             task.recordId() == null ? null : highlightCounts.get(task.recordId())));
         }
-        // 无任务记录（A-FU-014 / C-FU-013 历史补录；E15-T06 起含 C-FU-022 计划外随访——按 source 分流成节点）
+        // 无任务记录（A-FU-014 / C-FU-013 历史补录；E15-T06 起含 C-FU-022 计划外随访、E21-T12 起含 C-FU-025
+        // 远程监测记录——按 source 分流成节点，远程监测与门诊程控记录区分展示）
         for (FollowupRecordMapper.RecordRowRaw record :
                 recordMapper.findTasklessByPatient(patientId)) {
             boolean submitted = "SUBMITTED".equals(record.status());
             boolean unplanned = "UNPLANNED".equals(record.source());
+            boolean remote = "REMOTE".equals(record.source());
             items.add(
                     new TimelineEntryView(
-                            unplanned ? "UNPLANNED" : "BACKFILL",
+                            unplanned ? "UNPLANNED" : remote ? "REMOTE" : "BACKFILL",
                             record.visitDate(),
-                            unplanned ? "计划外随访" : "历史补录",
+                            unplanned ? "计划外随访" : remote ? "远程监测" : "历史补录",
                             submitted ? "COMPLETED" : "IN_PROGRESS",
-                            unplanned ? unplannedNote(record) : backfillNote(record),
+                            unplanned
+                                    ? unplannedNote(record)
+                                    : remote ? remoteNote(record) : backfillNote(record),
                             String.valueOf(record.id()),
                             null,
                             null,
                             null,
-                            unplanned ? "UNPLANNED" : "BACKFILL",
+                            unplanned ? "UNPLANNED" : remote ? "REMOTE" : "BACKFILL",
                             null,
                             null,
                             null,
@@ -504,6 +509,17 @@ public class PatientOverviewService {
             return "计划外随访草稿（未提交），不影响后续节点";
         }
         return "计划外随访（随访时间点「其他」），不影响后续节点；不作对比对象";
+    }
+
+    /**
+     * 远程监测备注（E21-T12 / C-FU-025）：远程传输结果同一表单人工录入，与门诊程控记录区分（首期不对接厂商平台，附录 B）； 远程参数是真实测量值，照常作对比对象（与计划外
+     * A-FU-027 的排除分开）。
+     */
+    private static String remoteNote(FollowupRecordMapper.RecordRowRaw record) {
+        if (!"SUBMITTED".equals(record.status())) {
+            return "远程监测草稿（未提交），同一表单人工录入";
+        }
+        return "远程监测记录（同一表单人工录入，C-FU-025；首期不对接厂商远程监测平台）";
     }
 
     /** 历史补录备注：「补录，随访日期 X，Y 录入」（C-FU-023 各次随访含补录、单独标识）。 */

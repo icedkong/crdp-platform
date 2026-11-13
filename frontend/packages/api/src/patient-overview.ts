@@ -84,7 +84,8 @@ export interface PatientLostView {
  * 时间轴节点类型（A-PAT-013、A-FU-023 / C-FU-023）：DISCHARGE 出院 / STATUS 状态变更（含死亡）/
  * FOLLOWUP 每年随访（任务节点，E15-T07）/ BACKFILL 历史补录（无任务的补录记录，A-FU-014、C-FU-013）/
  * PLANNED 下次计划日期（「计划中 / 待开始」，实时计算不落库，A-FU-001）/ UNPLANNED 计划外随访
- * （E15-T06）；IMPLANT C 器械事件（E21-T23：首次植入 / 升级 / 更换 / 电极修正 / 其他，菱形 ◆，
+ * （E15-T06）；REMOTE 远程监测记录（E21-T12 / C-FU-025：与门诊程控记录区分，同一表单人工录入）；
+ * IMPLANT C 器械事件（E21-T23：首次植入 / 升级 / 更换 / 电极修正 / 其他，菱形 ◆，
  * `implant` 开关关闭不下发）；EVENT 终点事件随 E17 接入。
  */
 export type PatientTimelineKind =
@@ -94,6 +95,7 @@ export type PatientTimelineKind =
   | 'FOLLOWUP'
   | 'IMPLANT'
   | 'PLANNED'
+  | 'REMOTE'
   | 'STATUS'
   | 'UNPLANNED';
 

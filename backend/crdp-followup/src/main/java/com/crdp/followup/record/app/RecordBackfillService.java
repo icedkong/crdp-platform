@@ -30,7 +30,14 @@ import org.springframework.transaction.annotation.Transactional;
  * C-FU-022「症状就诊、程控调整等直接新建记录，随访时间点选『其他』；不影响后续节点，但填写了下次随访时间时照常覆盖」）</b>： 同一入口、同一条 fu_record（visit_date
  * 必填、允许当天——补录须早于今天，计划外是「现在发生了的就诊」）， 不创建任务、不动入组 next_plan_date 缓存（「不影响后续节点」：时间轴单独成节点、不作对比对象
  * A-FU-027）；须患者在随访中（ACTIVE，pages.md §4.10 已终止置灰）。「随访时间点选『其他』」是表单字段（不做时间点建议，C-FU-022 与补录的 C-FU-014
- * 分开）。 远程监测（REMOTE，C-FU-025）随 E21 开放，本入口 40001。
+ * 分开）。
+ *
+ * <p><b>远程监测记录（REMOTE，E21-T12 / C-FU-025「随访方式为『远程监测』时使用同一表单人工录入；首期不对接厂商远程监测平台」）</b>：
+ * 同一入口、同一张程控表单人工录入（厂商对接首期不做，附录 B），source = REMOTE 与门诊程控（任务 / 补录 /
+ * 计划外）区分——时间轴单独成「远程监测」节点、记录页头幅与横幅按来源展示； 功能开关 {@code remote_monitor_record}（医院 C，AGENTS §5.7）关闭
+ * 40301；不创建任务、不做时间点建议（远程传输不对应术后节点）；visit_date
+ * 必填且不能晚于今天（远程传输收到当天即可录，与计划外同口径）；须患者在随访中（ACTIVE）。提交与补录同一条（POST /records/{id}/submit），照常参与 C-FU-024
+ * 重复提示、C-FU-018 序号与对比标红（远程参数是真实测量值，作对比对象——计划外才排除，A-FU-027）。
  */
 @Service
 public class RecordBackfillService {
@@ -40,8 +47,11 @@ public class RecordBackfillService {
     /** fu_record.source：计划外随访（E15-T06 / A-FU-013、C-FU-022）。 */
     static final String SOURCE_UNPLANNED = "UNPLANNED";
 
-    /** fu_record.source 之外的来源（本入口暂不开放）。 */
-    private static final String SOURCE_REMOTE = "REMOTE";
+    /** fu_record.source：远程监测记录（E21-T12 / C-FU-025）。 */
+    static final String SOURCE_REMOTE = "REMOTE";
+
+    /** 功能开关：远程监测记录（医院 C，followup V99；无行 = 关闭 = A / B 行为，AGENTS §5.7）。 */
+    static final String FEATURE_REMOTE_MONITOR_RECORD = "remote_monitor_record";
 
     private final PatientContactGateway patientScope;
     private final FollowupRecordService recordService;
@@ -49,6 +59,7 @@ public class RecordBackfillService {
     private final com.crdp.form.record.app.FormService formService;
     private final TimepointSuggestionService suggestions;
     private final AuditLogger audit;
+    private final com.crdp.followup.record.infra.mapper.RecordFeatureMapper features;
 
     public RecordBackfillService(
             PatientContactGateway patientScope,
@@ -56,16 +67,18 @@ public class RecordBackfillService {
             FollowupRecordMapper recordMapper,
             com.crdp.form.record.app.FormService formService,
             TimepointSuggestionService suggestions,
-            AuditLogger audit) {
+            AuditLogger audit,
+            com.crdp.followup.record.infra.mapper.RecordFeatureMapper features) {
         this.patientScope = patientScope;
         this.recordService = recordService;
         this.recordMapper = recordMapper;
         this.formService = formService;
         this.suggestions = suggestions;
         this.audit = audit;
+        this.features = features;
     }
 
-    /** 补录 / 计划外请求（followup.md §3：source 收 BACKFILL / UNPLANNED，REMOTE 随 E21）。 */
+    /** 补录 / 计划外 / 远程监测请求（followup.md §3：source 收 BACKFILL / UNPLANNED / REMOTE）。 */
     public record BackfillCommand(String source, LocalDate visitDate, String formCode) {}
 
     /** 补录创建结果：recordId 即随访表单路由（pages.md §5 统一用 recordId）。 */
@@ -81,13 +94,14 @@ public class RecordBackfillService {
         }
         String source = command == null ? null : command.source();
         if (SOURCE_REMOTE.equals(source)) {
-            throw new ApiException(400, 40001, "远程监测记录随 E21 开放，暂不支持该来源");
+            return createRemote(patientId, command);
         }
         if (SOURCE_UNPLANNED.equals(source)) {
             return createUnplanned(patientId, command);
         }
         if (source != null && !FollowupRecordService.SOURCE_BACKFILL.equals(source)) {
-            throw new ApiException(400, 40001, "source 只支持 BACKFILL（历史补录）或 UNPLANNED（计划外随访）");
+            throw new ApiException(
+                    400, 40001, "source 只支持 BACKFILL（历史补录）、UNPLANNED（计划外随访）或 REMOTE（远程监测）");
         }
         if (command == null || command.visitDate() == null) {
             throw new ApiException(400, 40001, "补录必须填写实际随访日期（A-FU-014）");
@@ -127,6 +141,34 @@ public class RecordBackfillService {
                 "计划外随访（C-FU-022：不影响后续节点；下次随访时间覆盖随 E21）");
     }
 
+    /**
+     * 远程监测分支（E21-T12 / C-FU-025）：远程传输结果同一表单人工录入，source = REMOTE 与门诊程控记录区分。 功能开关关闭 40301（医院 C
+     * 能力，AGENTS §5.7）；visit_date 必填、不能晚于今天（远程传输收到当天即可录，与计划外同口径）；
+     * 须患者在随访中（已终止不再接收远程数据）；不做时间点建议（远程传输不对应术后节点，与补录的 C-FU-014 分开）。
+     */
+    private BackfillView createRemote(long patientId, BackfillCommand command) {
+        if (!Boolean.TRUE.equals(features.findEnabled(FEATURE_REMOTE_MONITOR_RECORD))) {
+            throw new ApiException(403, 40301, "远程监测记录未开通（C-FU-025，医院 C 功能）");
+        }
+        if (command == null || command.visitDate() == null) {
+            throw new ApiException(400, 40001, "远程监测记录必须填写随访日期（C-FU-025）");
+        }
+        if (command.visitDate().isAfter(LocalDate.now(ZONE))) {
+            throw new ApiException(400, 40001, "远程监测随访日期不能晚于今天");
+        }
+        String status = recordMapper.findPatientFollowupStatus(patientId);
+        if (!"ACTIVE".equals(status)) {
+            throw new ApiException(409, 40901, "患者不在随访中，不能录入远程监测记录（C-FU-025）");
+        }
+        return createRecord(
+                patientId,
+                SOURCE_REMOTE,
+                command.visitDate(),
+                command.formCode(),
+                "RECORD_REMOTE_CREATE",
+                "远程监测记录（C-FU-025：同一表单人工录入，首期不对接厂商远程监测平台）");
+    }
+
     /** 共用落库：表单解析 → DRAFT fu_record → 审计（source 落列与 data_meta 双记，时间轴按 source 分流）。 */
     private BackfillView createRecord(
             long patientId,
@@ -136,10 +178,11 @@ public class RecordBackfillService {
             String auditAction,
             String auditLabel) {
         String resolved = resolveFormCode(patientId, formCode);
-        // 建议随访时间点（E21-T14 / C-FU-014）：只有补录分支建议（计划外选「其他」）；种进草稿、可改选。
+        // 建议随访时间点（E21-T14 / C-FU-014）：只有补录分支建议（计划外选「其他」、远程传输不对应术后节点，
+        // C-FU-022 / C-FU-025 与补录的 C-FU-014 分开）；种进草稿、可改选。
         // 无建议（空档区间 / 无器械 / 表单无 visit_timepoint 字段〔A / B〕）时 initialData 为空 Map，不动表单。
         TimepointSuggestionService.SuggestionView suggestion =
-                SOURCE_UNPLANNED.equals(source)
+                SOURCE_UNPLANNED.equals(source) || SOURCE_REMOTE.equals(source)
                         ? null
                         : suggestions.suggest(patientId, visitDate, resolved);
         if (suggestion != null

@@ -363,6 +363,85 @@ class PatientOverviewServiceTest {
         assertEquals("IN_PROGRESS", draft.status(), "计划外草稿按进行中展示");
     }
 
+    /** E21-T12 / C-FU-025：远程监测记录单独成「远程监测」节点，与补录 / 计划外（门诊程控来源）区分展示。 */
+    @Test
+    void timelineSplitsRemoteRecordsFromBackfillAndUnplanned() {
+        when(gateway.findOverview(PATIENT_ID)).thenReturn(row("ACTIVE"));
+        when(recordMapper.findTasklessByPatient(PATIENT_ID))
+                .thenReturn(
+                        List.of(
+                                new FollowupRecordMapper.RecordRowRaw(
+                                        821L,
+                                        PATIENT_ID,
+                                        null,
+                                        "REMOTE",
+                                        LocalDate.of(2026, 10, 20),
+                                        null,
+                                        "C_PROGRAM_FU",
+                                        1,
+                                        "SUBMITTED",
+                                        2,
+                                        "{}",
+                                        "{}",
+                                        7L,
+                                        LocalDateTime.of(2026, 10, 21, 9, 0),
+                                        7L,
+                                        LocalDateTime.of(2026, 10, 21, 9, 0)),
+                                new FollowupRecordMapper.RecordRowRaw(
+                                        822L,
+                                        PATIENT_ID,
+                                        null,
+                                        "REMOTE",
+                                        LocalDate.of(2026, 11, 2),
+                                        null,
+                                        "C_PROGRAM_FU",
+                                        1,
+                                        "DRAFT",
+                                        0,
+                                        "{}",
+                                        "{}",
+                                        7L,
+                                        LocalDateTime.of(2026, 11, 3, 9, 0),
+                                        7L,
+                                        LocalDateTime.of(2026, 11, 3, 9, 0)),
+                                new FollowupRecordMapper.RecordRowRaw(
+                                        823L,
+                                        PATIENT_ID,
+                                        null,
+                                        "BACKFILL",
+                                        LocalDate.of(2024, 5, 10),
+                                        null,
+                                        "C_PROGRAM_FU",
+                                        1,
+                                        "SUBMITTED",
+                                        2,
+                                        "{}",
+                                        "{}",
+                                        7L,
+                                        LocalDateTime.of(2025, 1, 15, 9, 0),
+                                        7L,
+                                        LocalDateTime.of(2025, 1, 15, 9, 0))));
+
+        PatientOverviewService.TimelineView timeline = service.timelineOf(PATIENT_ID);
+
+        List<PatientOverviewService.TimelineEntryView> remote =
+                timeline.items().stream().filter(item -> "REMOTE".equals(item.kind())).toList();
+        assertEquals(2, remote.size(), "远程监测记录单独成节点（C-FU-025）");
+        assertEquals(
+                1,
+                timeline.items().stream().filter(item -> "BACKFILL".equals(item.kind())).count(),
+                "补录节点不受影响");
+        PatientOverviewService.TimelineEntryView submitted = remote.get(0);
+        assertEquals("远程监测", submitted.label(), "节点名「远程监测」，与门诊程控记录区分");
+        assertEquals("COMPLETED", submitted.status());
+        assertTrue(submitted.note().contains("同一表单人工录入"), "备注写明同一表单人工录入：" + submitted.note());
+        assertEquals("821", submitted.recordId());
+        assertEquals("REMOTE", submitted.createType(), "来源位 REMOTE（前端状态派生）");
+        assertEquals(true, submitted.canOpen(), "可打开表单页查看 / 续填");
+        PatientOverviewService.TimelineEntryView draft = remote.get(1);
+        assertEquals("IN_PROGRESS", draft.status(), "远程监测草稿按进行中展示");
+    }
+
     @Test
     void reminderTaskNodeCarriesNoFormNote() {
         when(gateway.findOverview(PATIENT_ID)).thenReturn(row("ACTIVE"));
