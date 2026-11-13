@@ -278,7 +278,8 @@ class TenantOnboardingServiceMySqlIT {
                 // E23-T21 增加 V94（医院 C 报告单类型与程控映射预置 rpt_type / rpt_name /
                 // rpt_indicator_tpl / rpt_indicator_item / rpt_mapping / rpt_mapping_item）。
                 // E21-T09 增加 V95（fu_record.sequence_no 随访序号列与功能开关 record_sequence_no）。
-                // E21-T21 增加 V97（转科室历史表 pt_dept_history，C-WARD-006）；E21-T19 增加 V96（C 首页三卡目录行 dash_card）。
+                // E21-T21 增加 V97（转科室历史表 pt_dept_history，C-WARD-006）；E21-T19 增加 V96（C 首页三卡目录行
+                // dash_card）。
                 // 此处随迁移清单维护
                 java.util.stream.IntStream.rangeClosed(1, 97).mapToObj(String::valueOf).toList(),
                 root.queryForList(
