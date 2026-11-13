@@ -55,6 +55,7 @@ import TaskAssignModal from '#/components/followup/task-assign-modal.vue';
 import TaskFilterDrawer from '#/components/followup/task-filter-drawer.vue';
 import TempTaskModal from '#/components/followup/temp-task-modal.vue';
 import { useBreakpoint } from '#/reference/use-breakpoint';
+import { useFeature } from '#/reference/use-feature';
 import { usePermission } from '#/reference/use-permission';
 
 import {
@@ -69,6 +70,7 @@ import {
   scopeOfQuery,
   statusOfQuery,
   TASK_EMPTY_TEXT,
+  taskColumns,
 } from './logic';
 import {
   drawerFilterCount,
@@ -96,8 +98,11 @@ defineOptions({ name: 'FollowupTask' });
  * POST /tasks/batch-assign（followup:task:assign），改派成功后新负责人收站内信。
  *
  * 「最近联系」列已随 E15-T04 沟通记录接入（该患者最新一条结果，中文由
- * packages/api contactResultText 映射，无联系显示「—」）；C 的器械类型 /
- * 随访时间点 / 上次标红项数三列随 E21 / E17 开放。
+ * packages/api contactResultText 映射，无联系显示「—」）；E21-T23 / C-FU-020 起
+ * `implant` 开关开启（医院 C）的桌面列表加三列：当前器械类型、随访时间点（任务
+ * 节点名）、上次随访标红项数（>0 红色；无已提交记录显示「—」），平板主要列与
+ * 手机卡片不插（后端行附 deviceType / timepoint / lastHighlightCount，开关关闭
+ * 为 null，A / B 列行为与 E21 前一致，AGENTS §5.7）。
  *
  * E15-T06 / A-FU-013：「+ 临时任务」打开 TempTaskModal（检索选患者 →
  * FORM / REMINDER → 计划日期 + 窗口宽度），不占用年度任务；
@@ -507,35 +512,14 @@ const rowSelection = computed(() => ({
   }),
 }));
 
-// ---------------------------------------------------------------- 列定义（pages.md §7）
+// ---------------------------------------------------------------- 列定义（pages.md §7；E21-T23 C 三列）
 
-const desktopColumns = computed(() => [
-  { dataIndex: 'index', title: '#', width: 48 },
-  { dataIndex: 'patientName', title: '患者' },
-  { dataIndex: 'wardName', title: '病区', width: 120 },
-  { dataIndex: 'nodeName', title: '节点', width: 110 },
-  { dataIndex: 'planDate', title: '计划日期', width: 110 },
-  { dataIndex: 'window', title: '窗口', width: 150 },
-  { dataIndex: 'status', title: '状态', width: 150 },
-  { dataIndex: 'assigneeName', title: '负责人', width: 110 },
-  { dataIndex: 'lastContact', title: '最近联系', width: 96 },
-  { dataIndex: 'action', fixed: 'right' as const, title: '操作', width: 168 },
-]);
-
-/** 平板保留主要列（pages.md §7：去掉序号 / 最近联系，信息在行展开前的主列足够定位任务）。 */
-const tabletColumns = computed(() => [
-  { dataIndex: 'patientName', title: '患者' },
-  { dataIndex: 'wardName', title: '病区', width: 110 },
-  { dataIndex: 'nodeName', title: '节点', width: 100 },
-  { dataIndex: 'planDate', title: '计划日期', width: 104 },
-  { dataIndex: 'window', title: '窗口', width: 140 },
-  { dataIndex: 'status', title: '状态', width: 140 },
-  { dataIndex: 'assigneeName', title: '负责人', width: 100 },
-  { dataIndex: 'action', fixed: 'right' as const, title: '操作', width: 150 },
-]);
+/** implant 开关（E21-T23 / C-FU-020）：开启（医院 C）桌面列表插入当前器械类型 / 随访时间点 / 上次标红三列。 */
+const { isEnabled } = useFeature();
+const implantEnabled = computed(() => isEnabled('implant'));
 
 const columns = computed(() =>
-  isTablet.value ? tabletColumns.value : desktopColumns.value,
+  taskColumns({ implantEnabled: implantEnabled.value, tablet: isTablet.value }),
 );
 
 const dataSource = computed(() =>
@@ -895,6 +879,31 @@ function handleEmptyAction() {
               <template v-if="column.dataIndex === 'patientName'">
                 <div>{{ record.patientName }}</div>
                 <div class="sub-text">{{ record.mrn }}</div>
+              </template>
+              <!-- E21-T23 / C-FU-020：C 三列（implant 开启才有列）——上次标红 >0 红色（components.md §9 标红口径） -->
+              <template v-else-if="column.dataIndex === 'deviceType'">
+                <span v-if="record.deviceType">{{ record.deviceType }}</span>
+                <span v-else class="sub-text">—</span>
+              </template>
+              <template v-else-if="column.dataIndex === 'timepoint'">
+                <span v-if="record.timepoint">{{ record.timepoint }}</span>
+                <span v-else class="sub-text">—</span>
+              </template>
+              <template v-else-if="column.dataIndex === 'lastHighlightCount'">
+                <span
+                  v-if="
+                    record.lastHighlightCount !== null &&
+                    record.lastHighlightCount !== undefined
+                  "
+                  :style="
+                    record.lastHighlightCount > 0
+                      ? { color: colors.error, fontWeight: 600 }
+                      : undefined
+                  "
+                >
+                  {{ record.lastHighlightCount }}
+                </span>
+                <span v-else class="sub-text">—</span>
               </template>
               <template v-else-if="column.dataIndex === 'status'">
                 <StatusTag

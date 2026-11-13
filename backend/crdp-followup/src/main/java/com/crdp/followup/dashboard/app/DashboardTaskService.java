@@ -306,7 +306,11 @@ public class DashboardTaskService {
                             row.recordId() == null ? null : String.valueOf(row.recordId()),
                             row.assigneeName(),
                             row.nextPlanDate(),
-                            latestContacts.get(row.patientId())));
+                            latestContacts.get(row.patientId()),
+                            // E21-T23：看板 / 首页任务表不带 C 三列（任务列表页专属，dashboard 卡片无器械列）
+                            null,
+                            null,
+                            null));
         }
         return items;
     }

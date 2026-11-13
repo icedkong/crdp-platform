@@ -187,6 +187,70 @@ describe('uNPLANNED 节点（E15-T06 / C-FU-022 单独成节点）', () => {
   });
 });
 
+/* ----------------------------------------------------------------------
+ * E21-T23 / C-FU-023 · C 适配：器械事件菱形 ◆（components.md §9「C 器械事件以菱形
+ * 插在时间线上」）与随访节点标红项数（「每次的标红项数」，红色「标红 n」）。
+ */
+describe('iMPLANT 器械事件（E21-T23 / C-FU-023 菱形）', () => {
+  it('显示「首次植入 · 类型」与入组语境，菱形 dot，点击不 emit open 且不置灰', async () => {
+    const wrapper = mountTimeline([
+      {
+        canOpen: false,
+        date: '2026-01-05',
+        kind: 'IMPLANT',
+        label: '首次植入 · 双腔起搏器(DDD)',
+        note: '入组“普通起搏器术后随访”',
+      },
+      {
+        canOpen: false,
+        date: '2026-11-01',
+        kind: 'IMPLANT',
+        label: '升级 · CRT-D',
+        note: '转入“ICD/CRT-D 术后随访”，从升级日重新起算',
+      },
+    ]);
+    expect(wrapper.findAll('[data-testid="timeline-device-dot"]')).toHaveLength(
+      2,
+    );
+    const first = wrapper.find('[data-testid="timeline-node-IMPLANT"]');
+    expect(first.text()).toContain('首次植入 · 双腔起搏器(DDD)');
+    expect(first.text()).toContain('入组“普通起搏器术后随访”');
+    expect(first.text()).toContain('器械事件');
+    expect(first.classes()).not.toContain('disabled');
+    await first.trigger('click');
+    expect(wrapper.emitted('open')).toBeUndefined();
+  });
+});
+
+describe('标红项数（E21-T23 / C-FU-023「每次的标红项数」）', () => {
+  it('highlightCount > 0 显示红色「标红 n」；null 不显示', () => {
+    const wrapper = mountTimeline([
+      followupNode({ highlightCount: 2 }),
+      followupNode({
+        highlightCount: null,
+        recordId: '702',
+        taskId: '9002',
+      }),
+    ]);
+    const nodes = wrapper.findAll('[data-testid="timeline-node-FOLLOWUP"]');
+    expect(nodes).toHaveLength(2);
+    expect(nodes[0]?.text()).toContain('标红 2');
+    expect(nodes[1]?.text()).not.toContain('标红');
+  });
+
+  it('表格视图含「标红」列', async () => {
+    localStorage.setItem('crdp:fu-view', 'table');
+    const wrapper = mountTimeline([followupNode({ highlightCount: 1 })]);
+    await nextTick();
+    const headers = wrapper
+      .findAll('th')
+      .map((th) => th.text())
+      .join(' ');
+    expect(headers).toContain('标红');
+    expect(wrapper.text()).toContain('标红');
+  });
+});
+
 describe('既有节点（E13-T05 回归）', () => {
   it('出院 / 状态节点不显示进度、不 emit open', async () => {
     const wrapper = mountTimeline([

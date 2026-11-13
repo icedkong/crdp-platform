@@ -1,8 +1,13 @@
 package com.crdp.followup.task.app;
 
 import com.crdp.followup.contact.app.ContactLogService;
+import com.crdp.followup.dashboard.infra.mapper.DashboardFeatureMapper;
+import com.crdp.followup.implant.app.ImplantDictPort;
+import com.crdp.followup.implant.app.ImplantGateway;
+import com.crdp.followup.implant.infra.mapper.ImplantMapper.ImplantRow;
 import com.crdp.followup.patient.app.PatientRegistrationService;
 import com.crdp.followup.patient.infra.mapper.PatientMapper;
+import com.crdp.followup.record.infra.mapper.FollowupRecordMapper;
 import com.crdp.followup.task.infra.mapper.FollowupTaskQueryMapper;
 import com.crdp.framework.audit.AuditEntry;
 import com.crdp.framework.audit.AuditLogger;
@@ -13,6 +18,7 @@ import com.crdp.framework.web.ApiException;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -34,9 +40,12 @@ import org.springframework.stereotype.Service;
  *   <li>批量查询写 BATCH_QUERY 数据访问审计（AGENTS §5.4）。
  * </ul>
  *
- * <p>C 侧（C-FU-020 沿用 A 的任务列表）：行结构同构；器械类型 / 随访时间点 / 上次标红项数三列随 E21 植入数据与 E17 对比标红落地（本任务先行返回 null
- * 位）。「最近联系」列已随 E15-T04 沟通记录接入：每患者最新一条 fu_contact_log 的结果编码， 中文映射在前端 packages/api（components.md §2
- * contact 域）。
+ * <p>C 侧（C-FU-020 沿用 A 的任务列表，E21-T23 起三列落地）：{@code implant} 开关开启时行附 当前器械类型
+ * deviceType（在用植入记录的字典显示名）、 随访时间点 timepoint（任务节点名——C 预置节点名即时间点，C-FU-008「来自任务的子计划」）、 上次随访标红项数
+ * lastHighlightCount（该患者最近一条 已提交记录的 fu_record.highlight 命中数，无已提交记录 null）； 开关关闭（A / B）三列全部 null
+ * 且不触发植入 / 标红查询，行为与 E21 前完全一致 （AGENTS §5.7）；{@code compare_highlight} 关闭时标红计数按读取侧过滤（followup.md
+ * §4）。 认领 / 改派 / 逾期沿用 A 的链路（E15-T03 / E15-T05，C-FU-020「沿用」）。「最近联系」列已随 E15-T04 沟通记录接入：每患者最新一条
+ * fu_contact_log 的结果编码， 中文映射在前端 packages/api（components.md §2 contact 域）。
  */
 @Service
 public class FollowupTaskQueryService {
@@ -62,23 +71,41 @@ public class FollowupTaskQueryService {
     /** 页签（A-FU-004：我的待办 / 本病区 / 全部）。 */
     private static final Set<String> SCOPE_VALUES = Set.of("MINE", "WARD", "ALL");
 
+    /** C 三列的功能开关（E21-T23 / C-FU-020：关闭〔A / B〕三列不出，AGENTS §5.7）。 */
+    private static final String FEATURE_IMPLANT = "implant";
+
+    /** 对比标红的功能开关（E21-T23：上次随访标红项数的读取侧过滤；无行视为默认开，tech-plan §10）。 */
+    private static final String FEATURE_COMPARE_HIGHLIGHT = "compare_highlight";
+
     private final FollowupTaskQueryMapper mapper;
     private final PatientMapper patientMapper;
     private final CryptoService crypto;
     private final AuditLogger audit;
     private final ContactLogService contactLogs;
+    private final DashboardFeatureMapper features;
+    private final ImplantGateway implantGateway;
+    private final ImplantDictPort implantDicts;
+    private final FollowupRecordMapper recordMapper;
 
     public FollowupTaskQueryService(
             FollowupTaskQueryMapper mapper,
             PatientMapper patientMapper,
             CryptoService crypto,
             AuditLogger audit,
-            ContactLogService contactLogs) {
+            ContactLogService contactLogs,
+            DashboardFeatureMapper features,
+            ImplantGateway implantGateway,
+            ImplantDictPort implantDicts,
+            FollowupRecordMapper recordMapper) {
         this.mapper = mapper;
         this.patientMapper = patientMapper;
         this.crypto = crypto;
         this.audit = audit;
         this.contactLogs = contactLogs;
+        this.features = features;
+        this.implantGateway = implantGateway;
+        this.implantDicts = implantDicts;
+        this.recordMapper = recordMapper;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -105,7 +132,11 @@ public class FollowupTaskQueryService {
             Integer pageNo,
             Integer pageSize) {}
 
-    /** 列表行（姓名 / 病案号只含脱敏值；最近联系随 E15-T04、C 三列随 E21 / E17 先行返回占位）。 */
+    /**
+     * 列表行（姓名 / 病案号只含脱敏值；最近联系随 E15-T04；E21-T23 起 {@code implant} 开启时附 C 三列—— deviceType
+     * 当前器械类型（在用植入记录的 字典显示名，无在用器械 null）、timepoint 随访时间点（任务节点名，C 预置节点即时间点）、 lastHighlightCount
+     * 上次随访标红项数（无已提交记录 null；compare_highlight 关闭 null——读取侧过滤））。
+     */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record TaskRowView(
             String id,
@@ -126,7 +157,10 @@ public class FollowupTaskQueryService {
             String recordId,
             String assigneeName,
             LocalDate nextPlanDate,
-            String lastContactResult) {}
+            String lastContactResult,
+            String deviceType,
+            String timepoint,
+            Integer lastHighlightCount) {}
 
     /** 页签徽标计数（同一非 scope 筛选下三态各计一次，MINE 恒按未完成口径）。 */
     public record TabCountsView(long mine, long ward, long total) {}
@@ -171,9 +205,15 @@ public class FollowupTaskQueryService {
         // 「最近联系」列（E15-T04 接入，A 规格 §主要页面 1）：每患者最新一条沟通记录的结果，
         // 与行查询同一数据范围（ContactLogMapper 语句上的 @DataScope 出行，越范围患者不可见）
         Map<Long, String> latestContacts = contactLogs.latestResultByPatients(patientIdsOf(rows));
+        // C 三列（E21-T23 / C-FU-020）：implant 开关关闭 → 空 Map（三列 null，不触发植入 / 标红查询）
+        Map<Long, TaskCColumns> cColumns = cColumnsOf(rows);
         List<TaskRowView> items = new ArrayList<>();
         for (FollowupTaskQueryMapper.TaskRowRaw row : rows) {
-            items.add(toView(row, latestContacts.get(row.patientId())));
+            items.add(
+                    toView(
+                            row,
+                            latestContacts.get(row.patientId()),
+                            cColumns.get(row.patientId())));
         }
         long total = mapper.count(criteria);
         FollowupTaskQueryMapper.TabCountRow counts = mapper.tabCounts(criteria);
@@ -276,7 +316,10 @@ public class FollowupTaskQueryService {
     }
 
     /** 行视图：姓名 / 病案号解密后脱敏（列表不提供逐行明文，明文走 E07-T05 专用接口）。 */
-    private TaskRowView toView(FollowupTaskQueryMapper.TaskRowRaw row, String lastContactResult) {
+    private TaskRowView toView(
+            FollowupTaskQueryMapper.TaskRowRaw row,
+            String lastContactResult,
+            TaskCColumns cColumns) {
         String name = decrypt(row.nameCipher());
         String mrn = decrypt(row.mrnCipher());
         return new TaskRowView(
@@ -299,7 +342,62 @@ public class FollowupTaskQueryService {
                 row.assigneeName(),
                 row.nextPlanDate(),
                 // E15-T04「最近联系」：该患者最新一条沟通记录的结果编码（前端映射中文），无联系时 null（列显示「—」）
-                lastContactResult);
+                lastContactResult,
+                // E21-T23 / C-FU-020 C 三列（implant 关闭 → null 占位）：随访时间点 = 任务节点名（数据驱动，不映射写死）
+                cColumns == null ? null : cColumns.deviceType(),
+                cColumns == null ? null : row.nodeName(),
+                cColumns == null ? null : cColumns.lastHighlightCount());
+    }
+
+    /** C 三列的每患者取数结果（deviceType 无在用器械 null；lastHighlightCount 无已提交记录 null、无命中 0）。 */
+    private record TaskCColumns(String deviceType, Integer lastHighlightCount) {}
+
+    /**
+     * 本页各患者的 C 列取数（E21-T23 / C-FU-020）：implant 开关关闭返回空 Map（三列 null， 不触发植入 / 标红查询——A / B 行为与 E21
+     * 前一致）；标红计数经批量查询（同「最近联系」模式），compare_highlight 关闭按读取侧过滤为 null。
+     */
+    private Map<Long, TaskCColumns> cColumnsOf(List<FollowupTaskQueryMapper.TaskRowRaw> rows) {
+        if (!Boolean.TRUE.equals(features.findEnabled(FEATURE_IMPLANT)) || rows.isEmpty()) {
+            return Map.of();
+        }
+        List<Long> patientIds = patientIdsOf(rows);
+        Map<Long, Integer> highlights =
+                Boolean.FALSE.equals(features.findEnabled(FEATURE_COMPARE_HIGHLIGHT))
+                        ? Map.of()
+                        : lastHighlightCounts(patientIds);
+        Map<Long, TaskCColumns> result = new LinkedHashMap<>();
+        for (Long patientId : patientIds) {
+            ImplantRow active = implantGateway.activeImplantOf(patientId);
+            // 无已提交记录 → 不在 Map（null，列显示「—」）；最近记录无命中 → 0
+            result.put(
+                    patientId,
+                    new TaskCColumns(
+                            active == null ? null : deviceTypeLabel(active.deviceType()),
+                            highlights.get(patientId)));
+        }
+        return result;
+    }
+
+    /** 各患者最近一条已提交记录的标红命中数（JSON_LENGTH(highlight)，无命中行 null；命中数 null 归 0）。 */
+    private Map<Long, Integer> lastHighlightCounts(List<Long> patientIds) {
+        Map<Long, Integer> result = new LinkedHashMap<>();
+        for (FollowupRecordMapper.PatientHighlightRow row :
+                recordMapper.latestSubmittedHighlightCounts(patientIds)) {
+            result.put(row.patientId(), row.hitCount() == null ? 0 : row.hitCount());
+        }
+        return result;
+    }
+
+    /** 起搏器类型显示名（字典 pacemaker_type 含停用项，C-FLD-009；未知编码回落原码，与 PatientOverviewService 同口径）。 */
+    private String deviceTypeLabel(String deviceType) {
+        if (deviceType == null) {
+            return null;
+        }
+        return implantDicts.items(ImplantDictPort.DICT_DEVICE_TYPE).stream()
+                .filter(item -> deviceType.equals(item.itemCode()))
+                .map(ImplantDictPort.DictItem::label)
+                .findFirst()
+                .orElse(deviceType);
     }
 
     /** 本页去重患者 id（「最近联系」批量取数）。 */

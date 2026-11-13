@@ -49,10 +49,11 @@ import InlineAttachmentStrip from './inline-attachment-strip.vue';
  * 节点：出院（DISCHARGE）、状态变更（STATUS）、每年随访（FOLLOWUP，带计划日期 / 窗口 / 完成日期 /
  * 完成进度 x/y；REMINDER 站内提醒任务同为任务节点，note 标「无需填表」）、历史补录（BACKFILL，
  * 单独标识）、计划外随访（UNPLANNED，E15-T06 / C-FU-022：单独成节点、不影响后续节点）、
- * 下次计划日期（PLANNED「计划中」，canOpen=false 置灰：任务开启日才创建）；终点事件随 E17、
- * C 器械事件随 E21。点节点卡片 canOpen 时 emit open（有 recordId 直接开表单页；未开始任务先
- * start 再开，由父页处理）。视图切换记住用户上次选择（localStorage crdp:fu-view，只存视图名，
- * 不含患者信息）。
+ * 下次计划日期（PLANNED「计划中」，canOpen=false 置灰：任务开启日才创建）；E21-T23 / C-FU-023
+ * 起随访节点带标红项数（highlightCount，红色「标红 n」）并渲染 C 器械事件（IMPLANT：菱形 ◆，
+ * 首次植入 / 升级 / 更换 + 入组语境 note，信息节点不可点不置灰）；终点事件随 E17。点节点卡片
+ * canOpen 时 emit open（有 recordId 直接开表单页；未开始任务先 start 再开，由父页处理）。
+ * 视图切换记住用户上次选择（localStorage crdp:fu-view，只存视图名，不含患者信息）。
  *
  * E13-T11 / A-PAT-021、C-PAT-018：有 recordId 的节点可「展开」——卡片内只读渲染该次记录
  * （FormRenderer readonly），顶部吸顶分组条（分组名、已填 / 应填、未填完橙色，A-PAT-019 口径
@@ -129,18 +130,24 @@ function nodeStatusText(entry: PatientTimelineEntry): string {
   return '';
 }
 
-/** 可点击（canOpen=true 的随访类节点；出院 / 状态事件是信息节点，不可点）。 */
+/** 可点击（canOpen=true 的随访类节点；出院 / 状态 / C 器械事件是信息节点，不可点）。 */
 function isClickable(entry: PatientTimelineEntry): boolean {
   return (
     entry.canOpen === true &&
     entry.kind !== 'DISCHARGE' &&
-    entry.kind !== 'STATUS'
+    entry.kind !== 'STATUS' &&
+    entry.kind !== 'IMPLANT'
   );
 }
 
-/** 置灰（计划中：任务开启日才创建，components.md §9 置灰 + 提示）。 */
+/** 置灰（计划中：任务开启日才创建，components.md §9 置灰 + 提示；器械事件是信息节点不置灰）。 */
 function isDimmed(entry: PatientTimelineEntry): boolean {
-  return entry.canOpen === false;
+  return entry.canOpen === false && entry.kind !== 'IMPLANT';
+}
+
+/** C 器械事件（E21-T23 / C-FU-023：菱形 ◆，components.md §9「植入 / 升级 / 更换插在时间线上」）。 */
+function isDeviceEvent(entry: PatientTimelineEntry): boolean {
+  return entry.kind === 'IMPLANT';
 }
 
 /** 节点主日期显示：随访节点用计划日期（补录 / 计划外用随访日期），其余用 date。 */
@@ -168,10 +175,12 @@ function nodeDetail(entry: PatientTimelineEntry): string {
   if (entry.doneDate) parts.push(`完成 ${entry.doneDate}`);
   const progress = timelineProgressText(entry);
   if (progress) parts.push(progress);
-  if (entry.highlightCount !== null && entry.highlightCount !== undefined) {
-    parts.push(`标红 ${entry.highlightCount}`);
-  }
   return parts.join(' · ');
+}
+
+/** 标红项数（E21-T23 / C-FU-023「每次的标红项数」）：null / undefined 不显示；>0 红色「标红 n」。 */
+function hasHighlight(entry: PatientTimelineEntry): boolean {
+  return entry.highlightCount !== null && entry.highlightCount !== undefined;
 }
 
 function onNodeClick(entry: PatientTimelineEntry) {
@@ -367,6 +376,7 @@ const tableColumns = [
   { dataIndex: 'windowText', title: '窗口' },
   { dataIndex: 'doneDate', title: '完成日期' },
   { dataIndex: 'progress', title: '进度' },
+  { dataIndex: 'highlight', title: '标红' },
   { dataIndex: 'note', title: '备注' },
   { dataIndex: 'action', title: '操作' },
 ];
@@ -375,6 +385,10 @@ const tableRows = computed(() =>
   props.entries.map((entry, index) => ({
     action: entry.canOpen ? '打开' : '—',
     doneDate: entry.doneDate ?? '—',
+    highlight:
+      entry.highlightCount === null || entry.highlightCount === undefined
+        ? '—'
+        : String(entry.highlightCount),
     key: `${entry.kind}-${entry.date}-${index}`,
     label: timelineEntryLabel(entry),
     note: entry.note ?? '—',
@@ -451,12 +465,17 @@ const tableRows = computed(() =>
           :key="index"
           :color="entry.kind === 'PLANNED' ? 'gray' : 'primary'"
         >
+          <!-- E21-T23 / C-FU-023：器械事件菱形 ◆（CSS rotate 的 8px 方块，components.md §9） -->
+          <template v-if="isDeviceEvent(entry)" #dot>
+            <span class="device-dot" data-testid="timeline-device-dot"></span>
+          </template>
           <Card
             :id="`timeline-item-${index}`"
             class="node"
             :class="{
               clickable: isClickable(entry),
               disabled: isDimmed(entry),
+              'device-event': isDeviceEvent(entry),
             }"
             :data-testid="`timeline-node-${entry.kind}`"
             size="small"
@@ -481,8 +500,22 @@ const tableRows = computed(() =>
                       ? '下次计划日期'
                       : entry.kind === 'BACKFILL'
                         ? '补录'
-                        : '随访节点'
+                        : entry.kind === 'IMPLANT'
+                          ? '器械事件'
+                          : '随访节点'
                 }}
+              </span>
+              <span
+                v-if="hasHighlight(entry)"
+                class="highlight-count"
+                :style="{
+                  color:
+                    (entry.highlightCount ?? 0) > 0
+                      ? colors.error
+                      : colors.textSecondary,
+                }"
+              >
+                标红 {{ entry.highlightCount }}
               </span>
               <span class="date">{{ nodeDate(entry) }}</span>
               <span class="head-actions">
@@ -648,6 +681,24 @@ const tableRows = computed(() =>
 
 .kind {
   font-size: 12px;
+}
+
+/* E21-T23 / C-FU-023：器械事件菱形 ◆（8px 方块 rotate 45°，components.md §9）与标红项数 */
+.device-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  background: var(--tl-primary);
+  transform: rotate(45deg);
+}
+
+.device-event {
+  background: #f0f7ff;
+}
+
+.highlight-count {
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .node {
