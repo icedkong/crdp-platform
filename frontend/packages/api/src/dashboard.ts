@@ -1,20 +1,24 @@
 /**
  * E19-T02 / A-DASH-001、A-DASH-002、C-DASH-001；E19-T03 / A-DASH-003、A-DASH-004、A-DASH-005、A-DASH-008、C-DASH-003、008；
  * E19-T04 / A-DASH-006、A-DASH-012、C-DASH-004；E19-T05 / A-DASH-010、A-DASH-011、C-DASH-009；
- * E21-T15 / C-DASH-007 补录进度（scan_progress 卡片，开关 scan_progress）：
- * 首页指标卡、趋势图、任务看板、任务表、随访率卡片、数据完整度两卡与补录进度卡的类型与纯逻辑
+ * E21-T15 / C-DASH-007 补录进度（scan_progress 卡片，开关 scan_progress）；
+ * E21-T19 / C-DASH-002、C-DASH-005、C-DASH-006 医院 C 三卡（device_dist 器械类型分布、
+ * eri_list 接近 ERI 器械列表、abnormal_records 异常标红记录）：
+ * 首页指标卡、趋势图、任务看板、任务表、随访率卡片、数据完整度两卡、补录进度卡与 C 三卡的类型与纯逻辑
  * （接口契约 docs/api/stats.md §2、§3，后端 `com.crdp.followup.dashboard.api.DashboardCardController`；
  * 页面 pages.md §2 首页）。
  *
  * 「数字与列表钻取一致」：后端卡片与列表接口共用同一条件树，响应内联每项指标 / 每列 /
  * 每页签的钻取目标（target + query）；前端用 `kpiMetricRoute` / `boardColumnRoute` /
  * `taskTableTabRoute` 把它换成列表页路由（患者列表 /followup/patient?status=…、任务列表
- * /followup/task?tab=all&status=…），不自行拼业务条件。数据源未落地的指标（C 的 ERI /
- * 扫描件随 E21）available=false，前端隐藏。随访率卡片（Q38 口径）数据时点 = 节点随访
+ * /followup/task?tab=all&status=…），不自行拼业务条件。数据源未落地或开关关闭的指标
+ * （C 的 ERI / 扫描件）available=false，前端隐藏。随访率卡片（Q38 口径）数据时点 = 节点随访
  * 事实表最近一次每日刷新（asOf 回显）；点击数字下钻患者列表需要患者检索支持按随访
  * 年度 / 节点筛选，随 E19-T08 口径核对后接入（OQ-109①）。完整度两卡（Q39 / Q40 口径）
  * 按当前数据实时计算（无 asOf），最常缺失字段经 `missingFieldRoute` 钻取患者列表
- * （患者检索 completenessDrill 与卡片同一计算，E19-T05）。
+ * （患者检索 completenessDrill 与卡片同一计算，E19-T05）。C 三卡口径见 OQ-146：
+ * eriNear 与 eri_list.total 同查询、abnormal_records days=30 与指标卡 highlightRecent
+ * 同条件树；异常标红行经 `abnormalRecordRoute` 进入患者详情随访记录页签并定位记录。
  */
 import type { RouteLocationRaw } from 'vue-router';
 
@@ -244,6 +248,121 @@ export interface ScanProgressParams {
   uploaderId?: null | number | string;
   wardId?: number;
   year?: null | number;
+}
+
+// ---------------------------------------------------------------- 医院 C 三卡（E21-T19 / C-DASH-002、005、006）
+
+/** 器械类型分布的品牌拆分行（brand 为编码、label 为字典显示名；未填品牌 brand=null）。 */
+export interface DeviceDistBrandRow {
+  brand?: null | string;
+  count: number;
+  label: string;
+}
+
+/** 器械类型一行：人数、占比（百分整数）与品牌拆分（deviceType=null 为「未登记在用器械」行）。 */
+export interface DeviceDistTypeRow {
+  brands: DeviceDistBrandRow[];
+  count: number;
+  deviceType?: null | string;
+  label: string;
+  pct: number;
+}
+
+/** 器械类型分布卡片数据：followedCount = 范围内在随访患者数（分母），rows 按字典序。 */
+export interface DeviceDistView {
+  followedCount: number;
+  rows: DeviceDistTypeRow[];
+}
+
+/** 器械类型分布请求参数（wardId 页面级病区筛选）。 */
+export interface DeviceDistParams {
+  wardId?: number;
+}
+
+/** 接近 ERI 器械一行（姓名脱敏；id 为字符串——超过 2^53 的 ID 不进 JSON number）。 */
+export interface EriListItem {
+  /** 预计电池寿命（年；命中原因之一，≤ batteryLifeThreshold） */
+  batteryLife?: null | number;
+  brand?: null | string;
+  brandLabel?: null | string;
+  deviceType?: null | string;
+  deviceTypeLabel?: null | string;
+  /** ERI 状态编码（0 正常 / 1 接近ERI / 2 已达ERI(EOI)，字典 c_eri_status） */
+  eriStatusCode?: null | string;
+  eriStatusName?: null | string;
+  lastVisitDate?: null | string;
+  model?: null | string;
+  name: string;
+  nextPlanDate?: null | string;
+  patientId: string;
+  visitNo?: null | string;
+}
+
+/** 接近 ERI 器械卡片数据：total 与指标卡「接近 ERI 器械数」同查询；items 前 limit 行。 */
+export interface EriListView {
+  batteryLifeThreshold: number;
+  items: EriListItem[];
+  limit: number;
+  total: number;
+}
+
+/** 接近 ERI 器械请求参数（wardId 页面级病区筛选；受 eri_cycle 开关控制）。 */
+export interface EriListParams {
+  wardId?: number;
+}
+
+/** ERI 状态 → 标签色调（已达ERI(EOI) 为错误、接近ERI 为警告；components.md §4 device.eri）。 */
+export function eriStatusTone(statusCode?: null | string): 'error' | 'warning' {
+  return statusCode === '2' ? 'error' : 'warning';
+}
+
+/** 异常标红一条命中（E17-T04 命中数组元素同形）：key 标红项目、change / changeText 变化率。 */
+export interface AbnormalHighlightHit {
+  change?: null | number;
+  changeText?: null | string;
+  key: string;
+  message?: null | string;
+  previousValue?: null | number | string;
+}
+
+/** 异常标红记录一行（姓名脱敏；点击经 abnormalRecordRoute 进入该记录）。 */
+export interface AbnormalRecordItem {
+  hits: AbnormalHighlightHit[];
+  name: string;
+  patientId: string;
+  recordId: string;
+  submittedAt: string;
+  visitDate?: null | string;
+  visitNo?: null | string;
+}
+
+/** 异常标红记录卡片数据：days / since 回显窗口；days=30 时 total 与指标卡 highlightRecent 一致。 */
+export interface AbnormalRecordsView {
+  days: number;
+  items: AbnormalRecordItem[];
+  limit: number;
+  since: string;
+  total: number;
+}
+
+/** 异常标红记录请求参数（wardId 页面级病区筛选；days 近 N 天缺省 30）。 */
+export interface AbnormalRecordsParams {
+  days?: null | number;
+  wardId?: number;
+}
+
+/**
+ * 异常标红行 → 患者详情路由（C-DASH-006「点击进入记录」）：随访记录页签
+ * （?tab=followup）+ 记录锚点（#rec=<recordId>，E16-T14 可分享 / 可后退口径）。
+ */
+export function abnormalRecordRoute(
+  item: AbnormalRecordItem,
+): RouteLocationRaw {
+  return {
+    hash: `#rec=${encodeURIComponent(item.recordId)}`,
+    path: `/followup/patient/${item.patientId}`,
+    query: { tab: 'followup' },
+  };
 }
 
 // ---------------------------------------------------------------- 病区筛选（A-DASH-005 / C-DASH-008）
@@ -635,7 +754,10 @@ export function userHiddenCodes(view: DashboardLayoutView): string[] {
 
 /** 首页渲染区块（layout → 区块序列；两张同区卡片归并到首次出现的位置）。 */
 export type DashboardAreaKind =
+  | 'abnormal_records'
   | 'completeness'
+  | 'device_dist'
+  | 'eri_list'
   | 'kpi'
   | 'rate'
   | 'scan_progress'
@@ -648,7 +770,10 @@ export interface DashboardArea {
 }
 
 const AREA_KIND_BY_CODE: Record<string, DashboardAreaKind> = {
+  abnormal_records: 'abnormal_records',
   baseline_completeness: 'completeness',
+  device_dist: 'device_dist',
+  eri_list: 'eri_list',
   followup_completeness: 'completeness',
   kpi: 'kpi',
   node_rate: 'rate',
@@ -663,8 +788,8 @@ const AREA_KIND_BY_CODE: Record<string, DashboardAreaKind> = {
  * 可见卡片 → 首页区块序列（E19-T06 按角色布局与顺序渲染）：
  * 任务区（task_board / task_table）、统计区（yearly_rate / node_rate）、完整度区
  * （baseline / followup_completeness）各归并为一个区块，排在组内第一张可见卡片的位置；
- * 补录进度（scan_progress，E21-T15）独立成区；未知编码（E21 的其余 C 卡片等尚未接入的
- * 目录项）跳过，不渲染也不报错。
+ * 补录进度（scan_progress，E21-T15）与 C 三卡（device_dist / eri_list /
+ * abnormal_records，E21-T19）独立成区；未知编码（尚未接入的目录项）跳过，不渲染也不报错。
  */
 export function layoutAreas(view: DashboardLayoutView): DashboardArea[] {
   const areas: DashboardArea[] = [];

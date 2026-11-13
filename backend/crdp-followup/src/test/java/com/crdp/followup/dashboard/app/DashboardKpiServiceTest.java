@@ -16,6 +16,7 @@ import com.crdp.followup.dashboard.app.DashboardKpiService.KpiCardView;
 import com.crdp.followup.dashboard.app.DashboardKpiService.MetricView;
 import com.crdp.followup.dashboard.infra.mapper.DashboardFeatureMapper;
 import com.crdp.followup.dashboard.infra.mapper.DashboardStatsMapper;
+import com.crdp.followup.stats.app.EriListService;
 import com.crdp.framework.web.ApiException;
 import java.time.LocalDate;
 import java.util.List;
@@ -39,7 +40,8 @@ class DashboardKpiServiceTest {
 
     private final DashboardStatsMapper stats = mock(DashboardStatsMapper.class);
     private final DashboardFeatureMapper features = mock(DashboardFeatureMapper.class);
-    private final DashboardKpiService service = new DashboardKpiService(stats, features);
+    private final EriListService eriList = mock(EriListService.class);
+    private final DashboardKpiService service = new DashboardKpiService(stats, features, eriList);
 
     {
         lenient().when(features.findEnabled("implant")).thenReturn(false);
@@ -142,15 +144,35 @@ class DashboardKpiServiceTest {
         assertEquals(20L, byCode.get("pending").value());
         assertEquals(
                 Map.of("tab", "all", "status", "PENDING"), byCode.get("pending").drill().query());
-        // 数据源随 E21 的 ERI 仍占位；待录入扫描件数在 scan_progress 关闭（本测默认 null）时占位
-        // （E21-T15：开关打开出数并钻取，见 cStyleScanPendingWithFeatureOn）
+        // ERI 数据源已随 E21-T19 落地，但 eri_cycle 关闭（本测默认 null）时仍占位
+        // （出数见 cStyleEriNearWithFeatureOn）
         assertNull(byCode.get("eriNear").value());
         assertNull(byCode.get("eriNear").drill());
         assertNull(byCode.get("scanPending").value());
         assertNull(byCode.get("scanPending").drill());
-        // 近 30 天标红可算（fu_record.highlight，E17-T04）；列表卡片随 E21-T19，暂不钻取
+        // 近 30 天标红可算（fu_record.highlight，E17-T04）；列表即 abnormal_records 卡片，不单设钻取
         assertEquals(3L, byCode.get("highlightRecent").value());
         assertNull(byCode.get("highlightRecent").drill());
+    }
+
+    @Test
+    void cStyleEriNearWithFeatureOnCountsFromEriListCardQuery() {
+        when(features.findEnabled("implant")).thenReturn(true);
+        when(features.findEnabled("eri_cycle")).thenReturn(true);
+        when(eriList.nearEriCount(null)).thenReturn(4L);
+
+        KpiCardView view = service.kpi(null);
+
+        MetricView eriNear =
+                view.metrics().stream()
+                        .filter(metric -> "eriNear".equals(metric.code()))
+                        .findFirst()
+                        .orElseThrow();
+        // E21-T19：接近 ERI 器械数与 eri_list 卡片 total 同一查询（一个口径一个查询）；无列表页钻取
+        assertTrue(eriNear.available());
+        assertEquals(4L, eriNear.value());
+        assertNull(eriNear.drill());
+        verify(eriList).nearEriCount(null);
     }
 
     @Test

@@ -6,18 +6,22 @@ import type { DashboardRoleCard, DoctorWorkloadRow } from './dashboard';
  * completenessDrill 与卡片同一计算，缺失人数 = 列表 total）。
  * E19-T07 / A-DASH-009、C-DASH-010：医护负责患者数的行级钻取路由（患者 / 任务列表
  * doctorId 筛选）与 doctorDrillOfQuery（列表页按路由 query 还原责任医生钻取）。
+ * E21-T19 / C-DASH-002、005、006：医院 C 三卡的区块解析（医院 C 默认顺序）、ERI 状态
+ * 色调与异常标红行进入记录的路由。
  * 首页指标卡、任务看板与任务表的类型与钻取路由（数字与列表钻取一致——
  * 钻取条件由后端随指标 / 列 / 页签下发，前端只透传 query，不自行拼业务条件）。
  */
 import { describe, expect, it } from 'vitest';
 
 import {
+  abnormalRecordRoute,
   BOARD_SCOPE_OPTIONS,
   boardColumnRoute,
   cohortYearOptions,
   DASHBOARD_DEFAULT_LAYOUT,
   doctorDrillOfQuery,
   doctorWorkloadRoute,
+  eriStatusTone,
   followupYearOptions,
   formatRatePct,
   kpiMetricRoute,
@@ -356,7 +360,7 @@ describe('e19-T06 卡片目录与布局（A-DASH-013 / A-DASH-014）', () => {
         card('task_board', 1),
         card('kpi', 2),
         card('task_table', 3),
-        card('device_dist', 4), // E21 卡片尚未接入：跳过不渲染
+        card('future_card', 4), // 尚未接入的目录项：跳过不渲染
         card('yearly_rate', 5),
         card('baseline_completeness', 6),
         card('followup_completeness', 7),
@@ -535,7 +539,7 @@ describe('e21-T15 待录入扫描件数钻取与补录进度卡片区（C-DASH-0
       cards: [
         card('kpi', 1),
         card('scan_progress', 2),
-        card('device_dist', 3), // E21 其余 C 卡片尚未接入：跳过
+        card('future_card', 3), // 尚未接入的目录项：跳过
       ],
       source: 'ROLE_CONFIG' as const,
     };
@@ -549,5 +553,84 @@ describe('e21-T15 待录入扫描件数钻取与补录进度卡片区（C-DASH-0
     };
     expect(layoutAreas(cardOff)).toEqual([{ codes: ['kpi'], kind: 'kpi' }]);
     expect(layoutCardVisible(cardOff, 'scan_progress')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------- E21-T19 医院 C 三卡（C-DASH-002 / 005 / 006）
+
+describe('e21-T19 医院 C 三卡纯逻辑（C-DASH-002 / C-DASH-005 / C-DASH-006）', () => {
+  const card = (code: string, order: number, extra = {}) => ({
+    allowUserHide: true,
+    code,
+    feature: null,
+    order,
+    permission: 'followup:dashboard:view',
+    title: code,
+    userHidden: false,
+    visible: true,
+    ...extra,
+  });
+
+  it('layoutAreas：医院 C 默认顺序下三卡各自成区（排在随访率之后、补录进度之前）', () => {
+    // 目录默认布局（followup V96 default_order）：device_dist 45 → yearly_rate 50 →
+    // node_rate 60 → eri_list 62 → abnormal_records 63 → scan_progress 80
+    const view = {
+      cards: [
+        card('kpi', 10),
+        card('task_board', 30),
+        card('device_dist', 45),
+        card('yearly_rate', 50),
+        card('node_rate', 60),
+        card('eri_list', 62),
+        card('abnormal_records', 63),
+        card('scan_progress', 80),
+      ],
+      source: 'DEFAULT' as const,
+    };
+    expect(layoutAreas(view)).toEqual([
+      { codes: ['kpi'], kind: 'kpi' },
+      { codes: ['task_board'], kind: 'task' },
+      { codes: ['device_dist'], kind: 'device_dist' },
+      { codes: ['yearly_rate', 'node_rate'], kind: 'rate' },
+      { codes: ['eri_list'], kind: 'eri_list' },
+      { codes: ['abnormal_records'], kind: 'abnormal_records' },
+      { codes: ['scan_progress'], kind: 'scan_progress' },
+    ]);
+  });
+
+  it('layoutAreas：开关关闭（implant / eri_cycle）时布局不含对应 C 卡（目录 ∩ 功能开关）', () => {
+    // 医院 A：implant / eri_cycle 关闭 → 三卡不出现在布局响应里，只有 A 卡
+    const view = {
+      cards: [card('kpi', 10), card('trend', 20), card('yearly_rate', 50)],
+      source: 'DEFAULT' as const,
+    };
+    expect(layoutCardVisible(view, 'device_dist')).toBe(false);
+    expect(layoutCardVisible(view, 'eri_list')).toBe(false);
+    expect(layoutCardVisible(view, 'abnormal_records')).toBe(false);
+  });
+
+  it('eriStatusTone：已达ERI(EOI) 错误色、接近ERI（与电池寿命低命中）警告色', () => {
+    expect(eriStatusTone('2')).toBe('error');
+    expect(eriStatusTone('1')).toBe('warning');
+    // 电池寿命 ≤ 阈值命中但状态为正常：按接近提示（warning）
+    expect(eriStatusTone('0')).toBe('warning');
+    expect(eriStatusTone(undefined)).toBe('warning');
+  });
+
+  it('abnormalRecordRoute：异常标红行 → 患者详情随访记录页签 + 记录锚点（点击进入记录）', () => {
+    expect(
+      abnormalRecordRoute({
+        hits: [],
+        name: '王*',
+        patientId: '61',
+        recordId: '551',
+        submittedAt: '2026-11-03T09:30:00',
+        visitDate: '2026-11-02',
+      }),
+    ).toEqual({
+      hash: '#rec=551',
+      path: '/followup/patient/61',
+      query: { tab: 'followup' },
+    });
   });
 });

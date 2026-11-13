@@ -3,7 +3,10 @@ package com.crdp.followup.dashboard.api;
 import com.crdp.followup.dashboard.app.DashboardKpiService;
 import com.crdp.followup.dashboard.app.DashboardTaskService;
 import com.crdp.followup.dashboard.app.DashboardTrendService;
+import com.crdp.followup.stats.app.AbnormalRecordsService;
 import com.crdp.followup.stats.app.CompletenessStatsService;
+import com.crdp.followup.stats.app.DeviceDistService;
+import com.crdp.followup.stats.app.EriListService;
 import com.crdp.followup.stats.app.NodeOccurrenceStatsService;
 import com.crdp.followup.stats.app.ScanProgressService;
 import com.crdp.framework.security.RequireModule;
@@ -46,6 +49,9 @@ public class DashboardCardController {
     private final NodeOccurrenceStatsService rateService;
     private final CompletenessStatsService completenessService;
     private final ScanProgressService scanProgressService;
+    private final DeviceDistService deviceDistService;
+    private final EriListService eriListService;
+    private final AbnormalRecordsService abnormalRecordsService;
 
     public DashboardCardController(
             DashboardKpiService kpiService,
@@ -53,13 +59,19 @@ public class DashboardCardController {
             DashboardTaskService taskService,
             NodeOccurrenceStatsService rateService,
             CompletenessStatsService completenessService,
-            ScanProgressService scanProgressService) {
+            ScanProgressService scanProgressService,
+            DeviceDistService deviceDistService,
+            EriListService eriListService,
+            AbnormalRecordsService abnormalRecordsService) {
         this.kpiService = kpiService;
         this.trendService = trendService;
         this.taskService = taskService;
         this.rateService = rateService;
         this.completenessService = completenessService;
         this.scanProgressService = scanProgressService;
+        this.deviceDistService = deviceDistService;
+        this.eriListService = eriListService;
+        this.abnormalRecordsService = abnormalRecordsService;
     }
 
     @Operation(
@@ -83,7 +95,13 @@ public class DashboardCardController {
                             + " 随访年度筛选；最常缺失字段点击钻取患者列表——患者检索 completenessDrill 过滤，同一计算）、"
                             + "scan_progress 补录进度（E21-T15 / C-DASH-007：待录入 / 已电子化 / 无需录入份数与"
                             + " 已电子化比例 + 补录随访记录条数；uploaderId 上传人、year 文档年份筛选；开关"
-                            + " scan_progress 关闭返回 40301）；wardId"
+                            + " scan_progress 关闭返回 40301）、device_dist 器械类型分布（E21-T19 /"
+                            + " C-DASH-002：在随访患者按在用器械类型统计、可按品牌拆分；开关 implant 关闭返回"
+                            + " 40301）、eri_list 接近 ERI 器械（E21-T19 / C-DASH-005：最近一次 ERI 状态为"
+                            + " 接近 / 已达或预计电池寿命 ≤ 1 年的患者，含器械、最近随访日期、下次计划日期；开关"
+                            + " eri_cycle 关闭返回 40301）、abnormal_records 异常标红记录（E21-T19 /"
+                            + " C-DASH-006：近 N 天 days 缺省 30 提交的含标红参数的记录，显示标红项目与变化率，"
+                            + " 只查看；开关 implant 关闭返回 40301）；wardId"
                             + " 病区筛选（A-DASH-005）全部卡片共用；数字与列表钻取共用同一条件树（各列 / 页签响应内联 drill"
                             + " 目标与筛选参数）")
     @GetMapping("/cards/{cardCode}")
@@ -105,7 +123,8 @@ public class DashboardCardController {
             @RequestParam(value = "patientType", required = false) String patientType,
             @RequestParam(value = "timeField", required = false) String timeField,
             @RequestParam(value = "year", required = false) Integer year,
-            @RequestParam(value = "uploaderId", required = false) Long uploaderId) {
+            @RequestParam(value = "uploaderId", required = false) Long uploaderId,
+            @RequestParam(value = "days", required = false) Integer days) {
         return switch (cardCode) {
             case "kpi" -> ApiResponse.ok(kpiService.kpi(wardId));
             case "trend" ->
@@ -128,13 +147,18 @@ public class DashboardCardController {
                                             wardId, patientType, from, to, timeField, year)));
             case "scan_progress" ->
                     ApiResponse.ok(scanProgressService.scanProgress(wardId, uploaderId, year));
+            case "device_dist" -> ApiResponse.ok(deviceDistService.deviceDist(wardId));
+            case "eri_list" -> ApiResponse.ok(eriListService.eriList(wardId));
+            case "abnormal_records" ->
+                    ApiResponse.ok(abnormalRecordsService.abnormalRecords(wardId, days));
             default ->
                     throw new ApiException(
                             400,
                             40001,
                             "cardCode（kpi / trend / task_board / task_table / yearly_rate /"
                                     + " node_rate / baseline_completeness / followup_completeness /"
-                                    + " scan_progress）不合法");
+                                    + " scan_progress / device_dist / eri_list / abnormal_records）"
+                                    + " 不合法");
         };
     }
 

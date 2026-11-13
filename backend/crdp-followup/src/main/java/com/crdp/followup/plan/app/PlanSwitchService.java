@@ -1,6 +1,7 @@
 package com.crdp.followup.plan.app;
 
 import com.crdp.followup.implant.domain.ImplantCodes;
+import com.crdp.followup.plan.domain.EriEval;
 import com.crdp.followup.plan.infra.mapper.DevicePlanMappingMapper;
 import com.crdp.followup.plan.infra.mapper.PlanEnrollmentMapper;
 import com.crdp.followup.plan.infra.mapper.PlanEnrollmentMapper.SwitchableEnrollmentRow;
@@ -59,24 +60,11 @@ public class PlanSwitchService {
 
     private static final Logger log = LoggerFactory.getLogger(PlanSwitchService.class);
 
-    /** C_PROGRAM_FU 稳定键契约（OQ-130①，附录 A 随访组 #n → f3nn）：ERI 状态（单选 0/1/2）。 */
-    static final String KEY_ERI_STATUS = "f323";
-
-    /** C_PROGRAM_FU 稳定键：预计电池寿命（年，≤ 1 视同接近 ERI，切换表「接近 ERI」行）。 */
-    static final String KEY_BATTERY_LIFE = "f324";
-
     /** C_PROGRAM_FU 稳定键：下次随访时间（日期，C-FU-005 医生指定，切换表末行）。 */
     static final String KEY_NEXT_VISIT_DATE = "f333";
 
-    /** ERI 状态选项编码（字典 c_eri_status，V82 / OQ-130①）：0 正常 / 1 接近ERI / 2 已达ERI(EOI)。 */
-    static final String ERI_NORMAL = "0";
-
-    static final String ERI_NEAR = "1";
-
-    static final String ERI_EOI = "2";
-
-    /** 预计电池寿命的接近 ERI 阈值（年，切换表「预计电池寿命 ≤ 1 年」）。 */
-    private static final double BATTERY_LIFE_THRESHOLD = 1d;
+    // ERI 判定（键 f323 / f324、阈值、命中 / 解除谓词）自 E21-T19 起共享自
+    // plan.domain.EriEval（首页「接近 ERI 器械」卡片与切换同一判定，C-DASH-005 / SW-7 / SW-8）。
 
     private final PlanEnrollmentMapper enrollmentMapper;
 
@@ -282,7 +270,7 @@ public class PlanSwitchService {
         if (eriMarked(data)) {
             String reason =
                     "切换 ERI 期循环（C-FU-006）：ERI 状态为接近 / 已达或预计电池寿命 ≤ "
-                            + (int) BATTERY_LIFE_THRESHOLD
+                            + (int) EriEval.BATTERY_LIFE_THRESHOLD
                             + " 年（记录 "
                             + recordId
                             + "，随访日期 "
@@ -463,23 +451,14 @@ public class PlanSwitchService {
                         .build());
     }
 
-    /** SW-7 命中：ERI 状态为接近 / 已达，或预计电池寿命 ≤ 1 年（值缺失不命中）。 */
+    /** SW-7 命中：ERI 状态为接近 / 已达，或预计电池寿命 ≤ 1 年（值缺失不命中；EriEval 共享判定）。 */
     private static boolean eriMarked(Map<String, Object> data) {
-        String eriStatus = codeOf(data.get(KEY_ERI_STATUS));
-        if (ERI_NEAR.equals(eriStatus) || ERI_EOI.equals(eriStatus)) {
-            return true;
-        }
-        Double batteryLife = numberOrNull(data.get(KEY_BATTERY_LIFE));
-        return batteryLife != null && batteryLife <= BATTERY_LIFE_THRESHOLD;
+        return EriEval.marked(data);
     }
 
-    /** SW-8 解除：ERI 状态更正为正常且预计电池寿命不再偏低（缺失视同不偏低，OQ-137）。 */
+    /** SW-8 解除：ERI 状态更正为正常且预计电池寿命不再偏低（缺失视同不偏低，OQ-137；EriEval 共享判定）。 */
     private static boolean eriCleared(Map<String, Object> data) {
-        if (!ERI_NORMAL.equals(codeOf(data.get(KEY_ERI_STATUS)))) {
-            return false;
-        }
-        Double batteryLife = numberOrNull(data.get(KEY_BATTERY_LIFE));
-        return batteryLife == null || batteryLife > BATTERY_LIFE_THRESHOLD;
+        return EriEval.cleared(data);
     }
 
     /** SW-10：下次随访时间（日期字符串；缺失 / 不成日期为 null，过去日期由调用侧忽略）。 */
@@ -493,24 +472,6 @@ public class PlanSwitchService {
         } catch (RuntimeException invalid) {
             return null;
         }
-    }
-
-    private static String codeOf(Object value) {
-        return value == null ? null : String.valueOf(value).trim();
-    }
-
-    private static Double numberOrNull(Object value) {
-        if (value instanceof Number number) {
-            return number.doubleValue();
-        }
-        if (value instanceof String text && !text.isBlank()) {
-            try {
-                return Double.parseDouble(text.trim());
-            } catch (NumberFormatException invalid) {
-                return null;
-            }
-        }
-        return null;
     }
 
     private static String plansOf(List<SwitchableEnrollmentRow> enrollments) {

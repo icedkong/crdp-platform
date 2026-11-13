@@ -3,6 +3,7 @@ package com.crdp.followup.dashboard.app;
 import com.crdp.followup.dashboard.infra.mapper.DashboardFeatureMapper;
 import com.crdp.followup.dashboard.infra.mapper.DashboardStatsMapper;
 import com.crdp.followup.plan.domain.PlanDateCalculator;
+import com.crdp.followup.stats.app.EriListService;
 import com.crdp.framework.web.ApiException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -20,9 +21,9 @@ import org.springframework.stereotype.Service;
  * Mapper 语句上的 {@code @DataScope(resource = "patient")} 出行，范围内无患者时全部为 0（stats.md §1，不报错）。
  *
  * <p>指标集按租户差异用功能开关判定（stats.md §3「A 与 C 指标不同，按租户配置」）： {@code implant} 开 → 医院 C 指标集 （C-DASH-001
- * 七项，其中「接近 ERI 器械数」的数据源随 E21-T07 / T19 落地、先行返回 available = false 占位——与任务列表 C 三列占位同做法； 「待录入扫描件数」已随
- * E21-T15 落地（rpt_report.digitize_status，随 {@code scan_progress} 开关出数、关闭仍占位））；关 → 医院 A
- * 指标集（A-DASH-001 七项）。随 E19-T06 卡片目录按角色配置时，指标集配置随目录 落库（OQ-107）。
+ * 七项，其中「接近 ERI 器械数」自 E21-T19 起随 {@code eri_cycle} 开关出数——与「接近 ERI 器械」卡片（eri_list） 同一查询，关闭仍占位
+ * available = false；「待录入扫描件数」已随 E21-T15 落地（rpt_report.digitize_status，随 {@code scan_progress}
+ * 开关出数、关闭仍占位））；关 → 医院 A 指标集（A-DASH-001 七项）。随 E19-T06 卡片目录按角色配置时，指标集配置随目录 落库（OQ-107）。
  */
 @Service
 public class DashboardKpiService {
@@ -33,12 +34,18 @@ public class DashboardKpiService {
     /** 电子化状态 / 补录进度的功能开关（E21-T15：关闭时「待录入扫描件数」保持占位，AGENTS §5.7）。 */
     static final String SCAN_PROGRESS_FEATURE = "scan_progress";
 
+    /** ERI 期随访的功能开关（E21-T19：关闭时「接近 ERI 器械数」保持占位，与 eri_list 卡片同判定）。 */
+    static final String ERI_CYCLE_FEATURE = "eri_cycle";
+
     private final DashboardStatsMapper stats;
     private final DashboardFeatureMapper features;
+    private final EriListService eriList;
 
-    public DashboardKpiService(DashboardStatsMapper stats, DashboardFeatureMapper features) {
+    public DashboardKpiService(
+            DashboardStatsMapper stats, DashboardFeatureMapper features, EriListService eriList) {
         this.stats = stats;
         this.features = features;
+        this.eriList = eriList;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -51,8 +58,9 @@ public class DashboardKpiService {
     public record DrillView(String target, Map<String, Object> query) {}
 
     /**
-     * 一项指标：value 为 null 且 available = false 表示数据源尚未落地（C 的 ERI / 扫描件随 E21）， 前端隐藏；drill 为 null
-     * 表示暂无对应列表（C 的 ERI / 异常标红列表卡片随 E21-T19；「待录入扫描件数」已随 E21-T15 钻取全院报告单列表）。
+     * 一项指标：value 为 null 且 available = false 表示数据源未落地或开关关闭（C 的 ERI / 扫描件）， 前端隐藏；drill 为 null
+     * 表示暂无对应列表页（C 的「接近 ERI 器械数」列表即首页 eri_list 卡片、「近 30 天含标红参数的记录数」列表即 abnormal_records
+     * 卡片，不单设钻取；「待录入扫描件数」已随 E21-T15 钻取全院报告单列表）。
      */
     public record MetricView(
             String code, String title, Long value, boolean available, DrillView drill) {}
@@ -189,8 +197,15 @@ public class DashboardKpiService {
                         stats.countTasksByStatus("OVERDUE", ward),
                         true,
                         new DrillView("TASK_LIST", Map.of("tab", "all", "status", "OVERDUE"))));
-        // 接近 ERI 器械数：植入 / 电极数据源随 E21（eri_cycle 循环随 E21-T07），先行返回占位（available = false）
-        metrics.add(new MetricView("eriNear", "接近 ERI 器械数", null, false, null));
+        // 接近 ERI 器械数（C-DASH-001）：E21-T19 起随 eri_cycle 开关出数——与「接近 ERI 器械」卡片 total 同一查询
+        // （EriListService.nearEriCount）；关闭（含无行）仍占位（available = false，AGENTS §5.7）
+        if (Boolean.TRUE.equals(features.findEnabled(ERI_CYCLE_FEATURE))) {
+            metrics.add(
+                    new MetricView(
+                            "eriNear", "接近 ERI 器械数", eriList.nearEriCount(ward), true, null));
+        } else {
+            metrics.add(new MetricView("eriNear", "接近 ERI 器械数", null, false, null));
+        }
         metrics.add(
                 new MetricView(
                         "highlightRecent",
