@@ -145,15 +145,15 @@ class NotifyAcceptanceIT {
 
     /** 清理本套件数据并恢复被改过的规则 / 设置 / 汇总发送时间（两院各自租户库内执行）。 */
     private void cleanTenant() {
+        // 隔离修复（E21-T25 CI 发现）：本套件断言租户级汇总计数（digest / tick 全队列口径），须整租户重置通知
+        // 发送态——早前 IT 残留的 PENDING 任务事件（TASK_OVERDUE 等）会被本类 dispatcher 消费成他人接收人的
+        // ntf 行、残留 QUEUED 行也会直接并入补跑，smsSent / 队列计数被顶掉（main #242 起三次 CI 红即此因）
+        jdbc.update("DELETE FROM ntf_send_log");
+        jdbc.update("DELETE FROM ntf_message");
         jdbc.update(
-                "DELETE FROM ntf_send_log WHERE recipient_id IN"
-                        + " (SELECT id FROM sys_user WHERE username LIKE 'it.n8.%')");
-        jdbc.update(
-                "DELETE FROM ntf_message WHERE recipient_id IN"
-                        + " (SELECT id FROM sys_user WHERE username LIKE 'it.n8.%')");
-        jdbc.update(
-                "DELETE FROM sys_outbox WHERE event_type = 'TASK_OVERDUE' AND payload LIKE"
-                        + " '%\\\"taskId\\\":8%'");
+                "DELETE FROM sys_outbox WHERE status = 'PENDING' AND event_type IN"
+                        + " ('TaskOpened', 'DUE_SOON', 'TASK_OVERDUE', 'TASK_REASSIGNED',"
+                        + " 'CALLBACK_DUE', 'UNREACHED_FOLLOWUP', 'LOST_CANDIDATE')");
         jdbc.update(
                 "DELETE FROM sys_user_ward WHERE user_id IN"
                         + " (SELECT id FROM sys_user WHERE username LIKE 'it.n8.%')");
