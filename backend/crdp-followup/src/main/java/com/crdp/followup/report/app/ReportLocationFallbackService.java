@@ -44,6 +44,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  *       作业自动执行、何时、退回 / 移除了哪个位置，before / after 留位置四元组快照，与 RPT_LOCATION_CHANGE 同形）。
  *   <li>幂等（重复执行结果不变）：巡检按「锚点当前是否仍存在」判定，退回后的整条行与移除后的空位不再命中； 乐观锁 version 只在有变更的报告单上 +1（与 E16-T13
  *       同口径，作业无操作人）。基线模板或记录固化版本快照读不出（防御：正常运营不会发生）时 该批行跳过并 WARN，不做无依据的退回。
+ *   <li>已电子化报告单被本作业移除其随访记录位置（移除后不再有任何随访位置）→ 电子化状态自动回「待录入」并 写 RPT_DIGITIZE_CHANGE（E21-T27 /
+ *       C-SCAN-020、C 规格 §7；分组退回整条不算——随访位置仍在）。
  *   <li>扇出与执行记录（job_tenant_run，ADR 0003）由 {@link JobScheduler} 承担（jobCode = {@value
  *       #JOB_CODE}）；followup 模块未开通的租户跳过（OQ-46②）。定时注册在 crdp-server（每日 00:25 + 启动各一次，避开 00:10 任务创建与
  *       00:20 租户到期）。
@@ -258,6 +260,7 @@ public class ReportLocationFallbackService {
         }
         mapper.markReportLocationAdjusted(plan.reportId());
         mapper.bumpVersionByJob(plan.reportId());
+        revertDoneIfLastFollowupLocationRemoved(plan);
         audit.append(
                 AuditEntry.operation("followup", "RPT_LOCATION_FALLBACK")
                         .objectType("REPORT")
@@ -272,6 +275,57 @@ public class ReportLocationFallbackService {
                 plan.reportId(),
                 plan.fallbackCount(),
                 plan.removeCount());
+    }
+
+    /**
+     * 作业移除随访位置（记录不存在等）且移除后不再有任何随访位置 → 已电子化自动回「待录入」（E21-T27 / C-SCAN-020、C 规格 §7；
+     * 分组退回整条记录不算——随访位置仍在）。UPDATE 的 DONE 守卫幂等：当前态非 DONE 命中 0 行、无变化不留痕。
+     */
+    private void revertDoneIfLastFollowupLocationRemoved(ReportPlan plan) {
+        boolean followupRemoved =
+                plan.actions().stream()
+                        .anyMatch(
+                                action ->
+                                        action.kind() == Kind.REMOVE
+                                                && "followup_record"
+                                                        .equals(action.row().linkType()));
+        if (!followupRemoved) {
+            return;
+        }
+        boolean followupRemains =
+                plan.before().stream()
+                        .anyMatch(
+                                row ->
+                                        "followup_record".equals(row.linkType())
+                                                && plan.actions().stream()
+                                                        .noneMatch(
+                                                                action ->
+                                                                        action.kind() == Kind.REMOVE
+                                                                                && action.row()
+                                                                                                .linkId()
+                                                                                        == row
+                                                                                                .linkId()));
+        if (followupRemains) {
+            return;
+        }
+        if (mapper.revertDoneToPendingByJob(plan.reportId()) == 0) {
+            return;
+        }
+        audit.append(
+                AuditEntry.operation("followup", "RPT_DIGITIZE_CHANGE")
+                        .objectType("REPORT")
+                        .objectId(String.valueOf(plan.reportId()))
+                        .description(
+                                "移除随访记录位置，已电子化 → 待录入（自动）：报告单："
+                                        + plan.typeName()
+                                        + (plan.nameSnapshot() == null
+                                                ? ""
+                                                : " · " + plan.nameSnapshot()))
+                        .beforeJson(writeJson(Map.of("digitizeStatus", "DONE")))
+                        .afterJson(writeJson(Map.of("digitizeStatus", "PENDING")))
+                        .result(AuditResult.SUCCESS)
+                        .build());
+        log.info("已电子化报告单随位置移除自动回待录入（E21-T27）：reportId={}", plan.reportId());
     }
 
     /** 日志描述：「退回 N 个（标签 → 标签）、移除 M 个（标签，原因）」——标签与 tagText 同口径。 */

@@ -10,10 +10,12 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -1349,6 +1351,138 @@ class ReportServiceTest {
                                                                 2)))));
         assertEquals(40001, overlap.code(), "add 与 remove 含同一在册位置：add 侧 40001 先拦截");
         assertTrue(overlap.getMessage().contains("已在报告单上"), overlap.getMessage());
+    }
+
+    // ---------------------------------------------------------------- 移除随访位置自动回待录入（E21-T27 /
+    // C-SCAN-020、C 规格 §7；评审 CL-10）
+
+    /**
+     * 已电子化报告单移除其最后一个随访记录位置（整条或分组都算；移除后只剩基线位置）→ 状态自动回「待录入」， 写 RPT_DIGITIZE_CHANGE（自动口径），结构化记录不受影响。
+     */
+    @Test
+    void changeLocationsRevertsDoneToPendingWhenLastFollowupLocationRemoved() {
+        readyReportWithTwoLocations();
+        when(mapper.findDigitizeRow(900L)).thenReturn(digitizeRow("DONE"));
+        // 执行后回读：只剩基线位置（随访 88 整条已被移除）
+        when(mapper.linksOfReport(900L))
+                .thenReturn(
+                        List.of(
+                                new ReportMapper.LinkRow(
+                                        1L, 900L, "baseline", null, "category", "case", 3, 0),
+                                new ReportMapper.LinkRow(
+                                        2L, 900L, "followup_record", 88L, null, null, 2, 0)))
+                .thenReturn(
+                        List.of(
+                                new ReportMapper.LinkRow(
+                                        1L, 900L, "baseline", null, "category", "case", 3, 0)));
+
+        service.changeLocations(
+                900L,
+                new ReportService.LocationChangeRequest(
+                        List.of(),
+                        List.of(
+                                new ReportService.LocationInput(
+                                        "followup_record", 88L, null, null, 2))));
+
+        verify(mapper).updateDigitizeStatus(900L, "PENDING", OPERATOR);
+        ArgumentCaptor<AuditEntry> captor = ArgumentCaptor.forClass(AuditEntry.class);
+        // RPT_LOCATION_CHANGE（位置增删）+ RPT_DIGITIZE_CHANGE（状态自动回退）各一条
+        verify(audit, atLeast(2)).append(captor.capture());
+        AuditEntry revert =
+                captor.getAllValues().stream()
+                        .filter(entry -> "RPT_DIGITIZE_CHANGE".equals(entry.action()))
+                        .findFirst()
+                        .orElseThrow();
+        assertEquals("REPORT", revert.objectType());
+        assertEquals("900", revert.objectId());
+        assertTrue(revert.description().contains("已电子化 → 待录入"), "描述记自动回退：" + revert.description());
+        assertTrue(revert.description().contains("移除随访记录位置"), "描述记触发原因：" + revert.description());
+        assertTrue(revert.beforeJson().contains("DONE"), revert.beforeJson());
+        assertTrue(revert.afterJson().contains("PENDING"), revert.afterJson());
+    }
+
+    /** 不触发回退的三种形态：仍保有另一条随访位置（换记录）、只移除基线位置、当前态本就不是已电子化 —— updateDigitizeStatus 一律不调。 */
+    @Test
+    void changeLocationsKeepsDigitizeStatusWhenFollowupAnchorRemains() {
+        // ① 在册两条随访位置（88 整条 + 89 整条），移除 88 后仍有随访位置
+        when(mapper.findReport(900L))
+                .thenReturn(
+                        new ReportMapper.ReportHeadRow(
+                                900L,
+                                PATIENT,
+                                "ECHO",
+                                "心脏超声",
+                                "经胸超声心动图（示例）",
+                                LocalDate.of(2026, 10, 28)));
+        RecordContext both = record(88L, "第2年随访", "TASK", LocalDate.of(2026, 6, 10), 2);
+        RecordContext other = record(89L, "第3年随访", "TASK", LocalDate.of(2027, 6, 10), 2);
+        when(mapper.recordsOfPatient(PATIENT)).thenReturn(List.of(both.row(), other.row()));
+        when(mapper.linksOfReport(900L))
+                .thenReturn(
+                        List.of(
+                                new ReportMapper.LinkRow(
+                                        2L, 900L, "followup_record", 88L, null, null, 2, 0),
+                                new ReportMapper.LinkRow(
+                                        3L, 900L, "followup_record", 89L, null, null, 2, 0)))
+                .thenReturn(
+                        List.of(
+                                new ReportMapper.LinkRow(
+                                        3L, 900L, "followup_record", 89L, null, null, 2, 0)));
+        service.changeLocations(
+                900L,
+                new ReportService.LocationChangeRequest(
+                        List.of(),
+                        List.of(
+                                new ReportService.LocationInput(
+                                        "followup_record", 88L, null, null, 2))));
+        verify(mapper, never()).updateDigitizeStatus(anyLong(), anyString(), anyLong());
+
+        // ② 只移除基线位置（随访位置仍在）——readyReportWithTwoLocations 形态
+        reset(mapper, audit);
+        readyReportWithTwoLocations();
+        when(mapper.linksOfReport(900L))
+                .thenReturn(
+                        List.of(
+                                new ReportMapper.LinkRow(
+                                        1L, 900L, "baseline", null, "category", "case", 3, 0),
+                                new ReportMapper.LinkRow(
+                                        2L, 900L, "followup_record", 88L, null, null, 2, 0)))
+                .thenReturn(
+                        List.of(
+                                new ReportMapper.LinkRow(
+                                        2L, 900L, "followup_record", 88L, null, null, 2, 0)));
+        service.changeLocations(
+                900L,
+                new ReportService.LocationChangeRequest(
+                        List.of(),
+                        List.of(
+                                new ReportService.LocationInput(
+                                        "baseline", null, "category", "case", 3))));
+        verify(mapper, never()).updateDigitizeStatus(anyLong(), anyString(), anyLong());
+
+        // ③ 移除了最后一个随访位置，但当前态是待录入（无变化不写）
+        reset(mapper, audit);
+        readyReportWithTwoLocations();
+        when(mapper.findDigitizeRow(900L)).thenReturn(digitizeRow("PENDING"));
+        when(mapper.linksOfReport(900L))
+                .thenReturn(
+                        List.of(
+                                new ReportMapper.LinkRow(
+                                        1L, 900L, "baseline", null, "category", "case", 3, 0),
+                                new ReportMapper.LinkRow(
+                                        2L, 900L, "followup_record", 88L, null, null, 2, 0)))
+                .thenReturn(
+                        List.of(
+                                new ReportMapper.LinkRow(
+                                        1L, 900L, "baseline", null, "category", "case", 3, 0)));
+        service.changeLocations(
+                900L,
+                new ReportService.LocationChangeRequest(
+                        List.of(),
+                        List.of(
+                                new ReportService.LocationInput(
+                                        "followup_record", 88L, null, null, 2))));
+        verify(mapper, never()).updateDigitizeStatus(anyLong(), anyString(), anyLong());
     }
 
     // ---------------------------------------------------------------- 电子化状态手工修改（E21-T15 /
