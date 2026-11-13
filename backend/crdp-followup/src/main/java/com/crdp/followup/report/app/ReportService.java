@@ -73,6 +73,12 @@ public class ReportService {
     private static final Map<String, String> DIGITIZE_LABEL =
             Map.of("PENDING", "待录入", "DONE", "已电子化", "NO_ENTRY", "无需录入");
 
+    /** 转录终态（移除随访位置自动回退的判定起点，E21-T27 / C-SCAN-020 §7）。 */
+    static final String STATUS_DONE = "DONE";
+
+    /** 回退目标态（待录入）。 */
+    static final String STATUS_PENDING = "PENDING";
+
     /** 电子化状态显示名（同包转录服务复用；未知值原样返回，null 由调用方处理）。 */
     static String digitizeStatusLabel(String status) {
         return DIGITIZE_LABEL.getOrDefault(status, status);
@@ -526,6 +532,8 @@ public class ReportService {
      *   <li>结果至少保留 1 个位置（40001）：全部移除不被允许；无位置报告单（历史迁移 / 模板调整后失去位置）只进 add（「指定位置」补上，A-ATT-020）。
      *   <li>增删同场一次事务：插入新增行、删除移除行、version + 1（V63 列注释「修改位置随 E16-T13」）， 写 RPT_LOCATION_CHANGE
      *       操作日志（谁、何时、增加 / 移除了哪些位置——beforeJson / afterJson 带位置清单）。
+     *   <li>已电子化报告单移除其随访记录位置（移除后不再有任何随访位置）→ 状态自动回「待录入」并写 RPT_DIGITIZE_CHANGE（E21-T27 / C-SCAN-020、C
+     *       规格 §7，结构化记录不受影响；见 {@link #revertDoneIfFollowupLocationLost}）。
      * </ul>
      *
      * <p>越范围 / 不存在 / 已删报告单 40400（写 DENIED 审计）；越患者数据范围查询「未指定位置」不受影响 （E16-T05
@@ -590,6 +598,7 @@ public class ReportService {
         mapper.bumpVersion(reportId, operator);
 
         List<ReportMapper.LinkRow> after = mapper.linksOfReport(reportId);
+        revertDoneIfFollowupLocationLost(reportId, removes, after, operator, report);
         List<LocationTagView> afterTags = buildTags(patientId, after);
         audit.append(
                 AuditEntry.operation("followup", "RPT_LOCATION_CHANGE")
@@ -616,6 +625,55 @@ public class ReportService {
                 operator);
         return new LocationsChangedView(
                 String.valueOf(reportId), afterTags.size(), List.copyOf(afterTags));
+    }
+
+    /**
+     * 已电子化报告单移除其随访记录位置 → 状态自动回「待录入」（E21-T27 / C-SCAN-020、C 规格 §7、评审 CL-10； 结构化记录不受影响）。
+     *
+     * <p>触发口径：本次移除了随访记录位置（整条或分组），且移除后报告单<b>不再有任何</b>随访记录位置（只剩基线等）。 仍保有另一条随访位置（含换记录同场
+     * add+remove）不触发——转录锚点可能指向任一在位记录，不误退（多位置边界见
+     * docs/testing/hospital-c-digitize-transcribe-acceptance.md §3）。当前态非 DONE 不动（无变化不留痕）。
+     *
+     * <p>留痕：RPT_DIGITIZE_CHANGE（自动口径，描述注明触发原因），version 随 updateDigitizeStatus 再 +1。
+     */
+    private void revertDoneIfFollowupLocationLost(
+            long reportId,
+            List<NormalizedLocation> removes,
+            List<ReportMapper.LinkRow> after,
+            long operator,
+            ReportMapper.ReportHeadRow report) {
+        boolean followupRemoved =
+                removes.stream().anyMatch(remove -> LINK_FOLLOWUP_RECORD.equals(remove.linkType()));
+        if (!followupRemoved) {
+            return;
+        }
+        boolean followupRemains =
+                after.stream().anyMatch(link -> LINK_FOLLOWUP_RECORD.equals(link.linkType()));
+        if (followupRemains) {
+            return;
+        }
+        ReportMapper.DigitizeRow digitize = mapper.findDigitizeRow(reportId);
+        if (digitize == null || !STATUS_DONE.equals(digitize.digitizeStatus())) {
+            return;
+        }
+        mapper.updateDigitizeStatus(reportId, STATUS_PENDING, operator);
+        Map<String, String> before = new LinkedHashMap<>();
+        before.put("digitizeStatus", STATUS_DONE);
+        audit.append(
+                AuditEntry.operation("followup", "RPT_DIGITIZE_CHANGE")
+                        .objectType("REPORT")
+                        .objectId(String.valueOf(reportId))
+                        .description(
+                                "移除随访记录位置，已电子化 → 待录入（自动）：报告单："
+                                        + report.typeName()
+                                        + (report.nameSnapshot() == null
+                                                ? ""
+                                                : " · " + report.nameSnapshot()))
+                        .beforeJson(writeJson(before))
+                        .afterJson(writeJson(Map.of("digitizeStatus", STATUS_PENDING)))
+                        .result(AuditResult.SUCCESS)
+                        .build());
+        log.info("已电子化报告单移除随访位置自动回待录入（E21-T27）：reportId={} operator={}", reportId, operator);
     }
 
     // ---------------------------------------------------------------- 电子化状态手工修改（E21-T15 /

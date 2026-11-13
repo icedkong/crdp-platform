@@ -515,6 +515,20 @@ public interface ReportMapper {
     @Update("UPDATE rpt_report SET version = version + 1 WHERE id = #{id} AND status = 'NORMAL'")
     int bumpVersionByJob(@Param("id") long id);
 
+    /**
+     * 退回作业口径的电子化状态回退（E21-T27 / C-SCAN-020、C 规格 §7）：作业移除报告单最后一个随访记录位置后， 已电子化自动回到待录入。WHERE 带 DONE
+     * 守卫（当前态非 DONE 命中 0 行、不推进版本——幂等，无变化不留痕）； 返回是否实际回退（1 = 已回退，调用方写 RPT_DIGITIZE_CHANGE）。
+     */
+    @IgnoreScope(
+            reason = "报告单电子化状态回退（E21-T27 作业）：与 scanActiveLinks 同口径的整库巡检联动，" + "作业无用户会话；只改状态列不吐患者数据")
+    @Update(
+            """
+            UPDATE rpt_report
+            SET digitize_status = 'PENDING', version = version + 1
+            WHERE id = #{id} AND status = 'NORMAL' AND digitize_status = 'DONE'
+            """)
+    int revertDoneToPendingByJob(@Param("id") long id);
+
     /** 清报告单级退回标记（E16-T13 修改位置 add 重新指定后）：用户接管位置后「原位置已调整」提示不再 lingering。 */
     @IgnoreScope(reason = "报告单退回标记清除（E16-T13 修改位置）：调用方已经 findReport（@DataScope）确认报告单可见")
     @Update(

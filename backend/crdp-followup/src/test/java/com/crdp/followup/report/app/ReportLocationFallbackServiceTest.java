@@ -5,10 +5,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -222,6 +225,72 @@ class ReportLocationFallbackServiceTest {
         verify(mapper, never()).fallbackToWholeRecord(anyLong());
         verify(mapper, never()).deleteLinkById(anyLong());
         verify(mapper, never()).bumpVersionByJob(anyLong());
+    }
+
+    // ---------------------------------------------------------------- 已电子化随位置移除回待录入（E21-T27 /
+    // C-SCAN-020、C 规格 §7）
+
+    /**
+     * 记录不存在移除其随访位置（整条 / 分组都移除）→ 已电子化报告单自动回「待录入」（C-SCAN-020 §7「移除其随访记录位置时， 状态回到待录入」），写
+     * RPT_DIGITIZE_CHANGE；分组退回整条（记录仍在）不触发。
+     */
+    @Test
+    void removingLastFollowupLocationRevertsDoneToPending() {
+        when(mapper.scanActiveLinks())
+                .thenReturn(
+                        List.of(
+                                wholeRow(902L, 30L, 99L, 0),
+                                sectionRow(902L, 31L, 99L, "echo", 0)));
+        when(mapper.findRecordById(99L)).thenReturn(null);
+        // 作业口径的回退 UPDATE 命中 1 行（= 当前态 DONE）
+        when(mapper.revertDoneToPendingByJob(902L)).thenReturn(1);
+
+        service.reconcileCurrentTenant();
+
+        verify(mapper).deleteLinkById(30L);
+        verify(mapper).deleteLinkById(31L);
+        verify(mapper).revertDoneToPendingByJob(902L);
+        ArgumentCaptor<AuditEntry> captor = ArgumentCaptor.forClass(AuditEntry.class);
+        verify(audit, atLeast(2)).append(captor.capture());
+        AuditEntry revert =
+                captor.getAllValues().stream()
+                        .filter(entry -> "RPT_DIGITIZE_CHANGE".equals(entry.action()))
+                        .findFirst()
+                        .orElseThrow(() -> new AssertionError("未写 RPT_DIGITIZE_CHANGE"));
+        assertTrue(revert.description().contains("已电子化 → 待录入"), "描述记自动回退：" + revert.description());
+        assertTrue(revert.description().contains("移除随访记录位置"), "描述记触发原因：" + revert.description());
+        assertTrue(revert.beforeJson().contains("DONE"), revert.beforeJson());
+        assertTrue(revert.afterJson().contains("PENDING"), revert.afterJson());
+    }
+
+    /** 分组退回整条记录（记录仍在，随访位置未失去）与 UPDATE 未命中（当前态非 DONE）都不产生回退日志。 */
+    @Test
+    void fallbackToWholeRecordOrNonDoneStatusKeepsDigitize() {
+        // ① 分组退回整条：随访位置仍在（记录 88 存在）
+        when(mapper.scanActiveLinks()).thenReturn(List.of(sectionRow(900L, 11L, 88L, "gone", 0)));
+        when(mapper.findRecordById(88L)).thenReturn(record(88L));
+        when(formService.schema("A_ANNUAL_FU", 2))
+                .thenReturn(schema(List.of(category("echo", "超声复查"))));
+        service.reconcileCurrentTenant();
+        verify(mapper, never()).revertDoneToPendingByJob(anyLong());
+
+        // ② 位置确被移除但 UPDATE 命中 0 行（当前态非 DONE / 已回退过）：不写回退日志（幂等、无变化不留痕）
+        reset(mapper, audit, formService);
+        lenient()
+                .when(formService.publishedVersion(BaselineSectionService.BASELINE_FORM_CODE))
+                .thenReturn(3);
+        lenient()
+                .when(formService.schema(BaselineSectionService.BASELINE_FORM_CODE, 3))
+                .thenReturn(schema(List.of(category("basic", "基本信息"), category("case", "病例基本信息"))));
+        when(mapper.scanActiveLinks()).thenReturn(List.of(wholeRow(903L, 40L, 98L, 0)));
+        when(mapper.findRecordById(98L)).thenReturn(null);
+        when(mapper.revertDoneToPendingByJob(903L)).thenReturn(0);
+
+        service.reconcileCurrentTenant();
+
+        verify(mapper).revertDoneToPendingByJob(903L);
+        verify(audit, never())
+                .append(argThat(e -> e != null && "RPT_DIGITIZE_CHANGE".equals(e.action())));
     }
 
     // ---------------------------------------------------------------- 防御与扇出
