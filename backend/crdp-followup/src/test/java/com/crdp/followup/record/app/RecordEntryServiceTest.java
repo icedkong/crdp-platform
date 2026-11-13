@@ -74,6 +74,8 @@ class RecordEntryServiceTest {
     private final FollowupSequenceService sequences = mock(FollowupSequenceService.class);
     private final com.crdp.followup.report.app.ReportTranscribeService reportTranscribe =
             mock(com.crdp.followup.report.app.ReportTranscribeService.class);
+    private final com.crdp.followup.patient.app.BaselineGateway baselineGateway =
+            mock(com.crdp.followup.patient.app.BaselineGateway.class);
 
     private final RecordEntryService service =
             new RecordEntryService(
@@ -94,7 +96,8 @@ class RecordEntryServiceTest {
                     features,
                     planSwitch,
                     sequences,
-                    reportTranscribe);
+                    reportTranscribe,
+                    baselineGateway);
 
     private static FollowupTaskQueryMapper.TaskRowRaw taskRow(String status) {
         return new FollowupTaskQueryMapper.TaskRowRaw(
@@ -231,6 +234,159 @@ class RecordEntryServiceTest {
         when(sequences.sequenceNoOfDetail(any(), eq(LocalDate.of(2026, 11, 5)))).thenReturn(4);
 
         assertEquals(4, service.detail(701L).sequenceNo());
+    }
+
+    // ------------------------------------------------------- E21-T12 / C-FU-008、C-FU-025 随访方式缺省
+
+    /** REMOTE 记录的随访方式缺省固定「远程监测」（c_visit_method 选项码 1，V90 契约）。 */
+    @Test
+    void detailDefaultsRemoteRecordVisitMethodToRemoteOption() {
+        loginAs(List.of("followup:record:edit"));
+        FollowupRecordService.RecordView remote =
+                new FollowupRecordService.RecordView(
+                        703L,
+                        301L,
+                        null,
+                        "REMOTE",
+                        LocalDate.of(2026, 11, 10),
+                        null,
+                        "C_PROGRAM_FU",
+                        1,
+                        "DRAFT",
+                        0,
+                        Map.of(),
+                        Map.of(),
+                        null,
+                        null);
+        when(recordService.record(703L)).thenReturn(remote);
+        when(taskQueryMapper.taskContextByRecordId(703L)).thenReturn(null);
+
+        RecordEntryService.EntryDefaultsView defaults = service.detail(703L).entryDefaults();
+
+        assertEquals("7", defaults.doctorId(), "随访医生默认当前用户（C-FU-008）");
+        assertEquals(1, defaults.visitMethod(), "REMOTE 记录随访方式缺省「远程监测」（C-FU-025）");
+        verify(baselineGateway, never()).sections(anyLong());
+    }
+
+    /** 非 REMOTE 记录的随访方式缺省取患者基线默认随访方式（患者 #19 f019，选项码原样下发）。 */
+    @Test
+    void detailDefaultsVisitMethodFromPatientBaseline() {
+        loginAs(List.of("followup:record:edit"));
+        when(recordService.record(701L)).thenReturn(record("DRAFT", Map.of("f214", "2026-11-05")));
+        when(taskQueryMapper.taskContextByRecordId(701L)).thenReturn(taskRow("IN_PROGRESS"));
+        when(baselineGateway.sections(301L))
+                .thenReturn(
+                        List.of(
+                                new com.crdp.followup.patient.infra.mapper.BaselineSectionMapper
+                                        .SectionRowRaw(
+                                        11L,
+                                        301L,
+                                        "C_REGISTRATION",
+                                        "followup",
+                                        1,
+                                        "{\"f019\":2}",
+                                        "{}",
+                                        0,
+                                        false,
+                                        7L,
+                                        null,
+                                        7L,
+                                        null)));
+        when(formService.schema("C_REGISTRATION", 1))
+                .thenReturn(
+                        new FormService.SchemaView(
+                                "C_REGISTRATION",
+                                "患者登记（医院 C）",
+                                "BASELINE",
+                                1,
+                                List.of(
+                                        new FormService.CategoryView(
+                                                "followup",
+                                                "随访安排",
+                                                30,
+                                                List.of(
+                                                        new FormService.FieldView(
+                                                                "f019",
+                                                                "visit_method",
+                                                                "随访方式",
+                                                                "select",
+                                                                null,
+                                                                null,
+                                                                null,
+                                                                null,
+                                                                List.of(),
+                                                                false,
+                                                                null,
+                                                                null,
+                                                                null,
+                                                                false,
+                                                                "json",
+                                                                null)))),
+                                List.of()));
+
+        assertEquals(
+                2,
+                service.detail(701L).entryDefaults().visitMethod(),
+                "随访方式缺省取患者默认随访方式（门诊程控+远程监测，选项码 2）");
+    }
+
+    /** A / B 模板（无 visit_method 字段）与未填基线的患者：visitMethod 为 null，前端不写入缺省。 */
+    @Test
+    void detailWithoutVisitMethodFieldOmitsDefault() {
+        loginAs(List.of("followup:record:edit"));
+        when(recordService.record(701L)).thenReturn(record("DRAFT", Map.of("f214", "2026-11-05")));
+        when(taskQueryMapper.taskContextByRecordId(701L)).thenReturn(taskRow("IN_PROGRESS"));
+        lenient()
+                .when(baselineGateway.sections(301L))
+                .thenReturn(
+                        List.of(
+                                new com.crdp.followup.patient.infra.mapper.BaselineSectionMapper
+                                        .SectionRowRaw(
+                                        12L,
+                                        301L,
+                                        "A_BASELINE",
+                                        "basic",
+                                        1,
+                                        "{\"f101\":\"某市（示例）\"}",
+                                        "{}",
+                                        0,
+                                        false,
+                                        7L,
+                                        null,
+                                        7L,
+                                        null)));
+        when(formService.schema("A_BASELINE", 1)).thenReturn(schemaWithoutVisitMethod());
+
+        assertNull(service.detail(701L).entryDefaults().visitMethod(), "无 visit_method 字段无缺省");
+    }
+
+    /** 无会话（定时作业旁路）：entryDefaults 整体 null（与 E21-T11 同口径）。 */
+    @Test
+    void detailWithoutSessionOmitsEntryDefaults() {
+        when(recordService.record(701L)).thenReturn(record("DRAFT", Map.of()));
+        when(taskQueryMapper.taskContextByRecordId(701L)).thenReturn(null);
+
+        assertNull(service.detail(701L).entryDefaults());
+    }
+
+    /** A_BASELINE 模板桩（无 visit_method 字段——A / B 模板不产生缺省）。 */
+    private static FormService.SchemaView schemaWithoutVisitMethod() {
+        return new FormService.SchemaView(
+                "A_BASELINE",
+                "患者基线（医院 A）",
+                "BASELINE",
+                1,
+                List.of(
+                        new FormService.CategoryView(
+                                "basic",
+                                "基本信息",
+                                10,
+                                List.of(
+                                        new FormService.FieldView(
+                                                "f101", "address", "住址", "text", null, null, null,
+                                                null, List.of(), false, null, null, null, true,
+                                                "column", null)))),
+                List.of());
     }
 
     @Test

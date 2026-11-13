@@ -23,6 +23,7 @@ export interface WorkbenchBanner {
     | 'outside'
     | 'overdue'
     | 'readonly'
+    | 'remote'
     | 'submitted'
     | 'unplanned';
   text: string;
@@ -32,7 +33,7 @@ export interface WorkbenchBanner {
 /** 今天（可注入，测试用）：比较窗口与随访日期只取日期部分（北京时间）。 */
 type DateLike = () => string;
 
-/** 横幅集合：逾期（未完成且窗口已过）、窗口外（随访日期落在窗口外）、计划外（E15-T06 / C-FU-022）。 */
+/** 横幅集合：逾期（未完成且窗口已过）、窗口外（随访日期落在窗口外）、计划外（E15-T06 / C-FU-022）、远程监测（E21-T12 / C-FU-025）。 */
 export function bannersOf(
   context: null | RecordTaskContext,
   visitDate: null | string,
@@ -44,6 +45,14 @@ export function bannersOf(
     banners.push({
       key: 'unplanned',
       text: '计划外随访：随访时间点为“其他”，不影响后续节点。',
+      tone: 'info',
+    });
+    return banners;
+  }
+  if (!context && source === 'REMOTE') {
+    banners.push({
+      key: 'remote',
+      text: '远程监测记录：随访方式为“远程监测”，同一表单人工录入（首期不对接厂商远程监测平台）。',
       tone: 'info',
     });
     return banners;
@@ -125,6 +134,20 @@ export function deathFieldKey(schema: FormSchema | null): null | string {
   return null;
 }
 
+/** 无任务记录的来源名称（补录 / 计划外随访 / 远程监测，E21-T12 起）。 */
+function tasklessSourceLabel(source: null | string): string {
+  if (source === 'UNPLANNED') return '计划外随访';
+  if (source === 'REMOTE') return '远程监测';
+  return '补录';
+}
+
+/** 无任务记录的来源短名（顶栏摘要用）。 */
+function tasklessSourceShortLabel(source: null | string): string {
+  if (source === 'UNPLANNED') return '计划外';
+  if (source === 'REMOTE') return '远程监测';
+  return '补录';
+}
+
 /** 提交成功文案（pages.md §5.1 提交确认：常规 / 死亡・失访两态；补录 / 计划外记录无任务联动）。 */
 export function submitSuccessMessage(
   deathSelected: boolean,
@@ -132,7 +155,7 @@ export function submitSuccessMessage(
   source: null | string = null,
 ): string {
   if (!hasTask) {
-    const kind = source === 'UNPLANNED' ? '计划外随访' : '补录';
+    const kind = tasklessSourceLabel(source);
     return deathSelected
       ? `已提交${kind}记录；随访计划终止，不再创建后续任务`
       : `已提交${kind}记录`;
@@ -158,9 +181,13 @@ export function submitConfirmText(
   source: null | string = null,
 ): string {
   if (hasTask) return '提交后任务完成，按计划生成下次随访任务。';
-  return source === 'UNPLANNED'
-    ? '提交后计划外随访记录生效（不影响后续节点，C-FU-022）。'
-    : '提交后补录记录生效（不占用年度任务，A-FU-014）。';
+  if (source === 'UNPLANNED') {
+    return '提交后计划外随访记录生效（不影响后续节点，C-FU-022）。';
+  }
+  if (source === 'REMOTE') {
+    return '提交后远程监测记录生效（同一表单人工录入，C-FU-025）。';
+  }
+  return '提交后补录记录生效（不占用年度任务，A-FU-014）。';
 }
 
 /** 必填缺失提示（照抄：「还有 n 个必填项未填写，已在左侧导航标出」）。 */
@@ -261,6 +288,9 @@ export function headerTitle(
   if (!context && patient && source === 'UNPLANNED') {
     return `计划外随访 · ${patient.patientName}`;
   }
+  if (!context && patient && source === 'REMOTE') {
+    return `远程监测 · ${patient.patientName}`;
+  }
   if (!context && patient) return `历史补录 · ${patient.patientName}`;
   if (!context) return '随访录入';
   return `随访录入 · ${context.patientName}`;
@@ -274,8 +304,7 @@ export function headerSummary(
 ): string {
   if (!context) {
     if (!visitDate) return '';
-    const kind = source === 'UNPLANNED' ? '计划外' : '补录';
-    return `${kind} · 实际随访日期 ${visitDate}`;
+    return `${tasklessSourceShortLabel(source)} · 实际随访日期 ${visitDate}`;
   }
   return `${context.nodeName ?? ''} · 计划 ${context.planDate} · 窗口 ${context.windowStart} ~ ${context.windowEnd}`;
 }
@@ -365,26 +394,37 @@ export function entrySummaryText(input: {
 }
 
 /**
- * 录入缺省写入（C-FU-008「随访医生默认当前用户」）：模板含编码 `visit_doctor`
- * 的字段（C 随访 #5，字段字典随 E23-T20——编码落地前无此字段即无操作）且当前无值时
- * 写入缺省值；返回写入后的 data（不修改原对象）。
+ * 录入缺省写入（C-FU-008「随访医生默认当前用户」；E21-T12 起随访方式缺省）：
+ * 模板含编码 `visit_doctor` / `visit_method` 的字段（C 随访 #5 / #6）且当前无值时
+ * 写入缺省值——随访医生 = 当前用户；随访方式 = REMOTE 记录「远程监测」、其余取患者
+ * 默认随访方式（后端 entryDefaults.visitMethod 下发，A / B 模板无此字段即无操作）；
+ * 仅在为空时写入，录入中可改选。返回写入后的 data（不修改原对象）。
  */
 export function applyEntryDefaults(
   schema: FormSchema | null,
   data: Record<string, unknown>,
-  defaults?: null | { doctorId: string; doctorName: string },
+  defaults?: null | {
+    doctorId: string;
+    doctorName: string;
+    visitMethod?: null | number;
+  },
 ): Record<string, unknown> {
-  if (!schema || !defaults?.doctorId) return data;
+  const visitMethod = defaults?.visitMethod ?? null;
+  if (!schema || (!defaults?.doctorId && visitMethod === null)) {
+    return data;
+  }
   const next = { ...data };
   for (const category of schema.categories) {
     for (const field of category.fields) {
-      if (
-        field.code === 'visit_doctor' &&
-        (next[field.key] === undefined ||
-          next[field.key] === null ||
-          next[field.key] === '')
-      ) {
+      const empty =
+        next[field.key] === undefined ||
+        next[field.key] === null ||
+        next[field.key] === '';
+      if (field.code === 'visit_doctor' && empty && defaults?.doctorId) {
         next[field.key] = defaults.doctorId;
+      }
+      if (field.code === 'visit_method' && empty && visitMethod !== null) {
+        next[field.key] = visitMethod;
       }
     }
   }

@@ -228,10 +228,17 @@ export interface RecordDetailView {
   visitNo?: null | string;
 }
 
-/** 录入缺省（C-FU-008「随访医生默认当前用户」；随访方式缺省取患者默认随访方式，患者表单字段随 E23-T20）。 */
+/**
+ * 录入缺省（C-FU-008「随访医生默认当前用户」；E21-T12 / C-FU-008、C-FU-025 起附随访方式缺省）。
+ */
 export interface RecordEntryDefaults {
   doctorId: string;
   doctorName: string;
+  /**
+   * 随访方式缺省（c_visit_method 选项码）：REMOTE 记录固定「远程监测」(1)、其余取患者基线默认随访方式
+   * （患者 #19）；无字段 / 无值 / A / B 模板为 null（前端不写入）。仅在字段为空时写入，录入中可改选。
+   */
+  visitMethod?: null | number;
 }
 
 /**
@@ -285,11 +292,12 @@ export interface BackfillCreateView {
 }
 
 /**
- * 历史补录 / 计划外随访创建请求（A-FU-014 / C-FU-013 过去日期；C-FU-022 计划外当天可录、
- * 须患者在随访中——E15-T06 开放 UNPLANNED；远程监测 REMOTE 随 E21）。
+ * 历史补录 / 计划外随访 / 远程监测记录创建请求（A-FU-014 / C-FU-013 过去日期；C-FU-022 计划外当天可录、
+ * 须患者在随访中——E15-T06 开放 UNPLANNED；C-FU-025 远程监测 REMOTE 同一表单人工录入——E21-T12 开放，
+ * 当天可录、须患者在随访中、功能开关 remote_monitor_record 开启〔关闭 40301〕）。
  */
 export interface BackfillCreateRequest {
-  source: 'BACKFILL' | 'UNPLANNED';
+  source: 'BACKFILL' | 'REMOTE' | 'UNPLANNED';
   visitDate: string;
 }
 

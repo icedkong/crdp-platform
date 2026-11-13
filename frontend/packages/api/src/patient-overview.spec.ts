@@ -261,6 +261,17 @@ describe('timelineEntryLabel（E15-T07 随访节点名）', () => {
       } as PatientTimelineEntry),
     ).toBe('历史补录');
   });
+
+  // E21-T12 / C-FU-025：远程监测节点用后端数据名「远程监测」（与门诊程控记录区分）
+  it('rEMOTE 节点用后端数据名「远程监测」（E21-T12 / C-FU-025）', () => {
+    expect(
+      timelineEntryLabel({
+        date: '2026-11-02',
+        kind: 'REMOTE',
+        label: '远程监测',
+      } as PatientTimelineEntry),
+    ).toBe('远程监测');
+  });
 });
 
 describe('timelineProgressText（A-FU-023 完成进度 x/y）', () => {

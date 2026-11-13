@@ -83,9 +83,14 @@ class CProgramEntryApiIT {
     void activatePresetPlans() {
         runInTenant(
                 "demoa",
-                () ->
-                        jdbc.update(
-                                "UPDATE cfg_feature SET enabled = 1 WHERE feature_code = 'implant'"));
+                () -> {
+                    jdbc.update(
+                            "UPDATE cfg_feature SET enabled = 1 WHERE feature_code = 'implant'");
+                    // E21-T12 / C-FU-025：远程监测记录开关（本类用例开启模拟医院 C 配置，@AfterAll 还原）
+                    jdbc.update(
+                            "UPDATE cfg_feature SET enabled = 1 WHERE feature_code ="
+                                    + " 'remote_monitor_record'");
+                });
         String admin = adminToken();
         for (String code : new String[] {PACER_CODE, ICD_CODE}) {
             long planId = presetPlanId(code);
@@ -130,6 +135,9 @@ class CProgramEntryApiIT {
                             ICD_CODE);
                     jdbc.update(
                             "UPDATE cfg_feature SET enabled = 0 WHERE feature_code = 'implant'");
+                    jdbc.update(
+                            "UPDATE cfg_feature SET enabled = 0 WHERE feature_code ="
+                                    + " 'remote_monitor_record'");
                 });
     }
 
@@ -474,6 +482,76 @@ class CProgramEntryApiIT {
                                         + second,
                                 admin));
         assertEquals(true, checkExcluded.get("duplicate"), "排除自身后另一条同日记录仍在提示范围内");
+    }
+
+    // ---------------------------------------------------------------- C-ACC-24 / C-FU-025
+    // 远程监测记录（E21-T12）
+
+    /** 远程监测记录（E21-T12 / C-FU-025）：同一表单人工录入、source=REMOTE、随访方式缺省「远程监测」、时间轴单独成节点与程控记录区分。 */
+    @Test
+    void remoteRecordUsesSameFormAndSplitsFromProgrammingRecords() {
+        String admin = adminToken();
+        LocalDate implant = LocalDate.now().minusMonths(4);
+        LocalDate visit = implant.plusDays(40);
+        long patientId = registerPatient(admin, "08", "DDD", implant, List.of("RA", "RV"));
+        // 同日先落一条补录（门诊程控来源的纸质记录），用于时间轴区分与重复提示
+        String backfill = createBackfillRecord(admin, patientId, visit);
+
+        // 开关开启（@BeforeAll）：REMOTE 当天 / 过去日期可建，同一入口同一表单
+        Map<?, ?> created =
+                post(
+                        "/api/hospital/followup/patients/" + patientId + "/records",
+                        admin,
+                        Map.of(
+                                "source",
+                                "REMOTE",
+                                "visitDate",
+                                visit.toString(),
+                                "formCode",
+                                C_FORM));
+        assertEquals(0, code(created), "远程监测记录创建失败：" + created);
+        String recordId = String.valueOf(data(created).get("recordId"));
+
+        Map<?, ?> detail = data(get("/api/hospital/followup/records/" + recordId, admin));
+        assertEquals("REMOTE", detail.get("source"), "source = REMOTE，与门诊程控记录区分（C-FU-025）");
+        assertEquals(visit.toString(), detail.get("visitDate"));
+        assertNull(detail.get("context"), "不创建任务、无任务上下文");
+        Map<?, ?> defaults = (Map<?, ?>) detail.get("entryDefaults");
+        assertNotNull(defaults, "录入缺省随详情下发");
+        assertEquals(
+                1,
+                ((Number) defaults.get("visitMethod")).intValue(),
+                "REMOTE 记录随访方式缺省「远程监测」（c_visit_method 选项码 1）");
+
+        // 同一表单提交（f303 随访日期 / f304 随访时间点 / f316 心室阻抗，与补录同口径）
+        Map<?, ?> submitted = submit(admin, recordId, baseProgramData(visit, 2), null);
+        assertEquals(0, code(submitted), "同一表单人工录入并提交成功：" + submitted);
+
+        // 时间轴：REMOTE 节点「远程监测」与 BACKFILL 节点分开（远程监测与程控记录区分，C-ACC-24）
+        Map<?, ?> timeline =
+                data(
+                        get(
+                                "/api/hospital/followup/patients/"
+                                        + patientId
+                                        + "/followup-timeline",
+                                admin));
+        List<Map<?, ?>> items = (List<Map<?, ?>>) timeline.get("items");
+        Map<?, ?> remoteNode =
+                items.stream()
+                        .filter(item -> "REMOTE".equals(item.get("kind")))
+                        .findFirst()
+                        .orElse(null);
+        assertNotNull(remoteNode, "时间轴含远程监测节点");
+        assertEquals("远程监测", remoteNode.get("label"), "节点名「远程监测」");
+        assertEquals(recordId, String.valueOf(remoteNode.get("recordId")));
+        assertTrue(
+                items.stream()
+                        .anyMatch(
+                                item ->
+                                        "BACKFILL".equals(item.get("kind"))
+                                                && String.valueOf(item.get("recordId"))
+                                                        .equals(backfill)),
+                "同日补录（程控来源）仍是 BACKFILL 节点，两者区分展示");
     }
 
     // ---------------------------------------------------------------- 辅助（CSwitchAcceptanceIT 同款口径）

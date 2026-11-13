@@ -50,6 +50,7 @@ import InlineAttachmentStrip from './inline-attachment-strip.vue';
  * 节点：出院（DISCHARGE）、状态变更（STATUS）、每年随访（FOLLOWUP，带计划日期 / 窗口 / 完成日期 /
  * 完成进度 x/y；REMINDER 站内提醒任务同为任务节点，note 标「无需填表」）、历史补录（BACKFILL，
  * 单独标识）、计划外随访（UNPLANNED，E15-T06 / C-FU-022：单独成节点、不影响后续节点）、
+ * 远程监测（REMOTE，E21-T12 / C-FU-025：与门诊程控记录区分，同一表单人工录入）、
  * 下次计划日期（PLANNED「计划中」，canOpen=false 置灰：任务开启日才创建）；E21-T23 / C-FU-023
  * 起随访节点带标红项数（highlightCount，红色「标红 n」）并渲染 C 器械事件（IMPLANT：菱形 ◆，
  * 首次植入 / 升级 / 更换 + 入组语境 note，信息节点不可点不置灰）；终点事件随 E17。点节点卡片
@@ -102,12 +103,13 @@ function setView(next: 'table' | 'timeline') {
   localStorage.setItem(VIEW_KEY, next);
 }
 
-/** 是否随访类节点（任务 / 补录 / 计划外 / 计划中——图例与状态列按任务状态口径展示）。 */
+/** 是否随访类节点（任务 / 补录 / 计划外 / 远程监测 / 计划中——图例与状态列按任务状态口径展示）。 */
 function isFollowupKind(entry: PatientTimelineEntry): boolean {
   return (
     entry.kind === 'FOLLOWUP' ||
     entry.kind === 'BACKFILL' ||
-    entry.kind === 'UNPLANNED'
+    entry.kind === 'UNPLANNED' ||
+    entry.kind === 'REMOTE'
   );
 }
 
@@ -166,7 +168,11 @@ function nodeDetail(entry: PatientTimelineEntry): string {
   const parts: string[] = [];
   if (entry.kind === 'FOLLOWUP' || entry.kind === 'PLANNED') {
     parts.push(`计划 ${nodeDate(entry)}`);
-  } else if (entry.kind === 'BACKFILL' || entry.kind === 'UNPLANNED') {
+  } else if (
+    entry.kind === 'BACKFILL' ||
+    entry.kind === 'UNPLANNED' ||
+    entry.kind === 'REMOTE'
+  ) {
     parts.push(`随访日期 ${nodeDate(entry)}`);
   } else {
     parts.push(entry.date);

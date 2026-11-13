@@ -113,6 +113,7 @@ import MobileUploadQrModal from '#/components/followup/mobile-upload-qr.vue';
 import ParamTrend from '#/components/followup/param-trend.vue';
 import PatientHeader from '#/components/followup/patient-header.vue';
 import ReasonModal from '#/components/followup/reason-modal.vue';
+import RemoteRecordModal from '#/components/followup/remote-record-modal.vue';
 import {
   reportDeleteLabel,
   reportDeleteNote,
@@ -277,6 +278,13 @@ const backfillOpen = ref(false);
 // C-FU-022 计划外随访弹窗（患者头部入口，components.md §4）
 const tempTaskOpen = ref(false);
 const unplannedOpen = ref(false);
+
+// E21-T12 / C-FU-025：远程监测记录弹窗（随访记录页签工具栏入口，随
+// remote_monitor_record 开关显隐——医院 C；A / B 不显示该按钮）
+const remoteRecordOpen = ref(false);
+const remoteRecordVisible = computed(() =>
+  isFeatureEnabled('remote_monitor_record'),
+);
 
 const patientId = computed(() => String(route.params.id ?? ''));
 
@@ -1275,7 +1283,7 @@ async function confirmRecordDelete(reason: string) {
 }
 
 const timelineLegendNote =
-  '时间轴含每年随访、历史补录、计划外随访（不影响后续节点）与下次计划日期（计划中）；终点事件随 E17、医院 C 的器械事件随 E21 接入。';
+  '时间轴含每年随访、历史补录、计划外随访（不影响后续节点）、远程监测（与门诊程控记录区分）与下次计划日期（计划中）；终点事件随 E17、医院 C 的器械事件随 E21 接入。';
 </script>
 
 <template>
@@ -1480,6 +1488,21 @@ const timelineLegendNote =
           >
             历史补录
           </Button>
+          <!-- E21-T12 / C-FU-025：远程监测记录（同一表单人工录入，与门诊程控记录区分）；
+               随 remote_monitor_record 开关显隐（医院 C），已终止患者置灰提示 -->
+          <Tooltip
+            v-if="remoteRecordVisible && followupTerminated"
+            title="患者不在随访中"
+          >
+            <Button disabled>远程监测</Button>
+          </Tooltip>
+          <Button
+            v-else-if="remoteRecordVisible && canEditRecord"
+            data-testid="remote-record-create"
+            @click="remoteRecordOpen = true"
+          >
+            远程监测
+          </Button>
           <!-- A-FU-023「中间该子计划的任务列表，可临时添加任务」：时间轴工具栏入口 -->
           <Tooltip v-if="followupTerminated" title="患者不在随访中">
             <Button disabled>添加任务</Button>
@@ -1546,6 +1569,11 @@ const timelineLegendNote =
         />
         <UnplannedRecordModal
           v-model:open="unplannedOpen"
+          :patient-id="overview.id"
+          @created="onRecordCreated"
+        />
+        <RemoteRecordModal
+          v-model:open="remoteRecordOpen"
           :patient-id="overview.id"
           @created="onRecordCreated"
         />

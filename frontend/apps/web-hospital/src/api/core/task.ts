@@ -190,7 +190,7 @@ export function deleteRecord(recordId: string, body: { reason: string }) {
   });
 }
 
-/** 历史补录 / 计划外随访（E15-T07 补录；E15-T06 起计划外 UNPLANNED 当天可录）：新建记录返回 recordId 进表单页。 */
+/** 历史补录 / 计划外随访 / 远程监测记录（E15-T07 补录；E15-T06 起计划外 UNPLANNED；E21-T12 起远程监测 REMOTE）：新建记录返回 recordId 进表单页。 */
 export function createBackfillRecord(
   patientId: number | string,
   data: BackfillCreateRequest,

@@ -281,8 +281,9 @@ class TenantOnboardingServiceMySqlIT {
                 // E21-T21 增加 V97（转科室历史表 pt_dept_history，C-WARD-006）；E21-T19 增加 V96（C 首页三卡目录行
                 // dash_card）。
                 // E21-T24 增加 V98（修正医院 C 上限/下限频率硬规则 upper_rate_gt_lower 的 op 契约）。
+                // E21-T12 增加 V99（远程监测记录功能开关 remote_monitor_record，C-FU-025）。
                 // 此处随迁移清单维护
-                java.util.stream.IntStream.rangeClosed(1, 98).mapToObj(String::valueOf).toList(),
+                java.util.stream.IntStream.rangeClosed(1, 99).mapToObj(String::valueOf).toList(),
                 root.queryForList(
                         "SELECT version FROM "
                                 + DB

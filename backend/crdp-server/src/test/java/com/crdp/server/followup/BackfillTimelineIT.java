@@ -302,9 +302,9 @@ class BackfillTimelineIT {
         enrollCurrentTask("demoa", patientId, planId);
 
         assertEquals(
-                40001,
+                40301,
                 code(backfillCall(doctor, patientId, "REMOTE", today.minusDays(10))),
-                "远程监测随 E21");
+                "远程监测记录未开通（remote_monitor_record 默认关闭，E21-T12 / C-FU-025）");
         assertEquals(
                 40001,
                 code(backfillCall(doctor, patientId, "BACKFILL", today)),

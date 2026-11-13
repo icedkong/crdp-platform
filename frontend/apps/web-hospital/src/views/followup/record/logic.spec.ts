@@ -78,6 +78,37 @@ describe('e15-T06 / C-FU-022 计划外随访横幅与文案', () => {
     ).toEqual([]);
   });
 
+  // E21-T12 / C-FU-025：远程监测记录横幅与文案（与门诊程控记录区分）
+  it('远程监测记录（无任务上下文）显示「同一表单人工录入」横幅', () => {
+    const banners = bannersOf(null, '2026-11-05', () => '2026-11-05', 'REMOTE');
+    expect(banners).toHaveLength(1);
+    expect(banners[0]).toMatchObject({
+      key: 'remote',
+      text: '远程监测记录：随访方式为“远程监测”，同一表单人工录入（首期不对接厂商远程监测平台）。',
+      tone: 'info',
+    });
+  });
+
+  it('顶栏标题与摘要区分远程监测（无任务上下文）', () => {
+    const patient = { patientName: '周*（示例）' };
+    expect(headerTitle(null, patient, 'REMOTE')).toBe('远程监测 · 周*（示例）');
+    expect(headerSummary(null, '2026-06-10', 'REMOTE')).toBe(
+      '远程监测 · 实际随访日期 2026-06-10',
+    );
+  });
+
+  it('提交确认与成功文案：远程监测记录', () => {
+    expect(submitConfirmText(false, 'REMOTE')).toBe(
+      '提交后远程监测记录生效（同一表单人工录入，C-FU-025）。',
+    );
+    expect(submitSuccessMessage(false, false, 'REMOTE')).toBe(
+      '已提交远程监测记录',
+    );
+    expect(submitSuccessMessage(true, false, 'REMOTE')).toBe(
+      '已提交远程监测记录；随访计划终止，不再创建后续任务',
+    );
+  });
+
   it('顶栏标题与摘要区分计划外 / 补录（无任务上下文）', () => {
     const patient = { patientName: '周*（示例）' };
     expect(headerTitle(null, patient, 'UNPLANNED')).toBe(
@@ -386,6 +417,12 @@ describe('e21-T11 / C-FU-008：录入缺省（随访医生 = 当前用户）', (
             label: '随访医生',
             type: 'select',
           },
+          {
+            code: 'visit_method',
+            key: 'f306',
+            label: '随访方式',
+            type: 'select',
+          },
         ],
         key: 'fu_contact',
         label: '随访概况',
@@ -427,6 +464,46 @@ describe('e21-T11 / C-FU-008：录入缺省（随访医生 = 当前用户）', (
         { doctorId: '7', doctorName: '张医生（示例）' },
       ),
     ).toEqual({});
+  });
+
+  // E21-T12 / C-FU-008、C-FU-025：随访方式缺省（REMOTE「远程监测」/ 患者默认，仅空值写入、可改选）
+  it('visit_method 为空时写入缺省（REMOTE 记录 → 远程监测 1）', () => {
+    expect(
+      applyEntryDefaults(
+        schema,
+        {},
+        {
+          doctorId: '7',
+          doctorName: '张医生（示例）',
+          visitMethod: 1,
+        },
+      ),
+    ).toEqual({ f305: '7', f306: 1 });
+  });
+
+  it('visit_method 已有值不覆盖（录入中改选保留）；缺省为 null 不写入', () => {
+    expect(
+      applyEntryDefaults(
+        schema,
+        { f306: 2 },
+        {
+          doctorId: '7',
+          doctorName: '张医生（示例）',
+          visitMethod: 1,
+        },
+      ),
+    ).toEqual({ f305: '7', f306: 2 });
+    expect(
+      applyEntryDefaults(
+        schema,
+        {},
+        {
+          doctorId: '7',
+          doctorName: '张医生（示例）',
+          visitMethod: null,
+        },
+      ),
+    ).toEqual({ f305: '7' });
   });
 });
 

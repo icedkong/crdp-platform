@@ -36,8 +36,8 @@ import org.springframework.test.context.ActiveProfiles;
  * <p>覆盖：临时任务（POST /tasks：FORM 负数 occurrence 不占用年度任务、REMINDER 无表单、负责人缺省本人、窗口 ±宽度、TaskOpened
  * 事件与审计）；完成提醒（acknowledge：REMINDER 无需填表即完成、FORM 40901、start 40901）； 计划外随访（POST
  * /patients/{id}/records source=UNPLANNED：当天可录、无任务、时间轴单独成节点、不影响后续节点〔下次计划日期不变〕、未来日期 40001、已终止患者
- * 40901、REMOTE 40001）； 权限（无 followup:record:edit 40300）、模块关闭 40301、越范围患者 40400。门控
- * CRDP_IT_MYSQL_PORT。全部虚构数据（legacy IT-E15T06-*）。
+ * 40901、REMOTE 40301 开关未开通〔E21-T12 / C-FU-025，A 租户默认关闭〕）； 权限（无 followup:record:edit 40300）、模块关闭
+ * 40301、越范围患者 40400。门控 CRDP_IT_MYSQL_PORT。全部虚构数据（legacy IT-E15T06-*）。
  */
 @ActiveProfiles("local")
 @SpringBootTest(
@@ -452,13 +452,13 @@ class TempReminderUnplannedIT {
                 code(unplannedCall(doctor, patientId, today.plusDays(1))),
                 "未来日期拒绝（未来随访由计划排期）");
         assertEquals(
-                40001,
+                40301,
                 code(
                         post(
                                 "/api/hospital/followup/patients/" + patientId + "/records",
                                 doctor,
                                 Map.of("source", "REMOTE", "visitDate", today.toString()))),
-                "远程监测随 E21");
+                "远程监测记录未开通（remote_monitor_record 默认关闭，E21-T12 / C-FU-025）");
         // 已终止患者（死亡）40901
         long dead = registerPatient("demoa", doctor, "U3", today.minusDays(20));
         enrollCurrentTask("demoa", dead, planId);
