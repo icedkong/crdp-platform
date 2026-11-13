@@ -3,6 +3,7 @@ import type {
   AuditRowView,
   ContactLogRow,
   FormSchema,
+  ImplantRecordView,
   PatientBaseline,
   PatientContactVersion,
   PatientDeptHistoryItem,
@@ -85,6 +86,7 @@ import {
 } from '#/components/followup/anchor-nav';
 import {
   itemsAtBaselineAnchor,
+  itemsAtImplant,
   thumbnailFileOf,
   toNavItems,
 } from '#/components/followup/attachment-nav-logic';
@@ -101,6 +103,10 @@ import {
 import ContactLogModal from '#/components/followup/contact-log-modal.vue';
 import { downloadFileById } from '#/components/followup/file-download';
 import FollowupTimeline from '#/components/followup/followup-timeline.vue';
+import {
+  implantAnchorKeyOf,
+  implantBarItems,
+} from '#/components/followup/implant-anchor-logic';
 import ImplantSection from '#/components/followup/implant-section.vue';
 import InlineAttachmentStrip from '#/components/followup/inline-attachment-strip.vue';
 import MobileUploadQrModal from '#/components/followup/mobile-upload-qr.vue';
@@ -179,6 +185,9 @@ const trendTabVisible = computed(() => isFeatureEnabled('param_trend'));
 // E21-T01 / C-PAT-004、C-PAT-005：基线资料页签的植入记录区块随 implant 开关显隐
 // （pages.md §4.4；关闭直接隐藏，后端仍按开关 40301 兜底）
 const implantSectionVisible = computed(() => isFeatureEnabled('implant'));
+// E21-T32 / C-PAT-018：植入记录清单（ImplantSection @loaded 回传）——分组条器械信息 / 电极条目与
+// 📎 计数的数据源；不另发请求，与区块展示同一份
+const implantRecords = ref<ImplantRecordView[]>([]);
 // E16-T14：左栏布局形态（桌面左栏 / 平板与手机收为「附件（n）」抽屉入口）；
 // E24-T04：isMobile 驱动手机形态（页签横向滚动、沟通 / 报告单 / 操作日志表格转卡片）
 const { isDesktop, isMobile } = useBreakpoint();
@@ -365,9 +374,11 @@ const baselineSectionViews = computed(() => {
 /**
  * 顶部分类条（吸顶）：每个分类显示「已填 / 应填」（服务端按 A-PAT-019 口径随
  * 基线视图下发，与分节标题同源）；未填完的数字由 CategoryBar 标橙色。
+ * E21-T32 / C-PAT-018：C（implant 开关开启）追加分组条目——每条植入记录的
+ * 器械信息与电极（已填 / 应填口径见 implant-anchor-logic，OQ-148）。
  */
-const baselineBarItems = computed(() =>
-  baselineSectionViews.value.map((section) => {
+const baselineBarItems = computed(() => {
+  const items = baselineSectionViews.value.map((section) => {
     const progress = baseline.value?.progress.find(
       (item) => item.key === section.code,
     );
@@ -379,8 +390,18 @@ const baselineBarItems = computed(() =>
       label: section.label,
       total: progress?.total ?? 0,
     };
-  }),
-);
+  });
+  if (implantSectionVisible.value && implantRecords.value.length > 0) {
+    items.push(
+      ...implantBarItems(
+        implantRecords.value,
+        (record, anchorKey) =>
+          itemsAtImplant(navItems.value, record.id, anchorKey).length,
+      ),
+    );
+  }
+  return items;
+});
 
 const baselineActiveKey = ref('');
 let lastJumpedKey = '';
@@ -633,12 +654,35 @@ function baselineAnchorItems(anchorKey: string) {
 // 左栏位置标签跳转：基线滚到分类锚点（分类条同步高亮、写 #cat=<key>）；随访经
 // FollowupTimeline.locateInRecord 展开该记录并滚到分组锚点 / 记录顶部（写
 // #rec=<id>&cat=<key>；A-PAT-020「点标签跳到该位置」，抽屉模式组件内先关抽屉）。
+// E21-T32 / C-PAT-017：植入位置切到基线资料页签并滚到该植入记录（或其器械信息 / 电极）。
 function handleNavLocate(location: ReportLocation) {
   if (location.linkType === 'followup_record' && location.linkRecordId) {
     void locateFollowup(location.linkRecordId, location.anchorKey);
     return;
   }
+  if (location.linkType === 'implant_record' && location.linkRecordId) {
+    void locateImplant(location.linkRecordId, location.anchorKey);
+    return;
+  }
   if (location.anchorKey) jumpToBaselineCategory(location.anchorKey);
+}
+
+/** 植入记录区块模板 ref（locate 展开该记录并滚动定位，C-PAT-017）。 */
+const implantSectionRef = ref<null | {
+  locate: (implantId: string, anchorKey?: null | string) => void;
+}>(null);
+
+/** 植入位置跳转：切到基线资料页签 → ImplantSection.locate 滚到整条 / 器械信息 / 电极锚点（写 #cat=<锚点键>）。 */
+async function locateImplant(implantId: string, anchorKey?: null | string) {
+  if (tab.value !== 'baseline') tab.value = 'baseline';
+  const key = implantAnchorKeyOf(implantId, anchorKey);
+  baselineActiveKey.value = key;
+  lastJumpedKey = key;
+  if (route.hash !== categoryHash(key)) {
+    void router.push({ hash: categoryHash(key) });
+  }
+  await nextTick();
+  implantSectionRef.value?.locate(implantId, anchorKey);
 }
 
 /** 随访时间轴模板 ref（locateInRecord 展开记录并滚动定位）。 */
@@ -1378,11 +1422,17 @@ const timelineLegendNote =
             @upload="openReportUpload(baselineUploadPreset(section.code))"
           />
         </section>
-        <!-- E21-T01 / C-PAT-004、C-PAT-005：植入记录与电极（当前器械置顶；手机转卡片 §4.10） -->
+        <!-- E21-T01 / C-PAT-004、C-PAT-005：植入记录与电极（当前器械置顶；手机转卡片 §4.10）；
+             E21-T32：每条记录整条 / 器械信息 / 电极都是报告单位置（锚点 + 内联缩略图条 + 分组条跳转） -->
         <ImplantSection
           v-if="implantSectionVisible"
+          ref="implantSectionRef"
+          :attachments="navItems"
+          :can-upload="canUploadReport"
           :patient-id="patientId"
           @changed="() => void reloadOverviewQuietly()"
+          @loaded="(records) => (implantRecords = records)"
+          @upload-at="(preset) => openReportUpload(preset)"
         />
         <p v-if="baseline && baselineSectionViews.length === 0" class="hint">
           基线分节尚未填写：点「编辑」按分类补录（A-PAT-003

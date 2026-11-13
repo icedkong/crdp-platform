@@ -311,11 +311,15 @@ class ReportIT {
                                 patientId,
                                 "typeCode",
                                 "LAB",
+                                "nameId",
+                                nameIdOfLab(admin),
                                 "reportDate",
                                 "2026-10-28",
                                 "locations",
                                 List.of(implantLocation)));
-        assertEquals(40001, code(implant), "植入记录位置随 E21-T32 开放");
+        // E21-T32 起植入位置开放：本例 demoa 未开 implant 开关 → 40301（AGENTS §5.7）；开放形态见
+        // CReportImplantLocationIT
+        assertEquals(40301, code(implant), "implant 开关关闭植入位置 40301：" + implant);
     }
 
     // ---------------------------------------------------------------- 配置删除守卫（OQ-95②）
@@ -635,6 +639,11 @@ class ReportIT {
                                 "A_ANNUAL_FU"));
         assertEquals(0, code(created), "历史补录失败：" + created);
         return Long.parseLong(str(data(created).get("recordId")));
+    }
+
+    /** LAB 首个名称 id（位置守卫用例：LAB 名称必填，缺 nameId 会先命中 40001 名称校验）。 */
+    private String nameIdOfLab(String token) {
+        return String.valueOf(labNameWithItems(token).get("id"));
     }
 
     /** LAB 首个绑定模板的名称（血常规，A 预置，V62）；目录接口 data 直接是清单。 */

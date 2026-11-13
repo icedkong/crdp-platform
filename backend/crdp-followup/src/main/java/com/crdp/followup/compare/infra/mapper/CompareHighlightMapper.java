@@ -94,4 +94,15 @@ public interface CompareHighlightMapper {
                             + "version 与 updated_by / updated_at，无患者数据经此输出")
     @Update("UPDATE fu_record SET highlight = #{highlight} WHERE id = #{id}")
     int updateHighlight(@Param("id") long id, @Param("highlight") String highlight);
+
+    /**
+     * 单条记录的持久化命中数组（E21-T32 / C-PAT-018 分组条标红数）：调用方（记录详情）已对记录做过 {@code @DataScope} 可见性校验，本句只读派生列
+     * highlight、不吐患者数据；无命中 / 未算为 null。
+     */
+    @com.crdp.framework.datascope.IgnoreScope(
+            reason =
+                    "记录详情读取持久化标红命中（E21-T32）：调用方已经 record（@DataScope）确认记录可见，"
+                            + "只读派生列 highlight 不吐患者数据")
+    @Select("SELECT highlight FROM fu_record WHERE id = #{id} AND deleted = 0")
+    String findHighlightOf(@Param("id") long id);
 }

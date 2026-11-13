@@ -1356,6 +1356,7 @@ export type {
   BackfillCreateView,
   RecordDetailView,
   RecordDeviceContext,
+  RecordHighlightHit,
   RecordPatientBrief,
   RecordPreviousView,
   RecordSubmitResult,

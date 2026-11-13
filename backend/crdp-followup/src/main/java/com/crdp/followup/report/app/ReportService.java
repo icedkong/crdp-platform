@@ -4,6 +4,9 @@ import com.crdp.followup.contact.app.ContactLogService;
 import com.crdp.followup.file.app.FilePolicyService;
 import com.crdp.followup.file.infra.mapper.SysFileMapper;
 import com.crdp.followup.file.infra.mapper.SysFileRow;
+import com.crdp.followup.implant.app.ImplantGateway;
+import com.crdp.followup.implant.app.ImplantService;
+import com.crdp.followup.implant.infra.mapper.ImplantMapper;
 import com.crdp.followup.patient.app.BaselineSectionService;
 import com.crdp.followup.report.infra.mapper.ReportConfigMapper;
 import com.crdp.followup.report.infra.mapper.ReportConfigMapper.ItemRow;
@@ -43,7 +46,7 @@ import org.springframework.transaction.annotation.Transactional;
  * <ul>
  *   <li>位置必填、可多选：粒度三种——基线某分类（baseline + category）、某条随访记录整条 （followup_record + anchor
  *       NULL）、某条随访记录中的某分组（followup_record + section）， 不细到字段；位置为空 40001（「请至少选择 1 个位置」）；C
- *       的植入记录锚点（implant_record）随 E21-T32 开放，此前 40001 拒绝。
+ *       的植入记录锚点（implant_record，整条或器械信息 / 电极分组）随 E21-T32 开放（implant 开关关闭 40301）。
  *   <li>锚点校验（E16-T02 口径）：基线分类对当前发布版模板、随访分组对该记录固化版本的模板分类清单； 修改位置（增删、至少保留一个、写 RPT_LOCATION_CHANGE
  *       操作日志）随 E16-T13 落地， 无位置报告单可查询为「未指定位置」并经 add 补指定（A-ATT-020）；模板改版退回随 E16-T15。
  *   <li>附件走 E10 上传接口拿 fileId 后挂台账（≤ file.upload.max.files.per.report，超限 40001）； 批量上传（E16-T03 /
@@ -61,6 +64,12 @@ public class ReportService {
     static final String LINK_BASELINE = "baseline";
 
     static final String LINK_FOLLOWUP_RECORD = "followup_record";
+
+    /**
+     * 植入记录位置（E21-T32 / C-SCAN-010、C-PAT-017）：整条植入记录（anchorType=null）或其中分组 —— C_IMPLANT 表单分类
+     * 器械信息（device）/ 电极（lead），不细到字段；随 {@code implant} 功能开关开放（关闭 40301，AGENTS §5.7）。
+     */
+    static final String LINK_IMPLANT_RECORD = "implant_record";
 
     static final String ANCHOR_CATEGORY = "category";
 
@@ -116,6 +125,7 @@ public class ReportService {
     private final SysFileMapper files;
     private final ContactLogService contactLogs;
     private final AuditLogger audit;
+    private final ImplantGateway implants;
 
     public ReportService(
             ReportMapper mapper,
@@ -126,7 +136,8 @@ public class ReportService {
             FilePolicyService filePolicy,
             SysFileMapper files,
             ContactLogService contactLogs,
-            AuditLogger audit) {
+            AuditLogger audit,
+            ImplantGateway implants) {
         this.mapper = mapper;
         this.config = config;
         this.features = features;
@@ -136,6 +147,7 @@ public class ReportService {
         this.files = files;
         this.contactLogs = contactLogs;
         this.audit = audit;
+        this.implants = implants;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -781,12 +793,14 @@ public class ReportService {
         }
         Map<String, String> baselineCategories = baselineCategoryMap();
         Map<Long, RecordRow> records = recordMap(patientId);
+        Map<Long, ImplantMapper.ImplantRow> implantRows = implantMap(patientId);
         Map<String, NormalizedLocation> distinct = new LinkedHashMap<>();
         for (LocationInput input : add) {
             if (input == null) {
                 continue;
             }
-            NormalizedLocation normalized = normalizeOne(input, baselineCategories, records);
+            NormalizedLocation normalized =
+                    normalizeOne(input, baselineCategories, records, implantRows);
             distinct.putIfAbsent(normalized.dedupeKey(), normalized);
         }
         for (NormalizedLocation normalized : distinct.values()) {
@@ -834,8 +848,19 @@ public class ReportService {
                         ? null
                         : input.anchorType().trim();
         String anchorKey = trimToNull(input.anchorKey());
-        if ("implant_record".equals(linkType)) {
-            throw bad("植入记录位置随医院 C 扩展开放（E21-T32），当前不可选");
+        if (LINK_IMPLANT_RECORD.equals(linkType)) {
+            // 模板版本不参与（与随访位置同口径）；分组锚点只查结构，是否仍在册由四元组匹配判定
+            if (input.linkRecordId() == null) {
+                throw bad("植入记录位置缺少记录标识");
+            }
+            if (anchorType != null && !ANCHOR_SECTION.equals(anchorType)) {
+                throw bad("植入记录位置只能是整条记录或其中某个分组（器械信息 / 电极）");
+            }
+            if (ANCHOR_SECTION.equals(anchorType) && anchorKey == null) {
+                throw bad("分组位置缺少分组锚点");
+            }
+            return new NormalizedLocation(
+                    LINK_IMPLANT_RECORD, input.linkRecordId(), anchorType, anchorKey, 0);
         }
         if (LINK_BASELINE.equals(linkType)) {
             if (!ANCHOR_CATEGORY.equals(anchorType) || anchorKey == null) {
@@ -874,6 +899,10 @@ public class ReportService {
     private static String locationRef(NormalizedLocation location) {
         if (LINK_BASELINE.equals(location.linkType())) {
             return "基线分类 " + location.anchorKey();
+        }
+        if (LINK_IMPLANT_RECORD.equals(location.linkType())) {
+            String ref = "植入记录 " + location.linkRecordId();
+            return location.anchorKey() == null ? ref : ref + " 分组 " + location.anchorKey();
         }
         String ref = "随访记录 " + location.linkRecordId();
         return location.anchorKey() == null ? ref : ref + " 分组 " + location.anchorKey();
@@ -945,7 +974,9 @@ public class ReportService {
         String scope =
                 LINK_BASELINE.equals(tag.linkType())
                         ? "基线"
-                        : (tag.recordLabel() != null ? tag.recordLabel() : "随访记录");
+                        : LINK_IMPLANT_RECORD.equals(tag.linkType())
+                                ? (tag.recordLabel() != null ? tag.recordLabel() : "植入记录")
+                                : (tag.recordLabel() != null ? tag.recordLabel() : "随访记录");
         return tag.anchorLabel() == null ? scope : scope + " · " + tag.anchorLabel();
     }
 
@@ -1263,12 +1294,14 @@ public class ReportService {
         }
         Map<String, String> baselineCategories = baselineCategoryMap();
         Map<Long, RecordRow> records = recordMap(patientId);
+        Map<Long, ImplantMapper.ImplantRow> implantRows = implantMap(patientId);
         Map<String, NormalizedLocation> distinct = new LinkedHashMap<>();
         for (LocationInput input : locations) {
             if (input == null) {
                 continue;
             }
-            NormalizedLocation normalized = normalizeOne(input, baselineCategories, records);
+            NormalizedLocation normalized =
+                    normalizeOne(input, baselineCategories, records, implantRows);
             if (distinct.putIfAbsent(normalized.dedupeKey(), normalized) != null
                     && log.isDebugEnabled()) {
                 log.debug("报告单位置重复提交，已合并（E16-T02）：{}", normalized.dedupeKey());
@@ -1283,7 +1316,8 @@ public class ReportService {
     private NormalizedLocation normalizeOne(
             LocationInput input,
             Map<String, String> baselineCategories,
-            Map<Long, RecordRow> records) {
+            Map<Long, RecordRow> records,
+            Map<Long, ImplantMapper.ImplantRow> implantRows) {
         String linkType = input.linkType() == null ? "" : input.linkType().trim();
         String anchorType =
                 input.anchorType() == null || input.anchorType().isBlank()
@@ -1333,10 +1367,53 @@ public class ReportService {
                     anchorKey,
                     record.templateVersion());
         }
-        if ("implant_record".equals(linkType)) {
-            throw bad("植入记录位置随医院 C 扩展开放（E21-T32），当前不可选");
+        if (LINK_IMPLANT_RECORD.equals(linkType)) {
+            return normalizeImplantLocation(input, anchorType, anchorKey, implantRows);
         }
         throw bad("位置类型不合法：" + linkType);
+    }
+
+    /**
+     * 植入记录位置（E21-T32 / C-SCAN-010）：整条（anchorType=null）或其中分组（section，锚点对 C_IMPLANT 当前发布版分类清单——器械信息
+     * device / 电极 lead）；须 {@code implant} 开关开启（关闭 40301，AGENTS §5.7）；越患者 / 越范围 / 不存在的植入记录统一
+     * 40400（不暴露对象存在）。
+     */
+    private NormalizedLocation normalizeImplantLocation(
+            LocationInput input,
+            String anchorType,
+            String anchorKey,
+            Map<Long, ImplantMapper.ImplantRow> implantRows) {
+        requireImplantFeature();
+        if (input.linkRecordId() == null) {
+            throw bad("植入记录位置缺少记录标识");
+        }
+        ImplantMapper.ImplantRow implant = implantRows.get(input.linkRecordId());
+        if (implant == null) {
+            // 不区分「不存在 / 不属于该患者 / 越范围」，统一 40400 不暴露对象存在
+            throw new ApiException(404, 40400, "植入记录不存在");
+        }
+        int version = formService.publishedVersion(ImplantService.IMPLANT_FORM_CODE);
+        if (anchorType == null) {
+            return new NormalizedLocation(LINK_IMPLANT_RECORD, implant.id(), null, null, version);
+        }
+        if (!ANCHOR_SECTION.equals(anchorType)) {
+            throw bad("植入记录位置只能是整条记录或其中某个分组（器械信息 / 电极）");
+        }
+        if (anchorKey == null) {
+            throw bad("分组位置缺少分组锚点");
+        }
+        if (!implantCategoryMap().containsKey(anchorKey)) {
+            throw bad("植入分组不存在：" + anchorKey);
+        }
+        return new NormalizedLocation(
+                LINK_IMPLANT_RECORD, implant.id(), ANCHOR_SECTION, anchorKey, version);
+    }
+
+    /** 植入开关闸门（E21-T32）：关闭（含无行）→ 40301，与 scan_progress / implant 子域同口径。 */
+    private void requireImplantFeature() {
+        if (!Boolean.TRUE.equals(features.findEnabled(ImplantService.FEATURE_IMPLANT))) {
+            throw new ApiException(403, 40301, "植入记录未开通（功能开关 implant 关闭）");
+        }
     }
 
     /** 归一化后的位置（templateVersion 为锚点校验依据的版本，存储以此为准）。 */
@@ -1378,6 +1455,47 @@ public class ReportService {
             map.put(row.id(), row);
         }
         return map;
+    }
+
+    /**
+     * 植入记录位置分组清单（E21-T32）：C_IMPLANT 表单当前发布版分类（V90 预置 器械信息 device / 电极 lead）——
+     * 植入记录无按记录固化版本（结构化列非表单实例），锚点一律对当前发布版校验（与基线分类同口径）。
+     */
+    private Map<String, String> implantCategoryMap() {
+        String code = ImplantService.IMPLANT_FORM_CODE;
+        return categoryMap(code, formService.publishedVersion(code));
+    }
+
+    /** 患者全部植入记录（当前用户范围内；越范围空清单 → 上层按 40400 处理）。 */
+    private Map<Long, ImplantMapper.ImplantRow> implantMap(long patientId) {
+        Map<Long, ImplantMapper.ImplantRow> map = new LinkedHashMap<>();
+        for (ImplantMapper.ImplantRow row : implants.implantsOf(patientId)) {
+            map.put(row.id(), row);
+        }
+        return map;
+    }
+
+    /**
+     * 植入记录标题（「植入记录#2 2025-01-10」，与 {@code ImplantService} 植入序号同口径：按植入日期升序 1..N）——
+     * 位置树节点与位置标签共用；日期缺失防御性只留序号。
+     */
+    static String implantTitle(ImplantMapper.ImplantRow row, Map<Long, Integer> implantNoById) {
+        Integer no = implantNoById.get(row.id());
+        String label = no == null ? "植入记录" : "植入记录#" + no;
+        return row.implantDate() == null ? label : label + " " + row.implantDate();
+    }
+
+    /** 植入序号表（按植入日期升序、同日 id 小者在前 1..N；与 ImplantService 列表口径一致）。 */
+    private static Map<Long, Integer> implantNoMap(List<ImplantMapper.ImplantRow> rows) {
+        List<ImplantMapper.ImplantRow> byDateAsc = new ArrayList<>(rows);
+        byDateAsc.sort(
+                java.util.Comparator.comparing(ImplantMapper.ImplantRow::implantDate)
+                        .thenComparing(ImplantMapper.ImplantRow::id));
+        Map<Long, Integer> nos = new LinkedHashMap<>();
+        for (int i = 0; i < byDateAsc.size(); i++) {
+            nos.put(byDateAsc.get(i).id(), i + 1);
+        }
+        return nos;
     }
 
     // ---------------------------------------------------------------- 附件与指标
@@ -1530,6 +1648,63 @@ public class ReportService {
         }
         roots.add(new LocationNodeView("baseline", "基线资料", false, null, baselineChildren));
 
+        // E21-T32 / C-SCAN-010、C-PAT-017：植入记录根（implant 开关开启才有）——每条植入记录整条 +
+        // 器械信息 / 电极分组；当前器械置顶，其余按植入日期新在前（与植入列表同序，pages.md §4.4）。
+        if (Boolean.TRUE.equals(features.findEnabled(ImplantService.FEATURE_IMPLANT))) {
+            String implantCode = ImplantService.IMPLANT_FORM_CODE;
+            int implantVersion = formService.publishedVersion(implantCode);
+            Map<String, String> implantCategories = categoryMap(implantCode, implantVersion);
+            List<ImplantMapper.ImplantRow> implantRows = implants.implantsOf(patientId);
+            // 当前器械置顶（在用在前），其余保持 gateway 的日期新在前——与 ImplantService 列表同序
+            implantRows =
+                    implantRows.stream()
+                            .sorted(
+                                    (left, right) -> {
+                                        boolean leftActive =
+                                                com.crdp.followup.implant.domain.ImplantCodes
+                                                        .STATUS_ACTIVE
+                                                        .equals(left.status());
+                                        boolean rightActive =
+                                                com.crdp.followup.implant.domain.ImplantCodes
+                                                        .STATUS_ACTIVE
+                                                        .equals(right.status());
+                                        return leftActive == rightActive ? 0 : leftActive ? -1 : 1;
+                                    })
+                            .toList();
+            Map<Long, Integer> implantNos = implantNoMap(implantRows);
+            List<LocationNodeView> implantChildren = new ArrayList<>();
+            for (ImplantMapper.ImplantRow row : implantRows) {
+                List<LocationNodeView> groups = new ArrayList<>();
+                for (var group : implantCategories.entrySet()) {
+                    groups.add(
+                            new LocationNodeView(
+                                    "implant:" + row.id() + ":sec:" + group.getKey(),
+                                    group.getValue(),
+                                    true,
+                                    new LocationValueView(
+                                            LINK_IMPLANT_RECORD,
+                                            String.valueOf(row.id()),
+                                            ANCHOR_SECTION,
+                                            group.getKey(),
+                                            implantVersion),
+                                    null));
+                }
+                implantChildren.add(
+                        new LocationNodeView(
+                                "implant:" + row.id(),
+                                implantTitle(row, implantNos),
+                                true,
+                                new LocationValueView(
+                                        LINK_IMPLANT_RECORD,
+                                        String.valueOf(row.id()),
+                                        null,
+                                        null,
+                                        implantVersion),
+                                groups));
+            }
+            roots.add(new LocationNodeView("implant", "植入记录", false, null, implantChildren));
+        }
+
         List<LocationNodeView> recordChildren = new ArrayList<>();
         for (RecordRow record : mapper.recordsOfPatient(patientId)) {
             List<LocationNodeView> sections = new ArrayList<>();
@@ -1601,7 +1776,13 @@ public class ReportService {
         for (ReportRow row : mapper.reportsOfPatient(patientId)) {
             List<LocationTagView> locations = tags.getOrDefault(row.id(), List.of());
             if ("baseline".equals(normalized)
-                    && locations.stream().noneMatch(tag -> LINK_BASELINE.equals(tag.linkType()))) {
+                    && locations.stream()
+                            .noneMatch(
+                                    tag ->
+                                            LINK_BASELINE.equals(tag.linkType())
+                                                    || LINK_IMPLANT_RECORD.equals(
+                                                            tag.linkType()))) {
+                // E21-T32 / C-PAT-017：植入记录在基线资料页签，implant 位置随 baseline 侧下发
                 continue;
             }
             if ("followup".equals(normalized)
@@ -1636,40 +1817,78 @@ public class ReportService {
     /** 位置标签（列表 / 左栏显示用）：recordLabel / anchorLabel 按当前模板解析（模板改版退回随 E16-T15）。 */
     private Map<Long, List<LocationTagView>> locationTags(long patientId) {
         Map<Long, List<LocationTagView>> tags = new LinkedHashMap<>();
-        for (LinkRow link : mapper.linksOfPatient(patientId)) {
+        List<LinkRow> links = mapper.linksOfPatient(patientId);
+        TagContext context = tagContextOf(patientId, links);
+        for (LinkRow link : links) {
             tags.computeIfAbsent(link.reportId(), id -> new ArrayList<>())
-                    .add(
-                            tagOf(
-                                    link,
-                                    baselineCategoryMap(),
-                                    recordMap(patientId),
-                                    new LinkedHashMap<>()));
+                    .add(tagOf(link, context));
         }
         return tags;
+    }
+
+    /** 标签拼装上下文（基线 / 随访 / 植入三侧的模板分类与记录行，一趟取齐）。 */
+    private record TagContext(
+            Map<String, String> baselineCategories,
+            Map<Long, RecordRow> records,
+            Map<Long, Map<String, String>> sectionCache,
+            Map<Long, ImplantMapper.ImplantRow> implantRows,
+            Map<Long, Integer> implantNos,
+            Map<String, String> implantCategories) {}
+
+    /**
+     * 标签拼装上下文（基线 / 随访 / 植入三侧的模板分类与记录行）。植入侧只在清单里确有 implant 位置时才读（A / B 租户与纯基线 / 随访报告单不多读 C_IMPLANT
+     * 模板与植入表）。
+     */
+    private TagContext tagContextOf(long patientId, List<LinkRow> links) {
+        boolean hasImplantLinks =
+                links.stream().anyMatch(link -> LINK_IMPLANT_RECORD.equals(link.linkType()));
+        List<ImplantMapper.ImplantRow> rows =
+                hasImplantLinks ? implants.implantsOf(patientId) : List.of();
+        Map<String, String> implantCategories = hasImplantLinks ? implantCategoryMap() : Map.of();
+        Map<Long, ImplantMapper.ImplantRow> implantRows = new LinkedHashMap<>();
+        for (ImplantMapper.ImplantRow row : rows) {
+            implantRows.put(row.id(), row);
+        }
+        return new TagContext(
+                baselineCategoryMap(),
+                recordMap(patientId),
+                new LinkedHashMap<>(),
+                implantRows,
+                implantNoMap(rows),
+                implantCategories);
     }
 
     /** 位置行 → 标签（修改位置的变更前后 / 操作日志摘要共用一份标签拼装）。 */
     private List<LocationTagView> buildTags(long patientId, List<ReportMapper.LinkRow> rows) {
-        Map<String, String> baselineCategories = baselineCategoryMap();
-        Map<Long, RecordRow> records = recordMap(patientId);
-        Map<Long, Map<String, String>> sectionCache = new LinkedHashMap<>();
+        TagContext context = tagContextOf(patientId, rows);
         List<LocationTagView> tags = new ArrayList<>();
         for (ReportMapper.LinkRow link : rows) {
-            tags.add(tagOf(link, baselineCategories, records, sectionCache));
+            tags.add(tagOf(link, context));
         }
         return tags;
     }
 
-    private LocationTagView tagOf(
-            LinkRow link,
-            Map<String, String> baselineCategories,
-            Map<Long, RecordRow> records,
-            Map<Long, Map<String, String>> sectionCache) {
+    private LocationTagView tagOf(LinkRow link, TagContext context) {
+        Map<String, String> baselineCategories = context.baselineCategories();
+        Map<Long, RecordRow> records = context.records();
+        Map<Long, ImplantMapper.ImplantRow> implantRows = context.implantRows();
+        Map<Long, Integer> implantNos = context.implantNos();
+        Map<String, String> implantCategories = context.implantCategories();
         String recordLabel = null;
         LocalDate recordDate = null;
         String anchorLabel = null;
         if (LINK_BASELINE.equals(link.linkType())) {
             anchorLabel = baselineCategories.get(link.anchorKey());
+        } else if (LINK_IMPLANT_RECORD.equals(link.linkType())
+                && link.linkRecordId() != null
+                && implantRows.containsKey(link.linkRecordId())) {
+            // E21-T32：植入记录标签「植入记录#2 2025-01-10 · 器械信息」——记录读不出（防御：行已不存在）只留锚点
+            ImplantMapper.ImplantRow implant = implantRows.get(link.linkRecordId());
+            recordLabel = implantTitle(implant, implantNos);
+            recordDate = implant.implantDate();
+            if (ANCHOR_SECTION.equals(link.anchorType())) {
+                anchorLabel = implantCategories.get(link.anchorKey());
+            }
         } else if (LINK_FOLLOWUP_RECORD.equals(link.linkType()) && link.linkRecordId() != null) {
             RecordRow record = records.get(link.linkRecordId());
             if (record != null) {
@@ -1677,9 +1896,13 @@ public class ReportService {
                 recordDate = record.planDate() != null ? record.planDate() : record.visitDate();
                 if (ANCHOR_SECTION.equals(link.anchorType())) {
                     Map<String, String> sections =
-                            sectionCache.computeIfAbsent(
-                                    record.id(),
-                                    id -> categoryMap(record.formCode(), record.templateVersion()));
+                            context.sectionCache()
+                                    .computeIfAbsent(
+                                            record.id(),
+                                            id ->
+                                                    categoryMap(
+                                                            record.formCode(),
+                                                            record.templateVersion()));
                     anchorLabel = sections.get(link.anchorKey());
                 }
             }

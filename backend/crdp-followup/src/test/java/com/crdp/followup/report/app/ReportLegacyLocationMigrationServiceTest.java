@@ -18,6 +18,7 @@ import com.crdp.framework.audit.AuditEntry;
 import com.crdp.framework.audit.AuditLogger;
 import com.crdp.framework.security.SessionPrincipal;
 import com.crdp.framework.tenant.TenantContext;
+import java.time.LocalDate;
 import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -48,9 +49,12 @@ class ReportLegacyLocationMigrationServiceTest {
     private final AuditLogger audit = mock(AuditLogger.class);
     private final PlatformTransactionManager transactionManager =
             mock(PlatformTransactionManager.class);
+    private final com.crdp.form.record.app.FormService formService =
+            mock(com.crdp.form.record.app.FormService.class);
 
     private final ReportLegacyLocationMigrationService service =
-            new ReportLegacyLocationMigrationService(mapper, audit, transactionManager);
+            new ReportLegacyLocationMigrationService(
+                    mapper, audit, transactionManager, formService);
 
     @BeforeEach
     void setUp() {
@@ -222,6 +226,75 @@ class ReportLegacyLocationMigrationServiceTest {
     }
 
     // ---------------------------------------------------------------- 构造
+
+    // ---------------------------------------- 植入记录关联（E21-T32 / OQ-105⑤、C 规格 §7）
+
+    /** 植入关联 → 该植入记录整条（模板版本 = C_IMPLANT 当前发布版）+ 版本推进 + 标记迁移 + 操作日志。 */
+    @Test
+    void implantLinkedReportLandsOnThatImplantWholeRecord() {
+        when(mapper.scanPendingLegacyReports()).thenReturn(List.of(legacyRow(940L, "IMPLANT", 41)));
+        when(mapper.linksOfReportForMigration(940L)).thenReturn(List.of());
+        when(mapper.findImplantById(41L))
+                .thenReturn(
+                        new com.crdp.followup.report.infra.mapper.ReportMapper.ImplantRefRow(
+                                41L, PATIENT, LocalDate.of(2025, 1, 10), "ACTIVE"));
+        when(formService.publishedVersion("C_IMPLANT")).thenReturn(1);
+
+        ReportLegacyLocationMigrationService.MigrationReport report =
+                service.migrateCurrentTenant();
+
+        assertEquals(1, report.implantLinked(), "植入关联落到该植入记录整条");
+        assertEquals(0, report.implantWithoutRecord());
+        assertEquals(0, report.invalidSkipped());
+
+        ArgumentCaptor<ReportMapper.LinkInsert> link =
+                ArgumentCaptor.forClass(ReportMapper.LinkInsert.class);
+        verify(mapper).insertLink(link.capture());
+        assertEquals("implant_record", link.getValue().linkType());
+        assertEquals(41L, link.getValue().linkRecordId());
+        assertEquals(null, link.getValue().anchorType());
+        assertEquals(1, link.getValue().templateVersion(), "模板版本取 C_IMPLANT 当前发布版");
+        verify(mapper).bumpVersion(940L, OPERATOR);
+        verify(mapper).markLegacyMigrated(940L);
+
+        ArgumentCaptor<AuditEntry> captor = ArgumentCaptor.forClass(AuditEntry.class);
+        verify(audit).append(captor.capture());
+        assertTrue(
+                captor.getValue().description().contains("植入记录 41 整条"),
+                captor.getValue().description());
+    }
+
+    /** 植入记录未装载（分批导入未到）→ 保持待迁移（不标记、不落行），下次执行可补。 */
+    @Test
+    void implantWithoutRecordStaysPendingAndCounted() {
+        when(mapper.scanPendingLegacyReports()).thenReturn(List.of(legacyRow(941L, "IMPLANT", 55)));
+        when(mapper.findImplantById(55L)).thenReturn(null);
+
+        ReportLegacyLocationMigrationService.MigrationReport report =
+                service.migrateCurrentTenant();
+
+        assertEquals(1, report.implantWithoutRecord(), "植入未装载保持待迁移并计数");
+        assertEquals(0, report.implantLinked());
+        verify(mapper, never()).insertLink(any());
+        verify(mapper, never()).markLegacyMigrated(941L);
+    }
+
+    /** 植入关联与患者不一致（防御：装载错库）→ 形态非法跳过，不做无依据的落位。 */
+    @Test
+    void implantLinkedToForeignPatientSkippedAsInvalid() {
+        when(mapper.scanPendingLegacyReports()).thenReturn(List.of(legacyRow(942L, "IMPLANT", 41)));
+        when(mapper.findImplantById(41L))
+                .thenReturn(
+                        new com.crdp.followup.report.infra.mapper.ReportMapper.ImplantRefRow(
+                                41L, 999L, LocalDate.of(2025, 1, 10), "ACTIVE"));
+
+        ReportLegacyLocationMigrationService.MigrationReport report =
+                service.migrateCurrentTenant();
+
+        assertEquals(1, report.invalidSkipped());
+        verify(mapper, never()).insertLink(any());
+        verify(mapper, never()).markLegacyMigrated(942L);
+    }
 
     private static LegacyScanRow legacyRow(long reportId, String type, Integer year) {
         return new LegacyScanRow(reportId, PATIENT, "心脏超声（示例）", "经胸超声心动图（示例）", type, year);

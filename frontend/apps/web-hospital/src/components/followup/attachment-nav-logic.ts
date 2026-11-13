@@ -36,8 +36,11 @@ function toLocation(tag: ReportRow['locations'][number]): ReportLocation {
 /** 无位置报告单的归属页签（home）：「未指定位置」组在两侧页签都显示（A-PAT-020）。 */
 function homeOf(locations: ReportLocation[]): AttachmentNavItem['home'] {
   if (locations.length === 0) return 'both';
+  // E21-T32 / C-PAT-017：植入记录在基线资料页签——implant 位置计入 baseline 侧
   const hasBaseline = locations.some(
-    (location) => location.linkType === 'baseline',
+    (location) =>
+      location.linkType === 'baseline' ||
+      location.linkType === 'implant_record',
   );
   const hasFollowup = locations.some(
     (location) => location.linkType === 'followup_record',
@@ -112,6 +115,30 @@ export function itemsAtRecord(
     .map((item) => ({
       ...item,
       locations: item.locations.filter((loc) => inRecord(loc)),
+    }));
+}
+
+/**
+ * 挂在某条植入记录下的条目（E21-T32 / C-PAT-017）：anchorKey 缺省 = 整条植入记录，
+ * 'device' = 器械信息、'lead' = 电极（与 C_IMPLANT 分类键一致）。同一报告单可同时挂
+ * 整条与分组，两处各显示一次（与随访记录同口径）。
+ */
+export function itemsAtImplant(
+  items: AttachmentNavItem[],
+  implantId: string,
+  anchorKey?: string,
+): AttachmentNavItem[] {
+  const inImplant = (location: ReportLocation) =>
+    location.linkType === 'implant_record' &&
+    location.linkRecordId === implantId &&
+    (anchorKey
+      ? location.anchorKey === anchorKey
+      : !location.anchorKey && location.anchorType !== 'section');
+  return items
+    .filter((item) => item.locations.some((loc) => inImplant(loc)))
+    .map((item) => ({
+      ...item,
+      locations: item.locations.filter((loc) => inImplant(loc)),
     }));
 }
 

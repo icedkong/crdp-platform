@@ -104,3 +104,31 @@ describe('attachment grouping', () => {
     expect(year2).toBeTruthy();
   });
 });
+
+describe('e21-T32 / C-PAT-017：植入位置随基线侧（基线资料页签左栏）', () => {
+  const implantOnly = navItem({
+    home: 'baseline',
+    locations: [
+      {
+        anchorKey: 'device',
+        anchorLabel: '器械信息',
+        anchorType: 'section',
+        linkRecordId: '41',
+        linkType: 'implant_record',
+        recordLabel: '植入记录#2 2025-01-10',
+      },
+    ],
+    reportId: 'rimp',
+  });
+
+  it('itemsForScope：仅植入位置的报告单进基线页签左栏、不进随访页签', () => {
+    expect(itemsForScope([implantOnly], 'baseline')).toHaveLength(1);
+    expect(itemsForScope([implantOnly], 'followup')).toHaveLength(0);
+  });
+
+  it('groupBaseline：植入位置与基线位置同组按类型展示（标签列出全部基线侧位置，每份只出现一次）', () => {
+    const groups = groupBaseline([implantOnly]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.items[0]?.locations[0]?.linkType).toBe('implant_record');
+  });
+});

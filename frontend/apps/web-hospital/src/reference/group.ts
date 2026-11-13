@@ -1,15 +1,18 @@
 import type { AttachmentGroup, AttachmentNavItem } from './types';
 
-/** 基线：每份附件只出现一次，位置标签列出全部基线位置。无位置进橙色组。 */
+/**
+ * 基线：每份附件只出现一次，位置标签列出全部基线侧位置。无位置进橙色组。
+ * E21-T32 / C-PAT-017：植入记录在基线资料页签——implant 位置随基线侧列出。
+ */
 export function groupBaseline(items: AttachmentNavItem[]): AttachmentGroup[] {
   const located = items.filter((item) =>
-    item.locations.some((location) => location.linkType === 'baseline'),
+    item.locations.some((location) => isBaselineSideLocation(location)),
   );
   const unlocated = items.filter((item) => item.locations.length === 0);
   const byType = new Map<string, AttachmentNavItem[]>();
   for (const item of located) {
-    const baselineLocations = item.locations.filter(
-      (location) => location.linkType === 'baseline',
+    const baselineLocations = item.locations.filter((location) =>
+      isBaselineSideLocation(location),
     );
     const copy = { ...item, locations: baselineLocations };
     const list = byType.get(item.typeName) ?? [];
@@ -109,14 +112,24 @@ export function itemsForScope(
       return item.home === 'both' || item.home === scope;
     }
     if (scope === 'baseline') {
-      return item.locations.some(
-        (location) => location.linkType === 'baseline',
+      // E21-T32 / C-PAT-017：植入记录位置在基线资料页签展示（implant 位置计入 baseline 侧）
+      return item.locations.some((location) =>
+        isBaselineSideLocation(location),
       );
     }
     return item.locations.some(
       (location) => location.linkType === 'followup_record',
     );
   });
+}
+
+/** 基线侧位置（基线分类 + 植入记录——C 的植入记录在基线资料页签，C-PAT-017）。 */
+function isBaselineSideLocation(
+  location: AttachmentNavItem['locations'][number],
+) {
+  return (
+    location.linkType === 'baseline' || location.linkType === 'implant_record'
+  );
 }
 
 export function countAttachments(items: AttachmentNavItem[]) {

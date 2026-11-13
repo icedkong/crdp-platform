@@ -61,10 +61,10 @@ public class ImplantService {
     private static final Logger log = LoggerFactory.getLogger(ImplantService.class);
 
     /** 功能开关编码（cfg_feature，种子 V100 默认关闭；components.md §1.3）。 */
-    static final String FEATURE_IMPLANT = "implant";
+    public static final String FEATURE_IMPLANT = "implant";
 
     /** 植入记录字段字典表单编码（fe_form，V90 随包；字段级留痕键 = 其稳定键 f1xx / f12x）。 */
-    static final String IMPLANT_FORM_CODE = "C_IMPLANT";
+    public static final String IMPLANT_FORM_CODE = "C_IMPLANT";
 
     /** 植入记录行 → 字段级留痕值（键 = C_IMPLANT 稳定键，V90 附录植入 #2–#11 + 配套两列； 日期转 ISO 文本，值编码同 fe_record.data）。 */
     private static java.util.Map<String, Object> implantHistoryValues(

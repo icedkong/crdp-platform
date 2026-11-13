@@ -1,7 +1,9 @@
 <script lang="ts" setup>
-import type { ImplantRecordView } from '@crdp/api';
+import type { ImplantRecordView, ReportLocationInput } from '@crdp/api';
 
-import { computed, onMounted, ref } from 'vue';
+import type { AttachmentNavItem } from '#/reference/types';
+
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 
 import {
   IMPLANT_TYPE_LEAD_REVISION,
@@ -19,9 +21,18 @@ import {
 } from 'ant-design-vue';
 
 import { fetchPatientImplants } from '#/api/core/implant';
+import { anchorDomId, flashAnchor } from '#/components/followup/anchor-nav';
+import { itemsAtImplant } from '#/components/followup/attachment-nav-logic';
+import {
+  IMPLANT_ANCHOR_DEVICE,
+  IMPLANT_ANCHOR_LEAD,
+  implantAnchorKeyOf,
+  implantRecordAnchorKey,
+} from '#/components/followup/implant-anchor-logic';
 import ImplantExplantModal from '#/components/followup/implant-explant-modal.vue';
 import ImplantFormModal from '#/components/followup/implant-form-modal.vue';
 import ImplantReplaceModal from '#/components/followup/implant-replace-modal.vue';
+import InlineAttachmentStrip from '#/components/followup/inline-attachment-strip.vue';
 import { useBreakpoint } from '#/reference/use-breakpoint';
 import { usePermission } from '#/reference/use-permission';
 
@@ -32,13 +43,22 @@ import { usePermission } from '#/reference/use-permission';
  * 已更换、电极逐根沿用 / 废弃留置 / 已拔除或新植）、取出、编辑。手机表格转卡片
  * （pages.md §4.10，OQ-114①）。写入按钮 followup:implant:edit（无权限隐藏，AGENTS §7）；
  * 区块由 useFeature('implant') 控制显隐（components.md §1.3）。
+ *
+ * E21-T32 / C-PAT-017、C-SCAN-010：每条植入记录（整条）与其器械信息、电极都是报告单位置——
+ * 行本体挂整条锚点 `implant-<id>`，展开区挂器械信息 / 电极锚点，各位置末尾内联缩略图条
+ * （上传预选该位置）；左栏点植入位置经 locate() 展开该记录并滚动定位高亮。
  */
 const props = defineProps<{
+  /** 左栏附件导航条目（各位置内联缩略图与 📎 计数同源，E16-T14 口径）。 */
+  attachments?: AttachmentNavItem[];
+  canUpload?: boolean;
   patientId: string;
 }>();
 
 const emit = defineEmits<{
   (event: 'changed'): void;
+  (event: 'loaded', records: ImplantRecordView[]): void;
+  (event: 'uploadAt', preset: ReportLocationInput[]): void;
 }>();
 
 const { hasPermission } = usePermission();
@@ -63,6 +83,7 @@ async function load() {
   try {
     const view = await fetchPatientImplants(props.patientId);
     records.value = view.items;
+    emit('loaded', view.items);
   } catch {
     message.error('植入记录加载失败，请刷新重试');
   } finally {
@@ -71,6 +92,88 @@ async function load() {
 }
 
 onMounted(() => void load());
+
+// ---------------------------------------------------------------- E21-T32 展开与定位
+
+/** 展开行键（默认全部展开——线框 §4.4 电极表随记录可见；定位电极 / 器械位置时确保展开）。 */
+const expandedKeys = ref<string[]>([]);
+
+watch(
+  records,
+  (items) => {
+    expandedKeys.value = items.map((record) => record.id);
+  },
+  { immediate: true },
+);
+
+/** 待定位请求（等表格展开行渲染后重放：滚到锚点并高亮 2 秒）。 */
+const pendingLocate = ref<null | { anchorKey: string; implantId: string }>(
+  null,
+);
+
+/**
+ * 左栏植入位置跳转入口（患者详情页经模板 ref 调用，C-PAT-017「滚动到基线资料页签中该
+ * 植入记录或其器械信息、电极并定位」）：确保该行展开 → 滚到 `implant-<id>[-device|-lead]`
+ * 锚点并高亮 2 秒（锚点不存在〔记录已变〕回落整条记录行）。
+ */
+async function locate(implantId: string, anchorKey?: null | string) {
+  const key = implantAnchorKeyOf(implantId, anchorKey);
+  if (!expandedKeys.value.includes(implantId)) {
+    expandedKeys.value = [...expandedKeys.value, implantId];
+  }
+  pendingLocate.value = { anchorKey: key, implantId };
+  await resolvePendingLocate();
+}
+
+async function resolvePendingLocate() {
+  const pending = pendingLocate.value;
+  if (!pending) return;
+  await nextTick();
+  if (pendingLocate.value !== pending) return;
+  const row = document.querySelector(
+    `#${anchorDomId(implantRecordAnchorKey(pending.implantId))}`,
+  );
+  if (!row) {
+    pendingLocate.value = null;
+    return;
+  }
+  const target =
+    (pending.anchorKey === IMPLANT_ANCHOR_DEVICE ||
+    pending.anchorKey === IMPLANT_ANCHOR_LEAD
+      ? row.querySelector(`#${anchorDomId(pending.anchorKey)}`)
+      : null) ?? row;
+  target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  flashAnchor(target, document.defaultView);
+  pendingLocate.value = null;
+}
+
+defineExpose({ locate });
+
+/** 条内「上传附件」预选该位置（整条 / 器械信息 / 电极；模板版本由上传对话框按位置树带出回填）。 */
+function stripPreset(
+  implantId: string,
+  anchorKey?: string,
+): ReportLocationInput[] {
+  return [
+    {
+      ...(anchorKey ? { anchorKey } : {}),
+      anchorTemplateVersion: 0,
+      anchorType: anchorKey ? 'section' : null,
+      linkRecordId: implantId,
+      linkType: 'implant_record',
+    },
+  ];
+}
+
+/** 某植入记录某位置的附件（与基线分类末尾条同源，同一报告单在每个所在位置各出现一次）。 */
+function itemsAt(implantId: string, anchorKey?: string) {
+  return itemsAtImplant(props.attachments ?? [], implantId, anchorKey);
+}
+
+/** 行锚点（customRow 注入 id：整条植入记录滚动目标）。 */
+function implantRowAttrs(record: ImplantRecordView) {
+  return { id: anchorDomId(implantRecordAnchorKey(record.id)) };
+}
 
 function openCreate() {
   editing.value = null;
@@ -169,9 +272,14 @@ function rowKey(record: ImplantRecordView) {
     </h3>
     <Spin :spinning="loading">
       <Empty v-if="records.length === 0" description="暂无植入记录" />
-      <!-- 手机：植入记录与电极表格改卡片（pages.md §4.10） -->
+      <!-- 手机：植入记录与电极表格改卡片（pages.md §4.10）；E21-T32 卡片带整条锚点与各位置附件条 -->
       <div v-else-if="isMobile" class="cards" data-testid="implant-cards">
-        <div v-for="record in records" :key="record.id" class="implant-card">
+        <div
+          v-for="record in records"
+          :id="anchorDomId(implantRecordAnchorKey(record.id))"
+          :key="record.id"
+          class="implant-card"
+        >
           <div class="card-head">
             <span>第 {{ record.implantNo }} 次 · {{ record.implantDate }}</span>
             <Tag v-if="record.current" color="processing">当前器械</Tag>
@@ -185,6 +293,16 @@ function rowKey(record: ImplantRecordView) {
             <span class="card-label">{{ label }}</span>
             <span>{{ value || '—' }}</span>
           </div>
+          <!-- 器械信息 / 电极 / 整条：手机合并为一条附件条（各位置分组展开区属桌面形态） -->
+          <InlineAttachmentStrip
+            :can-upload="canUpload"
+            :items="[
+              ...itemsAt(record.id, IMPLANT_ANCHOR_DEVICE),
+              ...itemsAt(record.id, IMPLANT_ANCHOR_LEAD),
+              ...itemsAt(record.id),
+            ]"
+            @upload="emit('uploadAt', stripPreset(record.id))"
+          />
           <div v-if="canEdit" class="card-actions">
             <Button
               v-if="record.current"
@@ -200,11 +318,14 @@ function rowKey(record: ImplantRecordView) {
       <template v-else>
         <Table
           :columns="columns"
+          :custom-row="implantRowAttrs"
           :data-source="records"
+          :expanded-row-keys="expandedKeys"
           :pagination="false"
           :row-key="rowKey"
           size="small"
           data-testid="implant-table"
+          @expanded-rows-change="(keys) => (expandedKeys = keys as string[])"
         >
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'implantNo'">
@@ -246,38 +367,111 @@ function rowKey(record: ImplantRecordView) {
               </template>
             </template>
           </template>
-          <!-- 电极挂在每条植入记录下（展开行；无电极的记录显示「无导线 / 未录」） -->
+          <!-- 电极挂在每条植入记录下（默认展开；器械信息 / 电极锚点与各位置内联缩略图条随 E21-T32） -->
           <template #expandedRowRender="{ record }">
-            <Table
-              :columns="leadColumns"
-              :data-source="(record as ImplantRecordView).leads"
-              :pagination="false"
-              size="small"
-              class="lead-table"
-            >
-              <template #bodyCell="{ column, record: lead }">
-                <template v-if="column.key === 'chamber'">
-                  {{
-                    (lead as ImplantRecordView['leads'][number]).chamberLabel
-                  }}
-                </template>
-                <template v-else-if="column.key === 'position'">
-                  {{
-                    (lead as ImplantRecordView['leads'][number])
-                      .positionLabel || '—'
-                  }}
-                </template>
-                <template v-else-if="column.key === 'leadStatus'">
-                  {{ (lead as ImplantRecordView['leads'][number]).statusLabel }}
-                </template>
-              </template>
-            </Table>
-            <span
-              v-if="(record as ImplantRecordView).leads.length === 0"
-              class="lead-empty"
-            >
-              无电极记录（无导线起搏器不录电极）
-            </span>
+            <div class="implant-detail">
+              <!-- 器械信息：行内主字段在表格行上，展开区给锚点与该位置的附件条 -->
+              <div
+                :id="
+                  anchorDomId(
+                    `implant-${(record as ImplantRecordView).id}-${IMPLANT_ANCHOR_DEVICE}`,
+                  )
+                "
+                class="detail-block"
+              >
+                <h4 class="detail-title">器械信息</h4>
+                <InlineAttachmentStrip
+                  :can-upload="canUpload"
+                  :items="
+                    itemsAt(
+                      (record as ImplantRecordView).id,
+                      IMPLANT_ANCHOR_DEVICE,
+                    )
+                  "
+                  @upload="
+                    emit(
+                      'uploadAt',
+                      stripPreset(
+                        (record as ImplantRecordView).id,
+                        IMPLANT_ANCHOR_DEVICE,
+                      ),
+                    )
+                  "
+                />
+              </div>
+              <div
+                :id="
+                  anchorDomId(
+                    `implant-${(record as ImplantRecordView).id}-${IMPLANT_ANCHOR_LEAD}`,
+                  )
+                "
+                class="detail-block"
+              >
+                <h4 class="detail-title">电极</h4>
+                <Table
+                  :columns="leadColumns"
+                  :data-source="(record as ImplantRecordView).leads"
+                  :pagination="false"
+                  size="small"
+                  class="lead-table"
+                >
+                  <template #bodyCell="{ column, record: lead }">
+                    <template v-if="column.key === 'chamber'">
+                      {{
+                        (lead as ImplantRecordView['leads'][number])
+                          .chamberLabel
+                      }}
+                    </template>
+                    <template v-else-if="column.key === 'position'">
+                      {{
+                        (lead as ImplantRecordView['leads'][number])
+                          .positionLabel || '—'
+                      }}
+                    </template>
+                    <template v-else-if="column.key === 'leadStatus'">
+                      {{
+                        (lead as ImplantRecordView['leads'][number]).statusLabel
+                      }}
+                    </template>
+                  </template>
+                </Table>
+                <span
+                  v-if="(record as ImplantRecordView).leads.length === 0"
+                  class="lead-empty"
+                >
+                  无电极记录（无导线起搏器不录电极）
+                </span>
+                <InlineAttachmentStrip
+                  :can-upload="canUpload"
+                  :items="
+                    itemsAt(
+                      (record as ImplantRecordView).id,
+                      IMPLANT_ANCHOR_LEAD,
+                    )
+                  "
+                  @upload="
+                    emit(
+                      'uploadAt',
+                      stripPreset(
+                        (record as ImplantRecordView).id,
+                        IMPLANT_ANCHOR_LEAD,
+                      ),
+                    )
+                  "
+                />
+              </div>
+              <!-- 整条植入记录末尾（只含整条挂靠位置；分组附件在各自分组末尾，与随访记录同口径） -->
+              <InlineAttachmentStrip
+                :can-upload="canUpload"
+                :items="itemsAt((record as ImplantRecordView).id)"
+                @upload="
+                  emit(
+                    'uploadAt',
+                    stripPreset((record as ImplantRecordView).id),
+                  )
+                "
+              />
+            </div>
           </template>
         </Table>
       </template>
@@ -323,6 +517,25 @@ function rowKey(record: ImplantRecordView) {
 
 .lead-table {
   background: #fafafa;
+}
+
+/* E21-T32：展开区内的器械信息 / 电极锚点块（滚动定位目标 + 各位置附件条） */
+.implant-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.detail-block {
+  scroll-margin-top: 48px;
+}
+
+.detail-title {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: rgb(0 0 0 / 65%);
 }
 
 .lead-empty {

@@ -29,6 +29,7 @@ export interface ImplantRecordView {
   current: boolean;
   deviceType: string;
   deviceTypeLabel: null | string;
+  doctor?: null | string;
   endDate?: null | string;
   endReason?: null | string;
   hospital?: null | string;
@@ -42,6 +43,7 @@ export interface ImplantRecordView {
   indicationNote?: null | string;
   leads: ImplantLeadView[];
   model?: null | string;
+  note?: null | string;
   pacingMode?: null | string;
   pacingModeLabel?: null | string;
   patientId: string;
@@ -101,6 +103,7 @@ export interface ImplantForm {
   indicationNote?: null | string;
   leads?: ImplantLeadForm[] | null;
   model?: null | string;
+  note?: null | string;
   pacingMode?: null | string;
   serialNo?: null | string;
 }

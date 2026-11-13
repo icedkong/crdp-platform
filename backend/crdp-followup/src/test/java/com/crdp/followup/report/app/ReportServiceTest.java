@@ -67,6 +67,8 @@ class ReportServiceTest {
     private final com.crdp.followup.contact.app.ContactLogService contactLogs =
             mock(com.crdp.followup.contact.app.ContactLogService.class);
     private final AuditLogger audit = mock(AuditLogger.class);
+    private final com.crdp.followup.implant.app.ImplantGateway implants =
+            mock(com.crdp.followup.implant.app.ImplantGateway.class);
 
     private final ReportService service =
             new ReportService(
@@ -78,7 +80,8 @@ class ReportServiceTest {
                     filePolicy,
                     files,
                     contactLogs,
-                    audit);
+                    audit,
+                    implants);
 
     @BeforeEach
     void login() {
@@ -89,6 +92,10 @@ class ReportServiceTest {
         lenient().when(patientScope.patientIdInScope(PATIENT)).thenReturn(PATIENT);
         // 电子化状态开关默认开（医院 C 形态）；关闭用例在各自测试内覆写（E21-T15）
         lenient().when(features.findEnabled("scan_progress")).thenReturn(true);
+        // E21-T32：implant 开关默认关（A 形态；位置树不出植入根、植入位置 40301），用例内覆写开启；
+        // 患者无植入记录（normalize / 标签拼装走空清单）
+        lenient().when(features.findEnabled("implant")).thenReturn(false);
+        lenient().when(implants.implantsOf(PATIENT)).thenReturn(List.of());
         lenient()
                 .when(filePolicy.policy())
                 .thenReturn(new FilePolicyService.UploadPolicy(List.of(), 20, 50, 10));
@@ -243,9 +250,93 @@ class ReportServiceTest {
                 .insertLink(any()); // 同一报告单同一位置只一行（A-ATT-002 关键字段）
     }
 
+    // ---------------------------------------- 植入记录位置（E21-T32 / C-SCAN-010、C-PAT-017）
+
+    /** C 形态桩：implant 开关开 + 一条在用植入记录（#2，2025-01-10）+ C_IMPLANT 模板两个分组。 */
+    private void readyImplantShape() {
+        when(features.findEnabled("implant")).thenReturn(true);
+        when(implants.implantsOf(PATIENT))
+                .thenReturn(
+                        List.of(
+                                new com.crdp.followup.implant.infra.mapper.ImplantMapper.ImplantRow(
+                                        41L,
+                                        PATIENT,
+                                        "FIRST",
+                                        LocalDate.of(2025, 1, 10),
+                                        "DDD",
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        "ACTIVE",
+                                        null,
+                                        null,
+                                        0,
+                                        OPERATOR,
+                                        null),
+                                // 更早的历史器械（已更换）：序号 1，当前器械 #2（置顶序 = gateway 日期倒序）
+                                new com.crdp.followup.implant.infra.mapper.ImplantMapper.ImplantRow(
+                                        40L,
+                                        PATIENT,
+                                        "FIRST",
+                                        LocalDate.of(2023, 5, 1),
+                                        "SSI",
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        "REPLACED",
+                                        LocalDate.of(2025, 1, 10),
+                                        null,
+                                        0,
+                                        OPERATOR,
+                                        null)));
+        lenient().when(formService.publishedVersion("C_IMPLANT")).thenReturn(1);
+        lenient()
+                .when(formService.schema("C_IMPLANT", 1))
+                .thenReturn(schema(1, List.of(category("device", "器械信息"), category("lead", "电极"))));
+    }
+
     @Test
-    void createRejectsImplantRecordLocationUntilE21() {
+    void createRejectsImplantLocationWhenFeatureOff() {
         readyTypeAndName();
+
+        ApiException error =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.create(
+                                        PATIENT,
+                                        request(
+                                                "LAB",
+                                                null,
+                                                LocalDate.of(2026, 10, 28),
+                                                List.of(
+                                                        new ReportService.LocationInput(
+                                                                "implant_record",
+                                                                41L,
+                                                                null,
+                                                                null,
+                                                                1)))));
+
+        assertEquals(40301, error.code(), "implant 开关关闭 40301（AGENTS §5.7）");
+        verify(mapper, never()).insertReport(any());
+    }
+
+    @Test
+    void createRejectsMissingOrForeignImplantWith40400() {
+        readyTypeAndName();
+        readyImplantShape();
 
         ApiException error =
                 assertThrows(
@@ -265,8 +356,93 @@ class ReportServiceTest {
                                                                 null,
                                                                 1)))));
 
-        assertEquals(40001, error.code());
-        assertTrue(error.getMessage().contains("E21"), error.getMessage());
+        assertEquals(40400, error.code(), "不区分不存在 / 不属于该患者，统一 40400");
+        verify(mapper, never()).insertReport(any());
+    }
+
+    @Test
+    void createRejectsUnknownImplantAnchorOrWrongGranularity() {
+        readyTypeAndName();
+        readyImplantShape();
+
+        ApiException unknown =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.create(
+                                        PATIENT,
+                                        request(
+                                                "LAB",
+                                                null,
+                                                LocalDate.of(2026, 10, 28),
+                                                List.of(
+                                                        new ReportService.LocationInput(
+                                                                "implant_record",
+                                                                41L,
+                                                                "section",
+                                                                "gone",
+                                                                1)))));
+        assertEquals(40001, unknown.code());
+        assertTrue(unknown.getMessage().contains("植入分组不存在"), unknown.getMessage());
+
+        ApiException badAnchorType =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.create(
+                                        PATIENT,
+                                        request(
+                                                "LAB",
+                                                null,
+                                                LocalDate.of(2026, 10, 28),
+                                                List.of(
+                                                        new ReportService.LocationInput(
+                                                                "implant_record",
+                                                                41L,
+                                                                "category",
+                                                                "device",
+                                                                1)))));
+        assertEquals(40001, badAnchorType.code());
+        assertTrue(
+                badAnchorType.getMessage().contains("植入记录位置只能是整条记录或其中某个分组"),
+                badAnchorType.getMessage());
+    }
+
+    @Test
+    void createAcceptsImplantWholeAndSectionLocations() {
+        readyTypeAndName();
+        readyImplantShape();
+        when(mapper.insertReport(any()))
+                .thenAnswer(
+                        invocation -> {
+                            invocation.getArgument(0, ReportInsert.class).setId(900L);
+                            return 1;
+                        });
+
+        service.create(
+                PATIENT,
+                request(
+                        "LAB",
+                        null,
+                        LocalDate.of(2026, 10, 28),
+                        List.of(
+                                new ReportService.LocationInput(
+                                        "implant_record", 41L, null, null, 0),
+                                new ReportService.LocationInput(
+                                        "implant_record", 41L, "section", "device", 0),
+                                new ReportService.LocationInput(
+                                        "implant_record", 41L, "section", "lead", 0))));
+
+        ArgumentCaptor<ReportMapper.LinkInsert> links =
+                ArgumentCaptor.forClass(ReportMapper.LinkInsert.class);
+        verify(mapper, times(3)).insertLink(links.capture());
+        assertEquals("implant_record", links.getAllValues().get(0).linkType());
+        assertEquals(41L, links.getAllValues().get(0).linkRecordId());
+        assertNull(links.getAllValues().get(0).anchorType());
+        assertEquals(1, links.getAllValues().get(0).templateVersion(), "模板版本 = C_IMPLANT 当前发布版");
+        assertEquals("section", links.getAllValues().get(1).anchorType());
+        assertEquals("device", links.getAllValues().get(1).anchorKey());
+        assertEquals("lead", links.getAllValues().get(2).anchorKey());
     }
 
     // ---------------------------------------------------------------- 位置校验（三种粒度，不细到字段）
@@ -732,6 +908,41 @@ class ReportServiceTest {
     }
 
     @Test
+    void reportLocationsTreeCarriesImplantRecordsWhenFeatureOn() {
+        readyImplantShape();
+        when(mapper.recordsOfPatient(PATIENT)).thenReturn(List.of());
+
+        List<ReportService.LocationNodeView> roots = service.reportLocations(PATIENT);
+
+        assertEquals(3, roots.size(), "基线资料 + 植入记录 + 随访记录三个分组根（E21-T32）");
+        ReportService.LocationNodeView implantRoot = roots.get(1);
+        assertEquals("植入记录", implantRoot.title());
+        assertFalse(implantRoot.selectable(), "分组根不可选");
+        assertEquals(2, implantRoot.children().size(), "当前器械置顶（在用在前，其余日期倒序）");
+        ReportService.LocationNodeView node = implantRoot.children().get(0);
+        assertEquals("implant:41", node.key());
+        assertEquals("植入记录#2 2025-01-10", node.title(), "标题 = 植入序号 + 日期（与列表同口径）");
+        assertEquals("植入记录#1 2023-05-01", implantRoot.children().get(1).title());
+        assertTrue(node.selectable(), "整条植入记录可选");
+        assertEquals("41", node.value().linkRecordId());
+        assertNull(node.value().anchorType());
+        assertEquals(1, node.value().anchorTemplateVersion());
+        assertEquals(2, node.children().size(), "器械信息 / 电极两个分组（C_IMPLANT 当前发布版）");
+        assertEquals("device", node.children().get(0).value().anchorKey());
+        assertEquals("lead", node.children().get(1).value().anchorKey());
+    }
+
+    @Test
+    void reportLocationsTreeOmitsImplantRootWhenFeatureOff() {
+        when(mapper.recordsOfPatient(PATIENT)).thenReturn(List.of());
+
+        List<ReportService.LocationNodeView> roots = service.reportLocations(PATIENT);
+
+        assertEquals(2, roots.size(), "implant 开关关闭不出植入根（A / B 形态不变）");
+        verify(implants, never()).implantsOf(anyLong());
+    }
+
+    @Test
     void reportLocationsRejectsOutOfScopePatient() {
         when(patientScope.patientIdInScope(PATIENT)).thenReturn(null);
 
@@ -829,6 +1040,48 @@ class ReportServiceTest {
         ApiException bad =
                 assertThrows(ApiException.class, () -> service.reportsOf(PATIENT, "nope"));
         assertEquals(40001, bad.code());
+    }
+
+    @Test
+    void reportsOfBaselineScopeIncludesImplantLocationsWithLabels() {
+        readyImplantShape();
+        when(mapper.reportsOfPatient(PATIENT))
+                .thenReturn(
+                        List.of(
+                                new ReportMapper.ReportRow(
+                                        902L,
+                                        PATIENT,
+                                        "C_PROGRAM",
+                                        "程控报告单",
+                                        null,
+                                        null,
+                                        null,
+                                        LocalDate.of(2026, 10, 1),
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        0,
+                                        0,
+                                        OPERATOR,
+                                        "管理员（示例）",
+                                        "2026-10-01 09:00:00")));
+        when(mapper.recordsOfPatient(PATIENT)).thenReturn(List.of());
+        when(mapper.linksOfPatient(PATIENT))
+                .thenReturn(
+                        List.of(
+                                new ReportMapper.LinkRow(
+                                        4L, 902L, "implant_record", 41L, "section", "lead", 1, 0),
+                                new ReportMapper.LinkRow(
+                                        5L, 902L, "implant_record", 41L, null, null, 1, 0)));
+
+        ReportService.ReportsView baseline = service.reportsOf(PATIENT, "baseline");
+        assertEquals(1, baseline.items().size(), "仅植入位置的报告单随 baseline 侧下发（C-PAT-017）");
+        assertEquals(2, baseline.items().get(0).locations().size());
+        assertEquals("植入记录#2 2025-01-10", baseline.items().get(0).locations().get(0).recordLabel());
+        assertEquals("电极", baseline.items().get(0).locations().get(0).anchorLabel());
+        assertNull(baseline.items().get(0).locations().get(1).anchorLabel(), "整条位置无锚点标签");
+        assertTrue(service.reportsOf(PATIENT, "followup").items().isEmpty(), "随访侧不含仅植入位置的报告单");
     }
 
     // ---------------------------------------------- 批量上传（E16-T03 / A-ATT-014、C-SCAN-007）

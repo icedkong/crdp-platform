@@ -131,7 +131,7 @@ public class ReportController {
     @Operation(
             summary =
                     "报告单位置树（components.md §8 LocationPicker options）：基线资料（当前发布版分类）"
-                            + "+ 随访记录（整条 + 按该记录固化版本的分组）；植入记录锚点随 E21-T32")
+                            + "+ 植入记录（整条 + 器械信息 / 电极分组，E21-T32）+ 随访记录（整条 + 按该记录固化版本的分组）")
     @GetMapping("/patients/{id}/report-locations")
     @RequireModule("followup")
     @RequiresPermission("followup:patient:view")
