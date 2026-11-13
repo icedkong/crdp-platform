@@ -514,9 +514,10 @@ class PatientRegistrationServiceTest {
     void optionsIncludeVisitNoRuleOnlyInCMode() {
         when(mapper.findWards()).thenReturn(List.of(new PatientMapper.OptionRow(WARD_ID, "示例二病区")));
         when(mapper.findDepts()).thenReturn(List.of());
-        // A / B：implant 关闭 → 无编号规则
+        // A / B：implant 关闭 → 无编号规则、无默认归属
         when(implants.implantEnabled()).thenReturn(false);
         assertNull(service.options().visitNoRule(), "A / B 登记无随访编号规则");
+        assertNull(service.options().defaults(), "A / B 登记无默认归属（C-WARD-002 为 C 口径）");
 
         // C：下发本院生效前缀与年内首号示例（登记页提示）
         when(implants.implantEnabled()).thenReturn(true);
@@ -526,6 +527,37 @@ class PatientRegistrationServiceTest {
         assertNotNull(rule);
         assertEquals("C21", rule.prefix());
         assertEquals("C21-2026-001", rule.sample());
+    }
+
+    /**
+     * E21-T21 / C-WARD-002「登记时默认为录入人所属科室病区」：病区 = 唯一负责病区；科室 = 主科室（sys_user.main_dept_id），
+     * 无主科室回落唯一负责科室；多值归属不猜默认（OQ-147 暂行）。
+     */
+    @Test
+    void optionsDefaultToRegistrantsOwnWardAndDeptInCMode() {
+        when(mapper.findWards()).thenReturn(List.of(new PatientMapper.OptionRow(WARD_ID, "示例二病区")));
+        when(mapper.findDepts()).thenReturn(List.of());
+        when(implants.implantEnabled()).thenReturn(true);
+        when(visitNos.rule()).thenReturn(new VisitNoService.VisitNoRule("C21"));
+
+        // 唯一负责病区 + 主科室
+        when(mapper.wardIdsOf(OPERATOR_ID)).thenReturn(List.of(WARD_ID));
+        when(mapper.mainDeptId(OPERATOR_ID)).thenReturn(7L);
+        PatientRegistrationService.RegistrationDefaultsView defaults = service.options().defaults();
+        assertEquals(WARD_ID, defaults.wardId());
+        assertEquals(7L, defaults.deptId());
+
+        // 多病区不猜默认；主科室仍生效
+        when(mapper.wardIdsOf(OPERATOR_ID)).thenReturn(List.of(WARD_ID, 4L));
+        assertNull(service.options().defaults().wardId(), "负责多个病区时不预选");
+
+        // 无主科室回落唯一负责科室；多科室也无默认
+        when(mapper.wardIdsOf(OPERATOR_ID)).thenReturn(List.of(WARD_ID));
+        when(mapper.mainDeptId(OPERATOR_ID)).thenReturn(null);
+        when(mapper.deptScopeIdsOf(OPERATOR_ID)).thenReturn(List.of(7L));
+        assertEquals(7L, service.options().defaults().deptId(), "无主科室时回落唯一负责科室");
+        when(mapper.deptScopeIdsOf(OPERATOR_ID)).thenReturn(List.of(7L, 8L));
+        assertNull(service.options().defaults().deptId(), "负责多个科室且无主科室时不预选");
     }
 
     @Test

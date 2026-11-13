@@ -140,18 +140,64 @@ public interface PatientMapper {
             """)
     int countEnabledDept(@Param("id") long id);
 
-    /** 在册患者 id 与当前病区（E13-T08 转病区入口的范围内校验；越范围 null）。 */
+    /** 在册患者 id 与当前病区 / 科室（E13-T08 转病区、E21-T21 转科室入口的范围内校验；越范围 null）。 */
     @DataScope(resource = "patient")
     @Select(
             """
-            SELECT id, ward_id AS wardId FROM pt_patient
+            SELECT id, ward_id AS wardId, dept_id AS deptId FROM pt_patient
             WHERE id = #{id} AND deleted = 0
             LIMIT 1
             """)
     WardRef findLiveWardById(@Param("id") long id);
 
-    /** 在册患者 id 与当前病区行。 */
-    record WardRef(Long id, Long wardId) {}
+    /** 在册患者 id 与当前病区 / 科室行（E21-T21 / C-WARD-002：患者归属一个科室和一个病区）。 */
+    record WardRef(Long id, Long wardId, Long deptId) {}
+
+    /** 科室行（E21-T21 转科室目标校验与名称回显；sys_dept 平台科室树，C-WARD-001）。 */
+    @Select(
+            """
+            SELECT id, name, status FROM sys_dept
+            WHERE id = #{id}
+            LIMIT 1
+            """)
+    DeptRow findDeptById(@Param("id") long id);
+
+    /** 科室行（id / 名称 / 状态）。 */
+    record DeptRow(Long id, String name, String status) {}
+
+    /**
+     * 转科室 / 转病区（E21-T21 / C-WARD-006，A-WARD-005 同模型）：只改归属列并递增乐观锁版本； 只下发发生变化的列（wardId / deptId
+     * 任一可空），任务与扫描件经 patient_id 关联患者自动随迁。
+     */
+    @Update(
+            """
+            <script>
+            UPDATE pt_patient
+            SET version = version + 1, updated_by = #{updatedBy}
+              <if test="wardId != null">, ward_id = #{wardId}</if>
+              <if test="deptId != null">, dept_id = #{deptId}</if>
+            WHERE id = #{id} AND deleted = 0
+            </script>
+            """)
+    int updateWardAndDept(
+            @Param("id") long id,
+            @Param("wardId") Long wardId,
+            @Param("deptId") Long deptId,
+            @Param("updatedBy") long updatedBy);
+
+    // ---------------------------------------------------------------- 录入人默认科室病区（C-WARD-002）
+
+    /** 用户主科室（sys_user.main_dept_id，租户底座 V12）；未配置返回 null。 */
+    @Select("SELECT main_dept_id FROM sys_user WHERE id = #{userId}")
+    Long mainDeptId(@Param("userId") long userId);
+
+    /** 用户负责病区清单（sys_user_ward，A-WARD-002 / C-WARD-003）。 */
+    @Select("SELECT ward_id FROM sys_user_ward WHERE user_id = #{userId} ORDER BY ward_id")
+    List<Long> wardIdsOf(@Param("userId") long userId);
+
+    /** 用户负责科室清单（sys_user_dept_scope，C-WARD-003）。 */
+    @Select("SELECT dept_id FROM sys_user_dept_scope WHERE user_id = #{userId} ORDER BY dept_id")
+    List<Long> deptScopeIdsOf(@Param("userId") long userId);
 
     // ---------------------------------------------------------------- 软删除与恢复（E13-T09 /
     // A-PAT-012、A-NFR-008）
@@ -205,15 +251,7 @@ public interface PatientMapper {
             """)
     int restore(@Param("id") long id, @Param("updatedBy") long updatedBy);
 
-    /** 转病区（A-WARD-005）：只改归属列并递增乐观锁版本；任务 / 附件经 patient_id 关联患者自动随迁。 */
-    @Update(
-            """
-            UPDATE pt_patient
-            SET ward_id = #{wardId}, updated_by = #{updatedBy}, version = version + 1
-            WHERE id = #{id} AND deleted = 0
-            """)
-    int updateWard(
-            @Param("id") long id, @Param("wardId") long wardId, @Param("updatedBy") long updatedBy);
+    /** 转病区 / 转科室（A-WARD-005、E21-T21 C-WARD-006）：见 {@link #updateWardAndDept}。 */
 
     /**
      * 随访状态流转（E14-T06 / A-FU-007、A-FU-008、A-PAT-011）：只改状态位并递增乐观锁版本，guardedOn 非空时只在当前值等于它才更新（并发流转 0

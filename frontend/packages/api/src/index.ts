@@ -556,6 +556,7 @@ export type {
   PatientTimelineKind,
 } from './patient-overview';
 export {
+  applyRegistrationDefaults,
   buildDuplicateCheckPayload,
   buildRegistrationPayload,
   canCheckDuplicate,
@@ -574,6 +575,7 @@ export type {
   PatientRegistrationForm,
   PatientRegistrationOptions,
   PatientRegistrationPayload,
+  RegistrationDefaults,
   RegistrationErrors,
   RegistrationOptionItem,
   RegistrationWardOption,
@@ -1474,6 +1476,8 @@ export {
   emptyTransferForm,
   emptyWardForm,
   parseAliasInput,
+  transferDeptTargetOptions,
+  transferSuccessText,
   transferTargetOptions,
   validateTransferForm,
   validateWardForm,
@@ -1484,6 +1488,8 @@ export {
   wardTypeText,
 } from './ward';
 export type {
+  PatientDeptHistory,
+  PatientDeptHistoryItem,
   PatientTransferPayload,
   PatientTransferredResult,
   PatientWardHistory,

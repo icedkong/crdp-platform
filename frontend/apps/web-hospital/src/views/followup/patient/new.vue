@@ -15,6 +15,7 @@ import { useRouter } from 'vue-router';
 import { Page } from '@vben/common-ui';
 
 import {
+  applyRegistrationDefaults,
   buildDuplicateCheckPayload,
   buildImplantPayload,
   buildRegistrationPayload,
@@ -132,6 +133,8 @@ async function loadOptions() {
   loadingOptions.value = true;
   try {
     options.value = await fetchPatientRegistrationOptions();
+    // E21-T21 / C-WARD-002：登记默认为录入人所属科室病区（implant 开启才下发；只填未选字段）
+    applyRegistrationDefaults(form, options.value.defaults);
   } catch {
     message.error('登记候选加载失败，请刷新重试');
   } finally {

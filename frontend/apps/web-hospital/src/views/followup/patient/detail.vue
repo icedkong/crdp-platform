@@ -5,6 +5,7 @@ import type {
   FormSchema,
   PatientBaseline,
   PatientContactVersion,
+  PatientDeptHistoryItem,
   PatientOverview,
   PatientStatusHistoryRow,
   PatientTimelineEntry,
@@ -65,6 +66,7 @@ import { getFilePreviewUrl } from '#/api/core/file';
 import { fetchFormSchema } from '#/api/core/form';
 import {
   fetchPatientContactInfo,
+  fetchPatientDeptHistory,
   fetchPatientLogs,
   fetchPatientStatusHistory,
   fetchPatientSummary,
@@ -229,6 +231,8 @@ const contactsLoading = ref(false);
 const contactVersions = ref<PatientContactVersion[]>([]);
 const statusHistory = ref<PatientStatusHistoryRow[]>([]);
 const wardHistory = ref<PatientWardHistoryItem[]>([]);
+// E21-T21 / C-WARD-006「保留转科历史」：转科室历史与转病区历史并列展示
+const deptHistory = ref<PatientDeptHistoryItem[]>([]);
 
 // E13-T08 / A-WARD-005：转病区（详情页入口，pages.md §6 页面 4）
 const transferOpen = ref(false);
@@ -270,6 +274,11 @@ const patientId = computed(() => String(route.params.id ?? ''));
 /** 当前病区 id（E13-T08 随概览下发；转病区弹窗用它排除当前病区）。 */
 const currentWardId = computed<null | number>(
   () => overview.value?.wardId ?? null,
+);
+
+/** 当前科室 id（E21-T21 / C-WARD-006：转科室弹窗用它排除当前科室）。 */
+const currentDeptId = computed<null | number>(
+  () => overview.value?.deptId ?? null,
 );
 
 /** E21-T01：植入记录保存后安静刷新概览（失败保留旧数据，不影响档案主体）。 */
@@ -465,32 +474,36 @@ async function openContacts() {
   if (
     contactVersions.value.length > 0 ||
     statusHistory.value.length > 0 ||
-    wardHistory.value.length > 0
+    wardHistory.value.length > 0 ||
+    deptHistory.value.length > 0
   )
     return;
   contactsLoading.value = true;
   try {
-    const [contactInfo, history, wardHist] = await Promise.all([
+    const [contactInfo, history, wardHist, deptHist] = await Promise.all([
       fetchPatientContactInfo(patientId.value),
       fetchPatientStatusHistory(patientId.value),
       fetchPatientWardHistory(patientId.value),
+      fetchPatientDeptHistory(patientId.value),
     ]);
     contactVersions.value = contactInfo.items;
     statusHistory.value = history;
     wardHistory.value = wardHist.items;
+    deptHistory.value = deptHist.items;
   } catch {
     // 抽屉内失败保留空态；概览本体不受影响
     contactVersions.value = [];
     statusHistory.value = [];
     wardHistory.value = [];
+    deptHistory.value = [];
   } finally {
     contactsLoading.value = false;
   }
 }
 
-/** 转病区成功（A-WARD-005）：原病区医生立即失去访问权——操作者本人可能已不可见该患者，统一返回列表。 */
+/** 转病区 / 转科室成功（A-WARD-005、C-WARD-006）：原病区 / 原科室用户立即失去访问权——操作者本人可能已不可见该患者，统一返回列表。 */
 function handleTransferred() {
-  message.success('已转病区，正在返回患者列表');
+  message.success('已转科室 / 病区，正在返回患者列表');
   void router.replace('/followup/patient');
 }
 
@@ -1075,6 +1088,25 @@ const wardHistoryRows = computed(() =>
     key: item.id,
     operatorName: item.operatorName ?? '—',
     toWardName: item.toWardName ?? '—',
+  })),
+);
+
+// E21-T21 / C-WARD-006「转科室历史可查」
+const deptHistoryColumns = [
+  { dataIndex: 'transferredAt', title: '时间' },
+  { dataIndex: 'fromDeptName', title: '原科室' },
+  { dataIndex: 'toDeptName', title: '新科室' },
+  { dataIndex: 'reason', title: '原因' },
+  { dataIndex: 'operatorName', title: '操作人' },
+];
+
+const deptHistoryRows = computed(() =>
+  deptHistory.value.map((item) => ({
+    ...item,
+    fromDeptName: item.fromDeptName ?? '—',
+    key: item.id,
+    operatorName: item.operatorName ?? '—',
+    toDeptName: item.toDeptName ?? '—',
   })),
 );
 
@@ -1958,6 +1990,15 @@ const timelineLegendNote =
         >
           <template #emptyText> 暂无转病区记录 </template>
         </Table>
+        <h3 class="drawer-title">转科室历史</h3>
+        <Table
+          :columns="deptHistoryColumns"
+          :data-source="deptHistoryRows"
+          :pagination="false"
+          size="small"
+        >
+          <template #emptyText> 暂无转科室记录 </template>
+        </Table>
       </Spin>
       <p class="hint">
         电话明文需持有「查看明文」权限，经患者头部的「显示明文」查看并写审计。
@@ -2001,6 +2042,7 @@ const timelineLegendNote =
 
     <TransferWardModal
       v-model:open="transferOpen"
+      :current-dept-id="currentDeptId"
       :current-ward-id="currentWardId"
       :label="`${overview.name} · ${overview.patientNo}`"
       :patient-id="overview.id"

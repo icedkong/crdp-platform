@@ -69,16 +69,24 @@ export interface WardMembersView {
   wardId: string;
 }
 
-/** 转病区请求（A-WARD-005：目标病区 + 原因必填）。 */
+/**
+ * 转病区 / 转科室请求（A-WARD-005：wardId + 原因必填；E21-T21 / C-WARD-006：deptId 与
+ * wardId 之一或同时携带、至少一项——同时转科室 + 病区为一次管理动作）。deptId 为医院 C
+ * 口径（implant 开关关闭的 A / B 租户后端 40001）。
+ */
 export interface PatientTransferPayload {
+  deptId?: null | number;
   reason: string;
-  wardId: number;
+  wardId?: null | number;
 }
 
+/** 转病区 / 转科室结果：ward / dept 为转后当前归属，未涉及的一侧原样回显。 */
 export interface PatientTransferredResult {
+  deptId?: null | string;
+  deptName?: null | string;
   patientId: string;
-  wardId: string;
-  wardName: string;
+  wardId?: null | string;
+  wardName?: null | string;
 }
 
 /** 转病区历史条目（GET ward-history，新在前）。 */
@@ -93,6 +101,21 @@ export interface PatientWardHistoryItem {
 
 export interface PatientWardHistory {
   items: PatientWardHistoryItem[];
+  patientId: string;
+}
+
+/** 转科室历史条目（GET dept-history，新在前；与转病区历史同构，C-WARD-006）。 */
+export interface PatientDeptHistoryItem {
+  fromDeptName?: null | string;
+  id: string;
+  operatorName?: null | string;
+  reason: string;
+  toDeptName?: null | string;
+  transferredAt: string;
+}
+
+export interface PatientDeptHistory {
+  items: PatientDeptHistoryItem[];
   patientId: string;
 }
 
@@ -193,37 +216,58 @@ export function wardDisableBlockedText(ward: WardView): string {
   return `该病区下仍有 ${ward.patientCount} 名在册患者，不能停用；请先为这些患者转病区后再停用`;
 }
 
-// ---------------------------------------------------------------- 转病区表单逻辑
+// ---------------------------------------------------------------- 转病区 / 转科室表单逻辑
 
-/** 转病区表单（弹窗状态；目标病区 + 原因）。 */
+/**
+ * 转病区 / 转科室表单（弹窗状态；目标病区 / 科室至少一项 + 原因）。
+ * deptId 仅医院 C 口径（implant 开关开启）出现，A / B 只填病区（A-WARD-005）。
+ */
 export interface TransferWardFormState {
+  deptId: null | number;
   reason: string;
   wardId: null | number;
 }
 
 export function emptyTransferForm(): TransferWardFormState {
-  return { wardId: null, reason: '' };
+  return { wardId: null, deptId: null, reason: '' };
 }
 
 export function validateTransferForm(
   form: TransferWardFormState,
+  options?: { deptEnabled?: boolean },
 ): Partial<Record<keyof TransferWardFormState, string>> {
   const errors: Partial<Record<keyof TransferWardFormState, string>> = {};
-  if (form.wardId === null || form.wardId === undefined)
-    errors.wardId = '请选择目标病区';
-  if (!form.reason.trim()) errors.reason = '请填写转病区原因';
+  const deptEnabled = options?.deptEnabled !== false;
+  const hasWard = form.wardId !== null && form.wardId !== undefined;
+  const hasDept = form.deptId !== null && form.deptId !== undefined;
+  if (!hasWard && (!deptEnabled || !hasDept)) {
+    // A / B 口径：科室维度未开通，仍要求病区（与 E13-T08 行为一致）
+    errors.wardId = deptEnabled ? '请选择目标病区或科室' : '请选择目标病区';
+  }
+  if (!form.reason.trim()) errors.reason = '请填写转病区 / 转科室原因';
   else if (form.reason.trim().length > 255)
-    errors.reason = '转病区原因最多 255 个字符';
+    errors.reason = '转病区 / 转科室原因最多 255 个字符';
   return errors;
 }
 
 export function buildTransferPayload(
   form: TransferWardFormState,
+  options?: { deptEnabled?: boolean },
 ): null | PatientTransferPayload {
-  if (form.wardId === null || form.wardId === undefined) return null;
+  const deptEnabled = options?.deptEnabled !== false;
   const reason = form.reason.trim();
   if (!reason || reason.length > 255) return null;
-  return { wardId: form.wardId, reason };
+  const wardId =
+    form.wardId === null || form.wardId === undefined ? null : form.wardId;
+  const deptId =
+    deptEnabled && form.deptId !== null && form.deptId !== undefined
+      ? form.deptId
+      : null;
+  if (wardId === null && deptId === null) return null;
+  const payload: PatientTransferPayload = { reason };
+  if (wardId !== null) payload.wardId = wardId;
+  if (deptId !== null) payload.deptId = deptId;
+  return payload;
 }
 
 /** 转病区目标候选：启用病区且排除当前病区（已在的病区无需转入）。 */
@@ -234,4 +278,28 @@ export function transferTargetOptions(
   return wards
     .filter((ward) => ward.id !== currentWardId)
     .map((ward) => ({ label: ward.name, value: ward.id }));
+}
+
+/** 转科室目标候选：启用科室且排除当前科室（已在了无需转入，C-WARD-006）。 */
+export function transferDeptTargetOptions(
+  depts: Array<{ id: number; name: string }>,
+  currentDeptId: null | number | undefined,
+): Array<{ label: string; value: number }> {
+  return depts
+    .filter((dept) => dept.id !== currentDeptId)
+    .map((dept) => ({ label: dept.name, value: dept.id }));
+}
+
+/** 转病区 / 转科室成功提示（按实际变化维度拼装，结果两维度都回显当前归属）。 */
+export function transferSuccessText(
+  result: PatientTransferredResult,
+  changed: { dept?: boolean; ward?: boolean },
+): string {
+  const parts: string[] = [];
+  if (changed.ward && result.wardName)
+    parts.push(`已转入病区「${result.wardName}」`);
+  if (changed.dept && result.deptName)
+    parts.push(`已转入科室「${result.deptName}」`);
+  const head = parts.length > 0 ? parts.join('，') : '已提交转病区 / 转科室';
+  return `${head}；原病区 / 原科室用户不再可见该患者，历史可在患者详情查看`;
 }

@@ -137,12 +137,19 @@ public class PatientRegistrationService {
      */
     public record VisitNoRuleView(String prefix, String sample) {}
 
+    /**
+     * 登记默认归属（E21-T21 / C-WARD-002「登记时默认为录入人所属科室病区」）：implant 开关关闭时两个默认都为 null（A / B
+     * 不受影响）；多值归属（负责多个病区 / 多个科室且无主科室）不猜默认，返回 null 由录入人选择（暂行口径见 OQ-147）。
+     */
+    public record RegistrationDefaultsView(Long wardId, Long deptId) {}
+
     public record RegistrationOptionsView(
             List<WardOption> wards,
             List<WardOption> depts,
             List<OptionItem> genders,
             List<OptionItem> dischargeStatuses,
-            VisitNoRuleView visitNoRule) {}
+            VisitNoRuleView visitNoRule,
+            RegistrationDefaultsView defaults) {}
 
     // ---------------------------------------------------------------- 查重（A-PAT-007、C-PAT-002）
 
@@ -356,7 +363,7 @@ public class PatientRegistrationService {
 
     /**
      * 登记候选（页面下拉）：病区 / 科室来自字典（启用项），性别与出院状态为实体列编码（A 规格字段 191）。 医院C（implant 开关开启）额外下发随访编号规则（
-     * C-PAT-003：登记页「留空自动生成（如 105-2026-001）」提示）；A / B 为 null。
+     * C-PAT-003：登记页「留空自动生成（如 105-2026-001）」提示）与默认归属（C-WARD-002「登记时默认为 录入人所属科室病区」）；A / B 两者为 null。
      */
     public RegistrationOptionsView options() {
         List<WardOption> wards =
@@ -368,9 +375,11 @@ public class PatientRegistrationService {
                         .map(item -> new WardOption(item.id(), item.name()))
                         .toList();
         VisitNoRuleView visitNoRule = null;
+        RegistrationDefaultsView defaults = null;
         if (implants.implantEnabled()) {
             visitNoRule =
                     new VisitNoRuleView(visitNos.rule().prefix(), visitNos.sampleForCurrentYear());
+            defaults = registrationDefaults();
         }
         return new RegistrationOptionsView(
                 wards,
@@ -380,7 +389,29 @@ public class PatientRegistrationService {
                         new OptionItem("1", "存活"),
                         new OptionItem("2", "病重自动出院"),
                         new OptionItem("3", "死亡")),
-                visitNoRule);
+                visitNoRule,
+                defaults);
+    }
+
+    /**
+     * 登记默认归属（E21-T21 / C-WARD-002）：病区 = 录入人唯一负责病区（sys_user_ward 恰好一行； 多病区不猜默认）；科室 =
+     * 主科室（sys_user.main_dept_id，V12），未配置主科室时回落唯一负责科室（sys_user_dept_scope 恰好一行）。多值无默认由录入人选择。
+     */
+    private RegistrationDefaultsView registrationDefaults() {
+        long userId = CurrentSession.requireHospital().userId();
+        Long defaultWardId = null;
+        List<Long> wardIds = mapper.wardIdsOf(userId);
+        if (wardIds.size() == 1) {
+            defaultWardId = wardIds.get(0);
+        }
+        Long defaultDeptId = mapper.mainDeptId(userId);
+        if (defaultDeptId == null) {
+            List<Long> deptIds = mapper.deptScopeIdsOf(userId);
+            if (deptIds.size() == 1) {
+                defaultDeptId = deptIds.get(0);
+            }
+        }
+        return new RegistrationDefaultsView(defaultWardId, defaultDeptId);
     }
 
     // ---------------------------------------------------------------- 内部

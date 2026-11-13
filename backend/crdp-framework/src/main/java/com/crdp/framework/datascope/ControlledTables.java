@@ -14,6 +14,7 @@ public final class ControlledTables {
                     "pt_contact",
                     "pt_status_history",
                     "pt_ward_history",
+                    "pt_dept_history",
                     "pt_patient_summary",
                     "pt_implant",
                     "pt_lead",
