@@ -136,14 +136,17 @@ class PlatformTenantScopeMySqlIT {
                         + " AND (m.perm_code IS NULL OR m.perm_code NOT IN"
                         + " (SELECT perm_code FROM plt_sensitive_perm))");
         platform.update("DELETE FROM plt_sensitive_perm");
-        // 与迁移后的种子一致（V18 七项 + V41 的 followup:patient:delete）：漏掉 217 的码会让上面的
-        // 模板重建把 217 当非敏感项收回模板，下一次运行 revoke 用例 removed 变 2 条而失败（本地持久库才会踩到）
+        // 与迁移后的种子一致（V18 七项 + V41 的 followup:patient:delete + V72 的
+        // followup:record:edit-submitted，E21-T11 / C-FU-026）：漏掉 217 的码会让上面的
+        // 模板重建把 217 当非敏感项收回模板，下一次运行 revoke 用例 removed 变 2 条而失败（本地持久库才会踩到）；
+        // 漏掉 V72 的 229 同理——229 进模板后 WITHOUT_TASK 不含它，removed 会多出第三条（E23-T22 本机重跑实测）
         platform.update(
                 "INSERT INTO plt_sensitive_perm (perm_code, name) VALUES"
                         + " ('followup:patient:plain', '敏感字段明文查看（证件号、手机号、住址等原值）'),"
                         + " ('followup:patient:export', '患者与业务数据导出（含批量导出）'),"
                         + " ('followup:record:delete', '删除业务数据（患者、随访记录等）'),"
                         + " ('followup:patient:delete', '删除患者（软删除，数据长期保留）'),"
+                        + " ('followup:record:edit-submitted', '修改已提交的随访记录（留字段级历史，Q17）'),"
                         + " ('followup:scan:download', '原件与附件下载（报告单、电子化资料、通话录音）'),"
                         + " ('tenant:audit:export', '审计日志导出'),"
                         + " ('tenant:user:export', '用户导出（含手机号等个人信息）'),"
@@ -428,7 +431,8 @@ class PlatformTenantScopeMySqlIT {
         // 前置归一（本机持久库重跑用；CI 全新库天然满足）：补齐种子授予——22 六角色、
         // 223 隐藏路由（管理员与随访医生，followup V55 / 平台库种子 V106，E15-T02）；
         // E23-T04 起医院 A 预置角色也持 22（病区医生 / 随访员 / 科主任），病区医生与随访员另持 223；
-        // E23-T18 起医院 B 预置角色（种子 V136，与 A 同构）也持 22 / 223。
+        // E23-T18 起医院 B 预置角色（种子 V136，与 A 同构）也持 22 / 223；
+        // E23-T22 起医院 C 预置角色（种子 V137）医生 / 随访员 / 科主任持 22，医生 / 随访员 / 护士另持 223。
         // 上一次运行到 Order(3) 会把 22/223 一并收回，重跑前先还原。
         root.update(
                 """
@@ -436,6 +440,9 @@ class PlatformTenantScopeMySqlIT {
                 SELECT r.id, m.menu_id FROM t_demoa.sys_role r
                 JOIN (SELECT 'TENANT_ADMIN' AS code, 223 AS menu_id
                       UNION ALL SELECT 'FOLLOWUP_DOCTOR', 223
+                      UNION ALL SELECT 'C_DOCTOR', 223
+                      UNION ALL SELECT 'C_FOLLOWUP_STAFF', 223
+                      UNION ALL SELECT 'C_NURSE', 223
                       UNION ALL SELECT 'TENANT_ADMIN', 22
                       UNION ALL SELECT 'FOLLOWUP_DOCTOR', 22
                       UNION ALL SELECT 'FOLLOWUP_NURSE', 22
@@ -451,7 +458,10 @@ class PlatformTenantScopeMySqlIT {
                       UNION ALL SELECT 'B_WARD_DOCTOR', 22
                       UNION ALL SELECT 'B_FOLLOWUP_NURSE', 223
                       UNION ALL SELECT 'B_FOLLOWUP_NURSE', 22
-                      UNION ALL SELECT 'B_DIRECTOR', 22) m ON m.code = r.code
+                      UNION ALL SELECT 'B_DIRECTOR', 22
+                      UNION ALL SELECT 'C_DOCTOR', 22
+                      UNION ALL SELECT 'C_FOLLOWUP_STAFF', 22
+                      UNION ALL SELECT 'C_DIRECTOR', 22) m ON m.code = r.code
                 WHERE NOT EXISTS (SELECT 1 FROM t_demoa.sys_role_menu rm
                                   WHERE rm.role_id = r.id AND rm.menu_id = m.menu_id)
                 """);
@@ -489,12 +499,17 @@ class PlatformTenantScopeMySqlIT {
         List<Map<String, Object>> roles = (List<Map<String, Object>>) preview.get("affectedRoles");
         // E06-T05 起，随访模板（随访员 / 责任医生 / 研究者 / CRC）默认也持有 22；
         // E23-T04 起，医院 A 预置角色（病区医生 / 随访员 / 科主任）也持有 22；
-        // E23-T18 起，医院 B 预置角色（种子 V136，与 A 同构）也持有 22，共 12 个角色受影响
-        assertEquals(12, roles.size(), "TENANT_ADMIN、FOLLOWUP_DOCTOR、4 个随访模板与 A、B 各 3 个预置角色都持有 22");
+        // E23-T18 起，医院 B 预置角色（种子 V136，与 A 同构）也持有 22；
+        // E23-T22 起，医院 C 预置角色（种子 V137）医生 / 随访员 / 科主任持 22、医生 / 随访员 / 护士另持 223
+        // （收回 22 连带 223，影响面取两菜单持有者并集，护士只持 223 也计入），共 16 个角色受影响
         assertEquals(
-                58,
+                16,
+                roles.size(),
+                "TENANT_ADMIN、FOLLOWUP_DOCTOR、4 个随访模板、A / B 预置各 3 个持 22 的角色与 C 预置医生 / 随访员 / 科主任（22）+ 护士（223）都受影响");
+        assertEquals(
+                85,
                 ((Number) preview.get("affectedUserCount")).intValue(),
-                "2 名演示用户 + A、B 预置各 28 名用户（16 病区医生 + 8 随访员 + 4 科主任）受影响");
+                "2 名演示用户 + A、B 预置各 28 名用户（16 病区医生 + 8 随访员 + 4 科主任）+ C 预置全部 27 名用户（护士持 223 也计入收回影响）受影响");
 
         // 保存（PLT-SCOPE-006、008）：自动收回租户库角色授权 + 受影响用户权限版本递增 + 变更记录
         Map<String, Object> change =
@@ -510,14 +525,14 @@ class PlatformTenantScopeMySqlIT {
                         .stream().map(n -> ((Number) n).intValue()).sorted().toList(),
                 "收回 22 连带其下隐藏路由 223（E15-T02 随访录入）");
         assertEquals(
-                18,
+                24,
                 ((Number) change.get("revokedGrants")).intValue(),
-                "12 个角色的 22 授权同步收回；TENANT_ADMIN / FOLLOWUP_DOCTOR 与 A、B 预置的病区医生 / 随访员另持 223");
-        assertEquals(12, ((Number) change.get("revokedRoles")).intValue());
+                "16 个角色的 22 授权同步收回；TENANT_ADMIN / FOLLOWUP_DOCTOR、A / B 预置的病区医生 / 随访员与 C 预置的医生 / 随访员 / 护士另持 223");
+        assertEquals(16, ((Number) change.get("revokedRoles")).intValue());
         assertEquals(
-                58,
+                85,
                 ((Number) change.get("refreshedUsers")).intValue(),
-                "2 名演示用户 + A、B 预置各 28 名用户权限版本递增");
+                "2 名演示用户 + A、B 预置各 28 名用户 + C 预置全部 27 名用户权限版本递增");
         assertEquals(
                 0,
                 root.queryForObject(
