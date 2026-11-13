@@ -320,7 +320,8 @@ interface ReportLocation {
 
 1. 基线：右侧滚到 `anchorKey` 对应分类（DOM id 由 FormRenderer 输出，见 §10），加 `.crdp-anchor-flash` 2 秒（`timings.anchorHighlightMs`），`CategoryBar` 同步高亮；写 URL hash（`#cat=<anchorKey>`），可分享、可后退。
 2. 随访：若在表格视图先切到时间轴；展开该次记录；滚到该分组并高亮；只关联到整条记录的滚到记录顶部；hash `#rec=<recordId>&sec=<anchorKey>`。
-3. 抽屉模式（平板 / 手机）：点完先关抽屉再跳转。
+3. 植入（C，E21-T32 / C-PAT-017）：切到**基线资料页签**；该植入记录表格行展开；滚到整条 / 器械信息（device）/ 电极（lead）锚点并高亮；hash `#cat=implant-<id>[-device|-lead]`。
+4. 抽屉模式（平板 / 手机）：点完先关抽屉再跳转。
 
 - 附件右键 / `⋮` 菜单：`预览`、`修改位置`（`followup:scan:upload`）、`下载`（`followup:scan:download`）、`删除`（`followup:scan:delete`，popconfirm，软删除填原因）。
 - 左栏**只用于查看和跳转**，编辑表单仍在右上「编辑」打开新标签页。
@@ -345,7 +346,7 @@ interface CategoryBarProps {
   scrollContainer?: () => HTMLElement; // 用于 scroll-spy
 }
 interface CategoryProgress {
-  key: string;        // 模板稳定 anchorKey
+  key: string;        // 模板稳定 anchorKey；C 植入条目（E21-T32）为 implant-<id>[-device|-lead]，已填 / 应填口径见 OQ-151
   label: string;      // 如 '病例基本信息'
   filled: number;     // 已填必填（只计实际显示的字段；A-PAT-019 口径，条件不显示不计入——E11-T11 已随 FormRenderer progress 事件落地）
   total: number;      // 应填必填（有效必填 = required || requiredWhen；storage=json 且非派生）

@@ -24,7 +24,8 @@
 | C-ACC-29 / CL-10 移除随访位置回退 | 已电子化报告单被删除或移除随访位置 → 回「待录入」、结构化记录不受影响 | `cAcc29ThreeStatesDefaultsProgressAndRevertOnLocationRemoval`（移除整条随访位置 → PENDING、fu_record 仍 SUBMITTED、`RPT_DIGITIZE_CHANGE`）+ `cAcc34ProgramReportMapsIntoProgramGroupThenReverts`（移除程控分组位置同口径）；行为面 `ReportServiceTest.changeLocationsRevertsDoneToPendingWhenLastFollowupLocationRemoved` / `changeLocationsKeepsDigitizeStatusWhenFollowupAnchorRemains`（换记录 / 只移除基线 / 非 DONE 不触发）、`ReportLocationFallbackServiceTest.removingLastFollowupLocationRevertsDoneToPending` / `fallbackToWholeRecordOrNonDoneStatusKeepsDigitize`（退回作业：记录不存在移除随访行 → 回退；分组退回整条不触发；非 DONE 幂等不写）。**报告单被删除**：软删除后 `r.status='DELETED'`，进度与列表按 `status='NORMAL'` 天然不计（`ScanProgressMapper` / 检索条件树），状态列无可见消费者——不另设状态动作 |
 | C-ACC-34 程控报告单映射写入 | 位置选第 3 次随访 → 电池电压 / 心室起搏阈值写入该记录（报告单不另存参数）、报告单变「已电子化」 | `cAcc34ProgramReportMapsIntoProgramGroupThenReverts`（位置 = 随访记录的**程控分组 battery** + 基线；V94 预置映射预览 → 确认：f322=2.85 / f313=0.9 落 fu_record、rpt_report.field_values 无参数键；随后转录态提交 → 报告单转 DONE——随访日期由转录 / 补录流程落，OQ-131② / OQ-142②）+ 行为面 `ReportMappingIT`（A 链 ECHO 映射端到端、时相 / 锁定 / 乐观锁 / 权限）、`ReportMappingServiceTest` / `MappingValuesTest`、预置面 `CReportPresetSqlTest`（映射 21 项与 V90 交叉核对）、`ReportConfigIT`（映射配置可见性） |
 | C-ACC-34 移除映射目标位置 | 已写入参数不清除、状态回「待录入」 | `cAcc34ProgramReportMapsIntoProgramGroupThenReverts`（移除 battery 分组位置 → 状态 PENDING、f322/f313 仍在记录、记录仍 SUBMITTED）+ 行为面同上回退单测 |
-| 含植入 / 程控分组位置（C-ACC-12 机器面 · E21-T27 份额） | 植入记录位置 E21-T32 前不可选；程控分组锚点须在记录固化版本分组清单内 | `positionGuardsLockImplantAnchorUntilE21T32`（创建与修改位置两侧 `implant_record` → 40001；未知分组键 → 40001「随访分组不存在」；合法程控分组 battery 落行）+ 行为面 `ReportServiceTest.createRejectsImplantRecordLocationUntilE21` 等（创建侧全部粒度守卫）。**C-ACC-12 的完整链路（基线 / 随访页签左栏导航、分组条已填 / 应填、点标签跳转）由 E21-T32 承接，届时本表回链补行** |
+| 含植入 / 程控分组位置（C-ACC-12 机器面 · E21-T27 份额） | 植入记录位置 E21-T32 前不可选；程控分组锚点须在记录固化版本分组清单内 | `positionGuardsRejectImplantAnchorWhileFeatureOff`（E21-T32 起改闸门口径：本套 implant 开关关闭 → 创建侧 40301；remove 侧不在册 40001；未知分组键 → 40001「随访分组不存在」；合法程控分组 battery 落行）+ 行为面 `ReportServiceTest` 植入位置系列（创建 / 开关 / 越患者 / 未知锚点 / 三粒度落行） |
+| C-ACC-12 位置锚点完整链路（E21-T32 承接补行） | C 报告单可选基线资料（患者登记分组、植入记录整条或器械 / 电极）与随访记录（整条或程控分组）为位置；左栏跳转到基线资料页签中的植入记录；分组条已填 / 应填（程控含标红数） | 机器面：`CReportImplantLocationIT`（位置树植入根〔当前器械置顶 + device / lead 分组〕、三粒度落行〔模板版本 = C_IMPLANT 当前发布版〕、唯一性 40001、未知锚点 40001、越患者 40400、开关关闭 40301、修改位置 add+remove、患者内清单 baseline 侧含仅植入位置 + 标签「植入记录#N 日期 · 器械信息」）+ `ReportServiceTest`（树 / 标签 / scope）+ `ReportLocationFallbackServiceTest` 植入退回 3 例 + `ReportLegacyLocationMigrationServiceTest` IMPLANT 3 例；展示面：`implant-anchor-logic.spec`（锚点 key / 已填应填口径 OQ-151 / 分组条条目）、`attachment-nav-logic.spec`（home=baseline、itemsAtImplant）、`group.spec`（基线侧取数）、`implant-section` 锚点与内联缩略图条、`detail.vue` 左栏跳转切页签滚动定位（#cat=implant-…）、`followup-timeline` 分组条标红数（records/{id} 新增 highlightHits）——浏览器走查随 E21-T29 集成测试执行 |
 
 ## 3. 边界口径（实现读法，评审用例未覆盖的形态）
 
@@ -37,7 +38,7 @@
 | 用例 | 状态 | 说明 |
 |---|---|---|
 | C-ACC-31 待归档区（C-SCAN-009，P1） | **未执行（开发任务未落地）** | 承接任务 E21-T16（S22 · W43–W44，晚于本任务）：未指定患者的文件进待归档区、逐个指定患者 / 类型 / 位置（≥1）后归档、按科室病区隔离。接口尚未实现（docs/api/report.md §4 为推断口径）；E21-T16 落地后由其随附用例 + 本表补行执行 |
-| C-ACC-12 位置锚点完整链路 | 部分（本任务只执行机器面守卫份额） | 左栏导航 / 分组条 / 跳转由 E21-T32 承接（见 §2 末行）；本任务锁定 implant_record 40001 守卫与程控分组锚点校验 |
+| C-ACC-12 位置锚点完整链路 | 已承接（E21-T32） | 机器面与展示面用例见 §2 补行；E21-T27 份额只锁定守卫（现为开关闸门 40301 口径） |
 | C-ACC-33 指标模板带出 | 通过（既有承载） | `CReportPresetSqlTest`（凝血四项 6 项名称 / 代码 / 单位随包）+ `ReportConfigIT`（配置接口可见）+ `ReportServiceTest.createRejectsIndicatorOutsideNameTemplate`（模板外指标 40001）；↑ / ↓ 参考范围解析 `ReportServiceTest.indicatorFlagParsesRangesTolerantly` |
 | C-ACC-35 批量上传 | 通过（既有承载） | E16-T03 批量链路（`FileServiceAcceptanceIT` / `ReportServiceTest.batchMergeRejectsFileCountOverPerReportLimit` 等：每文件一份 / 合并一份、单份 ≤50、单个 ≤20MB、格式白名单）；C-SCAN-007 复用 A 链路（评审 §4 承接列） |
 | C-ACC-36 双树 / 检索 / 修改位置 / 模板退回 | 通过（既有承载） | `ReportSearchIT`（类型 / 时间树、位置筛选含 UNASSIGNED、+N 折叠、科室病区隔离）、`ReportServiceTest` 修改位置系列、`ReportLocationFallbackServiceTest` + 位置退回作业 IT（E16-T15：退回 / 合并 / 移除 / 幂等 / `RPT_LOCATION_FALLBACK`） |
@@ -47,6 +48,7 @@
 
 | 批次 | 环境 | 结果 |
 |---|---|---|
+| 2026-11-14（E21-T32 承接批） | 本机 docker compose MySQL（`CRDP_IT_MYSQL_PORT=13306`）：`CReportImplantLocationIT` 2 例 + 相关回归（ReportIT / ReportLocationIT / ReportSearchIT / ReportLocationFallbackIT / ReportLegacyLocationMigrationIT / CDigitizeTranscribeAcceptanceIT / ImplantRecordIT 等 43 例）全绿；前端 vitest 1827 例全绿 | 通过（C-ACC-12 完整链路机器面与展示面用例落库，浏览器走查随 E21-T29） |
 | 2026-11-13（本任务交付批） | 本机 docker compose MySQL（`CRDP_IT_MYSQL_PORT=13306`）：`CDigitizeTranscribeAcceptanceIT` 4 例全绿；`ReportServiceTest` 50 例、`ReportLocationFallbackServiceTest` 11 例全绿（含回退新增 4 例）；全量 `mvn -B spotless:check test` 见 PR 描述 | 通过（§4 C-ACC-31 与 C-ACC-12 完整链路按承接任务顺延） |
 | CI | 每次 push 门控执行（与 A / B 全量回归同套） | 见 PR checks |
 

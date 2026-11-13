@@ -480,6 +480,22 @@ public interface ReportMapper {
     RecordRow findRecordById(@Param("id") long id);
 
     /**
+     * 植入记录行（E21-T32 位置退回作业校验用）：存在性与标题字段。同 {@link #findRecordById} 的 {@code @IgnoreScope}
+     * 口径——作业无用户会话，只读日期与状态，不吐患者数据。
+     */
+    @IgnoreScope(reason = "报告单位置退回作业的植入记录定位（E21-T32）：作业无用户会话，只读植入日期与状态，不吐患者数据")
+    @Select(
+            """
+            SELECT i.id, i.patient_id AS patientId, i.implant_date AS implantDate, i.status
+            FROM pt_implant i
+            WHERE i.id = #{id}
+            """)
+    ImplantRefRow findImplantById(@Param("id") long id);
+
+    /** 植入记录引用行（退回作业的标签与存在性判定用，E21-T32）。 */
+    record ImplantRefRow(Long id, Long patientId, LocalDate implantDate, String status) {}
+
+    /**
      * 随访分组位置退回到整条记录（E16-T15）：锚点清空、adjusted 置 1（「原位置已调整」位置级标记）。 带 anchor_type = 'section'
      * 条件——并发或重复执行时行已是整条（anchor 为 NULL）则 0 行更新，幂等。
      */

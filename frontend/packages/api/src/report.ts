@@ -3,12 +3,12 @@
  * （docs/api/report.md §2）——添加报告单对话框、位置选择（必填多选树）与患者内清单。
  *
  * 位置粒度三种（不细到字段）：基线某分类、某条随访记录整条、某条随访记录中的某分组；
- * C 的植入记录锚点（implant_record）随 E21-T32 开放。「修改位置」与按模板版本校验随 E16-T13 落地
+ * C 的植入记录锚点（implant_record，整条或器械信息 / 电极分组）已随 E21-T32 开放（implant 开关关闭 40301）
  * （PUT /reports/{id}/locations，至少保留 1 个位置）。
  * 运行时目录类型（ReportCatalogType / ReportCatalogName）见 report-config.ts（E16-T01）。
  */
 
-/** 位置链接类型（implant_record 随 E21-T32）。 */
+/** 位置链接类型（implant_record = 植入记录整条或器械信息 / 电极分组，E21-T32）。 */
 export type ReportLinkType = 'baseline' | 'followup_record' | 'implant_record';
 
 /** 锚点粒度：category 基线分类 / section 随访分组 / null 整条记录。 */
@@ -360,8 +360,9 @@ export function reportRowDigitizeStatusText(
  * 整条记录无锚点时只显示记录名；adjusted 追加「原位置已调整」（E16-T15 起）。
  */
 export function reportLocationText(tag: ReportLocationTag): string {
+  const fallback = tag.linkType === 'implant_record' ? '植入记录' : '随访记录';
   const scope =
-    tag.linkType === 'baseline' ? '基线' : (tag.recordLabel ?? '随访记录');
+    tag.linkType === 'baseline' ? '基线' : (tag.recordLabel ?? fallback);
   const anchor = tag.anchorLabel ?? '';
   const text = anchor ? `${scope} · ${anchor}` : scope;
   return tag.adjusted ? `${text}（原位置已调整）` : text;

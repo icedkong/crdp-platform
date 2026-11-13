@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   itemsAtBaselineAnchor,
+  itemsAtImplant,
   itemsAtRecord,
   thumbnailFileOf,
   toNavItems,
@@ -244,5 +245,46 @@ describe('thumbnailFileOf（首附件缩略图候选：只有图片格式换预�
       thumbnailFileOf(row({ firstFile: { fileId: '503', format: 'pdf' } })),
     ).toBeNull();
     expect(thumbnailFileOf(row({ firstFile: null }))).toBeNull();
+  });
+});
+
+describe('e21-T32 / C-PAT-017：植入记录位置（基线资料页签侧）', () => {
+  const implantRow = row({
+    id: '901',
+    locations: [
+      tag({
+        anchorType: 'section',
+        anchorKey: 'device',
+        anchorLabel: '器械信息',
+        linkRecordId: '41',
+        linkType: 'implant_record',
+        recordLabel: '植入记录#2 2025-01-10',
+      }),
+      tag({
+        linkRecordId: '41',
+        linkType: 'implant_record',
+        recordLabel: '植入记录#2 2025-01-10',
+      }),
+    ],
+  });
+
+  it('home 推导：仅植入位置 → baseline（植入记录在基线资料页签）', () => {
+    const [item] = toNavItems([implantRow]);
+    expect(item?.home).toBe('baseline');
+  });
+
+  it('itemsAtImplant：整条（anchorKey 缺省）只取无分组锚点的位置，device / lead 各取各自锚点', () => {
+    const items = toNavItems([implantRow]);
+    expect(itemsAtImplant(items, '41')).toHaveLength(1);
+    expect(itemsAtImplant(items, '41', 'device')).toHaveLength(1);
+    expect(itemsAtImplant(items, '41', 'lead')).toHaveLength(0);
+    // 同一报告单可同时挂整条与分组，两处各显示一次（与随访记录同口径）
+    expect(itemsAtImplant(items, '42')).toHaveLength(0);
+  });
+
+  it('条目只带该位置的植入位置标签（左栏口径一致）', () => {
+    const [item] = itemsAtImplant(toNavItems([implantRow]), '41', 'device');
+    expect(item?.locations).toHaveLength(1);
+    expect(item?.locations[0]?.anchorKey).toBe('device');
   });
 });

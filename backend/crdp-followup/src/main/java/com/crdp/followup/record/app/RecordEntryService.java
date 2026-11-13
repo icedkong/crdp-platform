@@ -164,7 +164,8 @@ public class RecordEntryService {
             List<CompareRuleService.RuleView> compareRules,
             String visitNo,
             Integer sequenceNo,
-            EntryDefaultsView entryDefaults) {}
+            EntryDefaultsView entryDefaults,
+            List<Map<String, Object>> highlightHits) {}
 
     /** 患者摘要（补录记录的表单页头幅；姓名 / 病案号只输出脱敏值）。 */
     public record PatientBriefView(
@@ -246,7 +247,9 @@ public class RecordEntryService {
                         record.visitDate() != null
                                 ? record.visitDate()
                                 : (context == null ? null : context.planDate())),
-                entryDefaultsOf());
+                entryDefaultsOf(),
+                // E21-T32 / C-PAT-018：持久化标红命中（分组条 ▲n 数据面；compare_highlight 关闭为 null）
+                compareHighlights.persistedHits(record.id()));
     }
 
     /** 录入缺省（C-FU-008：随访医生 = 当前用户；无医院会话〔定时作业旁路〕null）。 */

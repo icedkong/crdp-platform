@@ -199,7 +199,7 @@ export interface RecordDeviceContext {
   typeLabel?: null | string;
 }
 
-/** 记录详情（followup.md §3；E15-T07 起附 source 与 visitDate，taskless 记录附 patient 摘要；E17-T02 起附 previous、E17-T03 起附 compareRules、E21-T03 起附 device、E21-T11 起附 visitNo / sequenceNo / entryDefaults）。 */
+/** 记录详情（followup.md §3；E15-T07 起附 source 与 visitDate，taskless 记录附 patient 摘要；E17-T02 起附 previous、E17-T03 起附 compareRules、E21-T03 起附 device、E21-T11 起附 visitNo / sequenceNo / entryDefaults、E21-T32 起附 highlightHits）。 */
 export interface RecordDetailView {
   /** 该表单启用对比规则（E17-T03）：前端实时标红与后端保存复算共用；功能关闭 / 无启用规则为 null。 */
   compareRules?: CompareRule[] | null;
@@ -212,6 +212,8 @@ export interface RecordDetailView {
   entryDefaults?: null | RecordEntryDefaults;
   formCode: string;
   formVersion: number;
+  /** 持久化标红命中（E21-T32 / C-PAT-018 分组条 ▲n）：提交时重算落库的 fu_record.highlight；compare_highlight 关闭或无命中为 null。 */
+  highlightHits?: null | RecordHighlightHit[];
   id: string;
   patient?: null | RecordPatientBrief;
   /** 上一次记录解析（E17-T02 / A-FU-027）：功能关闭、无启用规则或回落字段全空为 null。 */
@@ -230,6 +232,20 @@ export interface RecordDetailView {
 export interface RecordEntryDefaults {
   doctorId: string;
   doctorName: string;
+}
+
+/**
+ * 持久化标红命中（E21-T32 / C-PAT-018）：提交时重算落库的 fu_record.highlight 元素，
+ * 与 FormRenderer 实时标红的 CompareHit 同形（空值键省略）；分组条 ▲n 按 categoryKey 计数。
+ */
+export interface RecordHighlightHit {
+  categoryKey: string;
+  change?: number | string;
+  changeText?: null | string;
+  key: string;
+  message: string;
+  previousValue?: null | number | string;
+  ruleId?: null | number | string;
 }
 
 /** 重复记录提示结果（C-FU-024：同一患者同一有效随访日期已有在册记录〔含草稿，软删不算〕时 duplicate = true）。 */

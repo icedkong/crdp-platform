@@ -122,7 +122,7 @@ public interface ReportSearchMapper {
             </if>
             <if test="c.locationScope == 'BASELINE'">
               AND EXISTS (SELECT 1 FROM rpt_report_link l
-                          WHERE l.report_id = r.id AND l.link_type = 'baseline')
+                          WHERE l.report_id = r.id AND l.link_type IN ('baseline', 'implant_record'))
             </if>
             <if test="c.locationScope == 'FOLLOWUP'">
               AND EXISTS (SELECT 1 FROM rpt_report_link l
@@ -170,7 +170,7 @@ public interface ReportSearchMapper {
             </if>
             <if test="c.locationScope == 'BASELINE'">
               AND EXISTS (SELECT 1 FROM rpt_report_link l
-                          WHERE l.report_id = r.id AND l.link_type = 'baseline')
+                          WHERE l.report_id = r.id AND l.link_type IN ('baseline', 'implant_record'))
             </if>
             <if test="c.locationScope == 'FOLLOWUP'">
               AND EXISTS (SELECT 1 FROM rpt_report_link l

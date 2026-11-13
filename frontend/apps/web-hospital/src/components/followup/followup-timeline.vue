@@ -2,6 +2,7 @@
 import type {
   FormSchema,
   PatientTimelineEntry,
+  RecordHighlightHit,
   ReportLocationInput,
 } from '@crdp/api';
 import type { CategoryProgress } from '@crdp/rules';
@@ -195,10 +196,16 @@ const recordSchema = ref<FormSchema | null>(null);
 const recordData = ref<Record<string, unknown>>({});
 const recordProgress = ref<CategoryProgress[]>([]);
 const recordActiveKey = ref('');
+/** 展开记录的持久化标红命中（E21-T32 / C-PAT-018 分组条 ▲n；compare_highlight 关闭或无命中为空）。 */
+const recordHighlightHits = ref<RecordHighlightHit[]>([]);
 /** 已加载过的记录（切换展开不重复请求；只存模板与值，不含患者敏感信息）。 */
 const recordCache = new Map<
   string,
-  { data: Record<string, unknown>; schema: FormSchema }
+  {
+    data: Record<string, unknown>;
+    highlightHits: RecordHighlightHit[];
+    schema: FormSchema;
+  }
 >();
 
 /** 展开 / 收起（一次只展开一条；按钮在卡片内，stopPropagation 不触发 open）。 */
@@ -216,10 +223,15 @@ async function loadRecord(recordId: string) {
   try {
     const detail = await fetchRecordDetail(recordId);
     const schema = await fetchFormSchema(detail.formCode, detail.formVersion);
-    recordCache.set(recordId, { data: detail.data, schema });
+    recordCache.set(recordId, {
+      data: detail.data,
+      highlightHits: detail.highlightHits ?? [],
+      schema,
+    });
     if (props.expandedRecordId === recordId) {
       recordSchema.value = schema;
       recordData.value = detail.data;
+      recordHighlightHits.value = detail.highlightHits ?? [];
     }
   } catch {
     recordFailed.value = true;
@@ -233,18 +245,34 @@ watch(
   (recordId) => {
     recordActiveKey.value = '';
     recordProgress.value = [];
+    recordHighlightHits.value = [];
     recordFailed.value = false;
     if (!recordId) return;
     const cached = recordCache.get(recordId);
     if (cached) {
       recordSchema.value = cached.schema;
       recordData.value = cached.data;
+      recordHighlightHits.value = cached.highlightHits;
       return;
     }
     recordSchema.value = null;
     void loadRecord(recordId);
   },
   { immediate: true },
+);
+
+/**
+ * 分组条条目 = 已填 / 应填 + 该组标红数（C-PAT-018「程控分组条显示已填 / 应填与标红数」；
+ * 只读视图不实时求值，▲n 读提交时重算落库的 fu_record.highlight——RecordHighlightHit 按
+ * categoryKey 计数，与编辑页 onHighlight 同口径）。
+ */
+const recordBarItems = computed(() =>
+  recordProgress.value.map((item) => ({
+    ...item,
+    highlightCount: recordHighlightHits.value.filter(
+      (hit) => hit.categoryKey === item.key,
+    ).length,
+  })),
 );
 
 /** 分组条点击：滚到该分组锚点（FormRenderer 输出 #crdp-anchor-<key>）并高亮 2 秒。 */
@@ -598,7 +626,7 @@ const tableRows = computed(() =>
               </div>
               <CategoryBar
                 v-model:active-key="recordActiveKey"
-                :items="recordProgress"
+                :items="recordBarItems"
                 show-highlight-count
                 spy
                 @jump="jumpRecordSection"

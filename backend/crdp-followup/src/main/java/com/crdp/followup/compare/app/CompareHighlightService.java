@@ -53,6 +53,9 @@ public class CompareHighlightService {
     /** 规则变更重算的患者分页大小（keyset 游标；整表单已提交记录可达数万行，按患者分批装载）。 */
     static final int PATIENT_PAGE_SIZE = 200;
 
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(CompareHighlightService.class);
+
     /** 命中数组序列化：空值键省略（previousValue / change / changeText 可为 null）。 */
     private static final ObjectMapper JSON =
             new ObjectMapper().setSerializationInclusion(JsonInclude.Include.NON_NULL);
@@ -131,6 +134,30 @@ public class CompareHighlightService {
                 total += recomputePatient(patientId, formCode, enabled);
                 cursor = patientId;
             }
+        }
+    }
+
+    /**
+     * 单条记录的持久化命中（E21-T32 / C-PAT-018 分组条标红数）：记录详情只读视图不下发 compareRules 实时求值， 分组条 ▲n 读提交时重算落库的 {@code
+     * fu_record.highlight}；开关关闭或无命中为 null（读取侧按开关过滤， 与 C-DASH-006 同口径）。元素形如 {@code ruleId / key /
+     * categoryKey / message / previousValue? / change? / changeText?}（与前端 CompareHit 同形）。
+     */
+    public List<Map<String, Object>> persistedHits(long recordId) {
+        if (featureOff()) {
+            return null;
+        }
+        String json = highlights.findHighlightOf(recordId);
+        if (json == null || json.isBlank()) {
+            return null;
+        }
+        try {
+            return JSON.readValue(
+                    json,
+                    JSON.getTypeFactory()
+                            .constructCollectionType(ArrayList.class, LinkedHashMap.class));
+        } catch (JsonProcessingException ex) {
+            log.warn("持久化标红命中解析失败，按无命中处理 recordId={} 原因={}", recordId, ex.getMessage());
+            return null;
         }
     }
 

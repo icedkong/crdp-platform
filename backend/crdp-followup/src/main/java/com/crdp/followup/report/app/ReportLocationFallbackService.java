@@ -35,8 +35,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  *
  * <ul>
  *   <li>巡检口径（与 E16-T02/T13 的锚点校验同一依据）：基线分类对基线表单<b>当前发布版</b>、随访分组对<b>该记录固化版本</b>的模板分类清单。
- *       当前数据模型里位置粒度三种（基线分类、随访整条、随访分组——表单模板只有分类一级，基线分类即基线的 最细粒度），所以退回链是：随访分组 →
- *       整条记录（有上一级可退）；基线分类已不在当前发布版 / 随访记录不存在（无上一级可退）→ 移除该位置， 失去全部位置的报告单进入「未指定位置」（A-ATT-020）。
+ *       当前数据模型里位置粒度四种（基线分类、随访整条、随访分组、植入整条 / 植入分组〔器械信息 / 电极，E21-T32〕——表单模板只有分类一级，基线分类即基线的
+ *       最细粒度），所以退回链是：随访分组 → 整条记录、植入分组 → 整条植入记录（有上一级可退）；基线分类已不在当前发布版 / 随访或植入记录不存在（无上一级可退）→ 移除该位置，
+ *       失去全部位置的报告单进入「未指定位置」（A-ATT-020）。
  *   <li>退回：位置行锚点清空（anchor NULL = 整条）并置 adjusted = 1（位置级「原位置已调整」，V63 列， 前端 reportLocationText
  *       追加提示）；分组退回时整条位置已在册（同一报告单同一位置唯一）则移除分组行、既有整条行置 adjusted = 1。移除与退回都置报告单级 location_adjusted =
  *       1（V66，患者内清单行带出「原位置已调整」）—— 用户经修改位置 add 重新指定后清 0（E16-T13 接口）。
@@ -183,11 +184,15 @@ public class ReportLocationFallbackService {
     private ReportPlan planReport(List<ScanRow> rows, Caches caches) {
         ScanRow first = rows.get(0);
         List<PlannedAction> actions = new ArrayList<>();
-        // 该报告单已有的整条记录位置（分组退回的合并判定：四元组中 anchor 为空即整条）
+        // 该报告单已有的整条记录位置（分组退回的合并判定：四元组中 anchor 为空即整条）；植入与随访分开记账（同数值 id 不串型）
         Set<Long> wholeRecordIds = new LinkedHashSet<>();
+        Set<Long> wholeImplantIds = new LinkedHashSet<>();
         for (ScanRow row : rows) {
             if ("followup_record".equals(row.linkType()) && row.anchorType() == null) {
                 wholeRecordIds.add(row.linkRecordId());
+            }
+            if ("implant_record".equals(row.linkType()) && row.anchorType() == null) {
+                wholeImplantIds.add(row.linkRecordId());
             }
         }
         for (ScanRow row : rows) {
@@ -206,8 +211,50 @@ public class ReportLocationFallbackService {
                 }
                 continue;
             }
+            if ("implant_record".equals(row.linkType())) {
+                // E21-T32 / C-SCAN-021：植入记录不存在 → 移除；分组（器械信息 / 电极）已不在 C_IMPLANT
+                // 当前发布版分类 → 退回整条植入记录（有上一级可退，与随访分组同链路）
+                ReportMapper.ImplantRefRow implant = caches.implant(row.linkRecordId());
+                if (implant == null) {
+                    actions.add(
+                            new PlannedAction(
+                                    row, Kind.REMOVE, "植入记录 " + row.linkRecordId() + " 不存在"));
+                    continue;
+                }
+                if (row.anchorType() == null) {
+                    continue; // 整条植入记录：记录在即有效
+                }
+                if (!"section".equals(row.anchorType())) {
+                    continue; // 防御：不认识的形态不动
+                }
+                Map<String, String> groups = caches.implantCategories();
+                if (groups == null) {
+                    continue; // C_IMPLANT 模板读不出：跳过，不做无依据的退回
+                }
+                if (groups.containsKey(row.anchorKey())) {
+                    continue;
+                }
+                if (wholeImplantIds.contains(row.linkRecordId())) {
+                    actions.add(new PlannedAction(row, Kind.REMOVE, "分组退回整条植入记录（与既有整条位置合并）"));
+                    for (ScanRow whole : rows) {
+                        if ("implant_record".equals(whole.linkType())
+                                && whole.anchorType() == null
+                                && row.linkRecordId().equals(whole.linkRecordId())
+                                && whole.adjusted() != null
+                                && whole.adjusted() == 0) {
+                            actions.add(new PlannedAction(whole, Kind.MARK_ADJUSTED, "分组退回合并"));
+                        }
+                    }
+                } else {
+                    actions.add(
+                            new PlannedAction(
+                                    row, Kind.FALLBACK, "C_IMPLANT 当前发布版已不含分组 " + row.anchorKey()));
+                    wholeImplantIds.add(row.linkRecordId());
+                }
+                continue;
+            }
             if (!"followup_record".equals(row.linkType())) {
-                continue; // implant_record 等（E21-T32）不在此处理
+                continue; // 防御：不认识的位置类型不动
             }
             RecordRow record = caches.record(row.linkRecordId());
             if (record == null) {
@@ -363,6 +410,21 @@ public class ReportLocationFallbackService {
             String label = categories == null ? null : categories.get(row.anchorKey());
             return "基线 · " + (label != null ? label : row.anchorKey());
         }
+        if ("implant_record".equals(row.linkType())) {
+            ReportMapper.ImplantRefRow implant = caches.implant(row.linkRecordId());
+            String recordLabel =
+                    implant == null
+                            ? "植入记录 " + row.linkRecordId()
+                            : (implant.implantDate() == null
+                                    ? "植入记录 " + implant.id()
+                                    : "植入记录 " + implant.implantDate());
+            if (row.anchorType() == null) {
+                return recordLabel;
+            }
+            Map<String, String> groups = caches.implantCategories();
+            String groupLabel = groups == null ? null : groups.get(row.anchorKey());
+            return recordLabel + " · " + (groupLabel != null ? groupLabel : row.anchorKey());
+        }
         RecordRow record = caches.record(row.linkRecordId());
         String recordLabel =
                 record != null ? ReportService.recordTitle(record) : "随访记录 " + row.linkRecordId();
@@ -438,6 +500,10 @@ public class ReportLocationFallbackService {
         private final Map<Long, Boolean> recordMisses = new LinkedHashMap<>();
         private final Map<String, Map<String, String>> sections = new LinkedHashMap<>();
         private final Map<String, Boolean> sectionMisses = new LinkedHashMap<>();
+        private final Map<Long, ReportMapper.ImplantRefRow> implants = new LinkedHashMap<>();
+        private final Map<Long, Boolean> implantMisses = new LinkedHashMap<>();
+        private Map<String, String> implantCategories;
+        private boolean implantCategoriesLoaded;
 
         Map<String, String> baselineCategories() {
             if (!baselineLoaded) {
@@ -452,6 +518,42 @@ public class ReportLocationFallbackService {
                 }
             }
             return baselineCategories;
+        }
+
+        /** 植入记录行（E21-T32）；null = 不存在（含越范围不存在，作业口径无范围概念）。 */
+        ReportMapper.ImplantRefRow implant(Long id) {
+            if (id == null) {
+                return null;
+            }
+            if (implants.containsKey(id)) {
+                return implants.get(id);
+            }
+            if (implantMisses.getOrDefault(id, false)) {
+                return null;
+            }
+            ReportMapper.ImplantRefRow row = mapper.findImplantById(id);
+            if (row == null) {
+                implantMisses.put(id, true);
+                return null;
+            }
+            implants.put(id, row);
+            return row;
+        }
+
+        /** C_IMPLANT 当前发布版分类（E21-T32；读不出记 null + WARN，该批行跳过）。 */
+        Map<String, String> implantCategories() {
+            if (!implantCategoriesLoaded) {
+                implantCategoriesLoaded = true;
+                try {
+                    String code = com.crdp.followup.implant.app.ImplantService.IMPLANT_FORM_CODE;
+                    int version = formService.publishedVersion(code);
+                    implantCategories = categoryMapOf(code, version);
+                } catch (RuntimeException ex) {
+                    log.warn("C_IMPLANT 模板读取失败，本租户植入位置跳过退回判定：{}", ex.getMessage());
+                    implantCategories = null;
+                }
+            }
+            return implantCategories;
         }
 
         RecordRow record(Long id) {

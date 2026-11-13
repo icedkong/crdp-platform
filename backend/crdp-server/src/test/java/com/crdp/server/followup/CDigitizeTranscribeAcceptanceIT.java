@@ -37,7 +37,7 @@ import org.springframework.test.context.ActiveProfiles;
  *       待录入），「无需录入」不计入；移除随访位置 → 回「待录入」、结构化记录不受影响（CL-10）；
  *   <li>C-ACC-34：程控报告单（C_PROGRAM + V94 预置映射 C_PROGRAM_TO_FU）位置选随访记录的程控分组（battery）—— 映射确认把电池电压 /
  *       心室起搏阈值写入该记录（报告单不另存参数）、转录态提交后报告单转「已电子化」； 移除其映射目标随访位置 → 已写入参数不清除、状态回「待录入」（CL-05 / OQ-131②）；
- *   <li>位置守卫（含植入 / 程控分组）：implant_record 位置 E21-T32 前拒绝（40001，锁定当前口径）；程控分组锚点须在该记录固化版本分组清单内。
+ *   <li>位置守卫（含植入 / 程控分组）：implant 开关关闭时植入位置 40301（E21-T32 闸门口径）；程控分组锚点须在该记录固化版本分组清单内。
  * </ol>
  *
  * <p>门控 CRDP_IT_MYSQL_PORT（CI 起 docker compose 注入端口）。自建自清（病案号 IT-E21T27- 前缀；C 预置类型随包
@@ -529,18 +529,18 @@ class CDigitizeTranscribeAcceptanceIT {
     // ---------------------------------------------------------------- 位置守卫（含植入 / 程控分组）
 
     /**
-     * 植入记录位置随 E21-T32 开放、当前拒绝（40001，锁定现行口径）；程控分组锚点不在该记录固化版本分组清单 → 40001； 修改位置 remove 侧
-     * implant_record 同口径拒绝。
+     * 植入记录位置（E21-T32 已开放）：本套 implant 开关保持关闭 → 创建侧 40301；修改位置 remove 侧按四元组匹配在册行（不在册 40001）；
+     * 程控分组锚点不在该记录固化版本分组清单 → 40001。开放形态的完整链路（位置树 / 落行 / 左栏数据面）见 CReportImplantLocationIT。
      */
     @Test
-    void positionGuardsLockImplantAnchorUntilE21T32() {
+    void positionGuardsRejectImplantAnchorWhileFeatureOff() {
         activateCHospitalShape();
         String nurse = hospitalToken("demoa", "nurse.demo");
         long patientId = registeredPatient(nurse, "04");
         Map<?, ?> paperName = firstNameOf("C_PAPER_FORM", nurse);
         long recordId = createBackfillRecord(nurse, patientId, LocalDate.now().minusDays(20));
 
-        // 创建：implant_record 位置 40001（E21-T32 前锁定）
+        // 创建：implant_record 位置 40301（本套 implant 开关关闭，E21-T32 起的闸门口径）
         Map<?, ?> implantRejected =
                 post(
                         BASE + "/reports",
@@ -551,7 +551,7 @@ class CDigitizeTranscribeAcceptanceIT {
                                 str(paperName.get("id")),
                                 List.of(implantLocation(1L)),
                                 List.of()));
-        assertEquals(40001, code(implantRejected), "植入记录位置 E21-T32 前拒绝：" + implantRejected);
+        assertEquals(40301, code(implantRejected), "implant 开关关闭植入位置 40301：" + implantRejected);
 
         // 创建：程控分组锚点不在该记录固化版本 → 40001
         Map<?, ?> badSection =
@@ -583,7 +583,7 @@ class CDigitizeTranscribeAcceptanceIT {
         removal.put("remove", List.of(implantLocation(1L)));
         Map<?, ?> removeRejected =
                 put(BASE + "/reports/" + reportId + "/locations", nurse, removal);
-        assertEquals(40001, code(removeRejected), "修改位置侧 implant_record 同口径拒绝");
+        assertEquals(40001, code(removeRejected), "修改位置侧不在册植入位置 40001（四元组匹配）");
 
         // 对照：合法程控分组位置可创建（battery，V90）——同一记录同一分组在 C-ACC-34 已走全流程，此处锁定 200 形态
         long sectionReport =
@@ -753,7 +753,7 @@ class CDigitizeTranscribeAcceptanceIT {
         return location;
     }
 
-    /** 植入记录整条位置（E21-T32 前被拒绝的形态；anchorType 为 null）。 */
+    /** 植入记录整条位置（anchorType 为 null；E21-T32 起开放、开关关闭 40301）。 */
     private static Map<String, Object> implantLocation(long implantId) {
         Map<String, Object> location = new HashMap<>();
         location.put("linkType", "implant_record");

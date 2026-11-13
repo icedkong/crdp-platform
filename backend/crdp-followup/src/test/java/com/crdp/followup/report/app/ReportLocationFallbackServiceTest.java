@@ -344,6 +344,109 @@ class ReportLocationFallbackServiceTest {
 
     // ---------------------------------------------------------------- 造数
 
+    // ---------------------------------------- 植入位置（E21-T32 / C-SCAN-021）
+
+    /** 植入分组已不在 C_IMPLANT 当前发布版 → 退回整条植入记录（锚点清空 + adjusted + 提示 + 日志）。 */
+    @Test
+    void implantSectionGoneFallsBackToWholeImplant() {
+        when(mapper.scanActiveLinks())
+                .thenReturn(List.of(implantSectionRow(910L, 31L, 41L, "gone", 0)));
+        when(mapper.findImplantById(41L)).thenReturn(implantRef(41L));
+        // C_IMPLANT 当前发布版只剩 lead（模板调整删掉了该分组所在键）
+        when(formService.publishedVersion("C_IMPLANT")).thenReturn(1);
+        when(formService.schema("C_IMPLANT", 1))
+                .thenReturn(schema(List.of(category("lead", "电极"))));
+
+        ReportLocationFallbackService.TenantSummary summary = service.reconcileCurrentTenant();
+
+        assertEquals(1, summary.fallbacks(), "植入分组退回整条植入记录");
+        assertEquals(0, summary.removals());
+        verify(mapper).fallbackToWholeRecord(31L);
+        verify(mapper).markReportLocationAdjusted(910L);
+        ArgumentCaptor<AuditEntry> captor = ArgumentCaptor.forClass(AuditEntry.class);
+        verify(audit).append(captor.capture());
+        assertTrue(
+                captor.getValue().description().contains("植入记录 2025-01-10 · gone → 整条记录"),
+                captor.getValue().description());
+    }
+
+    /** 植入记录不存在（防御：无删除口，异常装载场景）→ 移除位置行，失去全部位置进未指定组。 */
+    @Test
+    void missingImplantRemovesLinks() {
+        when(mapper.scanActiveLinks())
+                .thenReturn(
+                        List.of(
+                                implantWholeRow(911L, 32L, 41L, 0),
+                                implantSectionRow(911L, 33L, 41L, "device", 0)));
+        when(mapper.findImplantById(41L)).thenReturn(null);
+
+        ReportLocationFallbackService.TenantSummary summary = service.reconcileCurrentTenant();
+
+        assertEquals(2, summary.removals(), "整条与分组随记录不存在一并移除");
+        assertEquals(0, summary.fallbacks());
+        verify(mapper).deleteLinkById(32L);
+        verify(mapper).deleteLinkById(33L);
+        verify(mapper, never()).fallbackToWholeRecord(anyLong());
+    }
+
+    /** 在册植入分组仍在当前发布版 → 不动（重复执行结果不变）。 */
+    @Test
+    void validImplantAnchorLeavesEverythingUntouched() {
+        when(mapper.scanActiveLinks())
+                .thenReturn(
+                        List.of(
+                                implantWholeRow(912L, 34L, 41L, 0),
+                                implantSectionRow(912L, 35L, 41L, "device", 0)));
+        when(mapper.findImplantById(41L)).thenReturn(implantRef(41L));
+        when(formService.publishedVersion("C_IMPLANT")).thenReturn(1);
+        when(formService.schema("C_IMPLANT", 1))
+                .thenReturn(schema(List.of(category("device", "器械信息"), category("lead", "电极"))));
+
+        ReportLocationFallbackService.TenantSummary summary = service.reconcileCurrentTenant();
+
+        assertEquals(0, summary.reports(), "无陈旧锚点零写入——重复执行结果不变");
+        verify(mapper, never()).fallbackToWholeRecord(anyLong());
+        verify(mapper, never()).deleteLinkById(anyLong());
+        verify(mapper, never()).bumpVersionByJob(anyLong());
+    }
+
+    private static ReportMapper.ImplantRefRow implantRef(long id) {
+        return new ReportMapper.ImplantRefRow(
+                id, PATIENT, java.time.LocalDate.of(2025, 1, 10), "ACTIVE");
+    }
+
+    private static ScanRow implantWholeRow(
+            long reportId, long linkId, long implantId, int adjusted) {
+        return new ScanRow(
+                linkId,
+                reportId,
+                PATIENT,
+                "程控报告单",
+                "随访程控（示例）",
+                "implant_record",
+                implantId,
+                null,
+                null,
+                1,
+                adjusted);
+    }
+
+    private static ScanRow implantSectionRow(
+            long reportId, long linkId, long implantId, String key, int adjusted) {
+        return new ScanRow(
+                linkId,
+                reportId,
+                PATIENT,
+                "程控报告单",
+                "随访程控（示例）",
+                "implant_record",
+                implantId,
+                "section",
+                key,
+                1,
+                adjusted);
+    }
+
     private static ScanRow baselineRow(long reportId, long linkId, String key, int adjusted) {
         return new ScanRow(
                 linkId,
