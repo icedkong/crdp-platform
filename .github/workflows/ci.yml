@@ -41,8 +41,9 @@ jobs:
       # 令牌 sessionStorage 化、外链 noopener、登录回跳白名单防漂移校验。
       - name: 渗透修复（前端）校验
         run: python3 scripts/check_pentest_remediation_frontend.py
-      # E23-T08：医院 A UAT 对接。入库工具自检（不联网、dry-run / 幂等 / 虚构数据护栏）
-      # + UAT 手册 / 发现清单模板 / 用例集计数与分级映射防漂移校验。
+      # E23-T08 / E23-T23：医院 A / C UAT 对接。入库工具自检（不联网、dry-run /
+      # 幂等 / 虚构数据护栏 / A·C 院区路由与周次校验）+ UAT 手册（A、C 两册）/
+      # 发现清单模板 / 用例集计数与分级映射防漂移校验。
       - name: UAT 对接校验
         run: |
           python3 scripts/uat_intake.py --selftest

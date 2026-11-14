@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""医院 A UAT 发现入缺陷库（E23-T08 · UAT 组织、脚本与问题跟踪，W33–W35）。
+"""UAT 发现入缺陷库（医院 A：E23-T08 · W33–W35；医院 C：E23-T23 · W44–W45）。
 
 按 `AGENTS.md` 第 9 节，与医院的窗口确认、人员组织、现场执行与签字由产品 / 实施在场执行
-（窗口 2027-06-28 ~ 2027-07-16，见 docs/testing/uat-hospital-a.md §9）；本脚本交付
+（A 窗口 2027-06-28 ~ 07-16，见 docs/testing/uat-hospital-a.md §9；C 窗口
+2027-09-13 ~ 09-24，见 docs/testing/uat-hospital-c.md §9）；本脚本交付
 「问题入缺陷库」的机制：把 UAT 现场记录整理出的发现清单（CSV，模板
-`docs/testing/uat-findings-template.csv`）校验后逐条建为 GitHub Issue（缺陷库 =
-icedkong/crdp-platform 的 Issues，沿用 OQ-112 ① 的暂行载体，口径见 OQ-122）。
+`docs/testing/uat-findings-template.csv`，A / C 共用）校验后逐条建为 GitHub Issue
+（缺陷库 = icedkong/crdp-platform 的 Issues，沿用 OQ-112 ① 的暂行载体，口径见
+OQ-122 / OQ-153）。`--hospital a|c` 选择院区路由（修复 / 复测任务与 UAT-ID 合法
+周次，默认 a 保持向后兼容）。
 
 安全护栏：
 
@@ -13,13 +16,15 @@ icedkong/crdp-platform 的 Issues，沿用 OQ-112 ① 的暂行载体，口径�
 2. token 只经 `git credential fill`（host=github.com）取自凭据存储，仅进请求头，
    不回显、不落盘、不写入 Issue；
 3. 幂等：Issue 正文含 `UAT-ID: <finding_id>` 标记，入库前拉取仓库既有 Issue
-   （含关闭）比对标记，已存在的跳过，重复运行不重复建单；
+   （含关闭）比对标记，已存在的跳过，重复运行不重复建单（A 周次 W33–W35 与
+   C 周次 W44–W45 编号空间不冲突）；
 4. 严禁真实数据入缺陷库（AGENTS §5.5）：校验发现文本中不得出现疑似真实手机号
    （1[3-9] 开头 11 位）与居民身份证号（18 位）；证据只引用 UAT 执行记录表行号 /
    截图编号（截图存 UAT 共享目录，不入仓库）；
 5. 分级映射（OQ-122 ②，沿用 OQ-112 的四级梯子）：阻断 / 严重 / 一般 / 建议 →
-   label `severity:high|medium|low|info`，另打 `bug`、`UAT`、`E23`；正文标注修复
-   任务 E23-T09 / E23-T10（每日 triage 定责）与复测任务 E19-T10。
+   label `severity:high|medium|low|info`，另打 `bug`、`UAT`、`E23`；正文按院区
+   标注修复任务（A：E23-T09 / E23-T10；C：E23-T24 / E23-T25，每日 triage 定责）
+   与复测任务（A：E19-T10；C：E21-T30）。
 
 主仓库：https://github.com/icedkong/crdp-platform
 """
@@ -110,11 +115,27 @@ MODULE_LABELS_ZH = {
     "other": "其他",
 }
 
-# 修复 / 复测责任任务（docs/tasks/tasks.csv E23-T09 / E23-T10 / E19-T10）
-FIX_TASKS = "E23-T09 / E23-T10（每日 triage 定责，手册 §6）"
-RETEST_TASK = "E19-T10（A UAT 支持与缺陷复测）"
+# 修复 / 复测责任任务与合法周次，按院区路由（docs/tasks/tasks.csv：
+# A = E23-T09 / E23-T10 修复 + E19-T10 复测，窗口 W33–W35；C = E23-T24 / E23-T25
+# 修复 + E21-T30 复测，窗口 W44–W45；手册分别为 uat-hospital-a/c.md §6）
+HOSPITALS = {
+    "a": {
+        "weeks": (33, 34, 35),
+        "fix_tasks": "E23-T09 / E23-T10（每日 triage 定责，手册 §6）",
+        "retest_task": "E19-T10（A UAT 支持与缺陷复测）",
+        "source": "来源：E23-T08 医院 A UAT（W33–W35）发现清单；由 `scripts/uat_intake.py` 入库。",
+    },
+    "c": {
+        "weeks": (44, 45),
+        "fix_tasks": "E23-T24 / E23-T25（每日 triage 定责，手册 §6）",
+        "retest_task": "E21-T30（C UAT 支持与缺陷复测）",
+        "source": "来源：E23-T23 医院 C UAT（W44–W45）发现清单；由 `scripts/uat_intake.py` 入库。",
+    },
+}
+DEFAULT_HOSPITAL = "a"
 
-# finding_id 口径：UAT-W{周次 1~2 位}-{流水 3 位}，如 UAT-W34-001
+# finding_id 口径：UAT-W{周次 1~2 位}-{流水 3 位}，如 UAT-W34-001（周次须落在
+# 所选院区的 UAT 窗口内，见 HOSPITALS[*]["weeks"]）
 ID_PATTERN = re.compile(r"^UAT-W\d{1,2}-\d{3}$")
 # AGENTS §5.5：疑似真实联系方式 / 证件号不得进仓库（含缺陷库）
 MOBILE_CN_PATTERN = re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)")
@@ -165,8 +186,11 @@ def lint_sensitive_text(text: str) -> list[str]:
     return found
 
 
-def validate_rows(rows: list[dict[str, str]]) -> list[str]:
+def validate_rows(
+    rows: list[dict[str, str]], hospital: str = DEFAULT_HOSPITAL
+) -> list[str]:
     errors: list[str] = []
+    weeks = HOSPITALS[hospital]["weeks"]
     seen_ids: set[str] = set()
     for i, row in enumerate(rows, start=2):  # 第 1 行是表头
         rid = (row.get("finding_id") or "").strip()
@@ -175,6 +199,10 @@ def validate_rows(rows: list[dict[str, str]]) -> list[str]:
             errors.append(f"{where}：finding_id 为空")
         elif not ID_PATTERN.match(rid):
             errors.append(f"{where}：finding_id 须形如 UAT-W34-001")
+        elif int(rid.split("-")[1][1:]) not in weeks:
+            errors.append(
+                f"{where}：周次不在医院 {hospital.upper()} 的 UAT 窗口（W{min(weeks)}–W{max(weeks)}）"
+            )
         elif rid in seen_ids:
             errors.append(f"{where}：finding_id 重复")
         seen_ids.add(rid)
@@ -221,7 +249,8 @@ def to_issue_title(row: dict[str, str]) -> str:
     return f"[UAT{sev}] {row.get('title', '').strip()}（{row.get('finding_id', '').strip()}）"
 
 
-def to_issue_body(row: dict[str, str]) -> str:
+def to_issue_body(row: dict[str, str], hospital: str = DEFAULT_HOSPITAL) -> str:
+    routing = HOSPITALS[hospital]
     module = (row.get("module") or "").strip()
     module_zh = MODULE_LABELS_ZH.get(module, module)
     lines = [
@@ -233,8 +262,8 @@ def to_issue_body(row: dict[str, str]) -> str:
         f"- **模块**：{module_zh}（{module}）",
         f"- **位置**：{(row.get('page_or_api') or '').strip()}",
         f"- **提出人角色**：{(row.get('reporter_role') or '').strip()}",
-        f"- **修复任务**：{FIX_TASKS}",
-        f"- **复测任务**：{RETEST_TASK}",
+        f"- **修复任务**：{routing['fix_tasks']}",
+        f"- **复测任务**：{routing['retest_task']}",
         "",
         "## 复现步骤",
         "",
@@ -258,7 +287,7 @@ def to_issue_body(row: dict[str, str]) -> str:
         "",
         "---",
         "",
-        "来源：E23-T08 医院 A UAT（W33–W35）发现清单；由 `scripts/uat_intake.py` 入库。",
+        routing["source"],
         f"{ID_MARKER_PREFIX}{(row.get('finding_id') or '').strip()}",
         "",
     ]
@@ -344,12 +373,16 @@ def existing_marker_ids(repo: str, token: str, max_pages: int = 20) -> set[str]:
     return ids
 
 
-def create_issue(repo: str, token: str, row: dict[str, str]) -> str:
+def create_issue(repo: str, token: str, row: dict[str, str], hospital: str) -> str:
     result = api(
         token,
         "POST",
         f"/repos/{repo}/issues",
-        {"title": to_issue_title(row), "body": to_issue_body(row), "labels": to_labels(row)},
+        {
+            "title": to_issue_title(row),
+            "body": to_issue_body(row, hospital),
+            "labels": to_labels(row),
+        },
     )
     return str(result.get("html_url", result.get("number", "?")))
 
@@ -357,18 +390,24 @@ def create_issue(repo: str, token: str, row: dict[str, str]) -> str:
 # ---------- 入库主流程 ----------
 
 
-def run_intake(csv_path: Path, repo: str, apply: bool, ensure: bool) -> int:
+def run_intake(
+    csv_path: Path, repo: str, apply: bool, ensure: bool, hospital: str = DEFAULT_HOSPITAL
+) -> int:
     rows, errors = load_findings(csv_path)
     if errors:
         for e in errors:
             print(f"✗ {e}", file=sys.stderr)
         return 1
-    errors = validate_rows(rows)
+    errors = validate_rows(rows, hospital)
     if errors:
         for e in errors:
             print(f"✗ {e}", file=sys.stderr)
         return 1
-    print(f"校验通过：{len(rows)} 条发现（{csv_path}）")
+    weeks = HOSPITALS[hospital]["weeks"]
+    print(
+        f"校验通过：{len(rows)} 条发现（{csv_path}；医院 {hospital.upper()}，"
+        f"窗口 W{min(weeks)}–W{max(weeks)}）"
+    )
 
     token = ""
     existing: set[str] = set()
@@ -396,7 +435,7 @@ def run_intake(csv_path: Path, repo: str, apply: bool, ensure: bool) -> int:
             print(f"  正文含幂等标记 {ID_MARKER_PREFIX}{rid}")
             created_n += 1
             continue
-        url = create_issue(repo, token, row)
+        url = create_issue(repo, token, row, hospital)
         print(f"✓ 已创建 {rid} → {url}")
         created_n += 1
     mode = "apply" if apply else "dry-run（未联网；重跑以 --apply 落库）"
@@ -513,6 +552,30 @@ def selftest() -> int:
     # 9. 模块清单与手册 §5 分组一致（13 组）
     check("模块枚举与手册 §5 分组数一致（13）", len(MODULES) == 13 and len(MODULE_LABELS_ZH) == 13)
 
+    # 10. 院区路由（医院 C：E23-T23 · W44–W45）
+    check("院区路由枚举 = {a, c}", sorted(HOSPITALS) == ["a", "c"])
+    c_row = dict(zip(EXPECTED_COLUMNS, GOOD_ROW.replace("UAT-W34-003", "UAT-W44-003").split(",")))
+    c_body = to_issue_body(c_row, "c")
+    check("C 正文标注修复任务 E23-T24 / E23-T25", "E23-T24" in c_body and "E23-T25" in c_body)
+    check("C 正文标注复测任务 E21-T30", "E21-T30" in c_body)
+    check("C 正文来源署名 E23-T23 / W44–W45", "E23-T23" in c_body and "W44–W45" in c_body)
+    check("A 正文不含 C 侧任务（默认路由不串院）", "E23-T24" not in body and "E21-T30" not in body)
+    check("C 正文不含 A 侧任务", "E23-T09" not in c_body and "E19-T10" not in c_body)
+    check("周次校验：W44 在 C 窗口通过", not validate_rows([c_row], "c"))
+    check(
+        "周次校验：W44 不在 A 窗口被拦",
+        any("窗口" in e for e in validate_rows([c_row], "a")),
+    )
+    a_row = dict(zip(EXPECTED_COLUMNS, GOOD_ROW.split(",")))
+    check(
+        "周次校验：W34 在 A 窗口通过",
+        not validate_rows([a_row], "a"),
+    )
+    check(
+        "周次校验：W34 不在 C 窗口被拦",
+        any("窗口" in e for e in validate_rows([a_row], "c")),
+    )
+
     failed = [n for n, ok in checks if not ok]
     for n, ok in checks:
         print(("✓ " if ok else "✗ ") + n)
@@ -525,10 +588,17 @@ def selftest() -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="UAT 发现清单校验并写入 GitHub Issues 缺陷库（默认 dry-run）"
+        description="UAT 发现清单校验并写入 GitHub Issues 缺陷库（默认 dry-run，医院 A/C 路由见 --hospital）"
     )
     parser.add_argument("csv", nargs="?", help=f"发现清单 CSV（缺省用仓库模板 {TEMPLATE_RELPATH}）")
     parser.add_argument("--repo", default=REPO_DEFAULT, help=f"缺陷库所在仓库（默认 {REPO_DEFAULT}）")
+    parser.add_argument(
+        "--hospital",
+        choices=sorted(HOSPITALS),
+        default=DEFAULT_HOSPITAL,
+        help="院区路由：a=医院 A（修复 E23-T09/T10、复测 E19-T10、周次 W33–W35）；"
+        "c=医院 C（修复 E23-T24/T25、复测 E21-T30、周次 W44–W45）",
+    )
     parser.add_argument("--apply", action="store_true", help="真正写缺陷库（默认 dry-run，不联网）")
     parser.add_argument("--ensure-labels", action="store_true", help="顺带核对 / 创建 UAT 等 label（需 --apply）")
     parser.add_argument("--selftest", action="store_true", help="运行内嵌自检（不联网，CI 恒跑）")
@@ -536,7 +606,7 @@ def main() -> int:
     if args.selftest:
         return selftest()
     csv_path = Path(args.csv) if args.csv else Path(__file__).resolve().parent.parent / TEMPLATE_RELPATH
-    return run_intake(csv_path, args.repo, args.apply, args.ensure_labels)
+    return run_intake(csv_path, args.repo, args.apply, args.ensure_labels, args.hospital)
 
 
 if __name__ == "__main__":
