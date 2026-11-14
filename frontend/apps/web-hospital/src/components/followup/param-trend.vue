@@ -21,12 +21,27 @@ import {
   trendSeriesFor,
   trendTableRows,
 } from '@crdp/api';
-import { Button, Empty, Radio, RadioGroup, Spin, Table } from 'ant-design-vue';
+import {
+  Button,
+  Card,
+  Empty,
+  Pagination,
+  Radio,
+  RadioGroup,
+  Spin,
+  Table,
+} from 'ant-design-vue';
 
 import { fetchPatientImplants } from '#/api/core/implant';
 import { fetchPatientParamTrend } from '#/api/core/patient';
+import { useBreakpoint } from '#/reference/use-breakpoint';
+import { pageSlice } from '#/views/followup/patient/detail-responsive-logic';
 
-import { paramTrendChartOption, trendSeparators } from './param-trend-logic';
+import {
+  paramTrendChartOption,
+  trendCardLines,
+  trendSeparators,
+} from './param-trend-logic';
 
 defineOptions({ name: 'ParamTrend' });
 
@@ -35,6 +50,11 @@ defineOptions({ name: 'ParamTrend' });
  * 历次参数表；可切换心房 / 心室、阈值 / 感知 / 阻抗 / 比例、电池）。标红点 =
  * 与上次对比超出阈值（C-FU-010，接口 abnormal 位）；器械更换 / 升级处画分隔线
  * （E21-T02 植入记录推导，电极修正不画——沿用电极的曲线连续）。
+ *
+ * E24-T10 / pages.md §4.7「手机：图占满宽，表格改卡片（随 C 在 M5 做）」：
+ * 手机形态折线图保留（容器通栏），历次参数表转卡片（随访日期为标题、参数逐行、
+ * 标红值错误色、缺测 —），卡片分页与表格每页 20 同口径（detail-responsive-logic
+ * 的 pageSlice，切类别 / 腔室 / 电池参数回第 1 页）。
  *
  * 页签本身随功能开关 param_trend 显隐（detail-tabs-logic）；后端趋势接口随 C
  * 后续任务落地（patient.md §7 契约），未就绪时按加载失败处理、可重试。
@@ -128,6 +148,14 @@ const tableRows = computed(() =>
   })),
 );
 
+// E24-T10 / §4.7 手机：历次参数表转卡片（图保留通栏），分页与表格每页 20 同口径
+const { isMobile } = useBreakpoint();
+const cardPage = ref(1);
+const cardRows = computed(() => pageSlice(tableRows.value, cardPage.value));
+watch([kind, chamber, batteryParam], () => {
+  cardPage.value = 1;
+});
+
 const legendNote =
   '红色点 = 与上次对比超出阈值（C-FU-010）；竖虚线 = 器械更换 / 升级分隔（沿用电极的曲线连续，C-FU-012）。';
 </script>
@@ -187,7 +215,42 @@ const legendNote =
       <Empty v-else-if="!loading && !hasData" description="暂无程控参数记录" />
       <div v-else-if="view" class="chart-block">
         <EchartsUI ref="chartRef" height="360px" data-testid="trend-chart" />
+        <!-- E24-T10 / §4.7 手机：历次参数表改卡片（随访日期为标题、参数逐行、
+             标红值错误色、缺测 —），分页与表格每页 20 同口径 -->
+        <div v-if="isMobile" class="cards" data-testid="trend-card-list">
+          <Card
+            v-for="row in cardRows"
+            :key="row.recordId"
+            :bordered="false"
+            class="trend-card"
+            data-testid="trend-card"
+            size="small"
+          >
+            <template #title>{{ row.date }}</template>
+            <div
+              v-for="line in trendCardLines(row, tableSeries)"
+              :key="line.label"
+              class="card-line"
+            >
+              <span class="card-label">{{ line.label }}</span>
+              <!-- 缺测显示 —；标红值带错误色（C-FU-010 abnormal 位，与表格同口径） -->
+              <span :class="{ abnormal: line.abnormal }">{{ line.value }}</span>
+            </div>
+          </Card>
+          <div v-if="tableRows.length > 20" class="card-pagination">
+            <span class="card-total">共 {{ tableRows.length }} 次</span>
+            <Pagination
+              :current="cardPage"
+              data-testid="trend-card-pagination"
+              :page-size="20"
+              simple
+              :total="tableRows.length"
+              @change="(page: number) => (cardPage = page)"
+            />
+          </div>
+        </div>
         <Table
+          v-else
           :columns="tableColumns"
           :data-source="tableRows"
           :pagination="{ pageSize: 20, showSizeChanger: false }"
@@ -235,6 +298,38 @@ const legendNote =
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+/* E24-T10 / §4.7 手机卡片（口径与患者详情沟通 / 操作日志卡片一致） */
+.cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.card-line {
+  display: flex;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 22px;
+}
+
+.card-label {
+  min-width: 120px;
+  color: rgb(0 0 0 / 45%);
+}
+
+.card-pagination {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.card-total {
+  font-size: 12px;
+  color: rgb(0 0 0 / 45%);
 }
 
 /* 首次加载占位（保持 Spin 高度，避免闪烁） */

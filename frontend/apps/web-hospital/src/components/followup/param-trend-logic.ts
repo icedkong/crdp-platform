@@ -1,6 +1,8 @@
 /**
  * E21-T13 / C-FU-012：参数趋势图的 ECharts 装配与器械更换分隔线纯逻辑
  * （组件 param-trend.vue；折线图数据契约见 @crdp/api patient-trend）。
+ * E24-T10 / pages.md §4.7「手机：图占满宽，表格改卡片」：trendCardLines 把
+ * 历次参数表行组装成手机卡片字段行（与表格列头 / 标红口径一致）。
  *
  * - 分隔线：植入记录里「更换 / 升级」产生新器械（E21-T02 每次变更新增一条记录），
  *   首次植入与电极修正不算——电极修正后沿用电极的阻抗曲线连续
@@ -10,7 +12,11 @@
  * - 标红点：abnormal 数据点用错误色 #FF4D4F（tokens colors.error，C-FU-010
  *   与上次对比超出阈值）；缺测日期为 null（断点，不跨段连线）。
  */
-import type { ImplantRecordView, SelectedTrendSeries } from '@crdp/api';
+import type {
+  ImplantRecordView,
+  ParamTrendRow,
+  SelectedTrendSeries,
+} from '@crdp/api';
 import type { EChartsOption } from 'echarts';
 
 import { colors } from '@crdp/tokens';
@@ -49,6 +55,31 @@ export function separatorMarkLineIndex(
 ): null | number {
   const index = visitDates.findIndex((date) => date > separatorDate);
   return index > 0 && index < visitDates.length ? index : null;
+}
+
+/** E24-T10 / pages.md §4.7 手机卡片字段行（历次参数表转卡片，随 C 在 M5 做）。 */
+export interface TrendCardLine {
+  /** 与上次对比超出阈值（C-FU-010）：模板加错误色，与表格 abnormal 单元格同口径。 */
+  abnormal: boolean;
+  /** 参数名（带单位，与表格列头一致，如「心房起搏阈值(V)」）。 */
+  label: string;
+  /** 参数值；该次随访缺测为 —。 */
+  value: string;
+}
+
+/** 历次参数表行 → 手机卡片字段行：当前视图的参数逐行（trendTableRows 的行口径）。 */
+export function trendCardLines(
+  row: ParamTrendRow,
+  series: SelectedTrendSeries[],
+): TrendCardLine[] {
+  return series.map((item) => {
+    const cell = row.cells[item.param];
+    return {
+      abnormal: cell?.abnormal ?? false,
+      label: item.unit ? `${item.label}(${item.unit})` : item.label,
+      value: cell ? String(cell.value) : '—',
+    };
+  });
 }
 
 /** 折线图装配：x 轴 = 随访日期，系列 = 选中参数（abnormal 点错误色、缺测断点）。 */

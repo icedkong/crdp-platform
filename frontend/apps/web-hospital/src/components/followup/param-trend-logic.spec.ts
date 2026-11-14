@@ -1,10 +1,11 @@
-import type { ImplantRecordView } from '@crdp/api';
+import type { ImplantRecordView, ParamTrendRow } from '@crdp/api';
 
 import { describe, expect, it } from 'vitest';
 
 import {
   paramTrendChartOption,
   separatorMarkLineIndex,
+  trendCardLines,
   trendSeparators,
 } from './param-trend-logic';
 
@@ -14,6 +15,9 @@ import {
  * 时阻抗曲线连续，hospital-c-spec §5）；分隔线落在更换后第一次随访的刻度上、
  * 更换早于全部随访或晚于最后一次随访时不画；标红点（abnormal）用错误色 #FF4D4F；
  * 缺测日期为 null（断点，不跨段连线）。
+ *
+ * E24-T10 / pages.md §4.7「手机：图占满宽，表格改卡片」：历次参数表行 → 卡片
+ * 字段行（参数名带单位、值缺测为 —、abnormal 透传给模板标红）。
  */
 
 function implant(
@@ -85,6 +89,39 @@ describe('separatorMarkLineIndex：分隔线落在更换后第一次随访刻度
 
   it('更换晚于最后一次随访（尚无更换后数据）→ 不画', () => {
     expect(separatorMarkLineIndex(dates, '2026-01-01')).toBeNull();
+  });
+});
+
+describe('trendCardLines：手机卡片字段行（§4.7 表格改卡片）', () => {
+  const series = [
+    { label: '心房起搏阈值', param: 'ra_threshold', points: [], unit: 'V' },
+    { label: '心室起搏阈值', param: 'rv_threshold', points: [], unit: 'V' },
+    { label: '心房起搏比例', param: 'ra_percent', points: [], unit: '%' },
+  ];
+  const row: ParamTrendRow = {
+    cells: {
+      ra_threshold: { abnormal: true, value: 1.1 },
+      rv_threshold: { abnormal: false, value: 0.8 },
+    },
+    date: '2026-07-15',
+    recordId: '902',
+  };
+
+  it('参数逐行：label 带单位、值与标红位透传、缺测为 —（与表格同口径）', () => {
+    expect(trendCardLines(row, series)).toEqual([
+      { abnormal: true, label: '心房起搏阈值(V)', value: '1.1' },
+      { abnormal: false, label: '心室起搏阈值(V)', value: '0.8' },
+      { abnormal: false, label: '心房起搏比例(%)', value: '—' },
+    ]);
+  });
+
+  it('无单位参数 label 不带括号；空系列返回空数组', () => {
+    expect(
+      trendCardLines({ cells: {}, date: '2026-07-15', recordId: '902' }, [
+        { label: 'AT/AF 负荷', param: 'at_af', points: [], unit: '' },
+      ]),
+    ).toEqual([{ abnormal: false, label: 'AT/AF 负荷', value: '—' }]);
+    expect(trendCardLines(row, [])).toEqual([]);
   });
 });
 
