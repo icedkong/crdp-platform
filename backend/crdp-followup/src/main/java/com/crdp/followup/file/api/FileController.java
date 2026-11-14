@@ -1,5 +1,6 @@
 package com.crdp.followup.file.api;
 
+import com.crdp.followup.file.app.FileDuplicateCheckService;
 import com.crdp.followup.file.app.FilePolicyService;
 import com.crdp.followup.file.app.FilePreviewService;
 import com.crdp.followup.file.app.FileUploadService;
@@ -30,12 +31,17 @@ public class FileController {
     private final FileUploadService upload;
     private final FilePolicyService policy;
     private final FilePreviewService preview;
+    private final FileDuplicateCheckService duplicateCheck;
 
     public FileController(
-            FileUploadService upload, FilePolicyService policy, FilePreviewService preview) {
+            FileUploadService upload,
+            FilePolicyService policy,
+            FilePreviewService preview,
+            FileDuplicateCheckService duplicateCheck) {
         this.upload = upload;
         this.policy = policy;
         this.preview = preview;
+        this.duplicateCheck = duplicateCheck;
     }
 
     @Operation(
@@ -73,5 +79,19 @@ public class FileController {
     @RequireModule("followup")
     public ApiResponse<FilePreviewService.PreviewGrant> previewUrl(@PathVariable long fileId) {
         return ApiResponse.ok(preview.previewUrl(fileId));
+    }
+
+    @Operation(
+            summary =
+                    "重复文件提示（E21-T18 / C-SCAN-017）：按上传返回的 sha256 查已上传过该文件的患者，"
+                            + "只在当前用户可见范围内返回且姓名 / 病案号脱敏；"
+                            + "duplicate = true 时前端提示「该文件已上传过（所属患者：…），确定继续？」，不阻止保存；"
+                            + "只按已挂报告单的文件命中（刚上传未挂记录的这份不算），sha256 缺失 / 非 64 位十六进制 40001")
+    @GetMapping("/api/hospital/files/check-duplicate")
+    @RequireModule("followup")
+    @RequiresPermission("followup:scan:upload")
+    public ApiResponse<FileDuplicateCheckService.DuplicateCheckView> checkDuplicate(
+            @RequestParam(value = "sha256", required = false) String sha256) {
+        return ApiResponse.ok(duplicateCheck.check(sha256));
     }
 }

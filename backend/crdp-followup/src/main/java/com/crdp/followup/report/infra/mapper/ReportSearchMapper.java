@@ -1,5 +1,6 @@
 package com.crdp.followup.report.infra.mapper;
 
+import com.crdp.followup.file.app.FileDuplicateCheckPort;
 import com.crdp.framework.datascope.DataScope;
 import java.time.LocalDate;
 import java.util.List;
@@ -259,4 +260,28 @@ public interface ReportSearchMapper {
             ORDER BY u.display_name ASC
             """)
     List<UserOptionRow> uploaderOptions();
+
+    /**
+     * 重复文件提示的命中患者（E21-T18 / C-SCAN-017）：按文件 SHA-256 找已挂 NORMAL 报告单的患者。 只算已挂报告单（{@code
+     * rpt_report_file}）且未删除（sys_file ≠ DELETED）的文件——PENDING 上传没有患者归属不参与（刚上传 的这份自查不能命中自己，见
+     * FileDuplicateCheckService 口径）；同一患者多份报告单只出一行；患者 id 升序保证 LIMIT 截断确定。
+     */
+    @DataScope(resource = "patient")
+    @Select(
+            """
+            SELECT pt.id AS patientId,
+                   pt.name_cipher AS nameCipher, pt.mrn_cipher AS mrnCipher,
+                   pt.visit_no AS visitNo, w.name AS wardName
+            FROM sys_file sf
+            JOIN rpt_report_file rf ON rf.file_id = sf.id
+            JOIN rpt_report r ON r.id = rf.report_id AND r.status = 'NORMAL'
+            JOIN pt_patient pt ON pt.id = r.patient_id AND pt.deleted = 0
+            LEFT JOIN ward w ON w.id = pt.ward_id
+            WHERE sf.sha256 = #{sha256} AND sf.status <> 'DELETED'
+            GROUP BY pt.id, pt.name_cipher, pt.mrn_cipher, pt.visit_no, w.name
+            ORDER BY pt.id ASC
+            LIMIT #{limit}
+            """)
+    List<FileDuplicateCheckPort.DuplicateFilePatientRow> findPatientsByFileSha256(
+            @Param("sha256") String sha256, @Param("limit") int limit);
 }
