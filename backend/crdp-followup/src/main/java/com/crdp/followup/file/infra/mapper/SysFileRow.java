@@ -1,7 +1,10 @@
 package com.crdp.followup.file.infra.mapper;
 
+import java.time.LocalDateTime;
+
 /**
- * sys_file 行（E10-T01；E10-T02 起文件体只存对象存储，台账不带 body；E10-T03 起图片带缩略图键与页数）。 insert 由 MyBatis 回填自增 id。
+ * sys_file 行（E10-T01；E10-T02 起文件体只存对象存储，台账不带 body；E10-T03 起图片带缩略图键与页数； E22-T15 起带病毒扫描状态）。 insert 由
+ * MyBatis 回填自增 id。
  */
 public class SysFileRow {
 
@@ -26,6 +29,12 @@ public class SysFileRow {
     private Integer pages;
 
     private String status;
+
+    /** 病毒扫描状态（E22-T15 / D-01 整改）：UNSCANNED / CLEAN / INFECTED / HASH_MISMATCH（迁移 V139）。 */
+    private String virusScanStatus;
+
+    /** 病毒扫描时间（上传同步扫描或补扫作业回填）。 */
+    private LocalDateTime virusScannedAt;
 
     private long uploaderId;
 
@@ -107,6 +116,22 @@ public class SysFileRow {
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+    public String getVirusScanStatus() {
+        return virusScanStatus;
+    }
+
+    public void setVirusScanStatus(String virusScanStatus) {
+        this.virusScanStatus = virusScanStatus;
+    }
+
+    public LocalDateTime getVirusScannedAt() {
+        return virusScannedAt;
+    }
+
+    public void setVirusScannedAt(LocalDateTime virusScannedAt) {
+        this.virusScannedAt = virusScannedAt;
     }
 
     public long getUploaderId() {

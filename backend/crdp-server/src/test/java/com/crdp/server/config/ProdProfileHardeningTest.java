@@ -90,4 +90,26 @@ class ProdProfileHardeningTest {
                 yaml.getProperty("crdp.audit.archive.storage.obs.bucket"),
                 "归档桶名经 CRDP_OBS_ARCHIVE_BUCKET 注入");
     }
+
+    /**
+     * E22-T15 / 等保 D-01 整改：上传病毒扫描（clamd INSTREAM）生产接线以字面量锁定——mode 经 {@code CRDP_VIRUS_SCAN_MODE}
+     * 注入、缺省 off（clamd 副本部署并核验后置 clamd，整改手册 §5 待人工项）； clamd 地址经 {@code CRDP_CLAMD_HOST} / {@code
+     * CRDP_CLAMD_PORT} 注入。启用后扫描不可用一律 50300 不放行（fail closed）。
+     */
+    @Test
+    void virusScanModeWiredThroughEnvInProd() {
+        Properties yaml = prodYaml();
+        assertEquals(
+                "${CRDP_VIRUS_SCAN_MODE:off}",
+                yaml.getProperty("crdp.file.virus-scan.mode"),
+                "生产病毒扫描模式经 CRDP_VIRUS_SCAN_MODE 注入（缺省 off：clamd 部署核验后置 clamd）");
+        assertEquals(
+                "${CRDP_CLAMD_HOST:127.0.0.1}",
+                yaml.getProperty("crdp.file.virus-scan.clamd.host"),
+                "clamd 地址经 CRDP_CLAMD_HOST 注入（CCE 内 Service 名）");
+        assertEquals(
+                "${CRDP_CLAMD_PORT:3310}",
+                yaml.getProperty("crdp.file.virus-scan.clamd.port"),
+                "clamd 端口经 CRDP_CLAMD_PORT 注入");
+    }
 }

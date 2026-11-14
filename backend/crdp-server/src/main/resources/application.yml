@@ -153,6 +153,21 @@ crdp:
       # 链接签名密钥（Base64，解码后 ≥ 32 字节）。这里只放开发默认值（与 crdp.crypto.local-key 同口径），
       # 生产经环境变量 CRDP_FILE_DOWNLOAD_SIGNING_KEY 注入（application-prod.yml 无默认，缺省启动即失败）
       signing-key: "ZGV2LW9ubHktZmlsZS1kb3dubG9hZC1zaWduaW5nLWtleQ=="
+    virus-scan:
+      # E22-T15 / 等保自查 D-01 整改（恶意代码防范，tech-plan §10）：上传病毒扫描。
+      # off（默认，本机 / CI / 未部署 clamd）不扫描，台账 virus_scan_status=UNSCANNED 由补扫作业补；
+      # clamd 启用同步扫描（INSTREAM），不可用时上传 50300 不放行（fail closed）。
+      # 生产经 CRDP_VIRUS_SCAN_MODE 注入（application-prod.yml）：clamd 副本部署并核验后置 clamd。
+      # 引号必须：裸 off 会被 YAML 1.1 解析成布尔 false，@ConditionalOnProperty 两分支都不命中（无 bean 启动失败）
+      mode: "off"
+      # 存量补扫作业单租户单趟批量上限（每日 03:20 一趟，大存量逐晚推进）
+      retro-batch-limit: 200
+      clamd:
+        # clamd 地址（K8s 内走 Service 名；本机调试可 colima 起一个 clamd 容器映射 3310）
+        host: 127.0.0.1
+        port: 3310
+        connect-timeout: 2s
+        read-timeout: 30s
 
 info:
   app:

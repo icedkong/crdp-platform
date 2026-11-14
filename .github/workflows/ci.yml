@@ -183,6 +183,12 @@ jobs:
         run: |
           python3 scripts/mlps_onsite_intake.py --selftest
           python3 scripts/check_mlps_onsite.py
+      # E22-T15：等保测评整改（后端 / 全栈 1）。D-01（上传病毒扫描，tech-plan §10）
+      # 修复面与整改手册防漂移：clamd INSTREAM 适配器与 fail closed 语义、上传链路
+      # 40001/50300 与 FILE_VIRUS_REJECTED 审计、followup V139 扫描列、补扫作业、
+      # prod 配置字面量、自查回写与索引接线；clamd 部署与启用由运维执行（OQ-154）。
+      - name: 等保测评整改校验（E22-T15）
+        run: python3 scripts/check_mlps_remediation.py
       - name: 关闭依赖容器
         if: always()
         run: docker compose down -v

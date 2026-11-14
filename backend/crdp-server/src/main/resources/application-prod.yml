@@ -55,6 +55,15 @@ crdp:
       # 经 DEW 凭据管理 / 环境变量注入，不进镜像；此处无默认值——缺失或过短启动即失败
       # （FileDownloadSigner fail-fast），不落到开发默认密钥上
       signing-key: ${CRDP_FILE_DOWNLOAD_SIGNING_KEY:}
+    virus-scan:
+      # E22-T15 / 等保 D-01 整改（tech-plan §10）：clamd 副本在 CCE 部署并核验后置 CRDP_VIRUS_SCAN_MODE=clamd
+      # （启用即同步扫描、不可用 50300 不放行）；未部署前保持 off（不扫描，台账 UNSCANNED 由补扫作业在启用后
+      # 按 SHA-256 补扫存量）——启用时点与核验清单见 docs/ops/mlps/remediation-backend.md §5（待人工项）。
+      mode: ${CRDP_VIRUS_SCAN_MODE:off}
+      clamd:
+        # CCE 内 clamd Service 名 / 端口（部署口径见整改手册 §5；域名与 Service 名由运维在 IaC 落地后回填）
+        host: ${CRDP_CLAMD_HOST:127.0.0.1}
+        port: ${CRDP_CLAMD_PORT:3310}
   h5-upload:
     # E16-T10 / A-ATT-015、C-SCAN-008：手机扫码上传 H5 的对外基地址（https，公网可扫）。
     # G10（M3 审查）：生产不再回落本机开发地址——缺省为空，缺失（空 / 未改回落值）由

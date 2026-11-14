@@ -24,6 +24,8 @@ import com.crdp.followup.file.infra.image.ImageThumbnailGeneratorTest;
 import com.crdp.followup.file.infra.mapper.SysFileMapper;
 import com.crdp.followup.file.infra.mapper.SysFileRow;
 import com.crdp.followup.file.infra.mapper.UploadParamMapper;
+import com.crdp.followup.file.infra.scan.DisabledVirusScanner;
+import com.crdp.followup.file.infra.scan.VirusScanner;
 import com.crdp.framework.audit.AuditEvent;
 import com.crdp.framework.audit.AuditLogger;
 import com.crdp.framework.security.ScopeSnapshot;
@@ -92,7 +94,8 @@ class FileUploadServiceTest {
                         files,
                         storage,
                         audit,
-                        quota);
+                        quota,
+                        DisabledVirusScanner.INSTANCE);
         SecurityContextHolder.getContext()
                 .setAuthentication(
                         new UsernamePasswordAuthenticationToken(principal(), null, List.of()));
@@ -346,7 +349,8 @@ class FileUploadServiceTest {
                         files,
                         brokenStorage(),
                         audit,
-                        quota);
+                        quota,
+                        DisabledVirusScanner.INSTANCE);
         ApiException ex =
                 assertThrows(
                         ApiException.class,
@@ -398,6 +402,131 @@ class FileUploadServiceTest {
         when(quota.storageLimitBytes()).thenReturn(null);
         service.upload("出院小结（示例）.pdf", FileTypeDetectorTest.pdf());
         verify(files, org.mockito.Mockito.times(1)).sumActiveBytes();
+    }
+
+    // ---------------------------------------------------------------- 病毒扫描（E22-T15 / 等保 D-01 整改）
+
+    /** 扫描启用且检出病毒：40001 拒绝、不写任何对象、不落台账、写 FILE_VIRUS_REJECTED 审计（等保证据）。 */
+    @Test
+    void infectedUploadRejectedWithAuditAndNothingWritten() throws IOException {
+        FileUploadService scanning = serviceWithScanner(infectedScanner("Win.Test.EICAR.HDB-1"));
+        ApiException ex =
+                assertThrows(
+                        ApiException.class,
+                        () -> scanning.upload("出院小结（示例）.pdf", FileTypeDetectorTest.pdf()));
+        assertEquals(40001, ex.code());
+        assertTrue(ex.getMessage().contains("病毒"), "提示按病毒拒绝：" + ex.getMessage());
+        assertTrue(ex.getMessage().contains("Win.Test.EICAR.HDB-1"), ex.getMessage());
+        verify(files, never()).insert(any(SysFileRow.class));
+        try (var paths = Files.walk(storageRoot)) {
+            assertEquals(0, paths.filter(Files::isRegularFile).count(), "不写任何对象（fail closed）");
+        }
+        ArgumentCaptor<AuditEvent> event = ArgumentCaptor.forClass(AuditEvent.class);
+        verify(audit).record(event.capture());
+        assertEquals("FILE_VIRUS_REJECTED", event.getValue().eventType());
+        assertEquals("CREATE", event.getValue().action());
+        assertTrue(event.getValue().detail().contains("Win.Test.EICAR.HDB-1"));
+        assertTrue(event.getValue().detail().contains("（示例）"), "审计含文件名（合成示例）");
+    }
+
+    /** 扫描启用且干净：通过并落台账 virus_scan_status=CLEAN 与扫描时间（禁用态为 UNSCANNED 待补扫）。 */
+    @Test
+    void cleanUploadMarkedCleanWhenScannerEnabled() {
+        FileUploadService scanning = serviceWithScanner(cleanScanner());
+        scanning.upload("出院小结（示例）.pdf", FileTypeDetectorTest.pdf());
+        ArgumentCaptor<SysFileRow> row = ArgumentCaptor.forClass(SysFileRow.class);
+        verify(files).insert(row.capture());
+        assertEquals("CLEAN", row.getValue().getVirusScanStatus());
+        assertNotNull(row.getValue().getVirusScannedAt(), "回填扫描时间");
+
+        // 禁用态（本机 / CI / 未部署 clamd）：不扫描，UNSCANNED 待补扫作业补
+        service.upload("出院小结（示例）.pdf", FileTypeDetectorTest.pdf());
+        ArgumentCaptor<SysFileRow> unscanned = ArgumentCaptor.forClass(SysFileRow.class);
+        verify(files, times(2)).insert(unscanned.capture());
+        assertEquals("UNSCANNED", unscanned.getValue().getVirusScanStatus());
+        assertNull(unscanned.getValue().getVirusScannedAt());
+    }
+
+    /** 扫描服务不可用：50300「稍后重试」且不放行（tech-plan §10 fail closed），不落台账、不写对象。 */
+    @Test
+    void unavailableScannerFailsClosedWith50300() throws IOException {
+        FileUploadService unavailable =
+                serviceWithScanner(
+                        new VirusScanner() {
+                            @Override
+                            public boolean enabled() {
+                                return true;
+                            }
+
+                            @Override
+                            public ScanResult scan(byte[] body) {
+                                throw new ApiException(503, 50300, "病毒扫描服务暂不可用，请稍后重试");
+                            }
+                        });
+        ApiException ex =
+                assertThrows(
+                        ApiException.class,
+                        () -> unavailable.upload("出院小结（示例）.pdf", FileTypeDetectorTest.pdf()));
+        assertEquals(50300, ex.code());
+        assertTrue(ex.getMessage().contains("稍后重试"), ex.getMessage());
+        verify(files, never()).insert(any(SysFileRow.class));
+        try (var paths = Files.walk(storageRoot)) {
+            assertEquals(0, paths.filter(Files::isRegularFile).count(), "不放行（fail closed）");
+        }
+    }
+
+    /** 感染文件在病毒扫描步被拒：类型校验（白名单内合法 PDF）已通过、配额未触达（扫描在类型之后、配额之前短路）。 */
+    @Test
+    void scanHappensAfterTypeChecksAndBeforeQuota() {
+        FileUploadService scanning = serviceWithScanner(infectedScanner("Test.Virus"));
+        ApiException ex =
+                assertThrows(
+                        ApiException.class,
+                        () -> scanning.upload("出院小结（示例）.pdf", FileTypeDetectorTest.pdf()));
+        assertEquals(40001, ex.code());
+        // 配额查询在扫描之后（未触达）：扫描拒绝短路，不读用量
+        verify(files, never()).sumActiveBytes();
+    }
+
+    /** 以指定扫描器组装服务（其余依赖与 @BeforeEach 相同）。 */
+    private FileUploadService serviceWithScanner(VirusScanner scanner) {
+        return new FileUploadService(
+                policy,
+                new FileTypeDetector(),
+                new ImageThumbnailGenerator(128),
+                files,
+                storage,
+                audit,
+                quota,
+                scanner);
+    }
+
+    private static VirusScanner cleanScanner() {
+        return new VirusScanner() {
+            @Override
+            public boolean enabled() {
+                return true;
+            }
+
+            @Override
+            public ScanResult scan(byte[] body) {
+                return ScanResult.clean();
+            }
+        };
+    }
+
+    private static VirusScanner infectedScanner(String virusName) {
+        return new VirusScanner() {
+            @Override
+            public boolean enabled() {
+                return true;
+            }
+
+            @Override
+            public ScanResult scan(byte[] body) {
+                return ScanResult.infected(virusName);
+            }
+        };
     }
 
     // ---------------------------------------------------------------- 工具
