@@ -1469,6 +1469,9 @@ export type {
   WardOptionView,
 } from './tenant-user';
 export * from './tenant-view';
+// E22-T16 / 等保 D-01 前端面：上传失败分类与行级文案（病毒检出 40001 / 扫描不可用 50300）
+export type { UploadFailureInfo, UploadFailureKind } from './upload-rejection';
+export { uploadFailureInfo, uploadFailureText } from './upload-rejection';
 export {
   failedUserRows,
   USER_IMPORT_COLUMNS,

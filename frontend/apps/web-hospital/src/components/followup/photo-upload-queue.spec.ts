@@ -94,3 +94,23 @@ describe('e24-t06 photo-upload-queue（多页上传状态机）', () => {
     expect(undecodableNoteText(false)).toContain('按原文件上传');
   });
 });
+
+// E22-T16 / 等保 D-01 前端面：failed 页可携带病毒扫描类原因（病毒检出 / 扫描不可用），
+// 行状态文案不变（design-system §12「弱网失败可重试」），原因由队列模板内联展示。
+describe('e22-t16 失败原因摘要（病毒扫描类失败在队列内可见）', () => {
+  it('failed 带 error：字段保留原文（模板内联展示），photoStatusText 口径不变', () => {
+    const reason =
+      '文件未通过病毒检测（检出 Win.Test.EICAR.HDB-1），已拒绝上传';
+    let items = [createPhotoItem('p1', 'a.jpg')];
+    items = markFailed(items, 'p1', reason);
+    expect(items[0]?.error).toBe(reason);
+    expect(items[0] ? photoStatusText(items[0]) : '').toBe('上传失败，可重试');
+  });
+
+  it('failed 不带 error（普通弱网）：行为与既有口径一致', () => {
+    let items = [createPhotoItem('p1', 'a.jpg')];
+    items = markFailed(items, 'p1');
+    expect(items[0]?.error).toBeUndefined();
+    expect(items[0] ? photoStatusText(items[0]) : '').toBe('上传失败，可重试');
+  });
+});

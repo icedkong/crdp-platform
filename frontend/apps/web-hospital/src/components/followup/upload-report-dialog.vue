@@ -13,7 +13,7 @@ import type { CallContactOption, IndicatorRow } from './report-dialog-logic';
 
 import { computed, reactive, ref, watch } from 'vue';
 
-import { reportIndicatorFlag } from '@crdp/api';
+import { reportIndicatorFlag, uploadFailureInfo } from '@crdp/api';
 // E16-T10 / OQ-116⑤：压缩链路上提共享包（手机 H5 同一实现）
 import { compressImageFile, isHeicFile } from '@crdp/photo';
 import { viewportHeightUnit } from '@crdp/responsive';
@@ -240,10 +240,17 @@ async function processPhotoItem(id: string, session: number): Promise<void> {
     });
     photoSources.delete(id);
     photoQueue.value = photoQueue.value.filter((item) => item.id !== id);
-  } catch {
-    // 错误提示由统一拦截器弹出；这里保留该页等待「重试」
+  } catch (error) {
+    // 错误提示由统一拦截器弹出；这里保留该页等待「重试」。
+    // E22-T16 / 等保 D-01 前端面：病毒检出（40001）与扫描不可用（50300）在队列内
+    // 内联展示后端原文（弱网等普通失败不带原因，维持 design-system §12 口径）。
     if (session !== photoSession) return;
-    photoQueue.value = markFailed(photoQueue.value, id);
+    const failure = uploadFailureInfo(error);
+    photoQueue.value = markFailed(
+      photoQueue.value,
+      id,
+      failure.kind === 'other' ? undefined : failure.message,
+    );
   }
 }
 
@@ -773,6 +780,8 @@ defineExpose({
             >
               {{ photoStatusText(item) }}
             </span>
+            <!-- E22-T16 / 等保 D-01：病毒扫描类失败原因内联（病毒检出 / 扫描不可用原文） -->
+            <span v-if="item.error" class="queue-reason">{{ item.error }}</span>
             <Progress
               v-if="item.status === 'uploading'"
               :percent="item.progress"
@@ -908,6 +917,12 @@ defineExpose({
 }
 
 .queue-failed {
+  color: #ff4d4f;
+}
+
+/* E22-T16 / 等保 D-01：病毒扫描类失败原因（错误色 #FF4D4F，design-system §2） */
+.queue-reason {
+  margin-left: 4px;
   color: #ff4d4f;
 }
 </style>

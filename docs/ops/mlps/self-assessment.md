@@ -108,3 +108,7 @@
 - E22-T15（2026-11-14）：D-01 整改落地，§2.4「恶意代码防范」部分符合 → 符合（§1 汇总同步），
   整改手册 `docs/ops/mlps/remediation-backend.md`、防漂移校验 `scripts/check_mlps_remediation.py`；
   D-02~D-08 维持原口径（已接受 / 由人 / 条件触发，处置结论见整改手册 §4）。
+- E22-T16（2026-11-14）：D-01 前端面补齐（上传失败 40001 病毒检出 / 50300 扫描不可用的行级呈现，
+  `packages/api` `upload-rejection` + 批量上传行文案 + 拍照队列内联原因 + H5 原文透传核验），
+  整改手册 `docs/ops/mlps/remediation-frontend.md`、防漂移校验 `scripts/check_mlps_remediation_frontend.py`；
+  D-02~D-08 前端面结论见整改手册 §4（条件触发 2 / 无前端面 5），判定无翻转（§2.4 已符合）。

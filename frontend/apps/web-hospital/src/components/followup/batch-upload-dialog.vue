@@ -41,6 +41,7 @@ import {
   acceptBatchFiles,
   batchFormHasError,
   batchItemErrors,
+  batchUploadRowError,
   buildBatchPayload,
   validateBatchForm,
 } from './batch-upload-logic';
@@ -325,9 +326,11 @@ async function uploadRow(row: BatchFileRow) {
     row.fileId = uploaded.fileId;
     row.name = uploaded.originalName;
     row.status = 'done';
-  } catch {
+  } catch (error) {
     row.status = 'failed';
-    row.error = '上传失败，可重试（格式与大小按租户配置）';
+    // E22-T16 / 等保 D-01 前端面：病毒检出（40001）与扫描不可用（50300）显示后端原文，
+    // 不再把病毒拒绝误导成「格式与大小、可重试」；其余维持通用文案。
+    row.error = batchUploadRowError(error);
   }
 }
 
