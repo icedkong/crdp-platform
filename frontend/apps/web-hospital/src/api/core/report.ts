@@ -17,6 +17,11 @@ import type {
   ReportDeletedView,
   ReportDigitizeChangedView,
   ReportDigitizeChangeRequest,
+  ReportInboxArchiveRequest,
+  ReportInboxIntakeRequest,
+  ReportInboxIntakeView,
+  ReportInboxPage,
+  ReportInboxSearchRequest,
   ReportLocationInput,
   ReportLocationNode,
   ReportLocationsChangedView,
@@ -173,6 +178,48 @@ export function changeReportDigitizeStatus(
 ) {
   return requestClient.post<ReportDigitizeChangedView>(
     apiPath(`/followup/reports/${reportId}/digitize-status`),
+    payload,
+  );
+}
+
+// ---------------------------------------------------------------- E21-T16 待归档区（C-SCAN-009）
+
+/**
+ * 待归档区检索（POST /followup/report-inbox/search，权限 followup:inbox:view）：
+ * 未选患者的待分拣文件集中分拣；同样按科室病区隔离（按上传人所在科室 / 病区，
+ * 后端承担）；批量查询写 BATCH_QUERY 审计；开关 report_inbox 关闭 40301（前端按
+ * GET /auth/features 判定后隐藏入口）。
+ */
+export function searchReportInbox(payload: ReportInboxSearchRequest) {
+  return requestClient.post<ReportInboxPage>(
+    apiPath('/followup/report-inbox/search'),
+    payload,
+  );
+}
+
+/**
+ * 放入待归档区（POST /followup/report-inbox/files，权限 followup:scan:upload）：
+ * 先扫描后标注——已上传（PENDING、未挂任何记录）的文件一次 1–50 个进区；
+ * 重复进区 / 已挂他处 40001。
+ */
+export function addFilesToReportInbox(payload: ReportInboxIntakeRequest) {
+  return requestClient.post<ReportInboxIntakeView>(
+    apiPath('/followup/report-inbox/files'),
+    payload,
+  );
+}
+
+/**
+ * 归档（POST /followup/report-inbox/{id}/archive，权限 followup:scan:upload）：
+ * 逐个指定患者、类型与位置（至少 1 个）后生成报告单（复用创建链路：患者越范围
+ * 40400、位置 / 锚点校验、写 RPT_CREATE）；成功后待归档行退出分拣清单。
+ */
+export function archiveReportInboxFile(
+  inboxId: number | string,
+  payload: ReportInboxArchiveRequest,
+) {
+  return requestClient.post<ReportCreatedView>(
+    apiPath(`/followup/report-inbox/${inboxId}/archive`),
     payload,
   );
 }

@@ -2,7 +2,7 @@
 
 > 后端：`crdp-followup`（报告单子域，A-ATT-018 平台通用、按租户配置）+ 文件服务（OSS + 预览代理）。表：`rpt_report`、`rpt_report_link`（位置，见 OQ-02：统一用 `rpt_report_link`）、`rpt_report_file`、`rpt_type`、`rpt_name`、`rpt_indicator_tpl`、`rpt_mapping` / `rpt_mapping_item`（字段映射，E23-T03）、`sys_file`。
 > 页面：`docs/design/pages.md` §4（报告单页签、左栏附件导航）、§6（上传、H5、批量、全院报告单）；组件：AttachmentNav、LocationPicker、WatermarkPreview、ReportFormModal。
-> 路径除各表已标注「已实现」的接口（E10 文件、E16-T01 配置与目录、E16-T02 创建 / 患者内清单 / 位置树、E16-T03 批量上传、E16-T05 全院检索、E16-T07 映射预览与确认写入、E16-T09 删除与下载收紧、E16-T13 修改位置）外，其余 **推断，待确认**。权限：上传 `followup:scan:upload`、下载 `followup:scan:download`、删除 `followup:scan:delete`、配置 `followup:scan:config`；全院报告单菜单种子是 `followup:report:view`，与规格待统一（见 OQ-12）。
+> 路径除各表已标注「已实现」的接口（E10 文件、E16-T01 配置与目录、E16-T02 创建 / 患者内清单 / 位置树、E16-T03 批量上传、E16-T05 全院检索、E16-T07 映射预览与确认写入、E16-T09 删除与下载收紧、E16-T13 修改位置、E21-T16 待归档区）外，其余 **推断，待确认**。权限：上传 `followup:scan:upload`、下载 `followup:scan:download`、删除 `followup:scan:delete`、配置 `followup:scan:config`；全院报告单菜单种子是 `followup:report:view`，与规格待统一（见 OQ-12）；待归档区菜单 354 用新码 `followup:inbox:view`（perm_code 唯一，E21-T16）。
 
 ## 1. 文件
 
@@ -73,12 +73,15 @@
 
 映射写入后录入侧的对比标红（A-FU-027，E17）按目标记录现值计算，天然生效；基线写入经 `BaselineSectionService.applyMappingWrite`（锁定校验 + 写入闸门 + 完整度重算 A-PAT-019），随访写入经 `FollowupRecordService.applyMappingWrite`（写入闸门 + 乐观锁）。 |
 
-## 4. 待归档区（C-SCAN-009，P1；开关 `report_inbox` 推断）
+## 4. 待归档区（C-SCAN-009，P1；**已实现（E21-T16）**）
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| POST | `/api/hospital/followup/report-inbox/search` | 未选患者的文件，同样按科室病区隔离（按上传人所在科室） |
-| POST | `/api/hospital/followup/report-inbox/{id}/archive` | `{ patientId, typeCode, locations[≥1], ... }` → 生成报告单 |
+先扫描后标注：未选患者的文件进入待归档区（`rpt_inbox_file`，followup V138，一行一个文件、`file_id` 唯一；归档后行置 `ARCHIVED` 并记 `archived_report_id` 作溯源、保留不删），录入人员逐个指定患者、类型与位置（至少一个）后归档。开关 `report_inbox`（`cfg_feature`，V138 默认 0；医院 C 随租户配置打开，A / B 不启用）关闭（含无行）三个口一律 **40301**（AGENTS §5.7）；菜单平台库 V74（plt_menu 354「待归档区」，权限码 `followup:inbox:view`——`perm_code` 唯一不能与菜单 23 复用 `followup:report:view`，OQ-12 report 族新成员）。
+
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| POST | `/api/hospital/followup/report-inbox/files` | `followup:scan:upload` | **已实现（E21-T16）**。`{ fileIds[1–50] }`：已上传（`sys_file` PENDING、未挂任何记录）的文件放入待归档区，一行一个文件；`uploaded_by` 冻结进区操作人作隔离锚点。空清单 / 超 50 个 40001；文件已挂他处（ATTACHED）40001「文件已关联其他记录」；已在待归档区 40001；文件不存在 / 已删 40400。写 `RPT_INBOX_CREATE` 审计（objectType=REPORT_INBOX） |
+| POST | `/api/hospital/followup/report-inbox/search` | `followup:inbox:view` | **已实现（E21-T16）**。`{ pageNo, pageSize, uploadedFrom/To, creatorId }`（全部可空）→ `{ items, total, pageNo, pageSize, uploaders }`；行 `{ id, fileId, fileName, format, sizeBytes, pages, uploaderName, createdAt }`（文件台账信息，无患者面数据；`fileId` 供前端换预览短时链接）。只出 PENDING 行、按进区时间倒序；**同样按科室病区隔离（C-WARD-005；无患者可作 EXISTS 锚点，按上传人所在科室 / 病区的暂行口径）**：可见 = 上传人负责科室（`sys_user_dept_scope`）或负责病区（`sys_user_ward`）与操作者范围快照有交集，上传人本人恒可见（「仅本人负责的患者」范围用户上传后自己仍能分拣，不滞留），ALL 范围全见；`rpt_inbox_file` 不进 `ControlledTables`（受控表改写按 patient_id 锚定，待归档行没有患者），隔离在 Mapper 语句内实现。分页校验与全院检索同口径（pageNo 从 1、pageSize 1–100、日期颠倒 40001）；批量查询写 `BATCH_QUERY` 审计（objectType=REPORT_INBOX） |
+| POST | `/api/hospital/followup/report-inbox/{id}/archive` | `followup:scan:upload` | **已实现（E21-T16）**。`{ patientId, typeCode, nameId?, reportDate?, locations[≥1] }` → **生成报告单**：复用 `POST /reports` 创建链路（患者越范围 40400、类型 / 名称 / 位置锚点按当前模板版本校验、写 `RPT_CREATE`），附件即该待归档文件（归档后 `sys_file` 置 ATTACHED）；`reportDate` 缺省当天（先扫描后标注的纸质资料常无报告日期）。归档行不可见（越范围 / 已归档 / 不存在）40400 + `RPT_INBOX_ARCHIVE` DENIED 审计；并发归档（行已被归档）40901 整体回滚不重复生成；成功写 `RPT_INBOX_ARCHIVE` 审计（描述带 reportId 与患者） |
 
 ## 5. 手机拍照上传（A-ATT-015、C-SCAN-008、C-NFR-006；**已实现（E16-T10）**）
 

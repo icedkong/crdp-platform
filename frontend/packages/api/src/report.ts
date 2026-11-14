@@ -408,3 +408,88 @@ export function reportRefRangeFor(
   if (gender === 'F' && item.refRangeFemale) return item.refRangeFemale;
   return item.refRange ?? item.refRangeMale ?? item.refRangeFemale ?? null;
 }
+
+// ---------------------------------------------------------------- E21-T16 待归档区（C-SCAN-009）
+
+/** 进区请求（POST /followup/report-inbox/files）：未选患者的文件清单，一次 1–50 个。 */
+export interface ReportInboxIntakeRequest {
+  fileIds: string[];
+}
+
+/** 进区结果（文件数；行明细经检索刷新）。 */
+export interface ReportInboxIntakeView {
+  fileCount: number;
+}
+
+/** 待归档区检索请求（POST /followup/report-inbox/search；字段全部可空 = 只按可见性）。 */
+export interface ReportInboxSearchRequest {
+  creatorId?: null | string;
+  pageNo?: number;
+  pageSize?: number;
+  uploadedFrom?: string;
+  uploadedTo?: string;
+}
+
+/** 待归档区行（文件台账信息；无患者面数据，fileId 供换预览短时链接）。 */
+export interface ReportInboxRow {
+  createdAt: string;
+  fileId: string;
+  fileName: string;
+  format: string;
+  id: string;
+  pages: null | number;
+  sizeBytes: number;
+  uploaderName: null | string;
+}
+
+/** 待归档区分页结果（统一分页口径 + 上传人候选）。 */
+export interface ReportInboxPage {
+  items: ReportInboxRow[];
+  pageNo: number;
+  pageSize: number;
+  total: number;
+  uploaders: Array<{ id: string; name: string }>;
+}
+
+/**
+ * 归档请求（POST /followup/report-inbox/{id}/archive）：患者、类型必填，位置至少 1 个
+ * （C-SCAN-009「指定患者、类型与位置（至少一个）后归档」）；nameId 按类型 nameRequired；
+ * reportDate 缺省当天（先扫描后标注的纸质资料常无报告日期，取分拣当天）。
+ */
+export interface ReportInboxArchiveRequest {
+  locations: ReportLocationInput[];
+  nameId?: null | string;
+  patientId: string;
+  reportDate?: null | string;
+  typeCode: string;
+}
+
+/**
+ * 归档表单校验（前端先提示、后端同口径 40001 兜底）：患者 / 类型必选、位置至少 1 个、
+ * 名称按类型必填、报告时间必填（默认已填当天，清空须提示）；通过返回 null。
+ */
+export function reportInboxArchiveError(
+  form: {
+    nameId: null | string;
+    nameRequired: boolean;
+    patientId: null | string;
+    reportDate: null | string;
+    typeCode: null | string;
+  },
+  locationCount: number,
+): null | string {
+  if (!form.patientId) return '请选择患者';
+  if (!form.typeCode) return '请选择资料类型';
+  if (form.nameRequired && !form.nameId) return '请选择名称';
+  if (!form.reportDate) return '请选择报告时间';
+  if (locationCount < 1) return '请至少选择 1 个位置';
+  return null;
+}
+
+/** 待归档文件大小文案（KB / MB，列表列显示）。 */
+export function reportInboxSizeText(sizeBytes: number): string {
+  if (sizeBytes >= 1024 * 1024) {
+    return `${(sizeBytes / 1024 / 1024).toFixed(1)} MB`;
+  }
+  return `${Math.max(1, Math.round(sizeBytes / 1024))} KB`;
+}

@@ -32,7 +32,7 @@
 | OQ-03 | 🟡 | `me` 不返回功能开关 | 前端需要按开关隐藏菜单与卡片 | 新增 `GET /api/hospital/auth/features`，或扩展 `me`；二选一后在 `auth.md` 定稿 |
 | OQ-04 | 🟡 | 新增错误码 40400 / 40900 / 40901 / 40902 / 42200 / 40303 / 40304 / 40305 | 仓库只有 0、40001、40100、40101、40300、40301、40302、42900、50000、50002 | 按 `docs/api/README.md` 错误码表实现，加到后端 `ErrorCode` 枚举与前端 `packages/api` |
 | OQ-05 | 🟡 | 功能开关关闭时返回 40301 还是 404 | 仓库 `@RequireModule` 返回 40301 | 返回 40301；前端隐藏入口 |
-| OQ-06 | 🟡 | 新功能开关 `param_trend`、`next_visit_as_plan`、`baseline_lock`、`report_inbox` | 仓库只有 7 个开关 | 用 Flyway 新增（开关随 OQ-03 定稿存租户库 `cfg_feature`）：`param_trend` 已随 E21-T13 落 followup V92（默认 0，医院 C 待后端趋势接口落地后打开），其余三个仍待各自任务 |
+| OQ-06 | 🟡 | 新功能开关 `param_trend`、`next_visit_as_plan`、`baseline_lock`、`report_inbox` | 仓库只有 7 个开关 | 用 Flyway 新增（开关随 OQ-03 定稿存租户库 `cfg_feature`）：`param_trend` 已随 E21-T13 落 followup V92（默认 0，医院 C 待后端趋势接口落地后打开），`report_inbox` 已随 E21-T16 落 followup V138（默认 0，菜单 354 + 页面 `/followup/report-inbox`），其余两个仍待各自任务 |
 | OQ-07 | 🟡 | 菜单改名、新增“我的任务”是否顶级菜单 | UI 定稿与种子菜单不一致 | 新写 Flyway 迁移改菜单（不改旧脚本）；“我的任务”放顶级（推断） |
 | OQ-08 | ⚪ | 图表库 | 规格未指定 | ECharts（按需引入）；仓库若已有其他库则沿用 |
 | OQ-09 | 🟡 | 平台账号数据范围交集 | 仓库 DataScopeGuard 空范围改写与启动默认拒绝扫描已落地（E07-T01），受限范围按病区 / 科室 / 本人（OR、EXISTS 关联患者）的条件改写与七种类型快照归并已落地（E07-T02）；平台账号交集计算未做；平台租户视角会话类型 **已定为 `TENANT_VIEW`（E20-T01 落地，auth.md / platform.md 同步）** | 按 PLT-SCOPE 实现（交集计算仍待后续任务） |

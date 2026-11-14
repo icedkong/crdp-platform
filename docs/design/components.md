@@ -93,7 +93,8 @@ type FeatureCode =
   | 'param_trend'        // 参数趋势页签（C-FU-012）
   | 'next_visit_as_plan' // 下次随访时间 = 计划日期（C-FU-005）
   | 'baseline_lock'      // 基线锁定（A-PAT-006）
-  | 'report_inbox';      // 待归档区（C-SCAN-009，P1）
+  // 已随任务落 Flyway（默认 0，医院 C 随租户配置打开）：
+  | 'report_inbox';      // 待归档区（C-SCAN-009，P1；followup V138，菜单 354 /followup/report-inbox，E21-T16）
 ```
 
 - 功能开关存租户库 `cfg_feature`（`feature_code`, `enabled`），由独立端点 `GET /api/hospital/auth/features` 下发 `{ featureCode: enabled }`（OQ-03 定稿，E19-T04 已实现；未配置的开关不在返回里＝默认关闭）；`useFeature` 已落地（`apps/web-hospital/src/reference/use-feature.ts`，会话内缓存一次）。样板页的 fixture `features` 仅参考页用，见 `reference-pages.md`。
