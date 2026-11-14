@@ -272,13 +272,15 @@ function rowKey(record: ImplantRecordView) {
     </h3>
     <Spin :spinning="loading">
       <Empty v-if="records.length === 0" description="暂无植入记录" />
-      <!-- 手机：植入记录与电极表格改卡片（pages.md §4.10）；E21-T32 卡片带整条锚点与各位置附件条 -->
+      <!-- 手机：植入记录与电极表格改卡片（pages.md §4.10，E24-T10 验收「手机可查看
+           植入记录」）；E21-T32 卡片带整条锚点与各位置附件条 -->
       <div v-else-if="isMobile" class="cards" data-testid="implant-cards">
         <div
           v-for="record in records"
           :id="anchorDomId(implantRecordAnchorKey(record.id))"
           :key="record.id"
           class="implant-card"
+          data-testid="implant-card"
         >
           <div class="card-head">
             <span>第 {{ record.implantNo }} 次 · {{ record.implantDate }}</span>

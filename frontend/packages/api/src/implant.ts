@@ -664,7 +664,8 @@ export function implantCardLines(record: ImplantRecordView): string[][] {
   if (record.doctor) lines.push(['植入医生', record.doctor]);
   for (const lead of record.leads) {
     lines.push([
-      `电极 ${lead.chamber}`,
+      // E24-T10：腔室用显示名（与桌面表格「腔室」列同口径），缺 label 回落编码
+      `电极 ${lead.chamberLabel || lead.chamber}`,
       `${lead.positionLabel || '-'} · ${lead.implantDate || '-'} · ${lead.statusLabel || lead.status}`,
     ]);
   }

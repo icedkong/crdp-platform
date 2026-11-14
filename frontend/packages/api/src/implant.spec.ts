@@ -307,10 +307,43 @@ describe('e21-T01 手机卡片行（pages.md §4.10 植入记录表格转卡片�
     const keys = lines.map(([key]) => key);
     expect(keys).toContain('植入类型');
     expect(keys).toContain('状态');
-    expect(keys).toContain('电极 RV');
-    const rv = lines.find(([key]) => key === '电极 RV')?.[1] ?? '';
+    // E24-T10：电极行腔室用显示名（与桌面表格「腔室」列同口径），缺 label 回落编码
+    expect(keys).toContain('电极 右心室（RV）');
+    const rv = lines.find(([key]) => key === '电极 右心室（RV）')?.[1] ?? '';
     expect(rv).toContain('右室心尖');
     expect(rv).toContain('2018-05-10');
+  });
+
+  it('电极腔室缺显示名时回落编码（后端未下发 label 的兜底）', () => {
+    const lines = implantCardLines({
+      id: '503',
+      patientId: '101',
+      implantNo: 1,
+      implantType: 'FIRST',
+      implantTypeLabel: null,
+      implantDate: '2026-01-05',
+      deviceType: 'DDD',
+      deviceTypeLabel: null,
+      status: 'ACTIVE',
+      statusLabel: null,
+      current: true,
+      version: 0,
+      leads: [
+        {
+          id: '602',
+          chamber: 'RA',
+          chamberLabel: null,
+          position: null,
+          positionLabel: null,
+          status: 'ACTIVE',
+          statusLabel: null,
+          model: null,
+          implantDate: null,
+          version: 0,
+        },
+      ],
+    });
+    expect(lines.some(([key]) => key === '电极 RA')).toBe(true);
   });
 });
 
