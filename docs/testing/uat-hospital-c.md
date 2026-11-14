@@ -227,7 +227,7 @@ python3 scripts/uat_intake.py --selftest
 - 列与校验：12 列（finding_id、title、severity、module、page_or_api、reporter_role、description、reproduce_steps、expected_behavior、actual_behavior、evidence_ref、fix_suggestion）；空值、非法分级、非法模块、重复编号、**周次不在本院 UAT 窗口（W44 / W45）**、疑似真实手机号 / 身份证号一律拦截；
 - 编号口径：`UAT-W{周次}-{流水}`（C 侧周次 = W44 / W45，如 UAT-W44-001；A 侧 W33–W35 已结束，周次校验按 `--hospital` 区分，两院编号空间不冲突）；
 - 分级映射（OQ-122 ②，沿用 OQ-112 的四级梯子）：阻断 / 严重 / 一般 / 建议 → label `severity:high / medium / low / info`，另打 `bug`、`UAT`、`E23`；
-- 修复 / 复测路由（OQ-153 ①）：Issue 正文标注修复任务 **E23-T24 / E23-T25**（每日 16:00 triage 定责到人）与复测任务 **E21-T30**；复测结论回写与关闭沿用 `scripts/uat_retest.py` 框架（`docs/testing/uat-retest-hospital-a.md`），C 侧路由与模板随 E21-T30 增补；
+- 修复 / 复测路由（OQ-153 ①）：Issue 正文标注修复任务 **E23-T24 / E23-T25**（每日 16:00 triage 定责到人）与复测任务 **E21-T30**；复测结论回写与关闭用 `scripts/uat_retest.py --hospital c`（周次 W44 / W45 与 fix_task 越院拦截、打回路由 E23-T24 / T25、`--status --hospital c` 按周次过滤的判据看板；C 模板 `docs/testing/uat-retest-hospital-c-template.csv`，流程与判据细则见 `docs/testing/uat-retest-hospital-c.md`，E21-T30 交付）；
 - 时限：见 §2 分级表；阻断当日入库当日响应，修复版本进 UAT 前先过 CI + A 组冒烟（§3 版本冻结）；
 - 闭环口径：「阻断 / 严重清零」以 label `UAT` 的 Issue 全量状态为证，**C 侧按 UAT-ID 周次 W44 / W45 过滤**（与 A 侧 W33–W35 区分；M5 出口与 §7 判据的数据来源）；
 - 真实数据红线：发现描述不得含真实患者标识（工具自动拦截）；证据只引记录表行号 / 截图编号；UAT 环境本身不录真实患者（§3）。
@@ -320,7 +320,7 @@ python3 scripts/uat_intake.py --selftest
 | E23-T27 | 输入：导入演练批次（12 名历史患者台账）即 K 组核对对象，验收证据共用 |
 | E21-T29 | 同窗前置：C 集成测试（W43）是 UAT 版本准入的机器面门禁（§3 版本冻结行） |
 | E23-T24 / E23-T25 | 后续：C UAT 缺陷修复（全栈 1 / 2），以入库 Issue（周次 W44 / W45）为工作清单；与 C 切换同周，阻断 / 严重须 W45 内清零 |
-| E21-T30 | 后续：C UAT 支持与缺陷复测（测试，W44–W45），复测流程 / 工具沿用 `docs/testing/uat-retest-hospital-a.md` 框架，C 侧路由届时增补 |
+| E21-T30 | 后续：C UAT 支持与缺陷复测（测试，W44–W45），复测流程 / 工具沿用 `docs/testing/uat-retest-hospital-a.md` 框架——C 侧路由、模板与判据细则已增补为 `docs/testing/uat-retest-hospital-c.md`（`uat_retest.py --hospital c`，周次 W44 / W45 过滤） |
 | E23-T26 | 后续：C 上线切换（W46，测评通过后），以 §7 判据达成为前置；`docs/testing/hospital-c-switch-acceptance.md` 为切换侧参照 |
 | E21-T31 | 用例基准：评审用例集 C-ACC-01…45 与澄清记录 CL-01…12 是 §5 预期列的出处；§6 UAT 复核清单 5 项随本 UAT 请医院确认 |
 | E23-T08 / E19-T10 | 框架复用：A 手册 / 入库 / 复测工具与流程同构，差异见 §1；A 侧已走完的教训（环境冻结、就绪核验、演示会话不复用 UAT 环境）全部沿用 |
