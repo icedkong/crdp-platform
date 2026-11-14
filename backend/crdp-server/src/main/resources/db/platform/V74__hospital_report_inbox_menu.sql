@@ -10,7 +10,7 @@
 
 INSERT INTO plt_menu
   (id, parent_id, side, type, module_code, title, route_name, path, component, perm_code, icon, sort_no, hidden, status) VALUES
-  (354, 20, 'HOSPITAL', 'MENU', 'followup', '待归档区', 'FollowupReportInbox', '/followup/report-inbox', 'followup/report-inbox/index', 'followup:inbox:view', NULL, 40, 0, 'ENABLED');
+  (354, 20, 'HOSPITAL', 'MENU', 'followup', '待归档区', 'FollowupReportInbox', '/followup/report-inbox', 'followup/report-inbox/index', 'followup:inbox:view', NULL, 35, 0, 'ENABLED');
 
 -- 非敏感项进授权范围模板（默认可分配；医院端按角色勾选授予）。
 INSERT IGNORE INTO plt_scope_template (module_code, menu_id)

@@ -81,6 +81,22 @@ public class MenuManifest {
                             "followup:report:view",
                             null,
                             30),
+                    // E21-T16 / C-SCAN-009（待归档区，P1）：先扫描后标注的集中分拣页（医院 C 启用，
+                    // 开关 report_inbox）。perm_code 新设 followup:inbox:view（plt_menu.perm_code 唯一，
+                    // 不能与 23 的 followup:report:view 复用，OQ-12 report 族）；平台库 V74 同构。
+                    new MenuManifestItem(
+                            "followup",
+                            "HOSPITAL",
+                            "MENU",
+                            "FollowupReportInbox",
+                            "Followup",
+                            "待归档区",
+                            "FollowupReportInbox",
+                            "/followup/report-inbox",
+                            "followup/report-inbox/index",
+                            "followup:inbox:view",
+                            null,
+                            35),
                     // E19-T07 / A-DASH-009、C-DASH-010：统计页（随访目录下，平台库 V61 同构；perm_code 为
                     // NULL——followup:dashboard:view 已由按钮 234 持有（uk_plt_menu_perm 全库唯一），接口
                     // 按该码鉴权，菜单行只管路由可见性，V39 / V48 同做法）。页签：每年随访率 / 节点随访率
