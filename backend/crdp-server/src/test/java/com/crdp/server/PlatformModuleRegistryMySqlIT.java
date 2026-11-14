@@ -125,9 +125,9 @@ class PlatformModuleRegistryMySqlIT {
                                 + " FROM plt_module WHERE code = 'followup'");
         assertEquals("0.1.0", row.get("feature_version"));
         assertEquals(
-                "138",
+                "139",
                 row.get("migration_version").toString(),
-                "迁移版本取 db/tenant/followup 最大脚本版本 V138（E21-T16 / C-SCAN-009 待归档区；V1–V99 已用尽种子（V100–V137）以下号段，V138 起主迁移高于种子版本，全新种子库按版本序在种子后执行——V138 的菜单授予正依赖种子 V100 的 TENANT_ADMIN 角色）；此前 V99（E21-T12 / C-FU-025 远程监测记录功能开关）；"
+                "迁移版本取 db/tenant/followup 最大脚本版本 V139（E22-T15 等保 D-01 上传病毒扫描台账；V1–V99 已用尽种子（V100–V137）以下号段，V138 起主迁移高于种子版本，全新种子库按版本序在种子后执行——V138 的菜单授予正依赖种子 V100 的 TENANT_ADMIN 角色）；此前 V138（E21-T16 / C-SCAN-009 待归档区）、V99（E21-T12 / C-FU-025 远程监测记录功能开关）；"
                         + "此前 V98 修正医院 C 上限/下限频率硬规则 op 契约（E21-T24）、V94 医院 C 报告单类型与程控映射预置（E23-T21）、V93 fu_enrollment.last_visit_date（E21-T07 ERI 循环滚动基准）、V92 参数趋势功能开关 param_trend、"
                         + " V91 医院 C 字段字典与两套计划、V88 switch_reason /"
                         + " eri_since / doctor_next_date、V87 fu_record 软删除列与器械维度"
@@ -143,7 +143,7 @@ class PlatformModuleRegistryMySqlIT {
                                 + " plt_module_version WHERE module_code = 'followup'"
                                 + " ORDER BY id DESC LIMIT 1");
         assertEquals("0.1.0", version.get("feature_version"));
-        assertEquals("138", version.get("migration_version").toString());
+        assertEquals("139", version.get("migration_version").toString());
         assertTrue(
                 String.valueOf(version.get("change_note")).contains("随访"),
                 "版本记录含变更说明：" + version.get("change_note"));

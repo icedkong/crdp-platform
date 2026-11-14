@@ -24,7 +24,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 /**
  * E05-T04（PLT-MOD-002、003，验收：只登记随访模块、启动时同步）：启动把代码登记的 followup 模块同步进
  * plt_module——缺失注册、版本变化更新并写版本记录、无变化只刷新同步时间；展示信息与上架状态不被覆盖。迁移版本取 db/tenant/followup 里最大的 Flyway
- * 脚本版本（真实 classpath，当前最大 V138__report_inbox.sql → "138"（E21-T16 / C-SCAN-009 待归档区； V1–V99
+ * 脚本版本（真实 classpath，当前最大 V139__sys_file_virus_scan.sql → "139"（E22-T15 等保 D-01 上传病毒扫描台账； V1–V99
  * 已用尽种子（V100–V137）以下的号段，V138 起主迁移高于种子版本——全新种子库按版本序在种子后执行， V138 内的菜单授予正依赖种子 V100 建好的 TENANT_ADMIN
  * 角色）； 此前 V99__remote_monitor_record_feature.sql （E21-T12 / C-FU-025 远程监测记录功能开关）、V98 修正医院 C
  * 上限/下限频率硬规则 op 契约（E21-T24）、V97 E21-T21 转科室历史表 pt_dept_history / eri_list / abnormal_records； 此前
@@ -60,7 +60,7 @@ class ModuleRegistrySyncServiceTest {
 
     @Test
     void startupRunTriggersSyncOfRegisteredModules() {
-        stubCurrentRow("0.1.0", "138", "base");
+        stubCurrentRow("0.1.0", "139", "base");
 
         service.run(new DefaultApplicationArguments());
 
@@ -83,7 +83,7 @@ class ModuleRegistrySyncServiceTest {
         assertEquals("followup", outcome.code());
         assertEquals("REGISTERED", outcome.action());
         assertEquals("0.1.0", outcome.featureVersion());
-        assertEquals("138", outcome.migrationVersion(), "迁移版本取 followup 目录最大脚本版本 V138");
+        assertEquals("139", outcome.migrationVersion(), "迁移版本取 followup 目录最大脚本版本 V139");
 
         ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
         // 列序：code, name, description, base_module, feature_version, migration_version, depends_on
@@ -95,7 +95,7 @@ class ModuleRegistrySyncServiceTest {
                         contains("共用"),
                         eq(0),
                         eq("0.1.0"),
-                        eq("138"),
+                        eq("139"),
                         eq("base"));
         // 注册写入默认展示信息与版本列，上架状态默认 ON（SQL 字面量，不在参数里）
         assertTrue(sql.getValue().contains("INSERT INTO plt_module ("), sql.getValue());
@@ -106,7 +106,7 @@ class ModuleRegistrySyncServiceTest {
                         contains("INSERT INTO plt_module_version"),
                         eq("followup"),
                         eq("0.1.0"),
-                        eq("138"),
+                        eq("139"),
                         contains("随访"));
 
         ArgumentCaptor<AuditEvent> event = ArgumentCaptor.forClass(AuditEvent.class);
@@ -127,7 +127,7 @@ class ModuleRegistrySyncServiceTest {
 
         ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
         // 列序：feature_version, migration_version, depends_on, code
-        verify(platform).update(sql.capture(), eq("0.1.0"), eq("138"), eq("base"), eq("followup"));
+        verify(platform).update(sql.capture(), eq("0.1.0"), eq("139"), eq("base"), eq("followup"));
         // 只更新随发版注册的列；name / description / status 由平台端维护，同步不覆盖（PLT-MOD-002）
         assertTrue(
                 sql.getValue().contains("UPDATE plt_module SET feature_version"), sql.getValue());
@@ -139,7 +139,7 @@ class ModuleRegistrySyncServiceTest {
                         contains("INSERT INTO plt_module_version"),
                         eq("followup"),
                         eq("0.1.0"),
-                        eq("138"),
+                        eq("139"),
                         contains("首期登记"));
 
         ArgumentCaptor<AuditEvent> event = ArgumentCaptor.forClass(AuditEvent.class);
@@ -149,7 +149,7 @@ class ModuleRegistrySyncServiceTest {
 
     @Test
     void unchangedModuleOnlyRefreshesSyncedAt() {
-        stubCurrentRow("0.1.0", "138", "base");
+        stubCurrentRow("0.1.0", "139", "base");
 
         ModuleRegistrySyncService.SyncResult result = service.sync();
 
@@ -164,6 +164,6 @@ class ModuleRegistrySyncServiceTest {
 
     @Test
     void registryFollowupMigrationLocationResolvesOnClasspath() {
-        assertEquals("138", registry.migrationVersionOf(registry.find("followup").orElseThrow()));
+        assertEquals("139", registry.migrationVersionOf(registry.find("followup").orElseThrow()));
     }
 }
