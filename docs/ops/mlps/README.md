@@ -86,7 +86,7 @@ OQ-123 / OQ-127 / OQ-42 / OQ-39 暂行口径），不粉饰全绿；证据指向
 | E22-T03 监控告警 | 自查「安全管理中心」集中告警的支撑（排期 W2–W3，2026-11-23 验收） |
 | E22-T04 ~ E22-T08 | 生产基线、单院恢复、跨区域演练、渗透测试、审计 WORM——本清单证据索引（M-09 ~ M-12）的来源 |
 | E22-T14 现场测评（W39–W43） | 后续：以本资料包为输入配合现场测评（配合手册 `docs/ops/mlps/onsite-assessment.md`），输出测评问题清单 |
-| E22-T15 / T16 / T17 整改与复测 | 后续：自查「部分符合」项与测评问题的整改窗口（W44）与复测（W45）——E22-T15 后端面先行整改已落地（D-01 上传病毒扫描，`remediation-backend.md`，防漂移校验 `scripts/check_mlps_remediation.py`） |
+| E22-T15 / T16 / T17 整改与复测 | 后续：自查「部分符合」项与测评问题的整改窗口（W44）与复测（W45）——E22-T15 后端面先行整改已落地（D-01 上传病毒扫描，`remediation-backend.md`，防漂移校验 `scripts/check_mlps_remediation.py`）；E22-T16 前端面先行整改已落地（D-01 上传失败 40001/50300 的前端呈现，`remediation-frontend.md`，防漂移校验 `scripts/check_mlps_remediation_frontend.py`） |
 | E22-T18 备案（W46） | 后续：测评报告与公安机关备案（C 上线 E23-T26 在测评通过后） |
 
 ## 自动化对照

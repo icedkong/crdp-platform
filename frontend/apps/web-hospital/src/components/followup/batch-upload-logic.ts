@@ -10,11 +10,26 @@ import type {
   ReportLocationInput,
 } from '@crdp/api';
 
+import { uploadFailureText } from '@crdp/api';
+
 /** 一次批量上传的文件数上限（A-ATT-014「一次最多 50 个文件」；C-SCAN-007 同口径）。 */
 export const MAX_BATCH_FILES = 50;
 
 /** 批量文件行状态（C-SCAN-007 显示进度，失败可重试）。 */
 export type BatchFileStatus = 'done' | 'failed' | 'pending' | 'uploading';
+
+/** 其他上传失败的行级通用文案（格式 / 大小提示口径，pages.md §6.3）。 */
+export const BATCH_UPLOAD_ROW_ERROR =
+  '上传失败，可重试（格式与大小按租户配置）';
+
+/**
+ * 上传失败的行级文案（E22-T16 / 等保 D-01 前端面）：病毒检出（40001）与扫描不可用
+ * （50300）显示后端原文——不再把病毒拒绝误导成「可重试 / 格式与大小」；其余维持
+ * 既有通用文案（@crdp/api uploadFailureText）。
+ */
+export function batchUploadRowError(error: unknown): string {
+  return uploadFailureText(error, BATCH_UPLOAD_ROW_ERROR);
+}
 
 export interface BatchFileRow {
   error?: null | string;

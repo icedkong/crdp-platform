@@ -11,6 +11,7 @@ import {
   batchFormHasError,
   batchItemErrors,
   batchLimitText,
+  batchUploadRowError,
   buildBatchPayload,
   effectiveItemValue,
   MAX_BATCH_FILES,
@@ -242,5 +243,34 @@ describe('e16-t03 buildBatchPayload（载荷组装）', () => {
         reportDate: '2026-10-28',
       }),
     ).toEqual({ nameId: '12', reportDate: '2026-10-28' });
+  });
+});
+
+// E22-T16 / 等保 D-01 前端面：上传失败的行级文案——病毒检出（40001）与扫描不可用
+// （50300）显示后端原文，其余保持「格式与大小」通用提示（pages.md §6.3 既有口径）。
+describe('e22-t16 batchUploadRowError（病毒扫描失败的行级文案）', () => {
+  const GENERIC = '上传失败，可重试（格式与大小按租户配置）';
+  const VIRUS = '文件未通过病毒检测（检出 Win.Test.EICAR.HDB-1），已拒绝上传';
+  const UNAVAILABLE = '病毒扫描服务暂不可用，请稍后重试';
+
+  function failure(code: number, message: string) {
+    return Object.assign(new Error(message), {
+      response: { data: { code, message } },
+    });
+  }
+
+  it('病毒检出：行错误为后端原文（不再误导「可重试 / 格式与大小」）', () => {
+    expect(batchUploadRowError(failure(40_001, VIRUS))).toBe(VIRUS);
+  });
+
+  it('扫描不可用（50300）：行错误为后端原文（自带稍后重试指引）', () => {
+    expect(batchUploadRowError(failure(50_300, UNAVAILABLE))).toBe(UNAVAILABLE);
+  });
+
+  it('其他失败（格式 / 网络）：维持既有通用文案', () => {
+    expect(batchUploadRowError(failure(40_001, '文件类型不支持'))).toBe(
+      GENERIC,
+    );
+    expect(batchUploadRowError(new Error('Network Error'))).toBe(GENERIC);
   });
 });

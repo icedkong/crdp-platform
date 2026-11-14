@@ -189,6 +189,12 @@ jobs:
       # prod 配置字面量、自查回写与索引接线；clamd 部署与启用由运维执行（OQ-154）。
       - name: 等保测评整改校验（E22-T15）
         run: python3 scripts/check_mlps_remediation.py
+      # E22-T16：等保测评整改（前端 / 全栈 2）。D-01 前端面修复与整改手册防漂移：
+      # packages/api upload-rejection（40001 病毒检出 / 50300 扫描不可用分类与行级
+      # 文案）、批量上传行错误与拍照队列内联原因接线、H5 原文透传、pages.md §0.2
+      # 登记 50300、自查回写与索引接线；EICAR 三端呈现核验由人工执行（手册 §5）。
+      - name: 等保测评整改校验（E22-T16）
+        run: python3 scripts/check_mlps_remediation_frontend.py
       - name: 关闭依赖容器
         if: always()
         run: docker compose down -v
