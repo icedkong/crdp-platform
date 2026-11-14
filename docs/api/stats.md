@@ -60,5 +60,6 @@
 - 医护负责患者数（E19-T07）：患者两列 = 患者列表 `doctorId` 筛选 total（同一条件树）；每年随访率按患者 × 年度去重汇总（与 `yearly_rate` 同事实表，各年度行之和）；无责任医生的患者不出行；按责任医生归口的暂行口径见 OQ-118。
 - 完整度两卡（E19-T05）：最常缺失字段缺失人数 = 患者列表 `completenessDrill` 检索 total（同一计算）；计划外记录不计入随访完整度；任务录入记录的实际随访日期（表单字段）参与时间筛选。
 - C 三卡（E21-T19）：`eri_list.total` = 指标卡 `eriNear`（同查询）；`abnormal_records` days=30 的 total = 指标卡 `highlightRecent`（同条件树）；`device_dist` 分母 = 指标卡「在随访患者数」（同条件树）；ERI 命中与计划切换 SW-7 / SW-8 同一谓词（EriEval）。
+- **C 卡片数与列表核对由 E21-T28 测试锁定**（`CDashboardCardsCaliberIT`，MySQL 门控）：同一套虚构数据下用独立列表接口重算卡片数字——`device_dist` 分母 = 患者列表 `status=ACTIVE` 检索 total、每类型 / 品牌人数 = 患者列表逐患者植入记录（current 行）独立重算、各行之和 = 分母；`eri_list` 命中患者 ⊆ 患者列表 ACTIVE、器械类型显示名 / 下次计划日期 = 概览 `device.typeLabel` / `nextVisit.planDate`、最近随访日期 = 概览 `latestFollowup.date`（E15 写入方落地前概览为 null，卡片按 §2 回落证据记录有效随访日期 = 记录详情 `visitDate`，口径锁定）、状态命中行 ERI 文案 = 概览 ERI 标记（电池视同命中行概览「视同接近ERI」、卡片按字典状态展示）；`abnormal_records` 每行命中数 = 记录详情 `highlightHits` = 时间轴节点 `highlightCount`、患者列表逐患者时间轴标红记录数 = 卡片 total、窗口外（updated_at 回拨）记录不进卡片与指标卡但仍在详情与时间轴（差异只在窗口，OQ-107④）；卡片 `wardId` 与患者列表 `wardIds` 筛选同一收窄（转病区后双侧同步）。
 - 用户只有病区 1 权限时，任何卡片不含病区 2 的数据。
 - 60s 内重复请求命中缓存；角色权限变更后立即失效。
