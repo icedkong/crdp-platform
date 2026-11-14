@@ -729,7 +729,7 @@ interface CompareReportPaneProps {
 | `ConflictBanner` | 409 冲突处理 | 显示更新人、更新时间、不同的字段；按钮 `保留我的并覆盖` / `载入服务器版本` |
 | `ContactLogModal` | 记录沟通 | 520 宽；字段：方式 / 结果 / 约定下次联系时间 / 备注 / MP3 录音（可选）；结果 = 未接通时提示「系统次日自动生成跟进」 |
 | `AudioPlayer` | 录音播放 | 原生 `audio`，`controlsList="nodownload"`，播放器里**不放下载按钮**（下载走 `followup:scan:download`） |
-| `ReasonModal` | 需要填原因的操作（删除、解锁基线、修改已提交、停止随访、转病区） | 520；原因必填，placeholder「必填，如：抄录错误」 |
+| `ReasonModal` | 需要填原因的操作（删除、解锁基线、修改已提交、停止随访、转病区）；植入记录编辑的原因内嵌在编辑弹窗（必填，≤255 字，C-PAT-011 / E23-T24） | 520；原因必填，placeholder「必填，如：抄录错误」 |
 | `StatCard` | 首页统计卡 | `a-statistic` 24–28/600 + 右上线性图标 + 「较昨日 +n / −n」12px |
 | `EmptyBlock` | 带下一步的空状态 | 文案「暂无随访任务 · 去新建计划」，按钮按权限显示 |
 | `TenantViewBanner` | 平台进入租户视角时的顶部常驻提示条 + 一键退出（PLT-VIEW-003） | 橙色 `a-alert banner`，显示剩余时长；不可关闭 |

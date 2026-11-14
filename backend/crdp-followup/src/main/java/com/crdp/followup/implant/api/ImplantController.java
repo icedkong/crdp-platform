@@ -2,7 +2,6 @@ package com.crdp.followup.implant.api;
 
 import com.crdp.followup.implant.app.ImplantService;
 import com.crdp.followup.implant.app.ImplantService.ImplantPayload;
-import com.crdp.followup.implant.app.ImplantService.UpdateRequest;
 import com.crdp.framework.security.RequireModule;
 import com.crdp.framework.security.RequiresPermission;
 import com.crdp.framework.web.ApiResponse;
@@ -60,13 +59,22 @@ public class ImplantController {
     @Operation(
             summary =
                     "编辑植入记录与电极（baseVersion 乐观锁；状态系统维护；leads 为 null 不动电极）。"
-                            + "写 IMPLANT_UPDATE 审计；字段级历史随 C 字段字典录入（E23-T20）C_IMPLANT 模板")
+                            + "reason 修改原因必填（40001，C-PAT-011 字段级历史行带原因，UAT-SELF-01 修复）；"
+                            + "写 IMPLANT_UPDATE 审计（含原因）；字段级历史随 C 字段字典录入（E23-T20）C_IMPLANT 模板")
     @PutMapping("/implants/{implantId}")
     @RequireModule("followup")
     @RequiresPermission("followup:implant:edit")
     public ApiResponse<ImplantService.ImplantView> update(
-            @PathVariable("implantId") long implantId, @RequestBody UpdateRequest request) {
-        return ApiResponse.ok(service.update(implantId, request));
+            @PathVariable("implantId") long implantId,
+            @org.springframework.validation.annotation.Validated @RequestBody
+                    UpdateRequest request) {
+        return ApiResponse.ok(
+                service.update(
+                        implantId,
+                        new com.crdp.followup.implant.app.ImplantService.UpdateRequest(
+                                request.baseVersion(),
+                                request.implant() == null ? null : request.implant().toPayload(),
+                                request.reason())));
     }
 
     @Operation(
@@ -109,6 +117,10 @@ public class ImplantController {
             @PathVariable("implantId") long implantId, @RequestBody ExplantRequestRequest request) {
         return ApiResponse.ok(service.explant(implantId, request.toRequest()));
     }
+
+    /** 编辑请求体：baseVersion + 植入载荷 + 修改原因（必填，C-PAT-011 / UAT-SELF-01）。 */
+    public record UpdateRequest(
+            int baseVersion, ImplantPayloadRequest implant, @Size(max = 255) String reason) {}
 
     /** 新建请求体：植入记录字段 + 电极清单（无导线起搏器不录电极）。 */
     public record ImplantPayloadRequest(

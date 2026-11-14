@@ -115,6 +115,20 @@ export type ImplantPayload = ImplantForm;
 export interface ImplantUpdatePayload {
   baseVersion: number;
   implant: ImplantPayload;
+  /** 修改原因（必填，≤255 字；C-PAT-011 字段级历史行带原因，UAT-SELF-01）。 */
+  reason: string;
+}
+
+/** 编辑植入记录的修改原因校验（C-PAT-011 / UAT-SELF-01）：必填、≤255 字；通过返回 null。 */
+export function implantEditReasonError(reason: null | string): null | string {
+  const value = reason?.trim() ?? '';
+  if (!value) {
+    return '请填写修改原因';
+  }
+  if (value.length > 255) {
+    return '修改原因不能超过 255 字';
+  }
+  return null;
 }
 
 /** 植入指征选「其他」须填补充说明（Q16；编码与后端 ImplantCodes 对齐）。 */
@@ -559,8 +573,13 @@ export function buildImplantPayload(form: ImplantForm): ImplantPayload {
 export function buildImplantUpdatePayload(
   baseVersion: number,
   form: ImplantForm,
+  reason: string,
 ): ImplantUpdatePayload {
-  return { baseVersion, implant: buildImplantPayload(form) };
+  return {
+    baseVersion,
+    implant: buildImplantPayload(form),
+    reason: reason.trim(),
+  };
 }
 
 /** 新建表单缺省值（植入类型缺省首次植入；电极清空）。 */

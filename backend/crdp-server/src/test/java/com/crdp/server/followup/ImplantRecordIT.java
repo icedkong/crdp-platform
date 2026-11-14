@@ -251,6 +251,63 @@ class ImplantRecordIT {
     // ---------------------------------------------------------------- 校验（C-PAT-005）
 
     @Test
+    void editRecordsReasonInFieldHistory() {
+        // E23-T24 / UAT-SELF-01（C-PAT-011 / UAT 脚本 B-5）：编辑植入记录必须填写修改原因，
+        // 字段级历史行（fe_field_history，PT_IMPLANT）逐行带原因；缺原因 40001 拒绝
+        enableImplant("demoa");
+        String admin = adminToken();
+        String patientId =
+                registeredPatientId(
+                        admin, "IT-MRN-E23T24-01", "2026-01-05", "DDD", "DEMO-SN-E23T24-1");
+        Map<?, ?> implant = firstImplant(admin, patientId);
+        String implantId = String.valueOf(implant.get("id"));
+        int baseVersion = ((Number) implant.get("version")).intValue();
+
+        // 缺原因 → 40001，不落库
+        Map<String, Object> noReason = editBody(baseVersion, "示例型号 S-E23T24", List.of());
+        noReason.remove("reason");
+        Map<?, ?> rejected =
+                rest.exchange(
+                                "/api/hospital/followup/implants/" + implantId,
+                                HttpMethod.PUT,
+                                new HttpEntity<>(noReason, bearer(admin)),
+                                Map.class)
+                        .getBody();
+        assertEquals(40001, code(rejected), "修改植入记录必须填写修改原因：" + rejected);
+
+        // 带原因 → 200，字段级历史行 reason = 修改植入记录：<用户原因>
+        Map<String, Object> withReason = editBody(baseVersion, "示例型号 S-E23T24", List.of());
+        withReason.put("reason", "型号抄录更正（示例）");
+        Map<?, ?> updated =
+                rest.exchange(
+                                "/api/hospital/followup/implants/" + implantId,
+                                HttpMethod.PUT,
+                                new HttpEntity<>(withReason, bearer(admin)),
+                                Map.class)
+                        .getBody();
+        assertEquals(0, code(updated), "编辑失败：" + updated);
+
+        List<Map<String, Object>> history =
+                runInTenant(
+                        "demoa",
+                        () ->
+                                jdbc.queryForList(
+                                        "SELECT field_key, new_value, reason FROM fe_field_history"
+                                                + " WHERE record_type = 'PT_IMPLANT' AND record_id = ?"
+                                                + " ORDER BY id",
+                                        Long.parseLong(implantId)));
+        assertTrue(history.size() >= 1, "编辑写字段级历史行");
+        List<Map<String, Object>> modelRows =
+                history.stream().filter(row -> "f106".equals(row.get("field_key"))).toList();
+        assertEquals(1, modelRows.size(), "型号稳定键 f106 的历史行：" + history);
+        assertEquals(
+                "修改植入记录：型号抄录更正（示例）", modelRows.get(0).get("reason"), "历史行带用户填写的修改原因（C-PAT-011）");
+        assertTrue(
+                history.stream().allMatch(row -> row.get("reason") != null),
+                "全部历史行都带原因（本次保存单一原因）：" + history);
+    }
+
+    @Test
     void leadlessDeviceAndCrossChamberPositionRejected() {
         enableImplant("demoa");
         String admin = adminToken();
@@ -475,6 +532,7 @@ class ImplantRecordIT {
         implant.put("indication", "SSS");
         implant.put("leads", leads);
         body.put("implant", implant);
+        body.put("reason", "电极集与型号更正（示例）");
         return body;
     }
 

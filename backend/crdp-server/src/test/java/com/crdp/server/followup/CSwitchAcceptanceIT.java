@@ -399,6 +399,7 @@ class CSwitchAcceptanceIT {
         Map<String, Object> body = new HashMap<>();
         body.put("baseVersion", ((Number) implantRow.get("version")).intValue());
         body.put("implant", implantPayload("FIRST", implant, "ICD"));
+        body.put("reason", "类型更正（示例，SW-6）");
         assertEquals(
                 0,
                 code(put("/api/hospital/followup/implants/" + implantRow.get("id"), admin, body)),

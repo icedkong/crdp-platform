@@ -13,6 +13,7 @@ import {
   emptyReplaceForm,
   generatorUnchanged,
   implantCardLines,
+  implantEditReasonError,
   implantFormOf,
   leadPositionOptions,
   leadsAllowedForDevice,
@@ -132,10 +133,23 @@ describe('e21-T01 植入记录与电极（C-PAT-004、C-PAT-005）', () => {
     expect(payload.leads?.[0]?.status).toBe('ACTIVE');
   });
 
-  it('编辑请求体携带 baseVersion 乐观锁', () => {
-    const payload = buildImplantUpdatePayload(3, validForm());
+  it('编辑请求体携带 baseVersion 乐观锁与修改原因（C-PAT-011 / UAT-SELF-01）', () => {
+    const payload = buildImplantUpdatePayload(
+      3,
+      validForm(),
+      ' 型号抄录更正（示例） ',
+    );
     expect(payload.baseVersion).toBe(3);
     expect(payload.implant.implantType).toBe('FIRST');
+    expect(payload.reason).toBe('型号抄录更正（示例）');
+  });
+
+  it('编辑修改原因必填、≤255 字（UAT-SELF-01）', () => {
+    expect(implantEditReasonError(null)).toContain('请填写修改原因');
+    expect(implantEditReasonError('  ')).toContain('请填写修改原因');
+    expect(implantEditReasonError('型号更正（示例）')).toBeNull();
+    expect(implantEditReasonError('长'.repeat(256))).toContain('255');
+    expect(implantEditReasonError('长'.repeat(255))).toBeNull();
   });
 
   it('既有行 → 表单初值（电极行带 id 复用，附录 A 电极 #5）', () => {

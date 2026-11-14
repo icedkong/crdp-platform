@@ -375,7 +375,9 @@ class ImplantServiceTest {
                                 service.update(
                                         501L,
                                         new ImplantService.UpdateRequest(
-                                                0, payload("FIRST", "2026-01-05", "DDD", null))));
+                                                0,
+                                                payload("FIRST", "2026-01-05", "DDD", null),
+                                                "过期基线核验（示例）")));
         assertEquals(40900, failure.code(), "baseVersion 不一致按冲突提示刷新");
         verify(mapper, never()).updateImplant(any());
     }
@@ -403,7 +405,8 @@ class ImplantServiceTest {
                                 List.of(
                                         new ImplantService.LeadPayload(
                                                 "601", "RA", "RA_APPENDAGE", null, null, null),
-                                        leadPayload("RV", "RV_SEPTUM")))));
+                                        leadPayload("RV", "RV_SEPTUM"))),
+                        "电极集更正（示例）"));
 
         ArgumentCaptor<ImplantUpdate> captor = ArgumentCaptor.forClass(ImplantUpdate.class);
         verify(mapper).updateImplant(captor.capture());
@@ -425,7 +428,8 @@ class ImplantServiceTest {
 
         service.update(
                 501L,
-                new ImplantService.UpdateRequest(3, payload("FIRST", "2026-02-10", "CRT_D", null)));
+                new ImplantService.UpdateRequest(
+                        3, payload("FIRST", "2026-02-10", "CRT_D", null), "升级前更正日期（示例）"));
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<java.util.Map<String, Object>> before =
@@ -433,6 +437,7 @@ class ImplantServiceTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<java.util.Map<String, Object>> after =
                 ArgumentCaptor.forClass(java.util.Map.class);
+        ArgumentCaptor<String> reason = ArgumentCaptor.forClass(String.class);
         verify(fieldHistory)
                 .logChanges(
                         eq(com.crdp.form.history.app.FieldHistoryService.PT_IMPLANT),
@@ -442,11 +447,47 @@ class ImplantServiceTest {
                         before.capture(),
                         after.capture(),
                         eq(com.crdp.form.history.domain.ChangeSource.USER),
-                        any());
+                        reason.capture());
         assertEquals("2026-01-05", before.getValue().get("f103"), "旧植入日期（ISO 文本）");
         assertEquals("2026-02-10", after.getValue().get("f103"), "新植入日期");
         assertEquals("DDD", before.getValue().get("f104"), "旧起搏器类型（稳定键 f104）");
         assertEquals("CRT_D", after.getValue().get("f104"));
+        assertEquals(
+                "修改植入记录：升级前更正日期（示例）",
+                reason.getValue(),
+                "字段级历史带用户填写的修改原因（C-PAT-011 / UAT-SELF-01）");
+    }
+
+    @Test
+    void updateRequiresReasonForFieldHistory() {
+        // E23-T24 / UAT-SELF-01（C-PAT-011）：编辑植入记录必须填写修改原因——字段级历史行带原因，缺原因 40001
+        ImplantRow existing = implant(501L, "ACTIVE", "2026-01-05");
+        when(gateway.implantInScope(501L)).thenReturn(existing);
+
+        ApiException blank =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.update(
+                                        501L,
+                                        new ImplantService.UpdateRequest(
+                                                3,
+                                                payload("FIRST", "2026-01-05", "DDD", null),
+                                                " ")));
+        assertEquals(40001, blank.code(), "修改植入记录必须填写修改原因（C-PAT-011）");
+
+        ApiException missing =
+                assertThrows(
+                        ApiException.class,
+                        () ->
+                                service.update(
+                                        501L,
+                                        new ImplantService.UpdateRequest(
+                                                3,
+                                                payload("FIRST", "2026-01-05", "DDD", null),
+                                                null)));
+        assertEquals(40001, missing.code(), "缺修改原因同样拒绝");
+        verify(mapper, never()).updateImplant(any());
     }
 
     @Test
@@ -464,7 +505,8 @@ class ImplantServiceTest {
                                         501L,
                                         new ImplantService.UpdateRequest(
                                                 3,
-                                                payload("FIRST", "2026-01-05", "LEADLESS", null))));
+                                                payload("FIRST", "2026-01-05", "LEADLESS", null),
+                                                "换无导线（示例）")));
         assertEquals(40001, failure.code(), "改为无导线时不可遗留电极");
         verify(mapper, never()).updateImplant(any());
     }
@@ -812,7 +854,8 @@ class ImplantServiceTest {
 
         service.update(
                 501L,
-                new ImplantService.UpdateRequest(3, payload("FIRST", "2026-01-05", "ICD", null)));
+                new ImplantService.UpdateRequest(
+                        3, payload("FIRST", "2026-01-05", "ICD", null), "类型更正（示例）"));
 
         // SW-6 器械类型更正（录入纠错）：按新类型重新入组，起算仍按原植入日期（切换服务内部锁定）
         verify(planSwitch)
@@ -830,7 +873,8 @@ class ImplantServiceTest {
 
         service.update(
                 501L,
-                new ImplantService.UpdateRequest(3, payload("FIRST", "2026-02-10", "DDD", null)));
+                new ImplantService.UpdateRequest(
+                        3, payload("FIRST", "2026-02-10", "DDD", null), "日期更正（示例）"));
 
         // 类型未改、仅改植入日期：接入 E14-T07 起算重算（未开始任务按新日期重算，C 规格 §4 / OQ-135③）
         verify(startDateRecalc).recalculateOnBaseDateChange(PATIENT_ID, OPERATOR_ID);
@@ -847,7 +891,8 @@ class ImplantServiceTest {
 
         service.update(
                 501L,
-                new ImplantService.UpdateRequest(3, payload("FIRST", "2026-01-05", "ICD", null)));
+                new ImplantService.UpdateRequest(
+                        3, payload("FIRST", "2026-01-05", "ICD", null), "类型更正（示例）"));
 
         // 只针对在用记录（当前器械）：历史（已更换）记录的类型 / 日期改动不触发切换与重算
         verify(planSwitch, never())

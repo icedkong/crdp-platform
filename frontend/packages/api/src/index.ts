@@ -370,6 +370,7 @@ export {
   IMPLANT_TYPE_REPLACE,
   IMPLANT_TYPE_UPGRADE,
   implantCardLines,
+  implantEditReasonError,
   implantFormOf,
   leadPositionOptions,
   leadsAllowedForDevice,
