@@ -56,9 +56,11 @@ jobs:
       # V134 补授迁移、登记即死亡代码路径与 patient.md 更正（OQ-124）防漂移校验。
       - name: UAT 修复校验（全栈 1）
         run: python3 scripts/check_uat_remediation_fullstack1.py
-      # E19-T10：医院 A UAT 支持与缺陷复测（测试）。复测工具自检（不联网、
-      # dry-run / 幂等 / 关闭口径护栏）+ 复测手册 / 复测清单模板 / 预演留痕防漂移校验。
-      - name: UAT 复测校验（E19-T10）
+      # E19-T10 / E21-T30：医院 A / C UAT 支持与缺陷复测（测试）。复测工具自检
+      # （不联网、dry-run / 幂等 / 关闭口径护栏 / A·C 院区路由：周次与 fix_task
+      # 越院拦截、看板按周次过滤）+ 复测手册（A、C 两册）/ 复测清单模板（两份）/
+      # 预演留痕防漂移校验。
+      - name: UAT 复测校验（E19-T10 / E21-T30）
         run: |
           python3 scripts/uat_retest.py --selftest
           python3 scripts/check_uat_retest.py

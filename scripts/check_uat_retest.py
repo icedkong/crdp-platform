@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""医院 A UAT 支持与缺陷复测（E19-T10，测试）防漂移校验（CI 恒跑，不联网）。
+"""UAT 支持与缺陷复测（医院 A：E19-T10 / 医院 C：E21-T30，测试）防漂移校验（CI 恒跑，不联网）。
 
 校验对象：
 
@@ -8,15 +8,24 @@
    待人工清单、衔接与验证留痕齐备；验收句与 tasks.csv E19-T10 行一致（含
    排期 W35–W36 / 2027-07-12 与「超出里程碑窗口」口径）；复测面预演表覆盖
    UAT-SELF-01~06 与 A 组冒烟；
-2. `docs/testing/uat-retest-template.csv` 模板：表头与 `uat_retest.py` 的列定义
-   完全一致、示例行校验通过且全部带「示例」标记（AGENTS §5.5）；
-3. `scripts/uat_retest.py` 护栏在位：默认 dry-run（--apply 才写库）、token 只经
+2. `docs/testing/uat-retest-hospital-c.md` C 复测手册（E21-T30 · W44–W45）：
+   窗口 / 排期与 tasks.csv 一致、C 侧路由（打回 E23-T24 / T25、周次 W44 / W45、
+   看板 --status --hospital c 按周次过滤，OQ-153①）、W45 清零硬期限（不延入
+   W46 国庆周）、遗留清单含 OQ-148 结论与复核清单 5 项、复测链路预演三件套；
+3. `docs/testing/uat-retest-template.csv` 与
+   `docs/testing/uat-retest-hospital-c-template.csv` 两模板：表头与
+   `uat_retest.py` 的列定义完全一致、示例行按对应 --hospital 校验通过且全部
+   带「示例」标记（AGENTS §5.5；C 模板周次 W44 / W45、修复任务 E23-T24 / T25）；
+4. `scripts/uat_retest.py` 护栏在位：默认 dry-run（--apply 才写库）、token 只经
    git credential fill、复测评论幂等标记 RETEST-ID、只回写已入库 UAT-ID、
    utf-8-sig 兼容、疑似真实手机号 / 证件号拦截（复用 uat_intake 同一实现）、
-   关闭口径（通过 completed / 不通过保持打开 / 遗留 not_planned 且仅一般与建议）；
+   关闭口径（通过 completed / 不通过保持打开 / 遗留 not_planned 且仅一般与建议）、
+   `--hospital a|c` 院区路由（周次 / fix_task / 署名 / 缺省模板 / 看板过滤）；
    源码无硬编码凭据；
-4. 索引同步：ci.yml 含工具自检与本校验步骤、docs/README.md、UAT 手册（§6 工具
-   与 §10.5 预演留痕）、两本修复手册 §7 衔接行、AGENTS.md 脚本清单。
+5. 索引同步：ci.yml 含工具自检与本校验步骤（注释覆盖 A / C 两册）、
+   docs/README.md、UAT 手册（A §6 工具与 §10.5 预演留痕；C §6 工具与 §11
+   衔接行指向 C 复测手册）、两本 A 修复手册 §7 衔接行、open-questions.md
+   OQ-153、AGENTS.md 脚本清单。
 
 主仓库：https://github.com/icedkong/crdp-platform
 """
@@ -31,14 +40,18 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 MANUAL = ROOT / "docs/testing/uat-retest-hospital-a.md"
+MANUAL_C = ROOT / "docs/testing/uat-retest-hospital-c.md"
 TEMPLATE = ROOT / "docs/testing/uat-retest-template.csv"
+TEMPLATE_C = ROOT / "docs/testing/uat-retest-hospital-c-template.csv"
 TOOL = ROOT / "scripts/uat_retest.py"
 INTAKE = ROOT / "scripts/uat_intake.py"
 TASKS_CSV = ROOT / "docs/tasks/tasks.csv"
 CI_YML = ROOT / ".github/workflows/ci.yml"
 README = ROOT / "docs/README.md"
 AGENTS = ROOT / "AGENTS.md"
+OPEN_QUESTIONS = ROOT / "docs/open-questions.md"
 UAT_MANUAL = ROOT / "docs/testing/uat-hospital-a.md"
+UAT_MANUAL_C = ROOT / "docs/testing/uat-hospital-c.md"
 REMEDIATION_FS2 = ROOT / "docs/testing/uat-remediation-hospital-a.md"
 REMEDIATION_FS1 = ROOT / "docs/testing/uat-remediation-hospital-a-fullstack1.md"
 
@@ -55,13 +68,17 @@ def load_module(path: Path, name: str):
     return module
 
 
-def e19_t10_row() -> dict[str, str] | None:
+def tasks_row(task_id: str) -> dict[str, str] | None:
     # tasks.csv 表头为中文且带 BOM（utf-8-sig）
     with TASKS_CSV.open(encoding="utf-8-sig") as f:
         for row in csv.DictReader(f):
-            if row.get("任务编号") == "E19-T10":
+            if row.get("任务编号") == task_id:
                 return row
     return None
+
+
+def e19_t10_row() -> dict[str, str] | None:
+    return tasks_row("E19-T10")
 
 
 def main() -> int:
@@ -261,10 +278,215 @@ def main() -> int:
     check("AGENTS.md 脚本清单含复测工具", "uat_retest.py" in agents)
     check("AGENTS.md 脚本清单含本校验", "check_uat_retest.py" in agents)
 
+    # ---- 5. 医院 C 复测手册（E21-T30 · W44–W45） ----
+    manual_c = MANUAL_C.read_text(encoding="utf-8") if MANUAL_C.exists() else ""
+    check("C 复测手册存在", bool(manual_c))
+    row_c = tasks_row("E21-T30")
+    check("tasks.csv 有 E21-T30 行", row_c is not None)
+    if row_c:
+        check(
+            "C 手册窗口与任务标题一致（W44–W45）",
+            "W44–W45" in (row_c.get("标题") or "") and "W44–W45" in manual_c,
+        )
+        check("C 手册验收句与 tasks.csv 一致（UAT 缺陷复测关闭）", (row_c.get("验收标准") or "") in manual_c)
+        check(
+            "C 手册排期与 tasks.csv 一致（S22 · W44–W45、2027-09-13 起）",
+            "S22 · W44–W45（2027-09-13 起" in manual_c
+            and (row_c.get("开始周") or "").strip() == "W44"
+            and (row_c.get("结束周") or "").strip() == "W45"
+            and (row_c.get("开始日期") or "").strip() == "2027-09-13",
+        )
+        check(
+            "C 手册写明未超出里程碑窗口口径",
+            (row_c.get("超出里程碑窗口") or "").strip() != "是" and "未标超出里程碑窗口" in manual_c,
+        )
+        check("C 手册写明依赖（E23-T23）", "E23-T23" in manual_c)
+        check("C 手册写明类型为测试任务", "测试，4 人天" in manual_c)
+    for anchor in [
+        "## 1. 目标与验收口径",
+        "## 2. UAT 支持侧职责（测试角色，窗口内）",
+        "## 3. 复测流程（修复版本 → 复测 → 结论回写 → 关闭 / 打回）",
+        "## 4. 复测结论三档与关闭动作",
+        "## 5. 复测清单与工具（机制交付 · 本任务仓库侧完成）",
+        "## 6. 复测链路预演",
+        "## 7. 闭环判据与看板",
+        "## 8. 待人工 / 外部事项清单（窗口 W44–W45 内执行）",
+        "## 9. 与其他任务的衔接",
+        "## 10. 验证留痕",
+    ]:
+        check(f"C 手册章节「{anchor}」在位", anchor in manual_c)
+    for concl in ("**通过**", "**不通过**", "**遗留（延期上线，书面接受）**"):
+        check(f"C 结论三档含「{concl}」", concl in manual_c)
+    check("C 关闭动作口径（completed）在位", "completed" in manual_c)
+    check("C 关闭动作口径（not planned）在位", "not planned" in manual_c)
+    check(
+        "C 阻断 / 严重不允许遗留（判据 2 清零）",
+        "阻断 / 严重不允许遗留" in manual_c or "仅**一般 / 建议级**" in manual_c,
+    )
+    check(
+        "C 手册含判据 2 整句（阻断（severity:high）与严重（severity:medium）全部关闭）",
+        "阻断（severity:high）与严重（severity:medium）全部关闭" in manual_c,
+    )
+    check(
+        "C 手册写明 W45 清零硬期限（不延入 W46）",
+        "不延入 W46" in manual_c and "2027-09-23" in manual_c,
+    )
+    for marker in [
+        "uat_retest.py",
+        "--hospital c",
+        "uat-retest-hospital-c-template.csv",
+        "uat-hospital-c.md",
+        "uat-hospital-a.md",
+        "uat_intake.py",
+        "GitHub Issues",
+        "OQ-122",
+        "OQ-153",
+        "OQ-148",
+        "OQ-144",
+        "AGENTS §5.5",
+        "E23-T23",
+        "E23-T24",
+        "E23-T25",
+        "E23-T26",
+        "E21-T29",
+        "E19-T10",
+        "E21-T31",
+        "E23-T27",
+        "CFullChainAcceptanceIT",
+        "V137",
+        "--status",
+        "--round 2",
+        "RETEST-ID",
+    ]:
+        check(f"C 手册含关键口径「{marker}」", marker in manual_c)
+    for sev in intake.SEVERITIES:
+        check(f"C 手册含分级「{sev}」", sev in manual_c)
+    check("C 手册写明看板按周次过滤（OQ-153①）", "按 UAT-ID 周次 W44 / W45 过滤" in manual_c)
+    check("C 手册含打回口径（新轮次）", "新轮次" in manual_c)
+    check(
+        "C 手册遗留清单挂接 OQ-148 与复核清单（C 手册 §7-4）",
+        "OQ-148 确认结论" in manual_c and "复核清单 5 项" in manual_c,
+    )
+    # 复测链路预演三件套（§6 / §10）
+    check("C 预演含基准回归项（CFullChainAcceptanceIT 5/5）", "5/5" in manual_c)
+    check("C 预演含工具自检结果（63/63）", "63/63" in manual_c)
+    check("C 预演含判据看板实拉（--status --hospital c，0 条）", "--status --hospital c" in manual_c)
+    check("C 预演写明当前复测对象为空（窗口未到）", "窗口未到" in manual_c)
+
+    # ---- 6. C 复测清单模板 ----
+    trows_c, errs_c = tool.load_retests(TEMPLATE_C)
+    check("C 模板表头与工具列定义一致", not errs_c)
+    check("C 模板行全部按 --hospital c 校验通过", not tool.validate_rows(trows_c, "c"))
+    check(
+        "C 模板示例行 ≥2 且复测结果带「示例」",
+        len(trows_c) >= 2 and all("示例" in (r["reproduce_result"] or "") for r in trows_c),
+    )
+    with TEMPLATE_C.open(encoding="utf-8-sig") as f:
+        header_c = next(csv.reader(f))
+    check("C 模板表头顺序与 EXPECTED_COLUMNS 逐列一致", header_c == tool.EXPECTED_COLUMNS)
+    check(
+        "C 模板示例结论覆盖 通过 / 遗留（关闭动作示范）",
+        {r["conclusion"] for r in trows_c} == {"通过", "遗留"},
+    )
+    check(
+        "C 模板周次 W44 / W45 且修复任务 E23-T24 / E23-T25",
+        all(
+            r["uat_id"].split("-")[1] in ("W44", "W45")
+            and r["fix_task"] in ("E23-T24", "E23-T25")
+            for r in trows_c
+        ),
+    )
+    check("C 模板不含 A 侧任务 / 周次（不串院）", all(r["fix_task"] not in ("E23-T09", "E23-T10") for r in trows_c))
+
+    # ---- 7. C 侧工具护栏（运行时断言） ----
+    src_c = TOOL.read_text(encoding="utf-8") if TOOL.exists() else ""
+    for guard, why in [
+        ("--hospital", "院区路由（A / C，OQ-153①）"),
+        ("split_by_hospital", "看板按 UAT-ID 周次过滤出院区"),
+        ("E23-T24", "C 侧打回路由修复任务（全栈 1）"),
+        ("E23-T25", "C 侧打回路由修复任务（全栈 2）"),
+        ("E21-T30", "C 侧复测任务署名"),
+    ]:
+        check(f"复测工具 C 护栏「{guard}」（{why}）", guard in src_c)
+    check(
+        "C 路由周次与 uat_intake 同源（运行时断言）",
+        all(tool.HOSPITALS[h]["weeks"] == intake.HOSPITALS[h]["weeks"] for h in ("a", "c"))
+        and sorted(tool.HOSPITALS) == ["a", "c"],
+    )
+    base_c = dict(
+        zip(
+            tool.EXPECTED_COLUMNS,
+            [
+                "UAT-W44-001",
+                "严重",
+                "通过",
+                "E23-T24",
+                "2027-09-16",
+                "UAT 环境（示例）",
+                "cuat-fix-b1",
+                "按原步骤不可复现（示例）。",
+                "UAT 复测记录 W44-21（示例）",
+                "",
+            ],
+        )
+    )
+    body_c = tool.to_comment_body(base_c, 1, "c")
+    check(
+        "C 评论含幂等标记与打回路由（运行时断言）",
+        all(t in body_c for t in ("RETEST-ID: UAT-W44-001 #1", "E23-T24", "E21-T30", "severity:medium")),
+    )
+    check(
+        "C 评论不串 A 侧任务（运行时断言）",
+        "E23-T09" not in body_c and "E19-T10" not in body_c,
+    )
+    check(
+        "A 评论不串 C 侧任务（运行时断言）",
+        "E23-T24" not in body and "E21-T30" not in body,
+    )
+    check(
+        "C 周次越窗 / 越院拦截（运行时断言）",
+        not tool.validate_rows([base_c], "c")
+        and any("窗口" in e for e in tool.validate_rows([base_c], "a"))
+        and any("窗口" in e for e in tool.validate_rows([base], "c"))
+        and any("fix_task" in e for e in tool.validate_rows([dict(base_c, fix_task="E23-T09")], "c"))
+        and any("fix_task" in e for e in tool.validate_rows([dict(base, fix_task="E23-T24")], "a")),
+    )
+    fake_pool = [
+        {"number": 1, "state": "open", "body": "UAT-ID: UAT-W44-001", "labels": []},
+        {"number": 2, "state": "open", "body": "UAT-ID: UAT-W45-012", "labels": []},
+        {"number": 3, "state": "open", "body": "UAT-ID: UAT-W34-001", "labels": []},
+        {"number": 4, "state": "open", "body": "手工建单，无标记", "labels": []},
+    ]
+    inc_c, exc_c, unm_c = tool.split_by_hospital(fake_pool, tool.HOSPITALS["c"]["weeks"])
+    inc_a, exc_a, _unm_a = tool.split_by_hospital(fake_pool, tool.HOSPITALS["a"]["weeks"])
+    check(
+        "看板周次过滤行为（运行时断言：C 收 W44/W45、A 收 W33–W35、无标记计入单列）",
+        [i["number"] for i in inc_c] == [1, 2, 4]
+        and [i["number"] for i in exc_c] == [3]
+        and [i["number"] for i in inc_a] == [3, 4]
+        and [i["number"] for i in exc_a] == [1, 2]
+        and [i["number"] for i in unm_c] == [4],
+    )
+    check(
+        "C 缺省模板指向 C 模板（运行时断言）",
+        tool.HOSPITALS["c"]["template"] == Path("docs/testing/uat-retest-hospital-c-template.csv")
+        and tool.HOSPITALS["a"]["template"] == Path("docs/testing/uat-retest-template.csv"),
+    )
+
+    # ---- 8. C 索引与流程接线 ----
+    check("docs/README.md 收录 C 复测手册", "uat-retest-hospital-c.md" in readme)
+    uat_manual_c = UAT_MANUAL_C.read_text(encoding="utf-8") if UAT_MANUAL_C.exists() else ""
+    check("C UAT 手册引用复测工具 C 路由（§6）", "uat_retest.py" in uat_manual_c and "--hospital c" in uat_manual_c)
+    check("C UAT 手册 §11 E21-T30 行指向 C 复测手册", "uat-retest-hospital-c.md" in uat_manual_c)
+    check("A 复测手册 §9 E21-T30 行指向 C 复测手册（框架复用落地）", "uat-retest-hospital-c.md" in manual)
+    check("ci.yml 复测步骤注释覆盖 E21-T30（A / C 两册）", "E21-T30" in ci)
+    oq = OPEN_QUESTIONS.read_text(encoding="utf-8") if OPEN_QUESTIONS.exists() else ""
+    check("open-questions.md OQ-153 收录 C 复测路由落地", "uat-retest-hospital-c.md" in oq)
+
     failed = [n for n, ok in checks if not ok]
     for n, ok in checks:
         print(("✓ " if ok else "✗ ") + n)
-    print(f"UAT 复测（E19-T10）校验：{len(checks) - len(failed)}/{len(checks)} 通过")
+    print(f"UAT 复测（E19-T10 / E21-T30）校验：{len(checks) - len(failed)}/{len(checks)} 通过")
     if failed:
         print("失败项：" + "；".join(failed), file=sys.stderr)
         return 1
