@@ -360,6 +360,7 @@ class PlanSwitchIT {
         Map<String, Object> body = new HashMap<>();
         body.put("baseVersion", ((Number) implant.get("version")).intValue());
         body.put("implant", implantPayload(implantTypeOf(implant), implantDate, "ICD"));
+        body.put("reason", "类型更正（示例，SW-6）");
         assertEquals(
                 0,
                 code(put("/api/hospital/followup/implants/" + implant.get("id"), admin, body)),

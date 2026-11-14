@@ -12,10 +12,11 @@ import {
   buildImplantPayload,
   buildImplantUpdatePayload,
   emptyImplantForm,
+  implantEditReasonError,
   implantFormOf,
   validateImplantForm,
 } from '@crdp/api';
-import { message, Modal } from 'ant-design-vue';
+import { Form, FormItem, message, Modal, Textarea } from 'ant-design-vue';
 
 import {
   createPatientImplant,
@@ -28,7 +29,8 @@ import ImplantFields from '#/components/followup/implant-fields.vue';
  * E21-T01 / C-PAT-004、C-PAT-005 · 植入记录新建 / 编辑弹窗（pages.md §4.4「操作：
  * …编辑」；新建承载首条植入与补录历史器械，在用器械的更换 / 升级 / 电极修正走
  * implant-replace-modal.vue，E21-T02）。字段组见 implant-fields.vue。保存带
- * baseVersion 乐观锁（40900 提示刷新重试）。
+ * baseVersion 乐观锁（40900 提示刷新重试）。编辑必须填写修改原因（C-PAT-011 /
+ * UAT-SELF-01：字段级历史行带原因，与修改已提交随访记录同口径）。
  */
 const props = defineProps<{
   open: boolean;
@@ -45,6 +47,8 @@ const emit = defineEmits<{
 const form = reactive<ImplantForm>(emptyImplantForm());
 const options = ref<ImplantOptions | null>(null);
 const errors = ref<ImplantFormErrors>({});
+const reason = ref('');
+const reasonError = ref<null | string>(null);
 const submitting = ref(false);
 
 watch(
@@ -56,6 +60,8 @@ watch(
       props.record ? implantFormOf(props.record) : emptyImplantForm(),
     );
     form.leads = props.record ? implantFormOf(props.record).leads : [];
+    reason.value = '';
+    reasonError.value = null;
     errors.value = {};
     if (!options.value) {
       fetchImplantOptions()
@@ -72,8 +78,11 @@ const isEdit = computed(() => !!props.record);
 
 async function handleSave() {
   errors.value = validateImplantForm(form, options.value);
-  if (Object.keys(errors.value).length > 0) {
-    message.warning('请先补全植入记录必填项');
+  if (isEdit.value) {
+    reasonError.value = implantEditReasonError(reason.value);
+  }
+  if (Object.keys(errors.value).length > 0 || reasonError.value) {
+    message.warning(reasonError.value || '请先补全植入记录必填项');
     return;
   }
   submitting.value = true;
@@ -81,7 +90,7 @@ async function handleSave() {
     const saved = props.record
       ? await updatePatientImplant(
           props.record.id,
-          buildImplantUpdatePayload(props.record.version, form),
+          buildImplantUpdatePayload(props.record.version, form, reason.value),
         )
       : await createPatientImplant(props.patientId, buildImplantPayload(form));
     message.success(props.record ? '植入记录已保存' : '植入记录已新建');
@@ -114,5 +123,32 @@ async function handleSave() {
     @cancel="emit('update:open', false)"
   >
     <ImplantFields v-model:form="form" :errors="errors" :options="options" />
+    <Form v-if="isEdit" layout="vertical" @submit.prevent>
+      <FormItem label="修改原因（必填）">
+        <Textarea
+          v-model:value="reason"
+          data-testid="implant-edit-reason"
+          :maxlength="255"
+          :rows="2"
+          show-count
+          placeholder="必填，如：型号抄录更正（示例）"
+        />
+      </FormItem>
+    </Form>
+    <p
+      v-if="reasonError"
+      class="reason-error"
+      data-testid="implant-edit-reason-error"
+    >
+      {{ reasonError }}
+    </p>
   </Modal>
 </template>
+
+<style scoped>
+.reason-error {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: #ff4d4f;
+}
+</style>

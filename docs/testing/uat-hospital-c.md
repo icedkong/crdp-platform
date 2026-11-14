@@ -48,7 +48,7 @@
 |---|---|
 | 环境 | 与生产同构的独立 **UAT 级环境**（同版本镜像、独立数据库），与渗透靶机环境同口径（`docs/ops/pentest.md` §4、OQ-122 ③）；真实云资源由运维落实（OQ-55 待账号时由运维在测试集群代建，§9） |
 | 版本冻结 | W44 起冻结基准版本；UAT 期间只进缺陷修复版本，每个新版本先过 CI（含 W43 起 C 侧集成用例，E21-T29）+ §5 A 组冒烟再发 UAT；版本号与内容在日报中通报 |
-| 激活链（就绪前置） | 随包产品配置链按三本 runbook §3 激活：① 两套预置计划发布 + 器械类型映射核对（`docs/ops/hospital-c-plan-preset.md` §3）；② C 报告单类型启用 + 程控报告单映射（`docs/ops/hospital-c-report-preset.md` §3，V94）；③ 科室 / 病区 / 用户 / 角色按 §10 模板配置（`docs/ops/hospital-c-user-ward-role.md`；生产真实用户按交接单录入，UAT 用同构账号）；④ 功能开关按 C 上线配置全开：`implant`、`scan_progress`、`eri_cycle`、`param_trend`、`remote_monitor_record`、`report_inbox`（待归档区）等（OQ-71① / OQ-136①；`compare_highlight` 沿用 A 默认开）。激活必须在开通向导配置模板应用之后，重导模板须重做（B 预置同款顺序约束） |
+| 激活链（就绪前置） | 随包产品配置链按三本 runbook §3 激活：① 两套预置计划发布 + 器械类型映射核对（`docs/ops/hospital-c-plan-preset.md` §3）；② C 报告单类型启用 + 程控报告单映射（`docs/ops/hospital-c-report-preset.md` §3，V94）；③ 科室 / 病区 / 用户 / 角色按 §10 模板配置（`docs/ops/hospital-c-user-ward-role.md`；生产真实用户按交接单录入，UAT 用同构账号）；④ 功能开关按 C 上线配置全开（**八项清单，E23-T24 / UAT-SELF-02 补全——原「…等」易漏后两项，致 F-6 / F-7 测到 A 口径**）：`implant`、`scan_progress`、`eri_cycle`、`param_trend`、`remote_monitor_record`、`report_inbox`（待归档区）、`record_edit_submitted`（修改已提交双权限码租户闸门，OQ-136①：未开启 C 侧退回 A 口径）、`record_sequence_no`（随访序号自动编号与重排，OQ-143②：未开启序号恒空、F-7 / I 组不可测）；`compare_highlight` 沿用 A 默认开（OQ-71①）。激活必须在开通向导配置模板应用之后，重导模板须重做（B 预置同款顺序约束） |
 | 数据来源 | ① V137 预置（27 名虚构用户、2 科室〔心内 / 心外〕、3 病区 + 2 中心〔含起搏器程控随访中心〕，命名空间 `c.` / `W-C-` / `DEPT-C-`）；② E23-T27 导入演练批次（12 名虚构历史患者 + 30 个文件 → 27 份报告单，台账 `docs/testing/hospital-c-paper-archive-rehearsal.md` §2）；③ UAT 现场按 §5 脚本新建虚构患者（姓名带「示例」标记）。**真实患者数据不进 UAT**（AGENTS §5.5）；医院纸质《随访程控记录》原件只在现场作字段顺序比对参照（C-ACC-04），**不拍照、不扫描入库**（OQ-153 ②） |
 | 账号矩阵 | 医院方每人一号，按 C 规格 §10 角色模板开 UAT 账号（科主任 = 本人负责科室；医生 / 随访员 / 护士 = 本人负责病区；并集对照账号 3 个：跨病区、跨科室、病区 + 科室混合，用于 L-3）；口令一次性随机经加密渠道发放，首登强制修改，UAT 结束后回收；本地 / CI 预演用 V137 种子账号（`c.card1.fu01` 随访员、`c.card1.doc01` 病区医生、`c.card1.nur01` 护士、`c.cardio.dir` 心内科科主任、`c.multi.doc01` 跨两病区、`c.both.dir` 跨两科室、`c.mix.doc01` 病区 + 科室混合、`c.pmfu.fu01` 程控随访中心随访员；本地口令见仓库根 README，不入本手册） |
 | 通知通道 | 站内信真实投递；短信通道用模拟（不上行真实短信）；**H5 一次性令牌在 C 的 UAT 范围**（M-3：手机拍照上传，一次性二维码 15 分钟有效，C-SCAN-008 / C-NFR-006） |
@@ -114,7 +114,7 @@
 |---|---|---|---|---|
 | E-1 | P0 | 随访员 | 我的任务，切换状态分段（全部 / 待随访 / 进行中 / 逾期 / 已完成）与筛选 | 列表按本人范围展示，列含当前器械类型、随访时间点、上次随访标红项数；B-2 患者的当期任务在列、计划日 / 窗口正确（C-ACC-18 / C-FU-020） |
 | E-2 | P0 | 随访员 | 认领一条待随访任务 → 进入录入 → 填表提交 | 认领后转进行中；表单自动带入随访编号、随访序号、当前器械、随访时间点、随访医生（默认当前用户）与随访方式；提交后「已完成（按时 / 逾期）」（C-ACC-20 / C-FU-008） |
-| E-3 | P0 | 科主任 | 任务列表勾选 → 批量指定责任医生；单任务改派 | 指派 / 改派后新责任人可见并可收到通知、原责任人不可操作（C-FU-020 / C-NTF-004） |
+| E-3 | P0 | 医生（原列「科主任」，E23-T24 勘误：C 规格 §10 科主任主要权限无改派，V137 C_DOCTOR 持按钮 224 `followup:task:assign`、科主任不持——40300 属正确权限行为） | 任务列表勾选 → 批量指定责任医生；单任务改派 | 指派 / 改派后新责任人可见并可收到通知、原责任人不可操作（C-FU-020 / C-NTF-004） |
 | E-4 | P1 | 医生 | 查看 C-2 患者时间轴 | 切换计划后时间轴连续：植入、更换、各次随访（补录单独标识）、下次计划日期与标红项数（C-ACC-18 / C-FU-023） |
 
 ### F 随访程控录入（8 条）
@@ -302,7 +302,18 @@ python3 scripts/uat_intake.py --selftest
 
 复演方式：`./scripts/dev.sh` 起全套 → 按 §3 激活链执行（runbook §3）→ 按 §5 逐组走 UI；或 API 级复演（登录 → POST /patients〔含 implant〕→ POST /patients/search → summary → tasks/{id}/start → records/{id} 详情 → submit〔f303 随访日期 / f304 时间点〕→ contacts NOT_REACHED → 等 7 秒 notify/messages → patients/{id}/records BACKFILL + suggest-timepoint），口径同 E23-T27 / E21-T26 / E21-T11 验收 IT。
 
-### 10.2 UAT 执行留痕（W44–W45 结束后回填）
+### 10.2 E23-T24 分担面自查（本机，2026-11-14）
+
+（全栈 1 修复任务的自查预演：证明 §5 分担面 A / B / C / D / E / F / G / L 组深挖在缺陷修复后可走通；发现与处置明细见 `docs/testing/uat-remediation-hospital-c-fullstack1.md` §4。）
+
+| 项 | 内容 |
+|---|---|
+| 环境 | colima + docker compose（MySQL 13306 / Redis，时区 +08:00 基线）；后端 `local` 剖面 18080（`origin/main` 同源构建）；`t_demoa` 按本手册 §3 激活医院 C 形态（八项开关全开、V94 预置 C_\* 类型 ENABLED、V91 两套预置计划 PUBLISHED）；角色按 V137 矩阵（`c.card1.doc01` / `c.card1.fu01` / `c.card1.nur01` / `c.cardio.dir` / `c.card2.doc02` / 租户管理员）；全部虚构数据（姓名「武 / 严 / 衡 / 芮示例」、病案号 C-UAT-NN） |
+| 自查范围 | §5 八组深挖（A-1/G-3 登录与通知设置、B-2/B-3/B-5/B-6、C-1/C-2/C-3/C-5、D-1/D-3、E-1/E-2/E-3/E-4、F-2/F-3/F-5/F-7、G-2、L-1~L-5；§10.1 已覆盖的 P0 主链路做回归；H / I / J / K / M 归全栈 2） |
+| 发现 | **2 条**（严重 1 已修复 / 一般 1 已修复，处置表与测试见修复手册 §4）：UAT-SELF-01 植入记录编辑无「修改原因」——PUT /implants 无 reason 字段、fe_field_history 行 reason 恒 NULL（违反 C-PAT-011 P0 与脚本 B-5 预期，修复 = 前后端原因必填 + 历史行 / 审计带原因）；UAT-SELF-02 本手册 §3 激活链开关清单只列六项漏 `record_edit_submitted`（OQ-136①）与 `record_sequence_no`（OQ-143②）——F-6（P0）/ F-7 会测到 A 口径产出假缺陷（修复 = §3 八项清单）。另记 §5 E-3 角色勘误与本地持久库注记（PlatformTenantScopeMySqlIT 收回 22/223 后不还原，同 IT Order(2) 自愈口径） |
+| 修复后复测 | B-2 登记 + 重复病历号 40902 + 同名同生日提示 ✅、B-3 概览 ✅、B-5 植入编辑 40001 / 历史行带原因（`ImplantRecordIT.editRecordsReasonInFieldHistory`）✅、B-6 转病区后旧范围 40400 / 新范围 200 ✅、C-1 升级 CRT-D + RV 电极 RA 部位被拒 ✅、C-2 更换后旧器械 REPLACED + 结束日期 ✅、C-3 补录自动关联当时在用 DDD ✅、C-5 品牌字典九项 ✅、D-3 ERI 翻 mode + eri_since = 随访日期 + doctor_next_date 登记 ✅、E-1 WARD/ALL 页签 ✅、E-2 start→详情→提交 COMPLETED/ON_TIME ✅、E-3 医生批量指定 ✅（科主任 40300 口径注记）、F-2 重复日期提示 ✅、F-5 已终止守卫（代码 40901 路径）✅、F-7 序号 1/2/3→插入 11-04→1/2/3/4 重排 ✅、G-2 标红后站内信零新增 ✅、G-3 租户管理员 200 ✅、L-4 越范围 40400 ✅、L-5 明文无权限 40300 ✅ |
+
+### 10.3 UAT 执行留痕（W44–W45 结束后回填）
 
 | 项 | 内容 |
 |---|---|
@@ -319,7 +330,7 @@ python3 scripts/uat_intake.py --selftest
 | E23-T20 / E23-T21 / E23-T22 | 前置配置：97 字段与两套计划（V90 / V91）、报告单类型与程控映射（V94）、科室病区用户角色（V137）即 §3 激活链与 §5 多组用例的验收对象 |
 | E23-T27 | 输入：导入演练批次（12 名历史患者台账）即 K 组核对对象，验收证据共用 |
 | E21-T29 | 同窗前置：C 集成测试（W43）是 UAT 版本准入的机器面门禁（§3 版本冻结行） |
-| E23-T24 / E23-T25 | 后续：C UAT 缺陷修复（全栈 1 / 2），以入库 Issue（周次 W44 / W45）为工作清单；与 C 切换同周，阻断 / 严重须 W45 内清零 |
+| E23-T24 / E23-T25 | 后续：C UAT 缺陷修复（全栈 1 / 2），以入库 Issue（周次 W44 / W45）为工作清单；与 C 切换同周，阻断 / 严重须 W45 内清零；全栈 1 分担面（A/B/C/D/E/F/G/L 深挖）自查与修复手册见 `docs/testing/uat-remediation-hospital-c-fullstack1.md`（E23-T24，窗口内真实发现按其 §2 同一流程处置） |
 | E21-T30 | 后续：C UAT 支持与缺陷复测（测试，W44–W45），复测流程 / 工具沿用 `docs/testing/uat-retest-hospital-a.md` 框架——C 侧路由、模板与判据细则已增补为 `docs/testing/uat-retest-hospital-c.md`（`uat_retest.py --hospital c`，周次 W44 / W45 过滤） |
 | E23-T26 | 后续：C 上线切换（W46，测评通过后），以 §7 判据达成为前置；`docs/testing/hospital-c-switch-acceptance.md` 为切换侧参照 |
 | E21-T31 | 用例基准：评审用例集 C-ACC-01…45 与澄清记录 CL-01…12 是 §5 预期列的出处；§6 UAT 复核清单 5 项随本 UAT 请医院确认 |

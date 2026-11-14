@@ -163,8 +163,11 @@ public class ImplantService {
             String note,
             List<LeadPayload> leads) {}
 
-    /** 编辑请求：baseVersion 乐观锁（AGENTS §5.10）；leads 为 null 表示本次不动电极。 */
-    public record UpdateRequest(int baseVersion, ImplantPayload implant) {}
+    /**
+     * 编辑请求：baseVersion 乐观锁（AGENTS §5.10）；leads 为 null 表示本次不动电极； reason = 修改原因（必填，C-PAT-011 /
+     * UAT-SELF-01：字段级历史行带原因，与修改已提交随访记录同口径）。
+     */
+    public record UpdateRequest(int baseVersion, ImplantPayload implant, String reason) {}
 
     /**
      * 电极处置（E21-T02 / C-PAT-006 器械更换流程第 2–3 步）：KEEP 沿用（同一电极行挂到新植入记录下， 保留原植入日期）／ ABANDON 废弃留置 ／
@@ -411,7 +414,8 @@ public class ImplantService {
 
     /**
      * 编辑植入记录与电极（pages.md §4.4「操作：…编辑」）。带 baseVersion 乐观锁（冲突 40900）； 状态与结束信息不接受直改；leads 为 null
-     * 表示本次不动电极。成功写 IMPLANT_UPDATE 审计（含前后摘要）。
+     * 表示本次不动电极。修改原因必填（40001，C-PAT-011 / UAT-SELF-01：字段级历史行带原因， 与修改已提交随访记录 OQ-14「原因必填」同口径）。 成功写
+     * IMPLANT_UPDATE 审计（含前后摘要与原因）。
      */
     @Transactional
     public ImplantView update(long implantId, UpdateRequest request) {
@@ -419,6 +423,10 @@ public class ImplantService {
         ImplantRow existing = gateway.implantInScope(implantId);
         if (existing == null) {
             throw new ApiException(404, 40400, "植入记录不存在或不在您的数据范围内");
+        }
+        String reason = trimToNull(request.reason(), 255, "修改原因");
+        if (reason == null) {
+            throw new ApiException(400, 40001, "修改植入记录必须填写修改原因（C-PAT-011）");
         }
         if (request.baseVersion() != existing.version()) {
             throw new ApiException(409, 40900, "该植入记录已被他人修改，请刷新后重试");
@@ -490,7 +498,7 @@ public class ImplantService {
                         normalized.indicationNote(),
                         normalized.note()),
                 com.crdp.form.history.domain.ChangeSource.USER,
-                null);
+                "修改植入记录：" + reason);
 
         audit.append(
                 AuditEntry.operation("followup", "IMPLANT_UPDATE")
@@ -510,7 +518,8 @@ public class ImplantService {
                                                         + normalized.leads().size()
                                                         + " 根"
                                                 : "")
-                                        + "）")
+                                        + "）：")
+                        .reason(reason)
                         .beforeJson(
                                 writeJson(
                                         Map.of(
