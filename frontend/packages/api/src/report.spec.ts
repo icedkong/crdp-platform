@@ -6,6 +6,8 @@ import {
   digitizeChangeError,
   digitizeChangeRequiresReason,
   foldReportLocations,
+  reportInboxArchiveError,
+  reportInboxSizeText,
   reportIndicatorFlag,
   reportLocationText,
   reportRefRangeFor,
@@ -182,5 +184,55 @@ describe('e21-T15 digitizeChangeError（改为「无需录入」须填原因，�
     expect(digitizeChangeRequiresReason('PENDING')).toBe(false);
     expect(digitizeChangeRequiresReason('DONE')).toBe(false);
     expect(digitizeChangeRequiresReason(null)).toBe(false);
+  });
+});
+
+// E21-T16 / C-SCAN-009：待归档区归档表单校验与大小文案（前端先提示，后端同口径 40001 兜底）
+describe('e21-t16 reportInboxArchiveError（归档表单校验）', () => {
+  const base = {
+    nameId: '5',
+    nameRequired: true,
+    patientId: '101',
+    reportDate: '2026-11-14',
+    typeCode: 'LAB',
+  };
+
+  it('齐全（位置 ≥ 1）通过', () => {
+    expect(reportInboxArchiveError(base, 1)).toBeNull();
+    expect(reportInboxArchiveError(base, 3)).toBeNull();
+  });
+
+  it('患者 / 类型 / 名称（按类型必填）/ 报告时间缺失逐项提示', () => {
+    expect(reportInboxArchiveError({ ...base, patientId: null }, 1)).toBe(
+      '请选择患者',
+    );
+    expect(reportInboxArchiveError({ ...base, typeCode: null }, 1)).toBe(
+      '请选择资料类型',
+    );
+    expect(reportInboxArchiveError({ ...base, nameId: null }, 1)).toBe(
+      '请选择名称',
+    );
+    expect(
+      reportInboxArchiveError(
+        { ...base, nameId: null, nameRequired: false },
+        1,
+      ),
+    ).toBeNull();
+    expect(reportInboxArchiveError({ ...base, reportDate: null }, 1)).toBe(
+      '请选择报告时间',
+    );
+  });
+
+  it('位置为空提示「至少选择 1 个位置」（C-SCAN-009 至少一个）', () => {
+    expect(reportInboxArchiveError(base, 0)).toBe('请至少选择 1 个位置');
+  });
+});
+
+describe('e21-t16 reportInboxSizeText（文件大小文案）', () => {
+  it('kB 向上取整（最小 1 KB）、MB 保留一位小数', () => {
+    expect(reportInboxSizeText(70)).toBe('1 KB');
+    expect(reportInboxSizeText(2048)).toBe('2 KB');
+    expect(reportInboxSizeText(5 * 1024 * 1024)).toBe('5.0 MB');
+    expect(reportInboxSizeText(1536 * 1024)).toBe('1.5 MB');
   });
 });

@@ -148,6 +148,8 @@ public final class ConfigTableRegistry {
                     "rpt_report_link",
                     "rpt_report_file",
                     "rpt_indicator_value",
+                    // 待归档区暂存行（E21-T16 / C-SCAN-009：待分拣文件与归档溯源，本院运行数据不入模板）
+                    "rpt_inbox_file",
                     // 表单记录与字段历史（数据，不是模板）
                     "fe_record",
                     "fe_field_history",

@@ -1255,12 +1255,14 @@ export {
 export type { ReauthFlowDeps, ReauthResult } from './reauth';
 // E16-T02 报告单运行时：添加报告单对话框、位置选择（必填多选树）与患者内清单；
 // E16-T05 全院报告单列表与检索（A-ATT-016 / C-SCAN-014）；
-// E21-T15 电子化状态手工修改（C-SCAN-011）
+// E21-T15 电子化状态手工修改（C-SCAN-011）；E21-T16 待归档区（C-SCAN-009）
 export {
   DIGITIZE_CHANGE_OPTIONS,
   digitizeChangeError,
   digitizeChangeRequiresReason,
   foldReportLocations,
+  reportInboxArchiveError,
+  reportInboxSizeText,
   reportIndicatorFlag,
   reportLocationText,
   reportRefRangeFor,
@@ -1282,6 +1284,12 @@ export type {
   ReportDigitizeChangedView,
   ReportDigitizeChangeRequest,
   ReportFirstFile,
+  ReportInboxArchiveRequest,
+  ReportInboxIntakeRequest,
+  ReportInboxIntakeView,
+  ReportInboxPage,
+  ReportInboxRow,
+  ReportInboxSearchRequest,
   ReportIndicatorInput,
   ReportLinkType,
   ReportLocationInput,

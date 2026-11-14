@@ -282,8 +282,14 @@ class TenantOnboardingServiceMySqlIT {
                 // dash_card）。
                 // E21-T24 增加 V98（修正医院 C 上限/下限频率硬规则 upper_rate_gt_lower 的 op 契约）。
                 // E21-T12 增加 V99（远程监测记录功能开关 remote_monitor_record，C-FU-025）。
+                // E21-T16 增加 V138（待归档区 rpt_inbox_file + 功能开关 report_inbox + 菜单授予；
+                // V1–V99 已用尽种子（V100–V137，无种子 profile 不执行）以下号段，V138 起主迁移高于种子版本）。
                 // 此处随迁移清单维护
-                java.util.stream.IntStream.rangeClosed(1, 99).mapToObj(String::valueOf).toList(),
+                java.util.stream.Stream.concat(
+                                java.util.stream.IntStream.rangeClosed(1, 99)
+                                        .mapToObj(String::valueOf),
+                                java.util.stream.Stream.of("138"))
+                        .toList(),
                 root.queryForList(
                         "SELECT version FROM "
                                 + DB

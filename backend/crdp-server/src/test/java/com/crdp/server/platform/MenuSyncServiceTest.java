@@ -523,6 +523,20 @@ class MenuSyncServiceTest {
                         "followup/stats/index",
                         null,
                         40,
+                        "ENABLED"),
+                // E21-T16 待归档区（平台库 V74 同构）：随访目录下的 followup 菜单；perm_code 新设
+                // followup:inbox:view（uk_plt_menu_perm 全库唯一，不能与 23 复用 followup:report:view）；
+                // 放清单末位，既有用例按位置索引取的行（remove(6) 212 / set(5) 211）不动
+                manifestRow(
+                        354L,
+                        20L,
+                        "MENU",
+                        "待归档区",
+                        "FollowupReportInbox",
+                        "/followup/report-inbox",
+                        "followup/report-inbox/index",
+                        "followup:inbox:view",
+                        35,
                         "ENABLED"));
     }
 
