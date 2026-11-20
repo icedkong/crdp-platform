@@ -1,5 +1,7 @@
 # 医院 A UAT 缺陷修复手册（全栈 1，E23-T09）
 
+> 2026-11-20 更新：UAT-SELF-06 的历史“接口未实现 / 待 OQ-124 拍板”已由 OQR-04 覆盖。普通登记更正与敏感身份更正均已实现，权限、原因、版本冲突、范围、加密 / 盲索引及审计见 [OQR-04 实施记录](../reviews/oqr-04-patient-correction.md)。下文保留原发现与当时处置记录，现行防漂移改为核验已实现接口，生产部署与医院验收仍待执行。
+
 > 任务 E23-T09（全栈 1，5 人天，依赖 E23-T08 ✅；验收：**UAT 缺陷关闭**）。
 > 需求依据：tasks.csv 本行未关联需求编号，UAT 覆盖面按 `docs/requirements/hospital-a-spec.md` 第 3–11 章（同 E23-T08 / E23-T10 口径）；修复正确性的基准 = 手册 §5 用例「预期（依据）」列引用的 A 需求编号与 `AGENTS.md` 合同。
 > 上游：`docs/testing/uat-hospital-a.md`（E23-T08 UAT 手册）——医院用户在窗口 W33–W35 执行 §5 脚本（47 条），发现经 `scripts/uat_intake.py` 入缺陷库（GitHub Issues，OQ-122①），**每日 16:00 triage 定责到 E23-T09（全栈 1）/ E23-T10（全栈 2）**；复测关闭由 E19-T10（测试）执行。
