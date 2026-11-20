@@ -112,3 +112,18 @@ export interface ConfigApplyResult {
   tenantId: number;
   tenantName: string;
 }
+
+/** OQR-02：目标库只读对账结果；行级差异不返回配置值。 */
+export interface ConfigApplyPreview {
+  applicable: boolean;
+  changes: Array<{
+    action: 'CONFLICT' | 'DROP' | 'INSERT' | 'KEEP' | 'UPDATE';
+    columns: string[];
+    note: string;
+    sourceRow: number;
+    table: string;
+  }>;
+  mode: 'UPDATE';
+  planHash: string;
+  tables: ConfigApplyTableResult[];
+}

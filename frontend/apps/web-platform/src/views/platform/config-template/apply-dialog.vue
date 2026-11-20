@@ -1,12 +1,12 @@
 <script lang="ts" setup>
 import type {
+  ConfigApplyPreview,
   ConfigApplyResult,
-  ConfigTableMeta,
   ConfigTemplateView,
   TenantListItem,
 } from '@crdp/api';
 
-import type { ImportPreviewSummary, TableImportPreview } from './apply';
+import type { LoadedConfigPreview } from './apply';
 
 import { computed, reactive, ref, watch } from 'vue';
 
@@ -22,16 +22,14 @@ import {
 
 import {
   applyConfigTemplate,
-  configTemplateDetail,
+  previewConfigTemplate,
 } from '#/api/core/config-template';
 import { listTenants } from '#/api/core/tenant';
 
 import {
   applyResultSummaryText,
+  canSubmitConfigPreview,
   IMPORT_RULE_NOTES,
-  previewSummary,
-  previewSummaryText,
-  tablePreviews,
   targetTenantOptions,
   toApplyFormModel,
   validateApplyModel,
@@ -62,12 +60,11 @@ const submitError = ref('');
 // 预览数据：模板分表元信息（推演每张表的导入动作）+ 目标租户选项
 const previewLoading = ref(false);
 const previewFailed = ref(false);
-const previews = ref<TableImportPreview[]>([]);
-const summary = ref<ImportPreviewSummary>({
-  importRows: 0,
-  importTables: 0,
-  skipTables: 0,
-});
+const preview = ref<LoadedConfigPreview | null>(null);
+const ready = computed(() =>
+  canSubmitConfigPreview(form, preview.value, props.template?.id),
+);
+let previewSequence = 0;
 const tenants = ref<TenantListItem[]>([]);
 const tenantsLoading = ref(false);
 const tenantsFailed = ref(false);
@@ -80,16 +77,18 @@ const result = ref<ConfigApplyResult | null>(null);
 
 const previewColumns = [
   { dataIndex: 'table', title: '配置表' },
-  { dataIndex: 'category', title: '类别' },
-  { dataIndex: 'modeText', title: '复制方式', width: 110 },
-  {
-    dataIndex: 'packageRows',
-    title: '包内行数',
-    width: 96,
-    align: 'right' as const,
-  },
-  { dataIndex: 'actionText', title: '导入时会发生什么' },
+  { dataIndex: 'sourceRow', title: '源行序号' },
+  { dataIndex: 'action', title: '动作' },
+  { dataIndex: 'columns', title: '涉及字段' },
+  { dataIndex: 'note', title: '说明' },
 ];
+const actionText: Record<string, string> = {
+  CONFLICT: '冲突',
+  DROP: '丢弃',
+  INSERT: '新增',
+  KEEP: '保留',
+  UPDATE: '更新',
+};
 
 const resultColumns = [
   { dataIndex: 'table', title: '配置表' },
@@ -101,21 +100,40 @@ const resultColumns = [
 ];
 
 async function loadPreview() {
+  const sequence = ++previewSequence;
   const id = props.template?.id;
-  if (!id) return;
-  previewLoading.value = true;
+  const tenantId = form.tenantId;
+  preview.value = null;
+  form.confirmed = false;
   previewFailed.value = false;
-  try {
-    const detail = await configTemplateDetail(id);
-    const tables: ConfigTableMeta[] = detail.tables;
-    previews.value = tablePreviews(tables);
-    summary.value = previewSummary(tables);
-  } catch {
-    previewFailed.value = true;
-  } finally {
+  if (!id || tenantId === null || !props.open) {
     previewLoading.value = false;
+    return;
+  }
+  previewLoading.value = true;
+  try {
+    const response = await previewConfigTemplate(id, tenantId);
+    if (sequence === previewSequence)
+      preview.value = { ...response, templateId: id, tenantId };
+  } catch {
+    if (sequence === previewSequence) previewFailed.value = true;
+  } finally {
+    if (sequence === previewSequence) previewLoading.value = false;
   }
 }
+
+watch(
+  () => form.tenantId,
+  () => {
+    void loadPreview();
+  },
+);
+watch(
+  () => props.template?.id,
+  () => {
+    void loadPreview();
+  },
+);
 
 async function loadTenants() {
   tenantsLoading.value = true;
@@ -133,13 +151,14 @@ async function loadTenants() {
 watch(
   () => props.open,
   (open) => {
+    ++previewSequence;
+    preview.value = null;
+    previewLoading.value = false;
     if (!open) return;
     Object.assign(form, toApplyFormModel());
     submitError.value = '';
     result.value = null;
-    previews.value = [];
-    summary.value = { importRows: 0, importTables: 0, skipTables: 0 };
-    void loadPreview();
+
     if (tenants.value.length === 0 && !tenantsLoading.value) {
       void loadTenants();
     }
@@ -160,14 +179,28 @@ function onOk() {
 
 async function submit() {
   const id = props.template?.id;
-  if (!id || errors.value.length > 0 || submitting.value) return;
+  const current = preview.value;
+  if (
+    !id ||
+    errors.value.length > 0 ||
+    submitting.value ||
+    previewLoading.value ||
+    !current ||
+    !ready.value
+  )
+    return;
   submitting.value = true;
   submitError.value = '';
   try {
-    result.value = await applyConfigTemplate(id, form.tenantId as number);
+    result.value = await applyConfigTemplate(
+      id,
+      form.tenantId as number,
+      current.planHash,
+    );
     emit('done');
   } catch (error) {
     submitError.value = error instanceof Error ? error.message : String(error);
+    await loadPreview();
   } finally {
     submitting.value = false;
   }
@@ -179,7 +212,9 @@ async function submit() {
     :confirm-loading="submitting"
     :open="open"
     :ok-button-props="{
-      disabled: !result && (errors.length > 0 || previewFailed),
+      disabled:
+        !result &&
+        (errors.length > 0 || previewFailed || previewLoading || !ready),
     }"
     :ok-text="result ? '关闭' : '确认应用'"
     :title="result ? '应用结果' : '应用到租户（导入前预览）'"
@@ -199,7 +234,7 @@ async function submit() {
         <div class="field-label">目标租户</div>
         <Select
           v-model:value="form.tenantId"
-          :disabled="tenantsLoading"
+          :disabled="tenantsLoading || submitting"
           :loading="tenantsLoading"
           :options="options"
           placeholder="选择要应用配置的租户（不能是源租户）"
@@ -223,39 +258,57 @@ async function submit() {
             <a @click="loadPreview">重试</a>
           </template>
         </Alert>
-        <template v-else>
+        <Alert
+          v-if="!form.tenantId"
+          class="mt-4"
+          message="请选择目标租户后生成实际差异预览。"
+          show-icon
+          type="info"
+        />
+        <template v-else-if="preview">
           <Alert
             class="mt-4"
-            :message="previewSummaryText(summary)"
+            :message="
+              preview.applicable
+                ? '已读取目标租户，以下为实际差异；计划变更导入为未发布的新版本。'
+                : '存在冲突，请处理后重新预览。'
+            "
             show-icon
             type="warning"
           />
+          <div class="field-label mt-4">分表预计变更</div>
+          <Table
+            :columns="resultColumns"
+            :data-source="preview.tables"
+            :pagination="false"
+            :row-key="(row: ConfigApplyPreview['tables'][number]) => row.table"
+            :scroll="{ y: 200 }"
+            size="small"
+          />
+          <div class="field-label mt-4">行级差异</div>
           <Table
             class="mt-2"
             :columns="previewColumns"
-            :data-source="previews"
+            :data-source="preview.changes"
             :loading="previewLoading"
             :pagination="false"
-            :row-key="(row: TableImportPreview) => row.table"
+            :row-key="
+              (row: ConfigApplyPreview['changes'][number]) =>
+                `${row.table}:${row.sourceRow}`
+            "
             :scroll="{ y: 260 }"
             size="small"
           >
             <template #bodyCell="{ column, record }">
-              <template v-if="column.dataIndex === 'table'">
-                <span :class="{ 'row-skip': record.tone === 'skip' }">
-                  {{ record.table }}
-                </span>
-              </template>
-              <template v-else-if="column.dataIndex === 'modeText'">
-                <Tag v-if="record.mode === 'STRUCTURE_ONLY'" color="default">
-                  {{ record.modeText }}
+              <template v-if="column.dataIndex === 'action'">
+                <Tag
+                  :color="record.action === 'CONFLICT' ? 'error' : 'default'"
+                >
+                  {{ actionText[record.action] ?? record.action }}
                 </Tag>
-                <Tag v-else color="blue">{{ record.modeText }}</Tag>
               </template>
-              <template v-else-if="column.dataIndex === 'actionText'">
-                <span :class="{ 'row-skip': record.tone === 'skip' }">
-                  {{ record.actionText }}
-                </span>
+              <template v-else-if="column.dataIndex === 'columns'">
+                {{ record.columns.join('、') || '—' }}
               </template>
             </template>
           </Table>
@@ -265,8 +318,12 @@ async function submit() {
         <ul class="rule-notes">
           <li v-for="note in IMPORT_RULE_NOTES" :key="note">{{ note }}</li>
         </ul>
-        <Checkbox v-model:checked="form.confirmed" class="mt-2">
-          我已阅读导入预览，了解目标租户中与模板自然键相同的配置将被覆盖
+        <Checkbox
+          v-model:checked="form.confirmed"
+          :disabled="!preview?.applicable || previewLoading || submitting"
+          class="mt-2"
+        >
+          我已阅读目标租户的实际差异，并确认按该计划应用
         </Checkbox>
       </Spin>
       <Alert

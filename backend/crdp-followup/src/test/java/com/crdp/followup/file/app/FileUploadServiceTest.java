@@ -421,12 +421,14 @@ class FileUploadServiceTest {
         try (var paths = Files.walk(storageRoot)) {
             assertEquals(0, paths.filter(Files::isRegularFile).count(), "不写任何对象（fail closed）");
         }
-        ArgumentCaptor<AuditEvent> event = ArgumentCaptor.forClass(AuditEvent.class);
-        verify(audit).record(event.capture());
+        ArgumentCaptor<com.crdp.framework.audit.AuditEntry> event =
+                ArgumentCaptor.forClass(com.crdp.framework.audit.AuditEntry.class);
+        verify(audit).append(event.capture());
         assertEquals("FILE_VIRUS_REJECTED", event.getValue().eventType());
         assertEquals("CREATE", event.getValue().action());
-        assertTrue(event.getValue().detail().contains("Win.Test.EICAR.HDB-1"));
-        assertTrue(event.getValue().detail().contains("（示例）"), "审计含文件名（合成示例）");
+        assertEquals(com.crdp.framework.audit.AuditResult.DENIED, event.getValue().result());
+        assertTrue(event.getValue().description().contains("Win.Test.EICAR.HDB-1"));
+        assertFalse(event.getValue().description().contains("出院小结"), "审计不记录可能含患者信息的文件名");
     }
 
     /** 扫描启用且干净：通过并落台账 virus_scan_status=CLEAN 与扫描时间（禁用态为 UNSCANNED 待补扫）。 */

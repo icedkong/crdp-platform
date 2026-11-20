@@ -483,6 +483,21 @@ public class FollowupTaskStatusService {
         return complete(taskId, operatorId, PlanDateCalculator.businessToday(Instant.now()));
     }
 
+    /** OQR-01：补录仅在实际日期位于窗口内时完成；提交时刻仍保留当前时间。 */
+    @Transactional
+    public CompletionView completeBackfill(long taskId, Long operatorId, LocalDate visitDate) {
+        var task = requireTask(taskId);
+        if (visitDate == null
+                || visitDate.isBefore(task.windowStart())
+                || visitDate.isAfter(task.windowEnd())
+                || task.occurrence() <= 0
+                || task.followupSeq() != 0
+                || "TEMP".equals(task.createType())) {
+            throw new ApiException(409, 40901, "补录日期或任务类型不符合关联条件");
+        }
+        return complete(taskId, operatorId, visitDate);
+    }
+
     /** 完成入口（completedOn = 完成业务日，公开入口按北京时间今天；测试与提交流程可显式传日）。 完成方式与直接录入期判定都用它，与窗口列同口径 LocalDate。 */
     CompletionView complete(long taskId, Long operatorId, LocalDate completedOn) {
         FollowupTaskMapper.TaskRow task = requireTask(taskId);

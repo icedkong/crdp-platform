@@ -135,6 +135,8 @@ export const PLAN_ENROLL_MODE_TEXT: Record<string, string> = {
 
 /** 计划行（GET /plans、GET /plans/{id} 的 plan；id 超 2^53 序列化为字符串）。 */
 export interface PlanView {
+  /** 出院登记自动入组开关；仅影响后续登记。 */
+  autoEnroll: boolean;
   code: string;
   cycleType: PlanCycleType | string;
   cycleYears: null | number;
@@ -187,6 +189,7 @@ export interface PlanDetailView {
 
 /** 新建计划请求（POST /plans；code 创建后不可改）。 */
 export interface PlanCreateRequest {
+  autoEnroll?: boolean;
   code: string;
   cycleType: PlanCycleType | string;
   cycleYears: null | number;
@@ -197,6 +200,7 @@ export interface PlanCreateRequest {
 
 /** 编辑基本信息请求（PUT /plans/{id}，仅未发布；baseVersion = 详情 lockVersion）。 */
 export interface PlanUpdateRequest {
+  autoEnroll?: boolean;
   baseVersion: number;
   cycleType: PlanCycleType | string;
   cycleYears: null | number;

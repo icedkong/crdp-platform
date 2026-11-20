@@ -53,13 +53,15 @@ class AbnormalRecordsServiceTest {
         when(stats.countRecentHighlightRecords(eq(since), any())).thenReturn(3L);
         when(mapper.findRecentHighlights(eq(since), any(), anyInt())).thenReturn(List.of());
 
+        when(stats.countUnknownHighlightSubmissionTimes(null)).thenReturn(3L);
         AbnormalRecordsView view = service.abnormalRecords(null, null);
 
+        assertEquals(3L, view.unknownSubmittedAtCount());
         assertEquals(AbnormalRecordsService.DEFAULT_DAYS, view.days());
         assertEquals(today.minusDays(29L), view.since());
         assertEquals(3L, view.total(), "total 与指标卡「近 30 天含标红参数的记录数」同一条件树");
         assertEquals(AbnormalRecordsService.ITEM_LIMIT, view.limit());
-        // days 缺省 30 → 窗口起点与指标卡 HIGHLIGHT_WINDOW_DAYS 一致（OQ-107④ 同近似列）
+        // days 缺省 30 → 窗口起点与指标卡 HIGHLIGHT_WINDOW_DAYS 一致（OQR-05A 同首次提交事实）
         verify(stats).countRecentHighlightRecords(eq(since), any());
         verify(mapper).findRecentHighlights(eq(since), any(), anyInt());
     }
@@ -101,6 +103,7 @@ class AbnormalRecordsServiceTest {
         AbnormalRecordsView view = service.abnormalRecords(null, null);
 
         AbnormalItemView item = view.items().getFirst();
+        assertEquals("2026-11-03T09:30+08:00", item.submittedAt().toString());
         assertEquals("551", item.recordId(), "recordId 字符串化（点击进入记录的定位键）");
         assertEquals("61", item.patientId());
         assertEquals("王*", item.name(), "姓名脱敏（两字保留首字，列表不提供逐行明文）");

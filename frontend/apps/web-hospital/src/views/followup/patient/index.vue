@@ -358,6 +358,9 @@ async function loadOptions() {
 }
 
 onMounted(() => {
+  const routedWard = Number(route.query.wardId);
+  if (Number.isSafeInteger(routedWard) && routedWard > 0)
+    filters.wardId = routedWard;
   const status = patientStatusOfQuery(route.query.status);
   if (status) {
     filters.status = status;

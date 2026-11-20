@@ -147,7 +147,7 @@ class TenantOnboardingServiceTest {
                         ArgumentCaptor.forClass(
                                 com.crdp.server.configtemplate.ConfigTemplateImportService
                                         .ApplyRequest.class);
-        verify(templateImport).apply(eq(9L), captured.capture());
+        verify(templateImport).initialize(eq(9L), captured.capture());
         assertEquals(TENANT_ID, captured.getValue().tenantId());
     }
 
@@ -221,7 +221,7 @@ class TenantOnboardingServiceTest {
         ApiException ex = assertThrows(ApiException.class, () -> service.onboard(unknownTemplate));
         assertEquals(40400, ex.code());
         Mockito.verifyNoInteractions(platform, registry, provisioning);
-        verify(templateImport, never()).apply(anyLong(), any());
+        verify(templateImport, never()).initialize(anyLong(), any());
     }
 
     @Test
@@ -297,11 +297,11 @@ class TenantOnboardingServiceTest {
                         ArgumentCaptor.forClass(
                                 com.crdp.server.configtemplate.ConfigTemplateImportService
                                         .ApplyRequest.class);
-        verify(templateImport).apply(eq(9L), captured.capture());
+        verify(templateImport).initialize(eq(9L), captured.capture());
         assertEquals(TENANT_ID, captured.getValue().tenantId());
         org.mockito.InOrder order = Mockito.inOrder(tenantModules, templateImport);
         order.verify(tenantModules).openForOnboarding(eq(TENANT_ID), any());
-        order.verify(templateImport).apply(eq(9L), any());
+        order.verify(templateImport).initialize(eq(9L), any());
         verify(platform, times(6)).update(contains("plt_provision_step"), any(Object[].class));
     }
 
@@ -323,7 +323,7 @@ class TenantOnboardingServiceTest {
                                 100,
                                 "hash",
                                 "2026-11-07T00:00:00+08:00"));
-        when(templateImport.apply(eq(9L), any())).thenThrow(new RuntimeException("配置包解析失败"));
+        when(templateImport.initialize(eq(9L), any())).thenThrow(new RuntimeException("配置包解析失败"));
 
         TenantOnboardingService.OnboardingRequest request =
                 new TenantOnboardingService.OnboardingRequest(

@@ -6,10 +6,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 /**
  * 上传病毒扫描配置（E22-T15 / D-01 整改）。
  *
- * <p>{@code crdp.file.virus-scan.mode}：{@code off}（默认，本机 / CI / 未部署 clamd 的环境——不扫描， 台账落 UNSCANNED
- * 由补扫作业补）或 {@code clamd}（启用同步扫描；扫描不可用上传 50300 不放行）。 生产经 {@code CRDP_VIRUS_SCAN_MODE}
- * 注入（application-prod.yml）：clamd 副本在 CCE 部署并由运维 核验后置 {@code clamd}（整改手册 §5 待人工项），避免 clamd
- * 未就绪时生产上传整体不可用。
+ * <p>本机 / CI 可显式 off；生产默认 clamd，启动核验 mode、服务地址和有限超时。 扫描不可用一律拒绝上传，不把 UNSCANNED 当作 CLEAN。
  *
  * <p>{@code retro-batch-limit}：存量补扫作业单租户单趟最多处理的文件数（防首趟全量扫描打爆对象存储读与 clamd； 存量按 SHA-256 补扫，多趟推进）。
  */
@@ -42,6 +39,20 @@ public class VirusScanProperties {
 
     public Clamd getClamd() {
         return clamd;
+    }
+
+    public void validateClamd() {
+        if (clamd.host == null
+                || clamd.host.isBlank()
+                || clamd.port < 1
+                || clamd.port > 65535
+                || clamd.connectTimeout == null
+                || clamd.readTimeout == null
+                || clamd.connectTimeout.toMillis() < 1
+                || clamd.connectTimeout.toMillis() > 60000
+                || clamd.readTimeout.toMillis() < 1
+                || clamd.readTimeout.toMillis() > 60000)
+            throw new IllegalStateException("病毒扫描配置无效：检查 clamd host、port 及 1–60000ms 的有限连接 / 读取超时");
     }
 
     /** clamd 连接参数（默认本机 3310；K8s 部署经 Service 名注入）。 */

@@ -18,6 +18,7 @@ import {
   useAutoSave,
 } from '@crdp/form-engine';
 import { useKeyboardSafeBottom } from '@crdp/responsive';
+import { copyFormValue, sameFormValue } from '@crdp/rules';
 import {
   Alert,
   Button,
@@ -169,7 +170,7 @@ function diffOf(): Record<string, unknown> {
   for (const key of new Set([...Object.keys(base), ...Object.keys(current)])) {
     const before = base[key];
     const after = current[key];
-    if (!Object.is(before, after)) {
+    if (!sameFormValue(before, after)) {
       changes[key] = after === undefined ? null : after;
     }
   }
@@ -232,9 +233,9 @@ const autosave = useAutoSave({
   }),
   isDirty: dirty,
   kind: 'baseline',
-  async onSaved(result, trigger: AutoSaveTrigger) {
+  async onSaved(result, trigger: AutoSaveTrigger, snapshot) {
     version.value = result.version;
-    savedData.value = { ...data.value };
+    savedData.value = { ...snapshot.data };
     if (trigger === 'manual') {
       message.success('已暂存到服务器（草稿）');
     }
@@ -283,7 +284,7 @@ function applySection(
 ) {
   activeKey.value = code;
   data.value = { ...baseline.data };
-  savedData.value = { ...baseline.data };
+  savedData.value = copyFormValue(baseline.data);
   meta.value = {};
   version.value = baseline.version;
   showErrors.value = false;
@@ -391,7 +392,7 @@ async function handleSave() {
       meta: meta.value,
     });
     version.value = saved.section.version;
-    savedData.value = { ...saved.section.data };
+    savedData.value = copyFormValue(saved.section.data);
     data.value = { ...saved.section.data };
     void autosave.discardLocalDraft();
     message.success(sectionSaveSuccessText(saved.warnings.length));

@@ -163,3 +163,14 @@ describe('e21-T15 filtersFromRouteQuery（首页「待录入扫描件数」钻�
     });
   });
 });
+
+describe('oqr-05b 病区筛选透传', () => {
+  it('指标钻取保留病区，非法病区不构造筛选', () => {
+    expect(
+      filtersFromRouteQuery({ digitizeStatus: 'PENDING', wardId: '7' }),
+    ).toEqual({ digitizeStatus: 'PENDING', wardIds: [7] });
+    expect(filtersFromRouteQuery({ wardId: '-1' })).toEqual({
+      digitizeStatus: null,
+    });
+  });
+});

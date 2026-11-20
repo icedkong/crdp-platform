@@ -12,6 +12,7 @@
 | `requirements/hospital-c-spec.md` | 医院 C 需求规格 V0.1（C-*）；附录 A 字段字典 97 个字段 | C 业务（起搏器、程控、纸质资料） |
 | `tasks/tasks.md` | 里程碑、执行说明、各里程碑任务表 | 选任务 |
 | `tasks/tasks.csv` | 277 个任务：编号、标题、类型、人天、依赖、关联需求、冲刺 / 周、验收 | 选任务、查依赖 |
+| `tasks/oq-resolution-plan.md` | 2026-11-18 OQ 决议补充执行清单、依赖与验收；不改原 277 项排期 | 落实 OQ 整改 |
 | `design/design-system.md` | 设计规范：令牌、布局、表格、表单、弹窗、脱敏、水印、响应式、自动保存、文案 | 任何前端任务 |
 | `design/tokens.ts` | 设计令牌（AntD 主题 + 自定义），前端直接引用 | 前端主题、样式 |
 | `design/components.md` | 业务组件规格（props / 事件 / 状态 / 权限） | 写组件 |
@@ -32,7 +33,7 @@
 | `testing/hospital-b-acceptance.md` | 医院 B 验收手册（补录任务与节点随访率）：用例集 10 条（B-0~B-9，§14 Q43/Q44 补录行为闭环 + A-DASH-012 口径 + A-DASH-013 首页开启；执行面 = 机器 CI / 生产人工）、生产执行流程与数据红线、开关行载体定夺（配置模板承载，OQ-128 ④ 关闭；迁移补行与种子 V100 撞唯一键不可行）、机器侧自动化 `BAcceptanceBackfillNodeRateIT`（demob 化身，门控恒跑；验收发现并修复 FIXED 超次直接录入期误拦缺陷）与防漂移校验 `scripts/check_hospital_b_acceptance.py` | B 验收通过、E23-T19 上线前置（E23-T17） |
 | `testing/hospital-b-regression-a.md` | 医院 B 回归手册（A 功能不受影响）：用例集 8 条（RA-0~RA-7，B 上线共享面变更清单（V80 草稿进 A 库 / TaskCreationPlanner 共享代码修复 / B 侧激活与 node_rate 布局 / V136 命名空间）逐项映射 + A 冒烟 S-x 基线主链复跑；执行面 = 机器 CI / 生产人工）、生产执行流程与数据红线（B 上线切换后立即执行）、失败处置（B 租户级收敛 + hypercare）、机器侧自动化 `BRegressionAUnaffectedIT`（demob 置 B 上线态后复跑 demoa A 基线，门控恒跑）与防漂移校验 `scripts/check_hospital_b_regression.py` | B 上线后 A 回归通过（E23-T28） |
 | `testing/hospital-c-switch-acceptance.md` | 医院 C 植入、计划切换与 ERI 用例留痕（E21-T25）：切换表十行（评审 §3.3.1 SW-1…SW-10）双面执行映射——行为面 `PlanSwitchIT`（E21-T06/T07）+ 产品配置链面 `CSwitchAcceptanceIT`（发布 V91 预置 → V86 映射自动入组 → 预置节点排期端到端，门控同口径；含 C-ACC-18 切换后时间轴连续），其余机器面（C-ACC-05…07、13、17、25）承载映射与执行记录 | C 切换表验收（「切换表全部用例通过」；E21-T26…T29 姊妹执行任务的参照口径） |
-| `testing/hospital-c-next-visit-backfill-acceptance.md` | 医院 C 下次随访时间与补录用例留痕（E21-T26）：C-ACC-16 窗口算例（验收「窗口算例通过」）双面执行映射——行为面 `DoctorNextDateIT`（E21-T08）+ 产品配置链面 `CNextVisitBackfillAcceptanceIT`（发布 V91 预置 → V86 映射自动入组 → 预置常规随访节点 ±30 端到端，时钟相对化同构规格例 2027-01-15 → 2026-12-16 至 2027-02-14）；C-ACC-26 七档建议 / 31 天 / 可改选与 C-ACC-27 补录链路（不需任务、连续补录、日期边界）逐条映射；C-ACC-25 由 `SequenceNumberIT` 承载；§4 记「补录日期落在未完成任务窗口内自动完成任务」缺口（OQ-148，C-ACC-27 该句未通过） | C 窗口算例验收（E21-T26；E21-T27…T29 姊妹执行任务同口径留痕） |
+| `testing/hospital-c-next-visit-backfill-acceptance.md` | 医院 C 下次随访时间与补录用例留痕（E21-T26）：C-ACC-16 窗口算例（验收「窗口算例通过」）双面执行映射——行为面 `DoctorNextDateIT`（E21-T08）+ 产品配置链面 `CNextVisitBackfillAcceptanceIT`（发布 V91 预置 → V86 映射自动入组 → 预置常规随访节点 ±30 端到端，时钟相对化同构规格例 2027-01-15 → 2026-12-16 至 2027-02-14）；C-ACC-26 七档建议 / 31 天 / 可改选与 C-ACC-27 补录链路（不需任务、连续补录、日期边界）逐条映射；C-ACC-25 由 `SequenceNumberIT` 承载；§4 记 OQR-01 / OQ-148 补录联动本地实现及 C-ACC-27 机器面通过，生产开关 / 医院 UAT 待验收 | C 窗口算例验收（E21-T26；E21-T27…T29 姊妹执行任务同口径留痕） |
 | `testing/hospital-c-digitize-transcribe-acceptance.md` | 医院 C 电子化、待归档区与转录用例留痕（E21-T27）：C-ACC-28…37 执行方套件——验收「状态流转用例通过」= 电子化状态机全链（默认值 → 转录置 DONE → 移除随访位置自动回 PENDING〔按 C-SCAN-020 / C 规格 §7 / CL-10 随本任务补实现〕→ 补录进度口径）在随包产品配置链上端到端（`CDigitizeTranscribeAcceptanceIT`：runbook §3 启用 C 预置类型 + V94 程控映射 + 程控分组 / 植入位置守卫）；§3 记「移除其随访记录位置」粒度与退回作业触发面读法，§4 记 C-ACC-31 待归档区（E21-T16 未落地）与 C-ACC-12 完整链路（E21-T32）顺延 | C 电子化 / 转录验收（E21-T27；E21-T28 / T29 姊妹执行任务同口径留痕） |
 | `testing/hospital-c-paper-archive-rehearsal.md` | 医院 C 历史纸质资料导入演练留痕（E23-T27 / C-ACC-30）：验收「历史患者建档与扫描件关联核对通过」——测试环境形态（随包产品配置链激活：implant + scan_progress 开关、V94 预置类型、V91 预置计划发布）下 12 名虚构历史患者三阶段演练（建档〔过去植入日期 + 手填纸质原编号 + V86 映射自动入组 + Q14 任务口径〕→ 扫描件上传关联〔ONE_PER_FILE / MERGE / 植入整条 + 器械信息锚点〕→ 三口径核对〔台账 = 库内 = 患者内清单 / 概览待录入数 / 纸质编号检索 + 越患者 40400 防错〕），机器面 `CPaperArchiveImportRehearsalIT`（门控同口径；激活态收尾还原） | C 历史资料导入演练验收（E23-T26 C 上线切换前置） |
 | `ops/rds-prod.md` | RDS 8.0 生产实例运维手册：参数基线、主备切换验证、跨区域备份开启（IaC 在 `iac/rds-prod/`；真实云操作由运维执行） | 数据库运维、备份恢复演练（E22） |
@@ -60,7 +61,21 @@
 | `ops/mlps/remediation-backend.md` | 等保测评整改手册·后端（E22-T15，W44 整改窗口）：验收拆解（整改项全部关闭 = 先行整改〔自查偏差后端面 D-01~D-08 逐条处置，D-01 上传病毒扫描本轮已按 tech-plan §10 落地：clamd INSTREAM 同步扫描 40001/50300 fail closed + sys_file 扫描列 V139 + 存量 SHA-256 补扫作业〕+ 窗口内 MLPS-ID Issue 全关闭）、处置流程与三选一口径、INFECTED 存量处置（标记 + 会诊，不自动删除）、clamd 部署与启用待人工清单、复测闭环（E22-T17）；防漂移校验 `scripts/check_mlps_remediation.py` | 测评整改·后端（E22-T15；E22-T17 复测的输入） |
 | `ops/mlps/remediation-frontend.md` | 等保测评整改手册·前端（E22-T16，W44 整改窗口）：验收拆解（整改项全部关闭 = 先行整改〔自查偏差前端面 D-01~D-08 逐条处置，D-01 前端面本轮落地：上传失败 40001 病毒检出 / 50300 扫描不可用的行级呈现——packages/api upload-rejection 分类与文案、批量上传行错误、拍照队列内联原因、H5 原文透传、pages.md §0.2 登记 50300〕+ 窗口内 MLPS-ID Issue 全关闭）、处置流程与三选一口径、INFECTED 不进医院端界面口径、EICAR 三端呈现核验待人工清单、复测闭环（E22-T17）；防漂移校验 `scripts/check_mlps_remediation_frontend.py` | 测评整改·前端（E22-T16；E22-T17 复测的输入） |
 | `ops/hospital-c-user-ward-role.md` | 医院 C 科室、病区、用户与角色配置 runbook（W41）：C 规格 §7 / §10 的载体与核对（tenant/seed V137 与 A 预置 V123 / B 预置 V136 同库并存、命名空间隔离；临床三角色 WARD + RESPONSIBLE_DEPT 并集、科主任本人负责科室，OQ-144；行级 `CPresetWardUserSqlTest` CI 恒跑；生产不执行种子，按交接单录入）、生产配置手册（科室树 → 病区字典 → 从模板复制角色配科室病区范围 → 用户录入 / 批量导入 → 按科室病区分配（验收主判据）→ 默认随访负责人 → 敏感项 229 平台放开后按 §10 默认值补配 → 抽查）、回滚与人员 / 病区处置；落库与行为演练 IT `CPresetWardUserVerifyIT`（demob 化身，门控：本病区可见 / 他病区 40400 / 心内科科主任跨病区见本科室全部患者 / 跨科室并集 / 病区 + 科室混合并集 / 权限预览） | C 用户按科室病区分配（E23-T22；E23-T23 UAT / E23-T26 上线的输入） |
-| `open-questions.md` | 待确认问题 OQ-01…OQ-144（顺延）与暂行做法 | 遇到不确定时先查 |
+| `open-questions.md` | OQ 决策、历史暂行做法与实施状态（编号至 OQ-155） | 遇到不确定时先查 |
+| `reviews/oqr-02-config-import-protection.md` | OQR-02 配置导入真实预检、版本保护、初始化分流及本地验证记录 | 查看 OQ-91 / 94 的代码整改状态 |
+| `reviews/oqr-03-import-active-slot.md` | OQR-03 导入活动槽唯一约束、同步重试争用及本地验证记录 | 查看 OQ-101④ 的代码整改状态 |
+| `reviews/oqr-04-patient-correction.md` | OQR-04 登记就地更正、敏感身份独立授权、元数据与日期重算及本地验证 | 查看 OQ-124 / 126 的代码整改状态 |
+| `reviews/oqr-05a-record-fact-time.md` | OQR-05A 首次提交事实、历史未知值、时间窗口与本地验证 | 查看事实时间整改状态，后续补录联动与统计整改参见执行清单 |
+| `reviews/oqr-01-backfill-task-link.md` | OQR-01 医院 C 补录候选 / 任务联动、幂等与事务保护、本地 C-ACC-27 回归 | 查看 OQ-148 整改状态与部署边界 |
+| `reviews/oqr-05b-stats-drill.md` | OQR-05B 月度应随访集合、按计数粒度钻取、真实刷新时刻与本地验证 | 查看统计集合整改状态与部署边界 |
+| `reviews/oqr-06-current-device-schedule.md` | OQR-06 当前器械日期回退、医生指定次数绑定、冲突确认与本地回归 | 查看 OQ-140② / 141③④ 的代码整改与部署边界 |
+| `reviews/oqr-07-server-watermark-preview.md` | OQR-07 服务器水印副本、会话鉴权、隔离转换及本地验证 | 查看 OQ-127 实现与生产验收边界 |
+| `reviews/oqr-08-file-scan-safety.md` | OQR-08 生产强制扫描、异常文件访问闸门及补扫重试验证 | 查看 OQ-154②③ 实现与部署边界 |
+| `reviews/oqr-09-auto-enroll-switch.md` | OQR-09 自动入组开关、显式传参、版本与登记回归 | 查看 OQ-88 实现与代码整改收尾 |
+| `ops/file-scan-safety.md` | 生产扫描配置、补扫只读进度与异常文件授权处置 | OQR-08 操作与 OQR-10 验收 |
+| `adr/0008-server-watermark-preview.md` | 服务器烧录水印、鉴权内存预览与隔离渲染决策 | 维护文件预览 |
+| `ops/preview-renderer.md` | 隔离转换构建 / 安装草稿、资源上限及生产放行证据 | OQR-07 部署与 OQR-10 验收 |
+| `ops/import-active-jobs.md` | V140 逐租户迁移前检查、存量冲突与异常作业处置；只读 SQL 在 deploy/checks/ | 发布导入互斥约束前 |
 | `adr/` | 仓库已有架构决定（如 M0 骨架） | 改架构前 |
 | `reviews/m3-code-review.md` | M0–M3 代码审查报告（2026-11-10，对照 tasks.csv 与验收标准）。B1 的演示绕过见 PR #205；B1 与 B2 暂缓 | 看完成度、上线缺口和已知缺陷 |
 | `reviews/hospital-c-acceptance-review.md` | 医院 C 需求澄清与验收用例评审（产品，W38 · E21-T31）：澄清记录 12 条（CL-01…12，两项新增暂行口径回写 OQ-131）、验收用例集 45 条（C-ACC-01…45，算例取自规格各章验收标准与 tasks.csv 验收列）、计划切换十行子表、任务覆盖核对 37 行与 UAT 复核清单；机器面防漂移 `scripts/check_hospital_c_acceptance_review.py` | C 侧测试任务（E21-T25…T29）与 UAT（E23-T23）的用例口径基准 |

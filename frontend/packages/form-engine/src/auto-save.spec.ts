@@ -4,6 +4,7 @@ import type { LocalDraftSnapshot } from './local-draft-store';
 
 import { computed, effectScope, ref } from 'vue';
 
+import { sameFormValue } from '@crdp/rules';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -26,7 +27,7 @@ function fixture() {
       ...Object.keys(savedData.value),
       ...Object.keys(data.value),
     ])) {
-      if (!Object.is(savedData.value[key], data.value[key])) {
+      if (!sameFormValue(savedData.value[key], data.value[key])) {
         delta[key] = data.value[key] ?? null;
       }
     }
@@ -50,7 +51,16 @@ function mountAutosave(over: Partial<AutoSaveOptions> = {}) {
       version: body.baseVersion + 1,
     }),
   );
-  const onSaved = vi.fn();
+  const onSaved = vi.fn(
+    (
+      result: AutoSaveSavedView,
+      _trigger: unknown,
+      snapshot: LocalDraftSnapshot,
+    ) => {
+      form.version.value = result.version;
+      form.savedData.value = { ...snapshot.data };
+    },
+  );
   const restoreServer = vi.fn(async () => {
     // 页面重拉后以服务器为准（测试里以当前 data 近似服务器内容）
     form.savedData.value = { ...form.data.value };
@@ -119,6 +129,66 @@ describe('服务器草稿：每 2 分钟，有改动才保存（NFR-SAVE-001）'
     expect(api.status.value).toBe('idle');
   });
 
+  it('请求期间的新输入保留脏标记与本地草稿，下次保存才同步', async () => {
+    let finish!: (value: AutoSaveSavedView) => void;
+    const request = vi.fn(
+      () =>
+        new Promise<AutoSaveSavedView>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const f = mountAutosave({ saveDraft: request });
+    // 页面回调必须以请求快照更新基准。
+    f.onSaved.mockImplementation((result, _trigger, snapshot) => {
+      f.form.version.value = result.version;
+      f.form.savedData.value = { ...snapshot.data };
+    });
+    f.form.data.value = { q01_ef: 40 };
+    const pending = f.api.saveNow();
+    f.form.data.value = { q01_ef: 50 };
+    finish({ savedAt: SAVED_AT_ISO, version: 3 });
+    expect(await pending).toBe(false);
+    expect(f.form.dirty.value).toBe(true);
+    expect(f.api.status.value).toBe('dirty');
+    const local = await f.api.restoreLocalDraft();
+    expect(local?.data).toEqual({ q01_ef: 50 });
+    expect(local?.baseVersion).toBe(3);
+    const next = f.api.saveNow();
+    expect(request).toHaveBeenLastCalledWith({
+      baseVersion: 3,
+      changes: { q01_ef: 50 },
+    });
+    finish({ savedAt: SAVED_AT_ISO, version: 4 });
+    expect(await next).toBe(true);
+    expect(await f.api.hasLocalDraft()).toBe(false);
+  });
+
+  it('多选数组请求快照不受后续原地修改影响，保存后按内容恢复干净状态', async () => {
+    let finish!: (value: AutoSaveSavedView) => void;
+    const request = vi.fn(
+      () =>
+        new Promise<AutoSaveSavedView>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const f = mountAutosave({ saveDraft: request });
+    f.form.data.value = { choices: [1] };
+    const pending = f.api.saveNow();
+    (f.form.data.value.choices as number[]).push(2);
+    expect(request).toHaveBeenLastCalledWith({
+      baseVersion: 2,
+      changes: { choices: [1] },
+    });
+    finish({ savedAt: SAVED_AT_ISO, version: 3 });
+    expect(await pending).toBe(false);
+    expect(f.form.savedData.value).toEqual({ choices: [1] });
+    const next = f.api.saveNow();
+    finish({ savedAt: SAVED_AT_ISO, version: 4 });
+    expect(await next).toBe(true);
+    expect(f.form.dirty.value).toBe(false);
+    expect(f.api.status.value).toBe('saved');
+  });
+
   it('有改动时到点保存一次：带 baseVersion 与变更字段，状态 saving→saved，lastSavedAt 为 HH:mm', async () => {
     const { api, form, onSaved, saveDraft } = mountAutosave();
     form.data.value = { q01_ef: 45 };
@@ -133,6 +203,7 @@ describe('服务器草稿：每 2 分钟，有改动才保存（NFR-SAVE-001）'
     expect(onSaved).toHaveBeenCalledWith(
       { savedAt: SAVED_AT_ISO, version: 3 },
       'auto',
+      expect.objectContaining({ data: { q01_ef: 45 } }),
     );
     // 保存成功后页面以服务器版本为新基准 → 不再 dirty，下一个周期不再请求
     form.savedData.value = { q01_ef: 45 };

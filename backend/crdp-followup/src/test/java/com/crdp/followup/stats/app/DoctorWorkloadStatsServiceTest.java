@@ -40,8 +40,10 @@ class DoctorWorkloadStatsServiceTest {
 
     @Mock private DoctorWorkloadMapper mapper;
 
+    @Mock private MonthlyDueService monthly;
+
     private DoctorWorkloadStatsService service() {
-        return new DoctorWorkloadStatsService(mapper);
+        return new DoctorWorkloadStatsService(mapper, monthly);
     }
 
     // ---------------------------------------------------------------- 合并与钻取
@@ -53,7 +55,7 @@ class DoctorWorkloadStatsServiceTest {
                         List.of(
                                 new DoctorWorkloadMapper.DoctorPatientRow(11L, "张医生（示例）", 4, 3),
                                 new DoctorWorkloadMapper.DoctorPatientRow(12L, "李医生（示例）", 2, 2)));
-        when(mapper.countMonthDueByDoctor(eq(MONTH_START), eq(MONTH_END), isNull()))
+        when(monthly.doctorRows(eq(MONTH_START), eq(MONTH_END), isNull()))
                 .thenReturn(List.of(new DoctorWorkloadMapper.DoctorTaskRow(11L, 2)));
         when(mapper.countOverdueByDoctor(isNull()))
                 .thenReturn(List.of(new DoctorWorkloadMapper.DoctorTaskRow(11L, 1)));
@@ -93,15 +95,14 @@ class DoctorWorkloadStatsServiceTest {
         when(mapper.countPatientsByDoctor(isNull()))
                 .thenReturn(
                         List.of(new DoctorWorkloadMapper.DoctorPatientRow(11L, "张医生（示例）", 1, 1)));
-        when(mapper.countMonthDueByDoctor(eq(MONTH_START), eq(MONTH_END), isNull()))
-                .thenReturn(List.of());
+        when(monthly.doctorRows(eq(MONTH_START), eq(MONTH_END), isNull())).thenReturn(List.of());
         when(mapper.countOverdueByDoctor(isNull())).thenReturn(List.of());
         when(mapper.aggregateYearlyRateByDoctor(isNull())).thenReturn(List.of());
 
         service().workload(null);
 
         // 与指标卡「本月应随访」同一业务月口径（DashboardKpiService 同做法）
-        verify(mapper).countMonthDueByDoctor(eq(MONTH_START), eq(MONTH_END), isNull());
+        verify(monthly).doctorRows(eq(MONTH_START), eq(MONTH_END), isNull());
     }
 
     @Test
@@ -109,8 +110,7 @@ class DoctorWorkloadStatsServiceTest {
         when(mapper.countPatientsByDoctor(isNull()))
                 .thenReturn(
                         List.of(new DoctorWorkloadMapper.DoctorPatientRow(11L, "张医生（示例）", 4, 3)));
-        when(mapper.countMonthDueByDoctor(eq(MONTH_START), eq(MONTH_END), isNull()))
-                .thenReturn(List.of());
+        when(monthly.doctorRows(eq(MONTH_START), eq(MONTH_END), isNull())).thenReturn(List.of());
         when(mapper.countOverdueByDoctor(isNull())).thenReturn(List.of());
         when(mapper.aggregateYearlyRateByDoctor(isNull())).thenReturn(List.of());
 
@@ -126,10 +126,10 @@ class DoctorWorkloadStatsServiceTest {
         assertEquals("ACTIVE", row.activeDrill().query().get("status"));
         assertEquals("11", row.activeDrill().query().get("doctorId"));
         // 本月应随访 → 任务列表 doctorId + 计划日期窗口（与指标卡「本月应随访」同钻取形态）
-        assertEquals("TASK_LIST", row.monthDueDrill().target());
-        assertEquals("all", row.monthDueDrill().query().get("tab"));
-        assertEquals(MONTH_START.toString(), row.monthDueDrill().query().get("dueFrom"));
-        assertEquals(MONTH_END.toString(), row.monthDueDrill().query().get("dueTo"));
+        assertEquals("FOLLOWUP_STATS", row.monthDueDrill().target());
+        assertEquals("MONTH", row.monthDueDrill().query().get("kind"));
+        assertEquals(MONTH_START.toString(), row.monthDueDrill().query().get("from"));
+        assertEquals(MONTH_END.toString(), row.monthDueDrill().query().get("to"));
         assertEquals("11", row.monthDueDrill().query().get("doctorId"));
         // 逾期 → 任务列表 doctorId + status=OVERDUE
         assertEquals("TASK_LIST", row.overdueDrill().target());
@@ -143,7 +143,7 @@ class DoctorWorkloadStatsServiceTest {
     void emptyScopeReturnsEmptyRowsWithoutAsOf() {
         when(mapper.countPatientsByDoctor(eq(5L))).thenReturn(List.of());
         lenient()
-                .when(mapper.countMonthDueByDoctor(eq(MONTH_START), eq(MONTH_END), eq(5L)))
+                .when(monthly.doctorRows(eq(MONTH_START), eq(MONTH_END), eq(5L)))
                 .thenReturn(List.of());
         lenient().when(mapper.countOverdueByDoctor(eq(5L))).thenReturn(List.of());
         lenient().when(mapper.aggregateYearlyRateByDoctor(eq(5L))).thenReturn(List.of());
@@ -160,8 +160,7 @@ class DoctorWorkloadStatsServiceTest {
         // 行锚点是「有负责患者的医生」：任务 / 随访率只统计责任医生的在册患者，
         // 理论上不会出现无患者锚点的计数行；防御性地丢弃而不是凭空造行。
         when(mapper.countPatientsByDoctor(isNull())).thenReturn(List.of());
-        when(mapper.countMonthDueByDoctor(eq(MONTH_START), eq(MONTH_END), isNull()))
-                .thenReturn(List.of());
+        when(monthly.doctorRows(eq(MONTH_START), eq(MONTH_END), isNull())).thenReturn(List.of());
         when(mapper.countOverdueByDoctor(isNull())).thenReturn(List.of());
         when(mapper.aggregateYearlyRateByDoctor(isNull()))
                 .thenReturn(List.of(new DoctorWorkloadMapper.DoctorRateRow(99L, 3, 3, AS_OF)));

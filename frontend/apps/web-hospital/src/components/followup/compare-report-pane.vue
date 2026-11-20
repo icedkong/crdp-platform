@@ -21,13 +21,14 @@ export interface CompareReportPaneReport {
 <script lang="ts" setup>
 import type { WatermarkViewer } from '@crdp/viewer';
 
-import { computed, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 
 import { sizes } from '@crdp/tokens';
 import { FilePreview } from '@crdp/viewer';
 import { Button, Tooltip } from 'ant-design-vue';
 
 import { getFilePreviewUrl } from '#/api/core/file';
+import { releasePreviewUrls, trackPreviewUrl } from '#/api/core/preview-blob';
 
 const props = defineProps<{
   /** 下载权限（followup:scan:download）：仅下载格式与失败兜底里的下载按钮。 */
@@ -44,24 +45,34 @@ const emit = defineEmits<{
 
 const url = ref<null | string>(null);
 const failed = ref(false);
+trackPreviewUrl(url, () => {
+  failed.value = true;
+});
 
 const file = computed(() => props.report.firstFile);
 
+let sequence = 0;
 async function resolve(): Promise<void> {
+  const request = ++sequence;
   const current = file.value;
-  if (!current) return;
   failed.value = false;
+  if (url.value) releasePreviewUrls([url.value]);
   url.value = null;
+  if (!current) return;
   try {
     const grant = await getFilePreviewUrl(current.fileId);
+    if (request !== sequence) {
+      releasePreviewUrls([grant.url]);
+      return;
+    }
     url.value = grant.url;
   } catch {
-    failed.value = true;
+    if (request === sequence) failed.value = true;
   }
 }
 
 watch(
-  () => props.report.id,
+  () => [props.report.id, file.value?.fileId],
   () => void resolve(),
   { immediate: true },
 );
@@ -69,6 +80,10 @@ watch(
 function onDownload(item: { fileId: number | string }): void {
   emit('download', String(item.fileId));
 }
+onBeforeUnmount(() => {
+  sequence++;
+  if (url.value) releasePreviewUrls([url.value]);
+});
 </script>
 
 <template>

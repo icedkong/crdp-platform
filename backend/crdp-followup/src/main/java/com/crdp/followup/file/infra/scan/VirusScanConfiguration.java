@@ -19,6 +19,7 @@ public class VirusScanConfiguration {
     @Bean
     @ConditionalOnProperty(name = "crdp.file.virus-scan.mode", havingValue = "clamd")
     public VirusScanner clamdVirusScanner(VirusScanProperties properties) {
+        properties.validateClamd();
         return new ClamdVirusScanner(properties);
     }
 

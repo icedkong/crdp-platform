@@ -61,11 +61,22 @@ class DoctorNextDateIT {
     @Autowired private PlanEnrollmentService enrollmentService;
     @Autowired private FollowupTaskCreationService creationService;
 
+    private List<Map<String, Object>> implantFeatureBefore;
+
     @BeforeEach
     void cleanState() {
         runInTenant(
                 "demoa",
                 () -> {
+                    if (implantFeatureBefore == null)
+                        implantFeatureBefore =
+                                jdbc.queryForList(
+                                        "SELECT enabled FROM cfg_feature WHERE feature_code='implant'");
+                    jdbc.update(
+                            "INSERT INTO cfg_feature(feature_code,enabled) VALUES ('implant',1) ON DUPLICATE KEY UPDATE enabled=1");
+                    jdbc.update(
+                            "DELETE i FROM pt_implant i JOIN pt_patient p ON p.id=i.patient_id WHERE p.legacy_no LIKE ?",
+                            LEGACY + "-%");
                     AuditTableMaintenance.delete(
                             jdbc,
                             "DELETE FROM aud_log WHERE"
@@ -111,6 +122,16 @@ class DoctorNextDateIT {
     @AfterAll
     void cleanUp() {
         cleanState();
+        runInTenant(
+                "demoa",
+                () -> {
+                    if (implantFeatureBefore.isEmpty())
+                        jdbc.update("DELETE FROM cfg_feature WHERE feature_code='implant'");
+                    else
+                        jdbc.update(
+                                "UPDATE cfg_feature SET enabled=? WHERE feature_code='implant'",
+                                implantFeatureBefore.getFirst().get("enabled"));
+                });
     }
 
     @Test
@@ -140,7 +161,7 @@ class DoctorNextDateIT {
                 enrollmentRow(enrollmentId).get("doctor_next_date"),
                 "未消费不清理");
         assertEquals(
-                java.sql.Date.valueOf(visit.plusMonths(12)),
+                java.sql.Date.valueOf(doctor),
                 enrollmentRow(enrollmentId).get("next_plan_date"),
                 "缓存保持计划默认（lastVisit + 12 个月），读取侧医生日期优先");
 
@@ -242,9 +263,28 @@ class DoctorNextDateIT {
         body.put("dischargeDate", dischargeDate.toString());
         body.put("dischargeStatus", 1);
         body.put("legacyNo", LEGACY + "-" + suffix);
-        Map<?, ?> created = post("/api/hospital/followup/patients", token, body);
+        runInTenant(
+                "demoa",
+                () -> jdbc.update("UPDATE cfg_feature SET enabled=0 WHERE feature_code='implant'"));
+        Map<?, ?> created;
+        try {
+            created = post("/api/hospital/followup/patients", token, body);
+        } finally {
+            runInTenant(
+                    "demoa",
+                    () ->
+                            jdbc.update(
+                                    "UPDATE cfg_feature SET enabled=1 WHERE feature_code='implant'"));
+        }
         assertEquals(0, codeOf(created), "登记患者失败：" + created);
         long patientId = Long.parseLong(String.valueOf(data(created).get("id")));
+        runInTenant(
+                "demoa",
+                () ->
+                        jdbc.update(
+                                "INSERT INTO pt_implant(patient_id,implant_type,implant_date,device_type) VALUES (?,'FIRST',?,'DDD')",
+                                patientId,
+                                dischargeDate));
         // 服务层入组（计划 auto_enroll = false，无映射路径）：须在租户上下文内（TenantRoutingDataSource）
         runInTenant("demoa", () -> enrollmentService.enroll(patientId, planIdOf(PLAN_CODE), null));
         return patientId;

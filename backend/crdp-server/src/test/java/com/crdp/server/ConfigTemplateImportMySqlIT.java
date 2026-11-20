@@ -97,7 +97,7 @@ class ConfigTemplateImportMySqlIT {
         AuditTableMaintenance.delete(
                 platform,
                 "DELETE FROM plt_audit_log WHERE event_type IN"
-                        + " ('CONFIG_TEMPLATE_EXPORT', 'CONFIG_TEMPLATE_DOWNLOAD', 'CONFIG_TEMPLATE_APPLY')");
+                        + " ('CONFIG_TEMPLATE_EXPORT', 'CONFIG_TEMPLATE_DOWNLOAD', 'CONFIG_TEMPLATE_APPLY', 'CONFIG_TEMPLATE_PREVIEW')");
         if (viewerCreated) {
             platform.update(
                     "DELETE ar FROM plt_account_role ar JOIN plt_account a ON a.id = ar.account_id"
@@ -413,7 +413,7 @@ class ConfigTemplateImportMySqlIT {
                         Map.of("tenantId", TARGET_TENANT));
         assertThat(view).isNotNull();
         Long targetPlanId = queryId(demob, "SELECT id FROM fu_plan WHERE code = '" + PLAN + "'");
-        // 无自然键的子行表按计划版本整组替换：重放不叠加
+        // 重放保留相同计划版本及原节点，不叠加、不删除重建
         assertThat(
                         demob.queryForObject(
                                 "SELECT COUNT(*) FROM fu_plan_node WHERE plan_id = ?",
@@ -476,6 +476,13 @@ class ConfigTemplateImportMySqlIT {
         assertThat(
                         codeOf(
                                 HttpMethod.POST,
+                                "/api/platform/config-templates/" + templateId + "/preview",
+                                token,
+                                Map.of("tenantId", TARGET_TENANT)))
+                .isEqualTo(40300);
+        assertThat(
+                        codeOf(
+                                HttpMethod.POST,
                                 "/api/platform/config-templates/" + templateId + "/apply",
                                 token,
                                 Map.of("tenantId", TARGET_TENANT)))
@@ -484,6 +491,222 @@ class ConfigTemplateImportMySqlIT {
 
     @Test
     @Order(6)
+    void previewDoesNotWriteAndStaleTargetIsRejected() {
+        String token = loginPlatform("platform.admin");
+        var before = demob.queryForList("SELECT * FROM cfg_param WHERE param_key = ?", PARAM);
+        Map<?, ?> preview =
+                request(
+                        HttpMethod.POST,
+                        "/api/platform/config-templates/" + templateId + "/preview",
+                        token,
+                        Map.of("tenantId", TARGET_TENANT));
+        assertThat(preview).isNotNull();
+        assertThat(demob.queryForList("SELECT * FROM cfg_param WHERE param_key = ?", PARAM))
+                .isEqualTo(before);
+        demob.update("UPDATE cfg_param SET param_value = '8' WHERE param_key = ?", PARAM);
+        int code =
+                codeOf(
+                        HttpMethod.POST,
+                        "/api/platform/config-templates/" + templateId + "/apply",
+                        token,
+                        Map.of("tenantId", TARGET_TENANT, "planHash", preview.get("planHash")));
+        assertThat(code).isEqualTo(40900);
+        assertThat(
+                        demob.queryForObject(
+                                "SELECT param_value FROM cfg_param WHERE param_key = ?",
+                                String.class,
+                                PARAM))
+                .isEqualTo("8");
+        assertThat(
+                        codeOf(
+                                HttpMethod.POST,
+                                "/api/platform/config-templates/" + templateId + "/apply",
+                                token,
+                                Map.of("tenantId", TARGET_TENANT)))
+                .isEqualTo(40900);
+    }
+
+    @Test
+    @Order(7)
+    void changedPlanPreservesOldVersionAndNodesAndReplaysIdempotently() {
+        String token = loginPlatform("platform.admin");
+        var oldPlans = demob.queryForList("SELECT * FROM fu_plan WHERE code = ? ORDER BY id", PLAN);
+        var oldNodes =
+                demob.queryForList(
+                        "SELECT * FROM fu_plan_node WHERE plan_id IN (SELECT id FROM fu_plan WHERE code = ?) ORDER BY id",
+                        PLAN);
+        var sourceBefore =
+                demoa.queryForList(
+                        "SELECT * FROM fu_plan_node WHERE plan_id IN (SELECT id FROM fu_plan WHERE code = ?) ORDER BY id",
+                        PLAN);
+        try {
+            demoa.update(
+                    "UPDATE fu_plan_node SET name = '调整节点（示例）' WHERE plan_id IN (SELECT id FROM fu_plan WHERE code = ?) AND parent_id IS NOT NULL",
+                    PLAN);
+            var exported =
+                    request(
+                            HttpMethod.POST,
+                            "/api/platform/config-templates",
+                            token,
+                            Map.of("tenantId", SOURCE_TENANT, "name", "版本保护模板（示例）"));
+            long changedTemplate = ((Number) exported.get("id")).longValue();
+            var applied =
+                    request(
+                            HttpMethod.POST,
+                            "/api/platform/config-templates/" + changedTemplate + "/apply",
+                            token,
+                            Map.of("tenantId", TARGET_TENANT));
+            assertThat(applied).isNotNull();
+            assertThat(
+                            demob.queryForList(
+                                    "SELECT * FROM fu_plan WHERE id = ?",
+                                    oldPlans.getFirst().get("id")))
+                    .containsExactly(oldPlans.getFirst());
+            for (var node : oldNodes)
+                assertThat(
+                                demob.queryForMap(
+                                        "SELECT * FROM fu_plan_node WHERE id = ?", node.get("id")))
+                        .isEqualTo(node);
+            assertThat(
+                            demob.queryForObject(
+                                    "SELECT COUNT(*) FROM fu_plan WHERE code = ?",
+                                    Long.class,
+                                    PLAN))
+                    .isEqualTo(2L);
+            assertThat(
+                            demob.queryForObject(
+                                    "SELECT status FROM fu_plan WHERE code = ? ORDER BY version DESC LIMIT 1",
+                                    String.class,
+                                    PLAN))
+                    .isEqualTo("UNPUBLISHED");
+            var after =
+                    demob.queryForList(
+                            "SELECT * FROM fu_plan_node WHERE plan_id IN (SELECT id FROM fu_plan WHERE code = ?) ORDER BY id",
+                            PLAN);
+            assertThat(
+                            request(
+                                    HttpMethod.POST,
+                                    "/api/platform/config-templates/" + changedTemplate + "/apply",
+                                    token,
+                                    Map.of("tenantId", TARGET_TENANT)))
+                    .isNotNull();
+            assertThat(
+                            demob.queryForList(
+                                    "SELECT * FROM fu_plan_node WHERE plan_id IN (SELECT id FROM fu_plan WHERE code = ?) ORDER BY id",
+                                    PLAN))
+                    .isEqualTo(after);
+        } finally {
+            for (var row : sourceBefore)
+                demoa.update(
+                        "UPDATE fu_plan_node SET name = ? WHERE id = ?",
+                        row.get("name"),
+                        row.get("id"));
+        }
+    }
+
+    @Test
+    @Order(8)
+    void concurrentApplyOfSamePlanAllowsOneWinner() throws Exception {
+        demob.update("UPDATE cfg_param SET param_value = '8' WHERE param_key = ?", PARAM);
+        String token = loginPlatform("platform.admin");
+        var preview =
+                request(
+                        HttpMethod.POST,
+                        "/api/platform/config-templates/" + templateId + "/preview",
+                        token,
+                        Map.of("tenantId", TARGET_TENANT));
+        var body = Map.of("tenantId", TARGET_TENANT, "planHash", preview.get("planHash"));
+        var latch = new java.util.concurrent.CountDownLatch(1);
+        try (var pool = java.util.concurrent.Executors.newFixedThreadPool(2)) {
+            java.util.concurrent.Callable<Integer> apply =
+                    () -> {
+                        latch.await();
+                        return codeOf(
+                                HttpMethod.POST,
+                                "/api/platform/config-templates/" + templateId + "/apply",
+                                token,
+                                body);
+                    };
+            var one = pool.submit(apply);
+            var two = pool.submit(apply);
+            latch.countDown();
+            // 前一用例把目标参数改成 8，本模板仍为 7；本轮必须发生写入。
+            assertThat(
+                            List.of(
+                                    one.get(30, java.util.concurrent.TimeUnit.SECONDS),
+                                    two.get(30, java.util.concurrent.TimeUnit.SECONDS)))
+                    .containsExactlyInAnyOrder(0, 40900);
+        }
+    }
+
+    @Test
+    @Order(9)
+    void databaseFailureRollsBackEarlierConfigurationWrites() throws Exception {
+        String token = loginPlatform("platform.admin");
+        byte[] original =
+                platform.queryForObject(
+                        "SELECT package_body FROM plt_config_template WHERE id = ?",
+                        byte[].class,
+                        templateId);
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        com.fasterxml.jackson.databind.JsonNode root;
+        try (var gzip =
+                new java.util.zip.GZIPInputStream(new java.io.ByteArrayInputStream(original))) {
+            root = mapper.readTree(gzip);
+        }
+        for (var table : root.get("tables")) {
+            for (var row : table.get("rows")) {
+                if (table.get("table").asText().equals("cfg_dict")
+                        && row.path("code").asText().equals(DICT))
+                    ((com.fasterxml.jackson.databind.node.ObjectNode) row).put("name", "回滚验证（示例）");
+                if (table.get("table").asText().equals("cfg_param")
+                        && row.path("param_key").asText().equals(PARAM))
+                    ((com.fasterxml.jackson.databind.node.ObjectNode) row).putNull("param_value");
+            }
+        }
+        var before = demob.queryForMap("SELECT * FROM cfg_dict WHERE code = ?", DICT);
+        try {
+            platform.update(
+                    "UPDATE plt_config_template SET package_body = ? WHERE id = ?",
+                    gzip(mapper.writeValueAsString(root)),
+                    templateId);
+            var preview =
+                    request(
+                            HttpMethod.POST,
+                            "/api/platform/config-templates/" + templateId + "/preview",
+                            token,
+                            Map.of("tenantId", TARGET_TENANT));
+            assertThat(preview).isNotNull();
+            assertThat(preview.get("applicable")).isEqualTo(true);
+            assertThat(
+                            codeOf(
+                                    HttpMethod.POST,
+                                    "/api/platform/config-templates/" + templateId + "/apply",
+                                    token,
+                                    Map.of(
+                                            "tenantId",
+                                            TARGET_TENANT,
+                                            "planHash",
+                                            preview.get("planHash"))))
+                    .isEqualTo(50000);
+            assertThat(demob.queryForMap("SELECT * FROM cfg_dict WHERE code = ?", DICT))
+                    .isEqualTo(before);
+            assertThat(
+                            demob.queryForObject(
+                                    "SELECT param_value FROM cfg_param WHERE param_key = ?",
+                                    String.class,
+                                    PARAM))
+                    .isEqualTo("7");
+        } finally {
+            platform.update(
+                    "UPDATE plt_config_template SET package_body = ? WHERE id = ?",
+                    original,
+                    templateId);
+        }
+    }
+
+    @Test
+    @Order(10)
     void tamperedPackageWithPatientDataIsBlocked() throws Exception {
         // E12-T03（验收：含敏感信息的包被拦截）：直接改库把一节患者表塞进包体，模拟被篡改 / 旧版包——
         // 应用前敏感检查必须拦下（40901），目标租户库一个字都不进
@@ -577,6 +800,17 @@ class ConfigTemplateImportMySqlIT {
         headers.setContentType(MediaType.APPLICATION_JSON);
         if (token != null) {
             headers.setBearerAuth(token);
+        }
+        if (method == HttpMethod.POST
+                && path.endsWith("/apply")
+                && body instanceof Map<?, ?> args) {
+            Map<?, ?> preview =
+                    request(HttpMethod.POST, path.replace("/apply", "/preview"), token, body);
+            assertThat(preview).isNotNull();
+            assertThat(preview.get("applicable"))
+                    .as("差异动作：%s", preview.get("changes"))
+                    .isEqualTo(true);
+            body = Map.of("tenantId", args.get("tenantId"), "planHash", preview.get("planHash"));
         }
         HttpEntity<?> entity =
                 body == null ? new HttpEntity<>(headers) : new HttpEntity<>(body, headers);

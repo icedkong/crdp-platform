@@ -186,7 +186,7 @@ E20-T06 落地口径（PLT-VIEW-013、017、018，验收「默认关闭，开启
 - **受控放行（`TenantViewGuardFilter` 写分支）**：写请求按登记分类（`classify`：base/tenant:* 为配置类；followup 内 action=config 与资源 field 为配置类，其余为业务数据；后续模块按业务数据默认 fail closed）。配置类写 = 可代为配置 ∧ 资源在范围内放行（`VIEW_PROXY_CONFIG`）；业务数据写 = 可编辑业务数据 ∧ 该资源命中操作为可编辑的视角规则（任一不满足即只读，`VIEW_PROXY_EDIT`）；动作 plain / reset / export / download / approve 永不放行（明文是平台铁律、重置只走专用代理口、导出按 allowExport）。放行须带 `X-View-Reason`（二次确认填写的操作原因，必填 2–500；HTTP 头不承载非 ASCII，取值按 encodeURIComponent 百分号编码），缺失 40001 并写 VIEW_DENIED。
 - **前后值审计（PLT-VIEW-016）**：放行成功写平台访问审计 VIEW_PROXY_*（object_type=权限码资源段、object_id=路径尾段、reason；before_json=写前同路径 GET 内部快照（FORWARD 分发，未登记 GET 或失败为 null）、after_json=请求载荷（multipart 不记录），限长 32k 截断）并递增台账 `proxy_count`。**医院侧稽查匿名**：视角会话写租户侧可见审计（操作 / 数据访问）时操作者一律匿名「平台支持人员 会话号」（`platform_view`，不落平台账号与姓名，platform-spec §8 已确认）；字段历史来源归一为 `PLATFORM_SUPPORT`（OQ-66 ③ 收敛）；平台访问日志（VIEW_*）保留真实平台账号身份（仅平台侧可见）。
 - **代重置密码（PLT-VIEW-017）**：见 §6 端点表 `/api/hospital/view/users/{id}/reset-password`；`SmsCodeSender` 新增 `sendTemporaryPassword`（场景 `AUTH_TEMP_PASSWORD`，参数白名单 = 系统生成的临时密码字符集，与验证码 / 汇总场景分开）。短信先发、成功才落库——通道不可用时重置不生效并如实报 50000。
-- **@RequireReauth 接口（如患者删除 / 恢复）对视角仍按 40304 收口**（fail closed，OQ-107 ⑥ 原口径不变）：前端视角模式不显示这些按钮；如需放开须先设计视角下的二次认证流程。
+- **@RequireReauth 接口（如患者删除 / 恢复）对视角仍按 40304 收口**（fail closed，OQ-155 ⑥ 原口径不变）：前端视角模式不显示这些按钮；如需放开须先设计视角下的二次认证流程。
 - **权限码 `platform:view:config:operate` / `platform:view:user:reset` / `platform:view:business:edit` 未登记**（规格 §8 权限点表）：执行口径以角色六字段为唯一事实源（与 PLT-VIEW-005 落地一致），登记按钮码属重复配置面，暂不落（若产品要求按钮级独立控制再登记迁移）。
 
 ## 7. 平台配置（PLT-CFG-001/003/005/006/007/009/010/011）
@@ -236,18 +236,21 @@ E20-T06 落地口径（PLT-VIEW-013、017、018，验收「默认关闭，开启
 | GET | `/api/platform/config-templates/{id}` | `platform:tenant:view` | **已实现**。详情：`{template, tables[{table,module,mode,category,present,rowCount,excludedRowCount,sourceRowCount,columns}]}`（不带行数据；未知 40400） |
 | GET | `/api/platform/config-templates/{id}/package` | `platform:tenant:view` | **已实现**。读回完整包（gzip 解压后的 JSON 结构，`formatVersion/tenantCode/tenantName/exportedAt/tables[]`，行值已归一化）；写 `CONFIG_TEMPLATE_DOWNLOAD` 审计 |
 | GET | `/api/platform/config-templates/registry` | `platform:tenant:view` | **已实现**。配置表注册表清单（table / module / mode / category / description / excludeWhen），预览「会导出什么」用（管理页「导出范围」抽屉，E12-T04） |
-| POST | `/api/platform/config-templates/{id}/apply` | `platform:tenant:create` | **已实现（E12-T02）**。应用到目标租户：`{tenantId}`（不能是源租户 40001；租户库未注册 40901；未知租户 / 模板 40400；包结构版本不支持 40901；含敏感信息 40901——`SensitiveConfigChecker` 应用前拦截，见上，E12-T03）→ `{templateId,templateName,templateVersion,templateHash,sourceTenantId,sourceTenantCode,tenantId,tenantCode,tenantName,appliedAt,insertedRows,mergedRows,skippedRows,droppedRows,tables[{table,mode,imported,packageRows,inserted,merged,skipped,dropped,note}]}`；写 `CONFIG_TEMPLATE_APPLY` 审计（含包哈希），并递增目标租户全部用户权限版本（角色授权可能变化） |
+| POST | `/api/platform/config-templates/{id}/preview` | `platform:tenant:create` | **已实现（OQR-02）**。`{tenantId}` → `{planHash,applicable,mode:"UPDATE",changes[{table,sourceRow,action,columns,note}],tables[同应用结果分表计数]}`；目标库只读事务对账，行级动作 INSERT / UPDATE / KEEP / DROP / CONFLICT，只返回字段名，不返回配置值；写 `CONFIG_TEMPLATE_PREVIEW` 平台审计 |
+| POST | `/api/platform/config-templates/{id}/apply` | `platform:tenant:create` | **已实现（E12-T02）**。应用到目标租户：`{tenantId,planHash}`（不能是源租户 40001；租户库未注册 40901；未知租户 / 模板 40400；包结构版本不支持 40901；含敏感信息 40901——`SensitiveConfigChecker` 应用前拦截，见上，E12-T03）→ `{templateId,templateName,templateVersion,templateHash,sourceTenantId,sourceTenantCode,tenantId,tenantCode,tenantName,appliedAt,insertedRows,mergedRows,skippedRows,droppedRows,tables[{table,mode,imported,packageRows,inserted,merged,skipped,dropped,note}]}`；缺少预检摘要或模板 / 目标配置 / 可分配范围变化返回 40900，存在冲突返回 40901；锁定目标配置后校验摘要，只执行相同计划；写 `CONFIG_TEMPLATE_APPLY` 成功 / 失败审计（含包哈希），并递增目标租户全部用户权限版本（角色授权可能变化） |
 
-**管理页与导入预览（E12-T04，验收「导入前预览差异」）**：`/platform/config-template`（菜单 V52：菜单行不带独立权限码——`plt_menu.perm_code` 全库唯一、`platform:tenant:view` 已被 111 占用，可见性由角色授予决定；接口读 `platform:tenant:view`，导出 / 应用按钮按 `platform:tenant:create` 显隐）。应用前预览基于**模板详情（分表元信息）+ 上面的导入规则在前端推演**——逐表给出「将导入 n 行（自然键相同被覆盖、其余新增） / 只复制结构 / 空节跳过」，并列出导入口径（源值胜、整组替换、取交集、用户引用置空、权限版本递增），勾选确认后才能提交；**无后端 dry-run 接口**，确切的新增 / 覆盖 / 跳过 / 丢弃计数以 apply 结果回显为准（暂行口径见 OQ-94）。
+**管理页与导入预览（E12-T04 / OQR-02，验收「导入前预览差异」）**：`/platform/config-template` 菜单与权限沿用原配置。选目标租户后调用只读 preview，显示真实行级动作、字段名、原因及分表计数；无预览、加载失败或存在冲突时禁用确认。切换租户 / 模板清空确认，旧请求响应不能覆盖新预览。提交携带该预检 `planHash`，失败后重新读取预检并要求重新勾选确认。
 
-**用 A 配置初始化测试租户演练（E12-T05，验收「新租户表单、计划、报告单配置与 A 一致」）**：新建租户向导第 2 步可选配置模板（`POST /api/platform/tenants` 带 `templateId`），开通编排新增 `config-template` 步骤在模块开通后直接复用上面的 apply（同一套 ID 重映射、敏感拦截、授权取交集与审计）；医院 B 正式初始化（E23-T15）走同一路径。演练的自动化承载是 `ConfigTemplateTenantInitMySqlIT`：从 demoa（医院 A 的本地化身）导出模板 → 带 `templateId` 开通测试租户 → 表单（fe_* 七表）、计划（fu_plan / fu_plan_node）、报告单（rpt_type / rpt_name / rpt_indicator_tpl / rpt_indicator_item）三域配置业务列逐表与 A 比对一致（数值引用 join 到本院行取值比较），并断言患者 / 随访业务数据为空、配置行不带源租户用户引用（暂行口径见 OQ-99）。
+**在用更新的版本边界**：已存在计划版本与节点始终保留（包含未引用草稿，采用保守策略，避免引用变化竞争）；包内容与已有任一版本相同时复用该版本，不重建节点；不同时导入为同族递增的 `UNPUBLISHED` 新版本，清空发布时间 / 发布人，须由医院另行审核发布，不自动迁移入组。已有表单版本及字段快照不得改写或追加字段；有差异则整包阻断，须在源端发布新版本重新导出。其他配置按逐行明确的更新计划应用，保留包外配置；新行用户引用置空，已有行不清空本院操作人。数字引用按计划临时 ID 在执行时重映射；计划摘要绑定平台操作人、目标租户、模板内容、可分配范围及目标配置全量快照。应用事务使用 REPEATABLE_READ 和配置表行 / 间隙锁，预检至执行期间目标有变化则 40900，事务中途失败整体回滚。
+
+**用 A 配置初始化测试租户演练（E12-T05，验收「新租户表单、计划、报告单配置与 A 一致」）**：新建租户向导第 2 步可选配置模板（`POST /api/platform/tenants` 带 `templateId`），开通编排的 `config-template` 步骤在模块开通后调用独立 `initialize` 服务入口，仅允许 `PROVISIONING` 租户（保留源值胜与节点整组替换，使用既有 ID 重映射、敏感拦截、授权取交集与审计），该入口不通过公开 apply 接口暴露；医院 B 正式初始化（E23-T15）走同一路径。演练的自动化承载是 `ConfigTemplateTenantInitMySqlIT`：从 demoa（医院 A 的本地化身）导出模板 → 带 `templateId` 开通测试租户 → 表单（fe_* 七表）、计划（fu_plan / fu_plan_node）、报告单（rpt_type / rpt_name / rpt_indicator_tpl / rpt_indicator_item）三域配置业务列逐表与 A 比对一致（数值引用 join 到本院行取值比较），并断言患者 / 随访业务数据为空、配置行不带源租户用户引用（暂行口径见 OQ-99）。
 
 应用（导入）口径（A-FLD-014「导入时重新分配 ID 并重写引用」，验收「导入后引用关系正确」）：
 
 - **ID 重映射**：逐表维护「源 ID → 目标 ID」并改写数值引用列——`sys_role_menu` / `sys_role_scope` / `sys_role_field_policy` 的 `role_id`、`fe_form_version_field.version_id`、`fu_plan_node.plan_id` 与 `parent_id`（自引用）；解析不到目标行的行丢弃并在结果计数。编码引用（`form_code` / `option_set_code` / `dict_code` / `set_code` 等字符串列）不改写，随整包导入自然一致。
-- **用户引用置空**：`created_by / updated_by / published_by` 一律置 NULL（账号不随模板复制）；导出侧同样置空（E12-T03，tech-plan §6「配置中引用用户的字段一律置空」），列清单以 `ConfigImportSpecs.USER_REFERENCE_COLUMNS` 为唯一定义。
+- **用户引用置空**：初始化和新行的 `created_by / updated_by / published_by` 置 NULL（账号不随模板复制）；在用更新保留已有目标行的本院操作人；导出侧同样置空（E12-T03，tech-plan §6「配置中引用用户的字段一律置空」），列清单以 `ConfigImportSpecs.USER_REFERENCE_COLUMNS` 为唯一定义。
 - **角色权限取交集**：`sys_role_menu.menu_id` 须落在目标租户生效可分配范围（`TenantScopeService.assignableMenuIds`：base 固定能力 ∪ 模板调整 ∩ 已开通模块）内，超出即丢弃；`sys_role_menu` 本身取并集（INSERT IGNORE）。
-- **合并语义（源值胜，重放幂等）**：自然键相同的行用包值更新；`fu_plan_node` 无自然键，按计划版本（`plan_id` 分组）整组替换（先删后插），重放不叠加；`ntf_setting` 单行表按固定 `id=1` upsert。
+- **合并语义**：初始化采用源值胜、节点按版本整组替换；在用更新采用上述真实差异计划与版本保护，绝不删除已有计划节点；`ntf_setting` 按固定 `id=1` 对账，内容相同不写入。
 - **整表策略**：`sys_role_scope_dept` 行全部丢弃（`sys_dept` 组织架构不在复制清单，`dept_id` 无法重映射）；STRUCTURE_ONLY（术者、病区 / 中心）、`present=false` 与目标库缺表的节跳过（结果 note 说明）。
 - **事务**：导入在目标租户库单事务内全成或全败；平台库读取（包、租户、可分配范围）在事务外完成。
 

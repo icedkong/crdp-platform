@@ -30,6 +30,7 @@ import {
   Select,
   SelectOption,
   Spin,
+  Switch,
   Table,
   Textarea,
 } from 'ant-design-vue';
@@ -60,7 +61,7 @@ const router = useRouter();
 const { isMobile } = useBreakpoint();
 const { hasPermission } = usePermission();
 
-const canEdit = hasPermission('followup:plan:edit');
+const canEdit = computed(() => hasPermission('followup:plan:edit'));
 const canPublish = hasPermission([
   'followup:plan:publish',
   'followup:plan:edit',
@@ -75,6 +76,7 @@ const createOpen = ref(false);
 const creating = ref(false);
 const createErrors = ref<string[]>([]);
 const createForm = reactive({
+  autoEnroll: false,
   code: '',
   cycleType: 'ONGOING' as PlanCycleType,
   cycleYears: null as null | number,
@@ -120,6 +122,8 @@ async function reload() {
 }
 
 function openCreate() {
+  if (!canEdit.value) return;
+  createForm.autoEnroll = false;
   createForm.code = '';
   createForm.cycleType = 'ONGOING';
   createForm.cycleYears = null;
@@ -131,6 +135,7 @@ function openCreate() {
 }
 
 async function submitCreate() {
+  if (!canEdit.value || creating.value) return;
   createErrors.value = validateBasicInfo({
     code: createForm.code,
     cycleType: createForm.cycleType,
@@ -141,6 +146,7 @@ async function submitCreate() {
   creating.value = true;
   try {
     const created = await createPlan({
+      autoEnroll: createForm.autoEnroll,
       code: createForm.code.trim(),
       cycleType: createForm.cycleType,
       cycleYears:
@@ -344,6 +350,7 @@ onMounted(reload);
     </Card>
 
     <Modal
+      v-if="canEdit"
       v-model:open="createOpen"
       :confirm-loading="creating"
       title="新建计划"
@@ -400,6 +407,19 @@ onMounted(reload);
               :min="1"
               placeholder="≥1"
               style="width: 100%"
+            />
+          </FormItem>
+          <FormItem
+            class="form-span"
+            label="自动入组"
+            help="发布后，仅后续出院登记的患者按规则自动加入本计划；不补批处理已有患者，不改变已有入组。"
+          >
+            <Switch
+              v-model:checked="createForm.autoEnroll"
+              :disabled="creating"
+              checked-children="开启"
+              un-checked-children="关闭"
+              aria-label="自动入组"
             />
           </FormItem>
           <FormItem class="form-span" label="备注">

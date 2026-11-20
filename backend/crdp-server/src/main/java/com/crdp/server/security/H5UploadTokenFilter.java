@@ -62,6 +62,7 @@ public class H5UploadTokenFilter extends OncePerRequestFilter {
     private final TenantLookupCache tenantLookup;
     private final ApiErrorWriter errors;
     private final DeniedOperationLogger deniedLogger;
+    private final com.crdp.framework.security.SessionPermissionResolver permissions;
 
     public H5UploadTokenFilter(
             MobileUploadTokenStore tokens,
@@ -69,13 +70,18 @@ public class H5UploadTokenFilter extends OncePerRequestFilter {
             MobileUploadMapper mapper,
             TenantLookupCache tenantLookup,
             ApiErrorWriter errors,
-            DeniedOperationLogger deniedLogger) {
+            DeniedOperationLogger deniedLogger,
+            com.crdp.framework.security.PermissionVersionStore versions,
+            com.crdp.framework.security.SessionRefresher refresher) {
         this.tokens = tokens;
         this.sessionStore = sessionStore;
         this.mapper = mapper;
         this.tenantLookup = tenantLookup;
         this.errors = errors;
         this.deniedLogger = deniedLogger;
+        this.permissions =
+                new com.crdp.framework.security.SessionPermissionResolver(
+                        sessionStore, versions, refresher);
     }
 
     @Override
@@ -96,6 +102,7 @@ public class H5UploadTokenFilter extends OncePerRequestFilter {
         SessionPrincipal issuer =
                 sessionStore
                         .find(payload.issuerToken())
+                        .map(permissions::resolve)
                         .filter(
                                 p ->
                                         p.hospital()

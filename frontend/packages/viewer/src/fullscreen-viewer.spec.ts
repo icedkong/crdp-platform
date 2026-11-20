@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import FullscreenViewer from './fullscreen-viewer.vue';
 
-// pdf.js / docx-preview 懒加载渲染在单测里以替身注入（真实链路由 E10-T04 测试覆盖）
+// pdf.js（含 DOCX 的服务端 PDF） 懒加载渲染在单测里以替身注入（真实链路由 E10-T04 测试覆盖）
 vi.mock('./renderers', () => ({
   renderDocxDocument: vi.fn().mockResolvedValue(undefined),
   renderPdfDocument: vi.fn().mockResolvedValue(1),

@@ -7,7 +7,7 @@ import type {
   InboxUploadItem,
 } from './inbox-logic';
 
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
 
@@ -29,6 +29,7 @@ import {
 } from 'ant-design-vue';
 
 import { getFilePreviewUrl, uploadFile } from '#/api/core/file';
+import { releasePreviewUrls, trackPreviewUrls } from '#/api/core/preview-blob';
 import { addFilesToReportInbox, searchReportInbox } from '#/api/core/report';
 import { downloadFileById } from '#/components/followup/file-download';
 import InboxArchiveModal from '#/components/followup/inbox-archive-modal.vue';
@@ -115,6 +116,7 @@ onMounted(() => {
 // ---------------------------------------------------------------- 缩略图（首附件图片，预览短时链接懒加载）
 
 const thumbnailUrls = ref<Record<string, string>>({});
+trackPreviewUrls(thumbnailUrls);
 
 async function loadThumbnails(items: ReportInboxRow[]) {
   const targets = items
@@ -267,6 +269,7 @@ function openArchive(row: ReportInboxRow) {
   archiveTarget.value = { fileName: row.fileName, id: row.id };
   archiveOpen.value = true;
 }
+onBeforeUnmount(() => releasePreviewUrls(Object.values(thumbnailUrls.value)));
 </script>
 
 <template>

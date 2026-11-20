@@ -10,6 +10,7 @@ import type { LocalDraftSnapshot } from './local-draft-store';
 
 import { computed, effectScope, ref } from 'vue';
 
+import { sameFormValue } from '@crdp/rules';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useAutoSave } from './auto-save';
@@ -138,7 +139,7 @@ function createDeviceForm(server: FakeDraftServer) {
       ...Object.keys(savedData.value),
       ...Object.keys(data.value),
     ])) {
-      if (!Object.is(savedData.value[key], data.value[key])) {
+      if (!sameFormValue(savedData.value[key], data.value[key])) {
         delta[key] = data.value[key] ?? null;
       }
     }
@@ -172,9 +173,9 @@ function mountDevice(
       }),
       isDirty: form.dirty,
       kind: 'followup',
-      onSaved(result) {
+      onSaved(result, _trigger, snapshot) {
         form.version.value = result.version;
-        form.savedData.value = { ...form.data.value };
+        form.savedData.value = { ...snapshot.data };
       },
       recordKey: ref(options.key),
       async restoreServer() {

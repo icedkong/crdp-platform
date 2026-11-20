@@ -157,6 +157,13 @@ public class TenantViewGuardFilter extends OncePerRequestFilter {
         }
 
         // 只读放行：GET / HEAD，或只读动作的 POST（复杂查询 POST .../search，AGENTS.md §6）
+        // OQR-04 新实体纠错面暂不开放视角；在采集代操作载荷之前拒绝，保护身份新值。
+        if (uri.matches("/api/hospital/followup/patients/[^/]+/(identity|registration)(?:/.*|;.*)?")
+                || ("PUT".equals(method)
+                        && uri.matches("/api/hospital/followup/patients/[^/]+/?"))) {
+            deny(request, response, principal, 40303, "租户视角暂不开放登记纠错入口");
+            return;
+        }
         if (readOnly(method, permCode)) {
             allow(request, response, filterChain, principal, permCode);
             return;

@@ -54,6 +54,7 @@ import {
   SelectOption,
   Spin,
   Steps,
+  Switch,
   Table,
   TabPane,
   Tabs,
@@ -104,7 +105,7 @@ const router = useRouter();
 const { isMobile } = useBreakpoint();
 const { hasPermission } = usePermission();
 
-const canEdit = hasPermission('followup:plan:edit');
+const canEdit = computed(() => hasPermission('followup:plan:edit'));
 const canPublish = hasPermission([
   'followup:plan:publish',
   'followup:plan:edit',
@@ -124,6 +125,7 @@ const basicEditing = ref(false);
 const basicSaving = ref(false);
 const basicErrors = ref<string[]>([]);
 const basicForm = reactive({
+  autoEnroll: false,
   cycleType: 'ONGOING' as PlanCycleType,
   cycleYears: null as null | number,
   name: '',
@@ -133,7 +135,8 @@ const basicForm = reactive({
 
 function startEditBasic() {
   const current = plan.value;
-  if (!current) return;
+  if (!current || !canEdit.value || !editable.value) return;
+  basicForm.autoEnroll = current.autoEnroll;
   basicForm.name = current.name;
   basicForm.startDateField = current.startDateField as PlanStartDateField;
   basicForm.cycleType = current.cycleType as PlanCycleType;
@@ -145,7 +148,8 @@ function startEditBasic() {
 
 async function submitBasic() {
   const current = plan.value;
-  if (!current) return;
+  if (!current || !canEdit.value || !editable.value || basicSaving.value)
+    return;
   basicErrors.value = validateBasicInfo({
     code: current.code,
     cycleType: basicForm.cycleType,
@@ -156,6 +160,7 @@ async function submitBasic() {
   basicSaving.value = true;
   try {
     await updatePlan(planId.value, {
+      autoEnroll: basicForm.autoEnroll,
       baseVersion: current.lockVersion,
       cycleType: basicForm.cycleType,
       cycleYears: basicForm.cycleType === 'YEARS' ? basicForm.cycleYears : null,
@@ -519,7 +524,12 @@ const nodeColumns = [
     <Tabs v-model:active-key="activeTab" @change="onTabChange">
       <TabPane key="basic" tab="基本信息">
         <Card>
-          <Descriptions v-if="!basicEditing" :column="2" bordered size="small">
+          <Descriptions
+            v-if="!basicEditing || !canEdit || !editable"
+            :column="2"
+            bordered
+            size="small"
+          >
             <DescriptionsItem label="计划编码">
               {{ plan.code }}
             </DescriptionsItem>
@@ -535,6 +545,9 @@ const nodeColumns = [
             </DescriptionsItem>
             <DescriptionsItem label="管理周期">
               {{ planCycleText(plan.cycleType, plan.cycleYears) }}
+            </DescriptionsItem>
+            <DescriptionsItem label="自动入组">
+              {{ plan.autoEnroll ? '开启' : '关闭' }}
             </DescriptionsItem>
             <DescriptionsItem label="发布时间">
               {{ plan.publishedAt ?? '—（未发布）' }}
@@ -586,6 +599,19 @@ const nodeColumns = [
                   v-model:value="basicForm.cycleYears"
                   :min="1"
                   style="width: 100%"
+                />
+              </FormItem>
+              <FormItem
+                class="form-span"
+                label="自动入组"
+                help="发布后，仅后续出院登记的患者按规则自动加入本计划；不补批处理已有患者，不改变已有入组。"
+              >
+                <Switch
+                  v-model:checked="basicForm.autoEnroll"
+                  :disabled="basicSaving || !canEdit"
+                  checked-children="开启"
+                  un-checked-children="关闭"
+                  aria-label="自动入组"
                 />
               </FormItem>
               <FormItem class="form-span" label="备注">

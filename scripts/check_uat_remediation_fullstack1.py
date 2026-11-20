@@ -13,7 +13,8 @@
    - 登记即死亡（UAT-SELF-05）：PatientInsert 带 followupStatus、INSERT 显式写 followup_status、
      PatientRegistrationService 按出院状态 = 3 写 DEAD 并走 recordRegistrationDead、
      PatientStatusHistoryService 提供 recordRegistrationDead；
-   - 文档更正（UAT-SELF-06）：patient.md 的 PUT /patients/{id} 行标注未实现并指向 OQ-124，
+   - 文档更正（UAT-SELF-06，现由 OQR-04 覆盖）：patient.md 的 PUT /patients/{id} 行
+     标注已实现并保留权限 / 版本 / 原因契约，实际 Controller 具备普通与敏感更正入口；
      open-questions.md 有 OQ-124 行；
    - 修复有测试锁定（NoticeMenuGrantSqlTest / NoticeMenuGrantVerifyIT /
      PatientRegistrationServiceTest / PatientRegistrationIT 的新用例名）；
@@ -183,8 +184,12 @@ def main() -> int:
             break
     check("patient.md 的 PUT /patients/{id} 行在位（口径更正对象）", bool(put_row))
     if put_row:
-        check("该行标注未实现（UAT-SELF-06 更正）", "未实现" in put_row and "40307" in put_row)
-        check("该行指向 OQ-124（是否实现待产品定夺）", "OQ-124" in put_row)
+        check("该行标注 OQR-04 已实现（覆盖 UAT-SELF-06 历史占位）", "OQR-04 已实现" in put_row)
+        check("普通登记字段更正保留权限 / 版本与原因契约", all(
+            value in put_row for value in ("followup:patient:edit", "版本", "原因")))
+        correction = (ROOT / "backend/crdp-followup/src/main/java/com/crdp/followup/patient/api/PatientCorrectionController.java").read_text(encoding="utf-8")
+        check("实际 Controller 登记普通与敏感身份更正入口", all(
+            value in correction for value in ('@PutMapping', 'followup:patient:edit', 'followup:patient:correct', '/identity')))
     oq = OQ_MD.read_text(encoding="utf-8") if OQ_MD.exists() else ""
     check("open-questions.md 有 OQ-124 行（患者基础信息编辑接口定夺）", "| OQ-124 |" in oq)
 

@@ -11,10 +11,11 @@ import type {
   RecordTaskContext,
 } from '@crdp/api';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   applyEntryDefaults,
+  backfillTaskChoice,
   bannersOf,
   canContinueBackfill,
   canEditSubmittedRecord,
@@ -34,6 +35,7 @@ import {
   nextVisitText,
   nextVisitWindowPreviewOf,
   readonlyBanner,
+  recordSubmissionTimeText,
   rendererContextOf,
   submitConfirmText,
   submitSuccessMessage,
@@ -561,6 +563,26 @@ describe('e21-t08 医生指定下次随访时间（C-FU-005 / Q05）', () => {
     );
   });
 
+  it('历史补录的过去下次日期仅归档；普通任务仍按北京时间拒绝过去日期', () => {
+    const today = () => '2026-11-13';
+    expect(
+      nextVisitIssueText('2026-11-12', '2026-11-10', today, 'BACKFILL'),
+    ).toBe('');
+    expect(
+      nextVisitIssueText('2026-11-10', '2026-11-10', today, 'BACKFILL'),
+    ).toContain('不能早于或等于');
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-11-12T16:05:00Z'));
+      expect(nextVisitIssueText('2026-11-12', '2026-11-10')).toBe(
+        '下次随访时间不能早于今天',
+      );
+      expect(nextVisitIssueText('2026-11-13', '2026-11-10')).toBe('');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('窗口预览：按当前任务节点的前后宽度围绕医生日期展开；无任务上下文 / 未填为 null', () => {
     // 任务窗口 plan 2026-11-05 ± 7 天 → 医生日期 2027-01-15 的预览窗口 ±7 天
     expect(nextVisitWindowPreviewOf('2027-01-15', context())).toEqual({
@@ -633,5 +655,32 @@ describe('e21-T14 / C-FU-015 连续补录入口', () => {
         source: 'BACKFILL',
       }),
     ).toBe(false);
+  });
+});
+
+describe('oqr-05a 首次提交事实显示', () => {
+  it('草稿与未知历史区分，不回落最后修改时间', () => {
+    expect(recordSubmissionTimeText('DRAFT', null)).toBe('未提交');
+    expect(recordSubmissionTimeText('SUBMITTED', null)).toContain('未知');
+    expect(
+      recordSubmissionTimeText('SUBMITTED', '2026-11-18T10:00:00+08:00'),
+    ).toBe('2026-11-18T10:00:00+08:00');
+  });
+});
+
+describe('oqr-01 补录任务选择', () => {
+  it('零候选独立提交，唯一候选明确绑定，多候选不默选', () => {
+    expect(backfillTaskChoice([])).toEqual({
+      needsChoice: false,
+      taskId: undefined,
+    });
+    expect(backfillTaskChoice([{ taskId: '1' }])).toEqual({
+      needsChoice: false,
+      taskId: '1',
+    });
+    expect(backfillTaskChoice([{ taskId: '1' }, { taskId: '2' }])).toEqual({
+      needsChoice: true,
+      taskId: undefined,
+    });
   });
 });

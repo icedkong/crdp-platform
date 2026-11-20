@@ -232,7 +232,7 @@ public class TenantOnboardingService {
                     tenantId,
                     "config-template",
                     () ->
-                            templateImport.apply(
+                            templateImport.initialize(
                                     selected,
                                     new ConfigTemplateImportService.ApplyRequest(tenantId)));
         }

@@ -486,6 +486,7 @@ export type {
   PatientPlaintextResult,
   PatientPlaintextScene,
 } from './patient';
+export * from './patient-correction';
 export {
   buildPatientExportPayload,
   PATIENT_DELETE_REASON_MAX,
@@ -587,6 +588,7 @@ export type {
   RegistrationWardOption,
   VisitNoRule,
 } from './patient-registration';
+
 export {
   buildPatientSearchPayload,
   completenessDrillOfQuery,
@@ -598,7 +600,6 @@ export {
   patientStatusOfQuery,
   patientStatusOptions,
 } from './patient-search';
-
 export type {
   CompletenessDrill,
   PatientFilterOptions,
@@ -609,6 +610,7 @@ export type {
   PatientSortSpec,
   PatientWardOption,
 } from './patient-search';
+
 export {
   TREND_BATTERY_PARAMS,
   TREND_CHAMBER_OPTIONS,
@@ -629,29 +631,6 @@ export type {
   ParamTrendView,
   SelectedTrendSeries,
 } from './patient-trend';
-
-export {
-  API_ACTION_TYPE_TEXT,
-  API_AUDIT_LEVEL_TEXT,
-  API_SENSITIVE_LEVEL_TEXT,
-  API_SOURCE_TEXT,
-  apiActionTypeText,
-  apiAuditLevelText,
-  apiSensitiveLevelText,
-  apiSourceText,
-  MENU_SOURCE_TEXT,
-  MENU_SYNC_ACTION_TEXT,
-  MENU_TYPE_TEXT,
-  menuSourceText,
-  menuSyncActionText,
-  menuTypeText,
-  RESOURCE_CHANGE_ACTION_TEXT,
-  RESOURCE_CHANGE_CHANNEL_TEXT,
-  RESOURCE_CHANGE_TYPE_TEXT,
-  resourceChangeActionText,
-  resourceChangeChannelText,
-  resourceChangeTypeText,
-} from './perm-resources';
 
 export interface CreateTenantRequest {
   /** 不填由后端自动生成（页面展示建议值可改）。 */
@@ -1155,6 +1134,28 @@ export interface ModuleOpenLog {
   tenantName: string;
 }
 
+export {
+  API_ACTION_TYPE_TEXT,
+  API_AUDIT_LEVEL_TEXT,
+  API_SENSITIVE_LEVEL_TEXT,
+  API_SOURCE_TEXT,
+  apiActionTypeText,
+  apiAuditLevelText,
+  apiSensitiveLevelText,
+  apiSourceText,
+  MENU_SOURCE_TEXT,
+  MENU_SYNC_ACTION_TEXT,
+  MENU_TYPE_TEXT,
+  menuSourceText,
+  menuSyncActionText,
+  menuTypeText,
+  RESOURCE_CHANGE_ACTION_TEXT,
+  RESOURCE_CHANGE_CHANNEL_TEXT,
+  RESOURCE_CHANGE_TYPE_TEXT,
+  resourceChangeActionText,
+  resourceChangeChannelText,
+  resourceChangeTypeText,
+} from './perm-resources';
 export type {
   ApiMarkRequest,
   ApiResourceItem,
@@ -1173,6 +1174,7 @@ export type {
   ResourceChangeLogQuery,
   ResourceChangeType,
 } from './perm-resources';
+
 // E14-T02 随访计划配置（docs/api/followup.md §1；页面 pages.md §8）
 export {
   PLAN_ENROLL_MODE_TEXT,
@@ -1192,7 +1194,6 @@ export {
   planLogActionText,
   planStartDateFieldText,
 } from './plan';
-
 export type {
   PlanCreateRequest,
   PlanCycleType,
@@ -1219,6 +1220,7 @@ export type {
   PlanUpdateRequest,
   PlanView,
 } from './plan';
+
 export {
   platformAccountStatusText,
   platformRoleStatusText,
@@ -1228,7 +1230,6 @@ export {
   validatePlatformAccount,
   validatePlatformRole,
 } from './platform-role';
-
 export type {
   PlatformAccountResetResult,
   PlatformAccountSaveRequest,
@@ -1241,6 +1242,7 @@ export type {
   PlatformTenantScope,
   PlatformVisibleScope,
 } from './platform-role';
+
 // E04-T08 / PLT-AUTH-012：敏感操作二次认证（明文查看、导出、下载、重置密码）
 export {
   isReauthCancelled,
@@ -1252,8 +1254,8 @@ export {
   ReauthTokenKeeper,
   runWithReauth,
 } from './reauth';
-
 export type { ReauthFlowDeps, ReauthResult } from './reauth';
+
 // E16-T02 报告单运行时：添加报告单对话框、位置选择（必填多选树）与患者内清单；
 // E16-T05 全院报告单列表与检索（A-ATT-016 / C-SCAN-014）；
 // E21-T15 电子化状态手工修改（C-SCAN-011）；E21-T16 待归档区（C-SCAN-009）
@@ -1269,7 +1271,6 @@ export {
   reportRefRangeFor,
   reportRowDigitizeStatusText,
 } from './report';
-
 export type {
   MobileUploadIssue,
   MobileUploadStatus,
@@ -1307,6 +1308,7 @@ export type {
   ReportSearchRequest,
   ReportSearchRow,
 } from './report';
+
 // E16-T01 报告单设置：资料类型、名称字典与指标模板（A-ATT-003、011、012、018；C-SCAN-002、003、004）
 export {
   REPORT_CODE_PATTERN,
@@ -1318,7 +1320,6 @@ export {
   reportRefRangeText,
   validateReportTypeCode,
 } from './report-config';
-
 export type {
   ReportCatalogField,
   ReportCatalogName,
@@ -1338,6 +1339,11 @@ export type {
   ReportTypeView,
 } from './report-config';
 export type { OnlineSessionView } from './session';
+export type {
+  StatsDrillContext,
+  StatsDrillPage,
+  StatsDrillQuery,
+} from './stats-drill';
 // E15-T02 / A-FU-004、A-FU-005、C-FU-020：我的任务、任务列表与随访工作台；
 // E15-T06 / A-FU-013、A-FU-026：临时添加任务与站内提醒（无需填表）
 export {
@@ -1360,9 +1366,11 @@ export {
   TEMP_TASK_DEFAULT_WINDOW_DAYS,
   TEMP_TASK_MAX_WINDOW_DAYS,
 } from './task';
+
 export type {
   BackfillCreateRequest,
   BackfillCreateView,
+  BackfillTaskCandidate,
   RecordDetailView,
   RecordDeviceContext,
   RecordHighlightHit,
@@ -1398,7 +1406,6 @@ export {
   tenantRoleTypeHint,
   tenantRoleTypeText,
 } from './tenant-role';
-
 export type {
   FieldPolicy,
   RoleScopeType,
@@ -1485,6 +1492,7 @@ export type {
   UserImportRowResult,
 } from './user-import';
 export { menuNodesToRoutes, menuNodeToRoute, toIconifyIcon } from './vben-menu';
+
 export type { VbenMenuRoute } from './vben-menu';
 export * from './view-rule';
 
@@ -1531,6 +1539,7 @@ export {
   webhookDeliveryStatusText,
   webhookEventLabel,
 } from './webhook';
+
 export type {
   WebhookDeliveryPage,
   WebhookDeliveryStatus,

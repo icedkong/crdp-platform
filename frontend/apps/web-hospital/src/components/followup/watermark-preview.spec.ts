@@ -85,6 +85,30 @@ describe('e16-t06 WatermarkPreview（components.md §12 契约）', () => {
     expect(fullscreen()?.querySelector('[data-watermark]')).toBeTruthy();
   });
 
+  it('关闭后的迟到响应不会复活旧预览', async () => {
+    const wrapper = await mountPreview();
+    await wrapper.setProps({ open: false });
+    let resolve!: (value: Record<string, unknown>) => void;
+    getFilePreviewUrl.mockImplementation(
+      () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    );
+    await wrapper.setProps({ open: true });
+    await wrapper.setProps({ open: false });
+    resolve({ url: 'blob:late-preview' });
+    await flush();
+    expect(fullscreen()).toBeNull();
+    getFilePreviewUrl.mockResolvedValue({ url: 'blob:fresh-preview' });
+    await wrapper.setProps({ open: true });
+    await flush();
+    expect(getFilePreviewUrl).toHaveBeenCalledTimes(3);
+    expect(fullscreen()?.querySelector('img')?.getAttribute('src')).toBe(
+      'blob:fresh-preview',
+    );
+  });
+
   it('翻页：update:index 后换下一份的短时链接（会话内回到已看过的份不重复签发）', async () => {
     const wrapper = await mountPreview();
     clickButton('下一份');

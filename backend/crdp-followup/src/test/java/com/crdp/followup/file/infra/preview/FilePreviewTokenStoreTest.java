@@ -1,81 +1,101 @@
 package com.crdp.followup.file.infra.preview;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.lenient;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
+import static org.assertj.core.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
 import com.crdp.followup.file.app.FilePreviewProperties;
 import com.crdp.framework.security.TokenGenerator;
-import java.util.Optional;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.redis.RedisConnectionFailureException;
-import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.ValueOperations;
+import com.crdp.framework.web.ApiException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.*;
+import org.junit.jupiter.api.*;
+import org.mockito.ArgumentCaptor;
+import org.springframework.data.redis.core.*;
 
-/**
- * E10-T04 预览令牌（{@link FilePreviewTokenStore}）单元测试：签发登记（摘要键、绑定租户与文件、TTL ≤ 5 分钟） 与解析的 fail closed
- * 口径（格式不对 / 登记值不合法 / Redis 不可用一律空，调用方按 40400 处理，不暴露存在性）。
- */
-@ExtendWith(MockitoExtension.class)
 class FilePreviewTokenStoreTest {
-
     private final StringRedisTemplate redis = mock(StringRedisTemplate.class);
-    private final ValueOperations<String, String> valueOps = mock(ValueOperations.class);
-
+    private final ValueOperations<String, String> values = mock(ValueOperations.class);
+    private final FilePreviewProperties properties = new FilePreviewProperties();
     private FilePreviewTokenStore store;
 
+    private FilePreviewTokenStore.Grant grant(long expiry) {
+        return new FilePreviewTokenStore.Grant(
+                2,
+                129,
+                "demo129",
+                9,
+                501,
+                "session-identity",
+                "t/demo129/file",
+                "0".repeat(64),
+                100,
+                "pdf",
+                "医生（示例）（account） · 医院（示例） · 2026-11-19 15:00",
+                expiry);
+    }
+
     @BeforeEach
-    void wire() {
-        FilePreviewProperties properties = new FilePreviewProperties();
-        properties.setTtlSeconds(300);
+    void setup() {
+        when(redis.opsForValue()).thenReturn(values);
         store = new FilePreviewTokenStore(redis, new TokenGenerator(), properties);
-        lenient().when(redis.opsForValue()).thenReturn(valueOps);
     }
 
-    /** 签发 → 解析往返：值绑定「租户ID|租户编码|文件ID」，TTL 不超过 5 分钟。 */
     @Test
-    void issueAndResolveRoundTrip() {
-        String token = store.issue(1L, "demoa", 9L);
-        when(valueOps.get(anyString())).thenReturn("1|demoa|9");
-        Optional<FilePreviewTokenStore.Grant> grant = store.resolve(token);
-        assertTrue(grant.isPresent());
-        assertEquals(1L, grant.orElseThrow().tenantId());
-        assertEquals("demoa", grant.orElseThrow().tenantCode());
-        assertEquals(9L, grant.orElseThrow().fileId());
+    void storesOnlyTokenHashAndCompleteIdentityBinding() {
+        var grant = grant(Instant.now().getEpochSecond() + 300);
+        String token = store.issue(grant);
+        var key = ArgumentCaptor.forClass(String.class);
+        var json = ArgumentCaptor.forClass(String.class);
+        verify(values).set(key.capture(), json.capture(), eq(Duration.ofSeconds(300)));
+        assertThat(key.getValue()).startsWith("crdp:file-preview:").doesNotContain(token);
+        assertThat(json.getValue()).doesNotContain(token);
+        when(values.get(anyString())).thenReturn(json.getValue());
+        assertThat(store.resolve(token)).contains(grant);
     }
 
-    /** 令牌格式不对（超出 base64url 字符集 / 超长）不进 Redis，直接空。 */
     @Test
-    void malformedTokenRejectedWithoutRedis() {
-        assertTrue(store.resolve("../etc/passwd").isEmpty());
-        assertTrue(store.resolve("a b c").isEmpty());
-        assertTrue(store.resolve("x".repeat(65)).isEmpty());
-        assertTrue(store.resolve(null).isEmpty());
+    void oldUnboundAndMalformedValuesFailClosed() {
+        for (String value : new String[] {"1|demoa|9", "{}", "[]", "not-json"}) {
+            when(values.get(anyString())).thenReturn(value);
+            assertThat(store.resolve("preview-token")).isEmpty();
+        }
     }
 
-    /** 登记值被篡改 / 结构不对 → 空（不猜测、不降级）。 */
     @Test
-    void corruptedRegistrationRejected() {
-        String token = store.issue(1L, "demoa", 9L);
-        when(valueOps.get(anyString())).thenReturn("who-knows");
-        assertTrue(store.resolve(token).isEmpty());
-        when(valueOps.get(anyString())).thenReturn("1|demoa");
-        assertTrue(store.resolve(token).isEmpty());
-        when(valueOps.get(anyString())).thenReturn("one|demoa|9");
-        assertTrue(store.resolve(token).isEmpty());
+    void expiryAndMissingValuesFailClosed() throws Exception {
+        when(values.get(anyString()))
+                .thenReturn(
+                        new ObjectMapper()
+                                .writeValueAsString(grant(Instant.now().getEpochSecond() - 1)));
+        assertThat(store.resolve("preview-token")).isEmpty();
+        when(values.get(anyString())).thenReturn(null);
+        assertThat(store.resolve("preview-token")).isEmpty();
     }
 
-    /** Redis 不可用 → 空（fail closed：宁可不能预览，不可绕开令牌闸门）。 */
     @Test
-    void redisFailureFailsClosed() {
-        String token = store.issue(1L, "demoa", 9L);
-        when(valueOps.get(anyString())).thenThrow(new RedisConnectionFailureException("down"));
-        assertTrue(store.resolve(token).isEmpty());
+    void invalidTokenDoesNotReadRedis() {
+        assertThat(store.resolve("../bad")).isEmpty();
+        assertThat(store.resolve("x".repeat(65))).isEmpty();
+        verify(values, never()).get(anyString());
+    }
+
+    @Test
+    void redisFailureDoesNotPermitAccess() {
+        when(values.get(anyString())).thenThrow(new IllegalStateException("不可用（示例）"));
+        assertThat(store.resolve("preview-token")).isEmpty();
+        doThrow(new IllegalStateException())
+                .when(values)
+                .set(anyString(), anyString(), any(Duration.class));
+        assertThatThrownBy(() -> store.issue(grant(Instant.now().getEpochSecond() + 300)))
+                .isInstanceOf(ApiException.class);
+    }
+
+    @Test
+    void ttlIsBoundedOnBothSides() {
+        properties.setTtlSeconds(-1);
+        assertThat(properties.effectiveTtlSeconds()).isEqualTo(1);
+        properties.setTtlSeconds(1000);
+        assertThat(properties.effectiveTtlSeconds()).isEqualTo(300);
     }
 }

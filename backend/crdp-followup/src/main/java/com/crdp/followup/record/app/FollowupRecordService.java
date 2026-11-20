@@ -48,14 +48,20 @@ public class FollowupRecordService {
     private final FollowupRecordMapper recordMapper;
     private final FormService formService;
     private final DeviceContextService deviceContext;
+    private final com.crdp.followup.record.infra.mapper.RecordFeatureMapper features;
+    private final com.crdp.followup.patient.app.PatientFollowupSummaryService summary;
 
     public FollowupRecordService(
             FollowupRecordMapper recordMapper,
             FormService formService,
-            DeviceContextService deviceContext) {
+            DeviceContextService deviceContext,
+            com.crdp.followup.record.infra.mapper.RecordFeatureMapper features,
+            com.crdp.followup.patient.app.PatientFollowupSummaryService summary) {
         this.recordMapper = recordMapper;
         this.formService = formService;
         this.deviceContext = deviceContext;
+        this.features = features;
+        this.summary = summary;
     }
 
     // ---------------------------------------------------------------- DTO
@@ -75,7 +81,8 @@ public class FollowupRecordService {
             Map<String, Object> data,
             Map<String, Object> dataMeta,
             String createdAt,
-            String updatedAt) {}
+            String updatedAt,
+            String firstSubmittedAt) {}
 
     /** 创建请求：任务录入（taskId 非空）或历史补录（visitDate 必填、taskId 空）；data / dataMeta 可空。 */
     public record CreateCommand(
@@ -222,6 +229,7 @@ public class FollowupRecordService {
         if (updated != 1) {
             throw draftConflict(requireRecord(id), data);
         }
+        summary.recompute(row.patientId(), CurrentSession.requireHospital().userId());
         return new SubmitOutcome(record(id), readMap(row.data()), stripped.clearedKeys(), warnings);
     }
 
@@ -269,6 +277,7 @@ public class FollowupRecordService {
         if (updated != 1) {
             throw draftConflict(requireRecord(id), data);
         }
+        summary.recompute(row.patientId(), CurrentSession.requireHospital().userId());
         return new SubmitOutcome(record(id), readMap(row.data()), stripped.clearedKeys(), warnings);
     }
 
@@ -303,6 +312,15 @@ public class FollowupRecordService {
         if (row.version() != baseVersion) {
             throw draftConflict(row, mergedData);
         }
+        if ("SUBMITTED".equals(row.status())) {
+            String permission =
+                    Boolean.TRUE.equals(features.findEnabled("record_edit_submitted"))
+                            ? "followup:record:edit-submitted"
+                            : "followup:record:edit";
+            if (!CurrentSession.requireHospital().permissionCodes().contains(permission)) {
+                throw new ApiException(403, 40300, "修改已提交记录需要相应修改权限");
+            }
+        }
         Map<String, Object> values = mergedData == null ? new LinkedHashMap<>() : mergedData;
         Map<String, Object> persisted =
                 formService.writeGateData(row.formCode(), row.templateVersion(), values);
@@ -315,7 +333,13 @@ public class FollowupRecordService {
         if (updated != 1) {
             throw draftConflict(requireRecord(id), mergedData);
         }
+        if ("SUBMITTED".equals(row.status()))
+            summary.recompute(row.patientId(), CurrentSession.requireHospital().userId());
         return new MappingWriteOutcome(record(id), readMap(row.data()));
+    }
+
+    public void refreshPatientSummary(long patientId) {
+        summary.recompute(patientId, CurrentSession.requireHospital().userId());
     }
 
     // ---------------------------------------------------------------- 内部
@@ -371,7 +395,8 @@ public class FollowupRecordService {
                 readMap(row.data()),
                 readMap(row.dataMeta()),
                 formatTime(row.createdAt()),
-                formatTime(row.updatedAt()));
+                formatTime(row.updatedAt()),
+                formatTime(row.firstSubmittedAt()));
     }
 
     private static Map<String, Object> readMap(String json) {
@@ -402,6 +427,6 @@ public class FollowupRecordService {
                 ? null
                 : DateTimeFormatter.ISO_OFFSET_DATE_TIME
                         .withZone(java.time.ZoneId.of("Asia/Shanghai"))
-                        .format(time.atZone(java.time.ZoneId.systemDefault()).toInstant());
+                        .format(time.atZone(java.time.ZoneId.of("Asia/Shanghai")).toInstant());
     }
 }

@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -53,6 +54,7 @@ class PlanSwitchServiceTest {
     private final PlanEnrollmentService enrollments = mock(PlanEnrollmentService.class);
     private final FollowupTaskTerminator taskTerminations = mock(FollowupTaskTerminator.class);
     private final AuditLogger audit = mock(AuditLogger.class);
+    private final CurrentDeviceScheduleService schedule = mock(CurrentDeviceScheduleService.class);
 
     private final PlanSwitchService service =
             new PlanSwitchService(
@@ -61,10 +63,24 @@ class PlanSwitchServiceTest {
                     planMapper,
                     enrollments,
                     taskTerminations,
-                    audit);
+                    audit,
+                    schedule);
 
     @BeforeEach
     void setUp() {
+        lenient().when(schedule.isLatest(anyLong(), anyLong())).thenReturn(true);
+        lenient()
+                .when(schedule.register(anyLong(), anyLong(), any(), any(), anyBoolean()))
+                .thenAnswer(
+                        inv -> {
+                            Map<String, Object> data = inv.getArgument(3);
+                            Object raw = data.get("f333");
+                            return raw instanceof String text
+                                    && !LocalDate.parse(text)
+                                            .isBefore(
+                                                    LocalDate.now(
+                                                            java.time.ZoneId.of("Asia/Shanghai")));
+                        });
         // C-FU-002 类型划分（V86 预置口径）：DDD / CRT_P → 普通计划，CRT_D / ICD → ICD 计划
         lenient()
                 .when(mappingMapper.findByDeviceType("DDD"))
@@ -111,6 +127,29 @@ class PlanSwitchServiceTest {
     private static SwitchableEnrollmentRow pacerEnrollment(String mode) {
         return new SwitchableEnrollmentRow(
                 PACER_ENROLLMENT_ID, PACER_PLAN_ID, "C_PACER_FU_PLAN", mode, "ACTIVE");
+    }
+
+    @Test
+    void oldOrReplacedDeviceRecordCannotChangeCurrentEriModeOrDoctorDate() {
+        when(enrollmentMapper.findSwitchableEnrollments(PATIENT_ID))
+                .thenReturn(List.of(pacerEnrollment("ERI")));
+        when(schedule.isLatest(anyLong(), anyLong())).thenReturn(false);
+        var result =
+                service.onRecordSubmitted(
+                        PATIENT_ID,
+                        701L,
+                        IMPLANT_DATE,
+                        Map.of(
+                                "f323",
+                                "0",
+                                "f324",
+                                9,
+                                "f333",
+                                LocalDate.now().plusDays(7).toString()));
+        assertEquals(0, result.eriRestored());
+        verify(enrollmentMapper, never()).switchEnrollmentMode(anyLong(), anyString(), any());
+        verify(schedule, never()).register(anyLong(), anyLong(), any(), any(), anyBoolean());
+        verifyNoInteractions(taskTerminations);
     }
 
     // ---------------------------------------------------------------- SW-1 首次植入：按器械类型入组（E21-T05
@@ -340,7 +379,7 @@ class PlanSwitchServiceTest {
         service.onRecordSubmitted(PATIENT_ID, 705L, visitDate, Map.of("f323", "1"));
 
         // 滚动循环节点（ERI 期每 1–3 个月 / 常规随访）的排期基准：记录提交单调推进快照（只增不减，SQL 守卫）
-        verify(enrollmentMapper).advanceLastVisitDate(PATIENT_ID, visitDate);
+        verify(schedule).refresh(PATIENT_ID);
     }
 
     @Test
@@ -350,18 +389,19 @@ class PlanSwitchServiceTest {
         service.onRecordSubmitted(
                 PATIENT_ID, 705L, LocalDate.of(2026, 10, 20), Map.of("f323", "1"));
 
-        verify(enrollmentMapper, never()).advanceLastVisitDate(anyLong(), any());
+        verify(schedule).refresh(PATIENT_ID);
     }
 
     @Test
-    void unresolvableVisitDateFallsBackToTodayForSnapshot() {
+    void unresolvableVisitDateDoesNotInventTodayOrSwitchMode() {
         when(enrollmentMapper.findSwitchableEnrollments(PATIENT_ID))
                 .thenReturn(List.of(pacerEnrollment("NORMAL")));
 
         service.onRecordSubmitted(PATIENT_ID, 705L, null, Map.of());
 
         // 随访日期不可解析（visit_date 与表单字段均空，防御）回落今天——与 eri_since 同口径
-        verify(enrollmentMapper).advanceLastVisitDate(eq(PATIENT_ID), eq(LocalDate.now()));
+        verify(schedule).refresh(PATIENT_ID);
+        verify(enrollmentMapper, never()).switchEnrollmentMode(anyLong(), anyString(), any());
     }
 
     // ---------------------------------------------------------------- SW-8 ERI 标记解除：恢复原计划的常规间隔
@@ -414,7 +454,7 @@ class PlanSwitchServiceTest {
                         PATIENT_ID, 701L, LocalDate.now(), Map.of("f333", next.toString()));
 
         assertTrue(view.doctorNextDateSet(), "登记医生指定下次随访日期（SW-10）");
-        verify(enrollmentMapper).setDoctorNextDate(PATIENT_ID, next);
+        verify(schedule).register(eq(PATIENT_ID), anyLong(), any(), any(), eq(false));
         // 不改变计划类型：不结束入组、不翻模式、不重新入组（窗口围绕展开与任务创建随 E21-T08）
         verify(enrollmentMapper, never()).switchEndEnrollment(anyLong(), anyString());
         verify(enrollmentMapper, never()).switchEnrollmentMode(anyLong(), anyString(), any());
@@ -431,7 +471,7 @@ class PlanSwitchServiceTest {
                         PATIENT_ID, 701L, LocalDate.of(2025, 6, 1), Map.of("f333", "2025-07-01"));
 
         assertFalse(view.doctorNextDateSet(), "补录历史记录填写的下次随访时间只保存、不再生成任务（C 规格 §5）");
-        verify(enrollmentMapper, never()).setDoctorNextDate(anyLong(), any());
+        verify(schedule).register(anyLong(), anyLong(), any(), any(), anyBoolean());
     }
 
     // ---------------------------------------------------------------- 公共口径
@@ -485,7 +525,7 @@ class PlanSwitchServiceTest {
         assertEquals(0, view.eriRestored());
         assertFalse(view.doctorNextDateSet());
         verify(enrollmentMapper, never()).switchEnrollmentMode(anyLong(), anyString(), any());
-        verify(enrollmentMapper, never()).setDoctorNextDate(anyLong(), any());
+        verify(schedule, never()).register(anyLong(), anyLong(), any(), any(), anyBoolean());
     }
 
     /** assertThat(stringContains) 的 Mockito 等价：捕获原因参数并断言包含关键字。 */

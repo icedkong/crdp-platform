@@ -204,12 +204,25 @@ export interface RecordDetailView {
   /** 该表单启用对比规则（E17-T03）：前端实时标红与后端保存复算共用；功能关闭 / 无启用规则为 null。 */
   compareRules?: CompareRule[] | null;
   context?: null | RecordTaskContext;
+  /** 实体创建 / 最后修改时间，ISO-8601 带时区，与实际随访日期分开。 */
+  createdAt?: null | string;
   data: Record<string, unknown>;
   dataMeta: Record<string, unknown>;
   /** 器械上下文（E21-T03）：implant 开关关闭或无匹配器械为 null。 */
   device?: null | RecordDeviceContext;
+  doctorNextCommands?: {
+    date: string;
+    enrollmentId: string;
+    implantId: null | string;
+    nodeId: null | string;
+    occurrence: null | number;
+    sourceRecordId: null | string;
+    state: 'CONFLICT' | 'PENDING';
+  }[];
   /** 录入缺省（E21-T11 / C-FU-008）：随访医生 = 当前用户（无医院会话为 null）。 */
   entryDefaults?: null | RecordEntryDefaults;
+  /** 首次提交事实：历史无法还原时为 null，修改 / 映射 / 重算不改写。 */
+  firstSubmittedAt?: null | string;
   formCode: string;
   formVersion: number;
   /** 持久化标红命中（E21-T32 / C-PAT-018 分组条 ▲n）：提交时重算落库的 fu_record.highlight；compare_highlight 关闭或无命中为 null。 */
@@ -222,6 +235,7 @@ export interface RecordDetailView {
   sequenceNo?: null | number;
   source?: null | string;
   status: 'DRAFT' | 'SUBMITTED';
+  updatedAt?: null | string;
   version: number;
   visitDate?: null | string;
   /** 患者随访编号（E21-T11 / C-FU-008；A / B 租户与未生成为 null）。 */
@@ -328,6 +342,7 @@ export interface RecordTimepointSuggestionView {
 export interface RecordSubmitResult {
   completeKind?: TaskCompleteKind;
   fieldChanges: number;
+  firstSubmittedAt?: null | string;
   recordId: string;
   taskId?: null | string;
   taskStatus?: null | TaskStatus;
@@ -579,4 +594,14 @@ export function taskWindowText(windowStart: string, windowEnd: string): string {
     return `${startMonth}-${startDay} ~ ${endMonth}-${endDay}`;
   }
   return `${start.slice(5)} ~ ${end.slice(5)}`;
+}
+
+/** OQR-01：仅返回当前范围内补录可关联的未完成任务，编号按字符串传递。 */
+export interface BackfillTaskCandidate {
+  nodeName: string;
+  planDate: string;
+  planName: string;
+  taskId: string;
+  windowEnd: string;
+  windowStart: string;
 }

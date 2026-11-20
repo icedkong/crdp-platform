@@ -12,7 +12,6 @@ import com.crdp.framework.web.ApiException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -26,9 +25,9 @@ import org.springframework.stereotype.Service;
  * <p>口径：
  *
  * <ul>
- *   <li><b>窗口</b> = 近 N 天提交，N 缺省 30（参数 days，1–365）；「提交」以 updated_at 近似（提交 / 标红重算 / 修改已提交都会触碰该列，
- *       fu_record 无独立提交时间列，OQ-107④）；窗口起点 = 北京业务日 today −（N − 1）的 0 点，与指标卡「近 30 天含标红参数的记录数」
- *       （C-DASH-001）同一棵条件树——days = 30 时两数一致（「一个口径一个查询」）；
+ *   <li><b>窗口</b> = 近 N 天提交，N 缺省 30（参数 days，1–365）；「提交」使用
+ *       first_submitted_at（OQR-05A），历史未知值不进入日期窗口；窗口起点 = 北京业务日 today −（N − 1）的 0 点，与指标卡「近 30
+ *       天含标红参数的记录数」 （C-DASH-001）同一棵条件树——days = 30 时两数一致（「一个口径一个查询」）；
  *   <li><b>标红来源</b> = fu_record.highlight（E17-T04 对比重算写入的命中数组，规则求值与前端实时标红同源）：每条记录列出命中项（字段 /
  *       规则文案）与变化率（change / changeText）；只读展示，不触发任何处理流程；
  *   <li><b>软删行不在册</b>（deleted = 0，V87 读取侧口径）；姓名脱敏（字段策略 + {@code TenantViewFieldGuard}，AGENTS §5.3）；
@@ -90,12 +89,17 @@ public class AbnormalRecordsService {
             String name,
             String visitNo,
             LocalDate visitDate,
-            LocalDateTime submittedAt,
+            java.time.OffsetDateTime submittedAt,
             List<HighlightHitView> hits) {}
 
     /** 卡片数据：days / since 回显窗口，total = 同条件树计数（days = 30 时与指标卡一致），items 前 {@link #ITEM_LIMIT} 行。 */
     public record AbnormalRecordsView(
-            int days, LocalDate since, long total, int limit, List<AbnormalItemView> items) {}
+            int days,
+            LocalDate since,
+            long total,
+            int limit,
+            List<AbnormalItemView> items,
+            long unknownSubmittedAtCount) {}
 
     // ---------------------------------------------------------------- 取数
 
@@ -119,10 +123,18 @@ public class AbnormalRecordsService {
                             maskedName(row.nameCipher()),
                             row.visitNo(),
                             row.visitDate(),
-                            row.updatedAt(),
+                            row.submittedAt() == null
+                                    ? null
+                                    : row.submittedAt().atOffset(java.time.ZoneOffset.ofHours(8)),
                             hitsOf(row.highlight())));
         }
-        return new AbnormalRecordsView(windowDays, since, total, ITEM_LIMIT, List.copyOf(items));
+        return new AbnormalRecordsView(
+                windowDays,
+                since,
+                total,
+                ITEM_LIMIT,
+                List.copyOf(items),
+                stats.countUnknownHighlightSubmissionTimes(ward));
     }
 
     // ---------------------------------------------------------------- 内部

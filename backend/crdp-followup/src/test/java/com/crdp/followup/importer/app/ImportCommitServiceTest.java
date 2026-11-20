@@ -977,6 +977,15 @@ class ImportCommitServiceTest {
 
         @Override
         public int casStatus(long id, String from, String to) {
+            if (ImportStagingMapper.ACTIVE_STATUSES.contains(to)
+                    && jobs.values().stream()
+                            .anyMatch(
+                                    j ->
+                                            j.id != id
+                                                    && ImportStagingMapper.ACTIVE_STATUSES.contains(
+                                                            j.status))) {
+                throw new org.springframework.dao.DuplicateKeyException("uk_imp_job_active_slot");
+            }
             MutableJob job = jobs.get(id);
             if (job == null || !from.equals(job.status)) {
                 return 0;
@@ -1078,8 +1087,18 @@ class ImportCommitServiceTest {
         @Override
         public int saveCommitOptions(long id, String optionsJson, String scopeJson) {
             FakeStagingMapper.MutableJob job = staging.jobs.get(id);
+            if (!"PRECHECKED".equals(job.status)) return 0;
+            if (staging.jobs.values().stream()
+                    .anyMatch(
+                            j ->
+                                    j.id != id
+                                            && ImportStagingMapper.ACTIVE_STATUSES.contains(
+                                                    j.status))) {
+                throw new org.springframework.dao.DuplicateKeyException("uk_imp_job_active_slot");
+            }
             job.optionsJson = optionsJson;
             job.scopeJson = scopeJson;
+            job.status = "IMPORTING";
             return 1;
         }
 

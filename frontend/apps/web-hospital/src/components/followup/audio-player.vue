@@ -1,11 +1,12 @@
 <script lang="ts" setup>
 import type { ContactAudioFile } from '@crdp/api';
 
-import { ref } from 'vue';
+import { onBeforeUnmount, ref, watch } from 'vue';
 
 import { Button, message, Tooltip } from 'ant-design-vue';
 
 import { getFileDownloadUrl, getFilePreviewUrl } from '#/api/core/file';
+import { releasePreviewUrls, trackPreviewUrl } from '#/api/core/preview-blob';
 
 /**
  * E15-T04 / A-FU-025 · AudioPlayer（components.md §13、pages.md §4.8 录音列）：
@@ -23,19 +24,28 @@ const props = defineProps<{
 const url = ref('');
 const loading = ref(false);
 const failed = ref(false);
+trackPreviewUrl(url, () => {
+  failed.value = true;
+});
 
 /** 播放前换短时链接（≤ 5 分钟，用完即弃；重复播放重新获取）。 */
+let sequence = 0;
 async function prepare(): Promise<void> {
   if (url.value || loading.value || !props.audio.inlinePlayable) return;
+  const request = ++sequence;
   loading.value = true;
   failed.value = false;
   try {
     const grant = await getFilePreviewUrl(props.audio.fileId);
+    if (request !== sequence) {
+      releasePreviewUrls([grant.url]);
+      return;
+    }
     url.value = grant.url;
   } catch {
-    failed.value = true;
+    if (request === sequence) failed.value = true;
   } finally {
-    loading.value = false;
+    if (request === sequence) loading.value = false;
   }
 }
 
@@ -49,6 +59,20 @@ async function download(): Promise<void> {
     message.error(body?.message || '下载失败，请稍后重试');
   }
 }
+watch(
+  () => props.audio.fileId,
+  () => {
+    sequence++;
+    if (url.value) releasePreviewUrls([url.value]);
+    url.value = '';
+    loading.value = false;
+    failed.value = false;
+  },
+);
+onBeforeUnmount(() => {
+  sequence++;
+  if (url.value) releasePreviewUrls([url.value]);
+});
 </script>
 
 <template>

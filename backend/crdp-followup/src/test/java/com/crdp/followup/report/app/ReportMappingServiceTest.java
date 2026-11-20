@@ -761,7 +761,8 @@ class ReportMappingServiceTest {
                 new LinkedHashMap<>(data),
                 Map.of(),
                 "2026-06-01 09:00:00+08:00",
-                "2026-06-01 09:00:00+08:00");
+                "2026-06-01 09:00:00+08:00",
+                null);
     }
 
     private static BaselineSectionService.BaselineView baselineView(

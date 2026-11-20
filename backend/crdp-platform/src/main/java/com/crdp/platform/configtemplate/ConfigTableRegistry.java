@@ -188,6 +188,7 @@ public final class ConfigTableRegistry {
                     "imp_batch_write",
                     // 统计事实表（E19-T01：派生只读数据，每日按本院业务数据重建，不入模板）
                     "st_node_occurrence",
+                    "st_refresh_state",
                     // 首页卡片目录与用户偏好（E19-T06：目录随卡片发版以迁移落库，属代码能力不是租户数据；
                     // dash_user_pref 是个人隐藏偏好，同 ntf_user_pref 不复制）
                     "dash_card",

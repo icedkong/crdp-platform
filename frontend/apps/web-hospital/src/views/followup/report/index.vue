@@ -3,7 +3,7 @@ import type { ReportSearchRow } from '@crdp/api';
 
 import type { ReportListFilters, ThumbnailKind } from './list-logic';
 
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { useRoute } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
@@ -27,6 +27,7 @@ import {
 } from 'ant-design-vue';
 
 import { getFilePreviewUrl } from '#/api/core/file';
+import { releasePreviewUrls, trackPreviewUrls } from '#/api/core/preview-blob';
 import { searchReports } from '#/api/core/report';
 import DigitizeStatusModal from '#/components/followup/digitize-status-modal.vue';
 import { downloadFileById } from '#/components/followup/file-download';
@@ -130,6 +131,7 @@ onMounted(() => {
 // ---------------------------------------------------------------- 缩略图（首附件图片，预览短时链接懒加载）
 
 const thumbnailUrls = ref<Record<string, string>>({});
+trackPreviewUrls(thumbnailUrls);
 
 /** 本页图片首附件逐个换预览短时链接（≤ 5 分钟、写审计，components.md §6 懒加载口径）。 */
 async function loadThumbnails(items: ReportSearchRow[]) {
@@ -248,6 +250,7 @@ function openDigitizeChange(row: ReportSearchRow) {
   };
   digitizeOpen.value = true;
 }
+onBeforeUnmount(() => releasePreviewUrls(Object.values(thumbnailUrls.value)));
 </script>
 
 <template>

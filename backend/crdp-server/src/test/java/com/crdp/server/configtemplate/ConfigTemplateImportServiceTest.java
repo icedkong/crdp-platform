@@ -75,7 +75,8 @@ class ConfigTemplateImportServiceTest {
                         routing,
                         audit,
                         permissionVersions,
-                        transactionManager);
+                        transactionManager,
+                        new com.crdp.framework.crypto.Sha256DigestService());
         when(transactionManager.getTransaction(any())).thenReturn(new SimpleTransactionStatus());
         SessionPrincipal principal =
                 new SessionPrincipal(
@@ -104,6 +105,76 @@ class ConfigTemplateImportServiceTest {
     @AfterEach
     void cleanUp() {
         SecurityContextHolder.clearContext();
+    }
+
+    @Test
+    void previewIsReadonlyAndDoesNotInvalidatePermissions() {
+        stubTemplateHeader(9L);
+        stubTenantRow(TARGET_TENANT, "demob");
+        when(routing.hasTenant(TARGET_TENANT)).thenReturn(true);
+        when(exporter.packageOf(9L))
+                .thenReturn(new ConfigPackage(1, "demoa", "医院（示例）", "time", List.of()));
+        var preview =
+                service.preview(9L, new ConfigTemplateImportService.ApplyRequest(TARGET_TENANT));
+        assertThat(preview.applicable()).isTrue();
+        assertThat(preview.planHash()).hasSize(64);
+        verify(jdbc, never()).update(anyString());
+        org.mockito.Mockito.verifyNoInteractions(permissionVersions);
+        verify(transactionManager)
+                .getTransaction(org.mockito.ArgumentMatchers.argThat(def -> def.isReadOnly()));
+    }
+
+    @Test
+    void publicApplyRequiresPreviewAndRejectsStalePlanWithoutWrites() {
+        stubTemplateHeader(9L);
+        stubTenantRow(TARGET_TENANT, "demob");
+        when(routing.hasTenant(TARGET_TENANT)).thenReturn(true);
+        when(exporter.packageOf(9L))
+                .thenReturn(new ConfigPackage(1, "demoa", "医院（示例）", "time", List.of()));
+        assertThatThrownBy(
+                        () ->
+                                service.apply(
+                                        9L,
+                                        new ConfigTemplateImportService.ApplyRequest(
+                                                TARGET_TENANT)))
+                .isInstanceOfSatisfying(
+                        ApiException.class, e -> assertThat(e.code()).isEqualTo(40900));
+        assertThatThrownBy(
+                        () ->
+                                service.apply(
+                                        9L,
+                                        new ConfigTemplateImportService.ApplyRequest(
+                                                TARGET_TENANT, "stale")))
+                .isInstanceOfSatisfying(
+                        ApiException.class, e -> assertThat(e.code()).isEqualTo(40900));
+        verify(jdbc, never()).update(anyString());
+        org.mockito.Mockito.verifyNoInteractions(permissionVersions);
+    }
+
+    @Test
+    void initializationCannotBypassPreviewForAnActiveTenant() {
+        stubTemplateHeader(9L);
+        when(jdbc.queryForList(contains("FROM plt_tenant"), eq(TARGET_TENANT)))
+                .thenReturn(
+                        List.of(
+                                Map.of(
+                                        "id",
+                                        TARGET_TENANT,
+                                        "code",
+                                        "demob",
+                                        "name",
+                                        "医院（示例）",
+                                        "status",
+                                        "TRIAL")));
+        assertThatThrownBy(
+                        () ->
+                                service.initialize(
+                                        9L,
+                                        new ConfigTemplateImportService.ApplyRequest(
+                                                TARGET_TENANT)))
+                .isInstanceOfSatisfying(
+                        ApiException.class, e -> assertThat(e.code()).isEqualTo(40901));
+        verify(exporter, never()).packageOf(9L);
     }
 
     // ---------------------------------------------------------------- 入口校验
@@ -272,7 +343,7 @@ class ConfigTemplateImportServiceTest {
         when(jdbc.queryForList(anyString(), eq(Long.class))).thenReturn(List.of(5L));
 
         ConfigTemplateImportService.AppliedView view =
-                service.apply(9L, new ConfigTemplateImportService.ApplyRequest(TARGET_TENANT));
+                service.initialize(9L, new ConfigTemplateImportService.ApplyRequest(TARGET_TENANT));
 
         assertThat(view.tenantCode()).isEqualTo("demob");
         assertThat(view.sourceTenantCode()).isEqualTo("demoa");
@@ -324,7 +395,7 @@ class ConfigTemplateImportServiceTest {
         when(jdbc.queryForList(anyString(), eq(Long.class))).thenReturn(List.of());
 
         ConfigTemplateImportService.AppliedView view =
-                service.apply(9L, new ConfigTemplateImportService.ApplyRequest(TARGET_TENANT));
+                service.initialize(9L, new ConfigTemplateImportService.ApplyRequest(TARGET_TENANT));
 
         Map<String, ConfigTemplateImportService.TableResult> byTable =
                 view.tables().stream()
@@ -565,7 +636,7 @@ class ConfigTemplateImportServiceTest {
                                         "name",
                                         "目标医院（示例）",
                                         "status",
-                                        "TRIAL")));
+                                        "PROVISIONING")));
     }
 
     /** 让每个 INSERT ... RETURN_GENERATED_KEYS 递增分配主键（100 起）。 */

@@ -602,6 +602,7 @@ function detailOfNodes(nodes: PlanNodeView[]): PlanDetailView {
   return {
     nodes,
     plan: {
+      autoEnroll: false,
       code: 'fu_annual',
       cycleType: 'ONGOING',
       cycleYears: null,

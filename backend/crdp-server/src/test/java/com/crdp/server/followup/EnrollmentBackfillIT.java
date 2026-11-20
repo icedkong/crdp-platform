@@ -2,6 +2,7 @@ package com.crdp.server.followup;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.crdp.followup.plan.domain.PlanDateCalculator;
 import com.crdp.followup.task.app.FollowupTaskCreationService;
@@ -231,16 +232,98 @@ class EnrollmentBackfillIT {
         assertEquals(0, tasksOf(patientId).size(), "不入组即不建任务");
     }
 
+    @Test
+    void autoEnrollChangesOnlySubsequentRegistrationsThroughPublishedVersions() {
+        String admin = hospitalToken();
+        long original = createPublishedPostopPlan(admin, PLAN_CODE + "-SWITCH", false);
+        long before = registerPatient(admin, "SW0", today().minusDays(8), today(), 1);
+        Map<?, ?> enabled =
+                data(post("/api/hospital/followup/plans/" + original + "/copy", admin, Map.of()));
+        long enabledId = Long.parseLong(enabled.get("id").toString());
+        var change = new HashMap<String, Object>();
+        change.put("baseVersion", enabled.get("lockVersion"));
+        change.put("name", "自动入组计划（示例）");
+        change.put("startDateField", "SURGERY_DATE");
+        change.put("cycleType", "ONGOING");
+        change.put("autoEnroll", true);
+        assertEquals(0, codeOf(put("/api/hospital/followup/plans/" + enabledId, admin, change)));
+        assertEquals(
+                40900,
+                codeOf(put("/api/hospital/followup/plans/" + enabledId, admin, change)),
+                "旧版本不得覆盖开关");
+        assertEquals(
+                0,
+                codeOf(
+                        post(
+                                "/api/hospital/followup/plans/" + enabledId + "/publish",
+                                admin,
+                                Map.of())));
+        long during = registerPatient(admin, "SW1", today().minusDays(8), today(), 1);
+        Map<?, ?> disabled =
+                data(post("/api/hospital/followup/plans/" + enabledId + "/copy", admin, Map.of()));
+        long disabledId = Long.parseLong(disabled.get("id").toString());
+        assertEquals(Boolean.TRUE, disabled.get("autoEnroll"), "复制版本沿用当前开关");
+        change.put("baseVersion", disabled.get("lockVersion"));
+        change.put("autoEnroll", false);
+        assertEquals(0, codeOf(put("/api/hospital/followup/plans/" + disabledId, admin, change)));
+        assertEquals(
+                0,
+                codeOf(
+                        post(
+                                "/api/hospital/followup/plans/" + disabledId + "/publish",
+                                admin,
+                                Map.of())));
+        long after = registerPatient(admin, "SW2", today().minusDays(8), today(), 1);
+        runInTenant(
+                "demoa",
+                () -> {
+                    assertEquals(
+                            0,
+                            jdbc.queryForObject(
+                                    "SELECT COUNT(*) FROM fu_enrollment WHERE patient_id=?",
+                                    Integer.class,
+                                    before));
+                    assertEquals(
+                            0,
+                            jdbc.queryForObject(
+                                    "SELECT COUNT(*) FROM fu_enrollment WHERE patient_id=?",
+                                    Integer.class,
+                                    after));
+                    assertEquals(
+                            enabledId,
+                            jdbc.queryForObject(
+                                    "SELECT plan_id FROM fu_enrollment WHERE patient_id=?",
+                                    Long.class,
+                                    during));
+                    assertEquals(
+                            "ACTIVE",
+                            jdbc.queryForObject(
+                                    "SELECT status FROM fu_enrollment WHERE patient_id=?",
+                                    String.class,
+                                    during));
+                    assertTrue(
+                            jdbc.queryForObject(
+                                            "SELECT COUNT(*) FROM fu_plan_log WHERE plan_id=? AND after_json LIKE '%autoEnroll%'",
+                                            Integer.class, enabledId)
+                                    > 0,
+                            "开关变更进入既有计划日志");
+                });
+    }
+
     // ---------------------------------------------------------------- 辅助
 
     /** 医院 B 形态：手术起算、FIXED×1 子计划；第 1/3/5 天 BACKFILL、第 4 天 SKIP、3 个月节点（窗口未开）。 */
     private long createPublishedPostopPlan(String token, String code) {
+        return createPublishedPostopPlan(token, code, true);
+    }
+
+    private long createPublishedPostopPlan(String token, String code, boolean autoEnroll) {
         Map<String, Object> body = new HashMap<>();
         body.put("code", code);
         body.put("name", "示例 IT 术后随访计划（" + code + "）");
         body.put("startDateField", "SURGERY_DATE");
         body.put("cycleType", "ONGOING");
-        body.put("autoEnroll", true);
+        body.put("autoEnroll", autoEnroll);
         long planId = idOf(post("/api/hospital/followup/plans", token, body));
 
         Map<String, Object> subplan = new HashMap<>();

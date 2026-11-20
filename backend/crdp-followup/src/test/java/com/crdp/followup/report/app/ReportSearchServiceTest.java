@@ -299,7 +299,7 @@ class ReportSearchServiceTest {
 
         ReportSearchService.RowView view = page.items().get(0);
         assertEquals("已设盲", view.patientName(), "报告单行内患者姓名按视角规则设盲（PLT-VIEW-011）");
-        assertEquals("MR****01", view.mrn(), "无规则命中的病案号保留脱敏值（OQ-107④）");
+        assertEquals("MR****01", view.mrn(), "无规则命中的病案号保留脱敏值（OQ-155④）");
         assertNull(view.firstFile(), "原件与附件对视角隐藏：首附件不返回（PLT-VIEW-008 / V109）");
         assertEquals(2L, view.fileCount(), "目录行数照常（只隐藏内容通道，不改台账口径）");
     }

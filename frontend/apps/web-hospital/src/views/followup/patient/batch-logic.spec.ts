@@ -15,6 +15,7 @@ import {
 function plan(id: string, status: string, version = 1): PlanView {
   return {
     code: `PLAN-${id}`,
+    autoEnroll: false,
     cycleType: 'ONGOING',
     cycleYears: null,
     enrolledCount: 0,

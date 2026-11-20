@@ -4,12 +4,12 @@ import type {
   CompletenessMissingField,
   CompletenessTimeField,
   FollowupCompletenessCardView,
+  StatsDrillQuery,
 } from '@crdp/api';
 
 import type { EchartsUIType } from '@vben/plugins/echarts';
 
 import { computed, onMounted, ref, watch } from 'vue';
-import { useRouter } from 'vue-router';
 
 import { EchartsUI, useEcharts } from '@vben/plugins/echarts';
 
@@ -18,10 +18,10 @@ import {
   FOLLOWUP_TIME_FIELD_OPTIONS,
   followupYearOptions,
   formatRatePct,
-  missingFieldRoute,
 } from '@crdp/api';
 import { sizes } from '@crdp/tokens';
 import {
+  Button,
   Card,
   Col,
   DatePicker,
@@ -43,6 +43,7 @@ import {
   completenessBandChartOption,
   followupCompletenessYearChartOption,
 } from './logic';
+import StatsDrillDrawer from './stats-drill-drawer.vue';
 
 defineOptions({ name: 'DashboardCompletenessArea' });
 
@@ -71,7 +72,7 @@ const props = withDefaults(
   { showBaseline: true, showFollowup: true, wardId: undefined },
 );
 
-const router = useRouter();
+const statsDrill = ref<null | StatsDrillQuery>(null);
 const RangePicker = DatePicker.RangePicker;
 
 /** 半行并排（A 规格 §9「相邻的两张半行卡片并排显示」）：只显示一块时占整行。 */
@@ -193,18 +194,36 @@ function yearDistribution(row: {
 // ---------------------------------------------------------------- 钻取（验收「可钻取到缺失字段」）
 
 /** 点缺失字段 → 缺该字段的患者列表（条件与卡片同一棵条件树，后端同一计算）。 */
+function drillAll(
+  kind: 'BASELINE_ALL' | 'FOLLOWUP_ALL',
+  count: number,
+  year?: number,
+) {
+  statsDrill.value = {
+    kind,
+    ...sharedFilter(),
+    timeField:
+      kind === 'BASELINE_ALL'
+        ? baselineTimeField.value
+        : followupTimeField.value,
+    year,
+    expectedCount: count,
+  };
+}
+
 function drillMissing(
   kind: 'BASELINE' | 'FOLLOWUP',
   field: CompletenessMissingField,
 ) {
-  void router.push(
-    missingFieldRoute(kind, field, {
-      ...sharedFilter(),
-      timeField:
-        kind === 'BASELINE' ? baselineTimeField.value : followupTimeField.value,
-      year: kind === 'FOLLOWUP' ? followupYear.value : undefined,
-    }),
-  );
+  statsDrill.value = {
+    kind: kind === 'BASELINE' ? 'BASELINE_MISSING' : 'FOLLOWUP_MISSING',
+    fieldKey: field.fieldKey,
+    ...sharedFilter(),
+    timeField:
+      kind === 'BASELINE' ? baselineTimeField.value : followupTimeField.value,
+    year: kind === 'FOLLOWUP' ? followupYear.value : undefined,
+    expectedCount: field.missingCount,
+  };
 }
 
 // ---------------------------------------------------------------- 装配
@@ -234,6 +253,7 @@ defineExpose({ reload });
 </script>
 
 <template>
+  <StatsDrillDrawer :query="statsDrill" @close="statsDrill = null" />
   <div class="completeness-area">
     <!-- 两块共用筛选：患者类型、时间范围（病区为页面级；时间维度各卡自带） -->
     <div class="shared-filters">
@@ -296,10 +316,16 @@ defineExpose({ reload });
                     formatRatePct(baseline.medianPct)
                   }}</span>
                 </span>
-                <span class="summary-item">
+                <div class="summary-item">
                   患者
-                  <span class="summary-value">{{ baseline.patientCount }}</span>
-                </span>
+                  <Button
+                    type="link"
+                    class="summary-value"
+                    @click="drillAll('BASELINE_ALL', baseline.patientCount)"
+                  >
+                    {{ baseline.patientCount }}
+                  </Button>
+                </div>
               </div>
               <div class="view-toggle">
                 <a
@@ -420,10 +446,22 @@ defineExpose({ reload });
                     formatRatePct(followup.averagePct)
                   }}</span>
                 </span>
-                <span class="summary-item">
+                <div class="summary-item">
                   已统计记录
-                  <span class="summary-value">{{ followup.recordCount }}</span>
-                </span>
+                  <Button
+                    type="link"
+                    class="summary-value"
+                    @click="
+                      drillAll(
+                        'FOLLOWUP_ALL',
+                        followup.recordCount,
+                        followupYear,
+                      )
+                    "
+                  >
+                    {{ followup.recordCount }}
+                  </Button>
+                </div>
                 <span class="summary-item">
                   患者
                   <span class="summary-value">{{ followup.patientCount }}</span>
@@ -438,7 +476,17 @@ defineExpose({ reload });
                 data-testid="followup-year-table"
               >
                 <template #bodyCell="{ column, record }">
-                  <template v-if="column.key === 'avg'">
+                  <Button
+                    v-if="column.dataIndex === 'recordCount'"
+                    type="link"
+                    @click="
+                      drillAll('FOLLOWUP_ALL', record.recordCount, record.year)
+                    "
+                  >
+                    {{ record.recordCount }}
+                  </Button>
+
+                  <template v-else-if="column.key === 'avg'">
                     <span class="pct-main">{{
                       formatRatePct(record.averagePct)
                     }}</span>

@@ -252,6 +252,9 @@ function handleTableChange(nextPage: number, nextSize: number) {
 }
 
 onMounted(() => {
+  const routedWard = Number(route.query.wardId);
+  if (Number.isSafeInteger(routedWard) && routedWard > 0)
+    filters.wardIds = [routedWard];
   const status = statusOfQuery(route.query.status);
   if (status) {
     filters.status = status;

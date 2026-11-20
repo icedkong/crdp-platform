@@ -124,15 +124,7 @@ public class SecurityConfig {
                                                 "/api/hospital/view/users/*/reset-password")
                                         .hasAnyAuthority(
                                                 TokenAuthenticationFilter.SESSION_VIEW_AUTHORITY)
-                                        // E10-T04 / tech-plan §10「预览」：预览内容经应用代理按流返回。pdf.js、
-                                        // docx-preview 与原生 <audio> 是浏览器子资源请求，带不了登录令牌，取流凭
-                                        // preview-url 签发的 ≤ 5 分钟随机令牌（公开口按 IP 每小时限流，
-                                        // FilePreviewService；@PublicApi 经启动扫描登记）。必须排在
-                                        // /api/hospital/**
-                                        // 端别判定之前
-                                        .requestMatchers(
-                                                HttpMethod.GET, "/api/hospital/files/preview/*")
-                                        .permitAll()
+                                        // OQR-07：预览取流与普通医院业务一样要求登录；短链只定位绑定授权。
                                         // E10-T05 / tech-plan §10「下载」：下载走 5 分钟 HMAC 签名链接。
                                         // 签发口要登录 + followup:scan:download（敏感权限）；
                                         // 取流口凭签名定位租户与文件（公开口按 IP 每小时限流，

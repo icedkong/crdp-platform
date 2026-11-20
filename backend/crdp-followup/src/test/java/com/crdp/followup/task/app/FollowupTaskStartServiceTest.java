@@ -64,7 +64,8 @@ class FollowupTaskStartServiceTest {
                                 Map.of(),
                                 Map.of(),
                                 null,
-                                "2026-11-05T09:00:00+08:00"));
+                                "2026-11-05T09:00:00+08:00",
+                                null));
         when(taskMapper.linkRecord(9001L, 701L)).thenReturn(1);
 
         FollowupTaskStartService.StartView view = service.start(9001L);
@@ -144,7 +145,8 @@ class FollowupTaskStartServiceTest {
                                 Map.of(),
                                 Map.of(),
                                 null,
-                                "2026-11-05T09:00:00+08:00"));
+                                "2026-11-05T09:00:00+08:00",
+                                null));
         when(taskMapper.linkRecord(9001L, 702L)).thenReturn(0);
 
         FollowupTaskStartService.StartView view = service.start(9001L);

@@ -29,8 +29,8 @@ public interface ImportCommitMapper {
     /** 确认提交：固化选项（重复策略 / 兜底病区）与操作人数据范围快照（E18-T05；scope_json 见 V73 注释）。 */
     @Update(
             """
-            UPDATE imp_job SET options_json = #{optionsJson}, scope_json = #{scopeJson}
-            WHERE id = #{id}
+            UPDATE imp_job SET options_json = #{optionsJson}, scope_json = #{scopeJson}, status = 'IMPORTING'
+            WHERE id = #{id} AND status = 'PRECHECKED'
             """)
     int saveCommitOptions(
             @Param("id") long id,
@@ -526,10 +526,11 @@ public interface ImportCommitMapper {
             """
             INSERT INTO fu_record (patient_id, enrollment_id, node_id, occurrence, followup_year,
                                    plan_date, window_start, window_end, task_id, source, visit_date,
-                                   form_code, template_version, status, version, data, data_meta, created_by)
+                                   form_code, template_version, status, version, data, data_meta, created_by, first_submitted_at)
             VALUES (#{patientId}, #{enrollmentId}, #{nodeId}, #{occurrence}, #{followupYear},
                     #{planDate}, #{windowStart}, #{windowEnd}, NULL, #{source}, #{visitDate},
-                    #{formCode}, #{templateVersion}, #{status}, 0, #{data}, #{dataMeta}, #{createdBy})
+                    #{formCode}, #{templateVersion}, #{status}, 0, #{data}, #{dataMeta}, #{createdBy},
+                    CASE WHEN #{status} = 'SUBMITTED' THEN CURRENT_TIMESTAMP(3) ELSE NULL END)
             """)
     @Options(useGeneratedKeys = true, keyProperty = "id", keyColumn = "id")
     int insertImportedRecord(ImportedRecordInsert row);
@@ -538,7 +539,10 @@ public interface ImportCommitMapper {
     @Update(
             """
             UPDATE fu_record
-            SET source = #{source}, status = #{status}, visit_date = #{visitDate},
+            SET first_submitted_at = CASE
+                    WHEN status = 'DRAFT' AND #{status} = 'SUBMITTED' THEN COALESCE(first_submitted_at, CURRENT_TIMESTAMP(3))
+                    ELSE first_submitted_at END,
+                source = #{source}, status = #{status}, visit_date = #{visitDate},
                 data = #{data}, data_meta = #{dataMeta}, version = version + 1, updated_by = #{updatedBy}
             WHERE id = #{id}
             """)

@@ -557,7 +557,7 @@ class PatientSearchServiceTest {
                 .setAuthentication(
                         new UsernamePasswordAuthenticationToken(viewPrincipal(), null, List.of()));
         stubSingleRow();
-        // 无规则命中（含 MASKED / PLAIN）：保留传入的脱敏值——视角不放宽列表明文（OQ-107④）
+        // 无规则命中（含 MASKED / PLAIN）：保留传入的脱敏值——视角不放宽列表明文（OQ-155④）
         PatientSearchService service = serviceOf(ViewStubGuard.of(Set.of(), Set.of()));
 
         PatientSearchService.PatientRowView row =

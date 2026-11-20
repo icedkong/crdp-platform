@@ -14,6 +14,10 @@ import DoctorWorkload from './doctor-workload.vue';
 const fetchDoctorWorkload = vi.fn();
 const routerPush = vi.fn();
 
+vi.mock('../../dashboard/stats-drill-drawer.vue', () => ({
+  default: { props: ['query'], template: '<div />' },
+}));
+
 vi.mock('#/api/core/dashboard', () => ({
   fetchDoctorWorkload: (...args: unknown[]) => fetchDoctorWorkload(...args),
 }));

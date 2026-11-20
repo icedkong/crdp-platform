@@ -8,10 +8,18 @@
  * setup 能跑通且渲染出表单骨架即通过；同类「缺导入 / setup 崩」回归会被
  * 这里拦住。
  */
-import { mount } from '@vue/test-utils';
+import { flushPromises, mount } from '@vue/test-utils';
 import { computed, ref } from 'vue';
 
+import { Modal } from 'ant-design-vue';
 import { describe, expect, it, vi } from 'vitest';
+
+import {
+  fetchRecordDetail,
+  startRecordEditSession,
+  updateSubmittedRecord,
+} from '#/api/core/task';
+import ReasonModal from '#/components/followup/reason-modal.vue';
 
 import RecordForm from './form.vue';
 
@@ -71,6 +79,7 @@ vi.mock('#/api/core/report', () => ({
 }));
 
 vi.mock('#/api/core/task', () => ({
+  deleteRecord: vi.fn(),
   fetchRecordDetail: vi.fn(
     async (): Promise<Record<string, unknown>> => ({
       id: '99001',
@@ -101,6 +110,17 @@ vi.mock('#/api/core/task', () => ({
   saveRecordDraft: vi.fn(),
   startTask: vi.fn(),
   submitRecord: vi.fn(),
+  startRecordEditSession: vi.fn(async () => ({
+    recordId: '99001',
+    version: 1,
+    status: 'SUBMITTED',
+  })),
+  updateSubmittedRecord: vi.fn(async () => ({
+    recordId: '99001',
+    version: 2,
+    fieldChanges: 0,
+    warnings: [],
+  })),
 }));
 
 vi.mock('#/reference/use-permission', () => ({
@@ -150,6 +170,68 @@ describe('e24-t09 随访表单页挂载冒烟（走查 W-0 回归）', () => {
     } finally {
       consoleWarn.mockRestore();
       consoleError.mockRestore();
+    }
+  });
+
+  it('指定目标冲突时保留记录，允许无字段改动的显式重新选择，并随保存发送确认标记', async () => {
+    const base = await fetchRecordDetail('99001');
+    vi.mocked(fetchRecordDetail).mockResolvedValueOnce({
+      ...base,
+      status: 'SUBMITTED',
+      version: 1,
+      doctorNextCommands: [
+        {
+          enrollmentId: '9007199254740995',
+          nodeId: '9007199254740997',
+          implantId: '9007199254740999',
+          sourceRecordId: '99001',
+          occurrence: 2,
+          date: '2027-01-15',
+          state: 'CONFLICT',
+        },
+      ],
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const confirm = vi.spyOn(Modal, 'confirm').mockImplementation((options) => {
+      void options.onOk?.();
+      return { destroy: vi.fn(), update: vi.fn() };
+    });
+    const wrapper = mount(RecordForm, {
+      attachTo: document.body,
+      global: { config: { warnHandler: () => {} } },
+    });
+    try {
+      await flushPromises();
+      expect(wrapper.text()).toContain('原指令尚未消费');
+      wrapper
+        .findAllComponents(ReasonModal)
+        .find((modal) => modal.props('confirmText') === '开始修改')
+        ?.vm.$emit('confirm', '重新确认指定排期（示例）');
+      await flushPromises();
+      const choose = wrapper
+        .findAll('button')
+        .find((button) => button.text().includes('重新选择下一次任务'));
+      expect(choose).toBeTruthy();
+      await choose?.trigger('click');
+      await wrapper.find('[data-testid="record-save-edit"]').trigger('click');
+      await flushPromises();
+      expect(startRecordEditSession).toHaveBeenCalledWith('99001', {
+        reason: '重新确认指定排期（示例）',
+      });
+      expect(updateSubmittedRecord).toHaveBeenCalledWith(
+        '99001',
+        expect.objectContaining({
+          baseVersion: 1,
+          reselectNextVisit: true,
+          data: base.data,
+        }),
+      );
+    } finally {
+      wrapper.unmount();
+      warn.mockRestore();
+      error.mockRestore();
+      confirm.mockRestore();
     }
   });
 

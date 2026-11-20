@@ -119,9 +119,11 @@ export function saveRecordDraft(
 export function submitRecord(
   recordId: string,
   body: {
+    backfillTaskId?: string;
     baseVersion: number;
     data: Record<string, unknown>;
     dataMeta?: Record<string, unknown>;
+    reselectNextVisit?: boolean;
     transcribeReportId?: string;
   },
 ) {
@@ -173,6 +175,7 @@ export function updateSubmittedRecord(
     data: Record<string, unknown>;
     dataMeta?: Record<string, unknown>;
     reason: string;
+    reselectNextVisit?: boolean;
     /** E21-T17 / C-SCAN-012：转录态保存修改同样完成转录（位置中已有已提交记录的对照录入）。 */
     transcribeReportId?: string;
   },
@@ -244,5 +247,12 @@ export function confirmLostTask(taskId: string) {
   return requestClient.post<TaskLostConfirmView>(
     apiPath(`/followup/tasks/${taskId}/confirm-lost`),
     {},
+  );
+}
+
+/** OQR-01：预览候选，提交仍由服务端锁定并重新校验。 */
+export function fetchBackfillTaskCandidates(recordId: string) {
+  return requestClient.get<import('@crdp/api').BackfillTaskCandidate[]>(
+    apiPath(`/followup/records/${recordId}/backfill-candidates`),
   );
 }

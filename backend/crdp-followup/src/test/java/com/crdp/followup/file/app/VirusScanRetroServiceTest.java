@@ -50,6 +50,8 @@ class VirusScanRetroServiceTest {
     void tenant() {
         TenantContext.useTenant(1L, "demoa");
         storage = new LocalObjectStorage(storageRoot);
+        lenient().when(files.markScanAttempt(anyLong())).thenReturn(1);
+        lenient().when(files.markVirusScanResult(anyLong(), anyString())).thenReturn(1);
         lenient().when(files.findUnscanned(anyInt())).thenReturn(List.of());
     }
 
@@ -195,8 +197,10 @@ class VirusScanRetroServiceTest {
                 new VirusScanRetroService(
                         jobScheduler, files, storage, cleanScanner(), properties, audit);
 
-        service.runForCurrentTenant(LocalDate.of(2026, 11, 14));
-
+        org.junit.jupiter.api.Assertions.assertThrows(
+                ApiException.class, () -> service.runForCurrentTenant(LocalDate.of(2026, 11, 14)));
+        verify(files).markScanRetry(15L, "OBJECT_MISSING");
+        verify(files).markScanRetry(16L, "FOREIGN_KEY");
         verify(files, never()).markVirusScanResult(anyLong(), anyString());
     }
 
@@ -212,6 +216,35 @@ class VirusScanRetroServiceTest {
         service.runForCurrentTenant(LocalDate.of(2026, 11, 14));
 
         verify(files).findUnscanned(7);
+    }
+
+    @Test
+    void failedFileDoesNotPreventLaterCleanFileAndKeepsRetryState() throws IOException {
+        byte[] body = pdfBody();
+        String key = storage.put("files/202611/retry.pdf", body, "application/pdf");
+        var missing = row(31, "t/demoa/files/missing.pdf", body);
+        var clean = row(32, key, body);
+        when(files.findUnscanned(200)).thenReturn(List.of(missing, clean));
+        var service =
+                new VirusScanRetroService(
+                        jobScheduler, files, storage, cleanScanner(), properties, audit);
+        org.junit.jupiter.api.Assertions.assertThrows(
+                ApiException.class, () -> service.runForCurrentTenant(LocalDate.of(2026, 11, 20)));
+        verify(files).markScanRetry(31, "OBJECT_MISSING");
+        verify(files).markVirusScanResult(32, "CLEAN");
+        org.junit.jupiter.api.Assertions.assertArrayEquals(
+                body, storage.get(key.substring("t/demoa/".length())));
+    }
+
+    @Test
+    void changedStateCannotBeOverwrittenOrCountedAsClean() throws IOException {
+        byte[] body = pdfBody();
+        String key = storage.put("files/202611/concurrent.pdf", body, "application/pdf");
+        when(files.findUnscanned(200)).thenReturn(List.of(row(33, key, body)));
+        when(files.markScanAttempt(33)).thenReturn(0);
+        new VirusScanRetroService(jobScheduler, files, storage, cleanScanner(), properties, audit)
+                .runForCurrentTenant(LocalDate.of(2026, 11, 20));
+        verify(files, never()).markVirusScanResult(anyLong(), anyString());
     }
 
     // ---------------------------------------------------------------- 替身与工具

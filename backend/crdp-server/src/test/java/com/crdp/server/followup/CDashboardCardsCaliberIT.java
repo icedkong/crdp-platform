@@ -44,7 +44,7 @@ import org.springframework.test.context.ActiveProfiles;
  *       已达）两处文案一致，电池寿命视同命中的行卡片按字典状态展示、概览按「视同接近ERI」展示（口径锁定）；
  *   <li>异常标红记录（C-DASH-006）：total = 指标卡「近 30 天含标红参数的记录数」；每条记录的命中数 = 记录详情 highlightHits（GET
  *       /records/{id}）= 患者时间轴该记录节点的 highlightCount；反向核对：患者列表逐患者时间轴 highlightCount 非 null 的记录数 = 卡片
- *       total；窗口外（updated_at 回拨 40 天）的记录不进卡片与指标卡、但仍在时间轴与记录详情中（列表与卡片差异只在窗口，OQ-107④）；
+ *       total；窗口外（first_submitted_at 回拨 40 天）的记录不进卡片与指标卡、但仍在时间轴与记录详情中（列表与卡片差异只在窗口，OQ-107④）；
  *   <li>病区筛选：卡片 wardId 与患者列表 wardIds 筛选同一收窄口径（转病区后双侧同步）。
  * </ul>
  *
@@ -494,8 +494,8 @@ class CDashboardCardsCaliberIT {
                     "时间轴节点 highlightCount = 卡片命中数（记录 " + hit.getKey() + "）");
         }
 
-        // 窗口：R3 回拨 40 天（「近 N 天提交」以 updated_at 近似，OQ-107④）→ 30 天卡片与指标卡同步少一、时间轴与详情仍可见
-        backdateUpdatedAt(r3, today.minusDays(40));
+        // 窗口：R3 回拨 40 天（「近 N 天提交」使用 first_submitted_at 事实，OQR-05A）→ 30 天卡片与指标卡同步少一、时间轴与详情仍可见
+        backdateFirstSubmittedAt(r3, today.minusDays(40));
         Map<?, ?> narrowed =
                 data(get("/api/hospital/followup/dashboard/cards/abnormal_records", admin));
         assertEquals(
@@ -687,14 +687,14 @@ class CDashboardCardsCaliberIT {
         return String.valueOf(((Map<?, ?>) summary.get("device")).get("eri"));
     }
 
-    /** 回拨记录 updated_at（「近 N 天提交」以 updated_at 近似，OQ-107④；窗口边界核对用）。 */
-    private void backdateUpdatedAt(String recordId, LocalDate updatedAt) {
+    /** 回拨记录 first_submitted_at（「近 N 天提交」使用 first_submitted_at 事实，OQR-05A；窗口边界核对用）。 */
+    private void backdateFirstSubmittedAt(String recordId, LocalDate submittedAt) {
         runInTenant(
                 "demoa",
                 () ->
                         jdbc.update(
-                                "UPDATE fu_record SET updated_at = ? WHERE id = ?",
-                                java.sql.Timestamp.valueOf(updatedAt.atStartOfDay()),
+                                "UPDATE fu_record SET first_submitted_at = ? WHERE id = ?",
+                                java.sql.Timestamp.valueOf(submittedAt.atStartOfDay()),
                                 Long.parseLong(recordId)));
     }
 

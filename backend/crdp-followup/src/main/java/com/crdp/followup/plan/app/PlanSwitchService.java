@@ -48,8 +48,8 @@ import org.springframework.transaction.annotation.Transactional;
  * E21-T08。
  *
  * <p><b>医生指定下次随访时间</b>（切换表末行，C-FU-005 / Q05）：只登记 {@code
- * doctor_next_date}（每次提交覆盖，只影响下一次任务），<b>不改变计划类型</b>（SW-10）； 早于今天的日期忽略（补录的历史记录「只保存，不再生成任务」，C 规格 §5
- * 业务规则）；窗口围绕展开与任务创建消费随 E21-T08。
+ * doctor_next_date}（每次提交覆盖，只影响下一次任务），<b>不改变计划类型</b>（SW-10）； 日期由后端按北京时间校验并绑定具体次数；只有历史补录的过去日期仅归档（C 规格
+ * §5 业务规则）；窗口围绕展开与任务创建消费随 E21-T08。
  *
  * <p>「其他（OTHER）」植入类型：C 规格关键字段表「由医生选择是否重新起算」——选择载体未定，本服务不切换（沿用 E21-T05 行为），见 OQ-137。
  * 触发入口（ImplantService 保存 / 编辑 / 取出、RecordEntryService 提交 / 修改）已做患者数据范围校验；本服务写 PLAN_SWITCH
@@ -78,13 +78,17 @@ public class PlanSwitchService {
 
     private final AuditLogger audit;
 
+    private final CurrentDeviceScheduleService schedule;
+
     public PlanSwitchService(
             PlanEnrollmentMapper enrollmentMapper,
             DevicePlanMappingMapper mappingMapper,
             PlanMapper planMapper,
             PlanEnrollmentService enrollments,
             FollowupTaskTerminator taskTerminations,
-            AuditLogger audit) {
+            AuditLogger audit,
+            CurrentDeviceScheduleService schedule) {
+        this.schedule = schedule;
         this.enrollmentMapper = enrollmentMapper;
         this.mappingMapper = mappingMapper;
         this.planMapper = planMapper;
@@ -259,12 +263,39 @@ public class PlanSwitchService {
     @Transactional
     public RecordSwitchView onRecordSubmitted(
             long patientId, long recordId, LocalDate visitDate, Map<String, Object> data) {
+        return onRecordSubmittedInternal(patientId, recordId, visitDate, data, false, true, false);
+    }
+
+    /** OQR-01：补录不改变暂停 / 终止入组或历史器械的当前排期。 */
+    @Transactional
+    public RecordSwitchView onBackfillSubmitted(
+            long patientId, long recordId, LocalDate visitDate, Map<String, Object> data) {
+        return onRecordSubmittedInternal(patientId, recordId, visitDate, data, true, true, false);
+    }
+
+    private RecordSwitchView onRecordSubmittedInternal(
+            long patientId,
+            long recordId,
+            LocalDate visitDate,
+            Map<String, Object> data,
+            boolean activeOnly,
+            boolean issueDoctorCommand,
+            boolean reselect) {
+        schedule.lockPatient(patientId);
+        schedule.refresh(patientId);
         List<SwitchableEnrollmentRow> active =
-                enrollmentMapper.findSwitchableEnrollments(patientId);
+                activeOnly
+                        ? enrollmentMapper.lockActiveBackfillEnrollments(patientId)
+                        : enrollmentMapper.findSwitchableEnrollments(patientId);
         if (active.isEmpty()) {
+            if (reselect) throw CurrentDeviceScheduleService.conflict();
             return new RecordSwitchView(patientId, 0, 0, false);
         }
-        LocalDate effectiveVisit = visitDate != null ? visitDate : LocalDate.now();
+        LocalDate effectiveVisit = visitDate;
+        if (effectiveVisit == null || !schedule.isLatest(patientId, recordId)) {
+            if (reselect) throw new ApiException(409, 40901, "仅当前器械的最新有效随访记录可重新确认指定排期，请打开最新记录操作");
+            return new RecordSwitchView(patientId, 0, 0, false);
+        }
         int switched = 0;
         int restored = 0;
         if (eriMarked(data)) {
@@ -307,22 +338,58 @@ public class PlanSwitchService {
                 auditEri(patientId, recordId, "NORMAL", reason, restored);
             }
         }
-        boolean doctorSet = false;
-        LocalDate doctorDate = doctorNextDate(data);
-        if (doctorDate != null && !doctorDate.isBefore(LocalDate.now())) {
-            enrollmentMapper.setDoctorNextDate(patientId, doctorDate);
-            doctorSet = true;
-        }
-        // 上次实际随访日期快照单调推进（E21-T07 / C-FU-006）：滚动循环节点（常规 / ERI 期）的排期基准
-        // fu_enrollment.last_visit_date（V93）——ERI 期第一次循环 = eri_since 那次随访 + 间隔，此后每次随访滚动一次
-        enrollmentMapper.advanceLastVisitDate(patientId, effectiveVisit);
-        if (switched == 0 && restored == 0 && doctorSet) {
-            log.info(
-                    "医生指定下次随访日期（SW-10，计划类型不变）：patient={} date={}（窗口展开随 E21-T08）",
-                    patientId,
-                    doctorDate);
-        }
+        boolean doctorSet =
+                issueDoctorCommand
+                        && schedule.register(patientId, recordId, effectiveVisit, data, reselect);
         return new RecordSwitchView(patientId, switched, restored, doctorSet);
+    }
+
+    @Transactional
+    public RecordSwitchView onRecordReselected(
+            long patientId,
+            long recordId,
+            LocalDate date,
+            Map<String, Object> data,
+            boolean activeOnly) {
+        return onRecordSubmittedInternal(patientId, recordId, date, data, activeOnly, true, true);
+    }
+
+    /** 更正旧记录可重算派生日期，但只允许当前器械最新记录发出新指令。未改动指定日期时不重复发出。 */
+    @Transactional
+    public RecordSwitchView onRecordUpdated(
+            long patientId,
+            long recordId,
+            LocalDate visitDate,
+            Map<String, Object> before,
+            Map<String, Object> data,
+            boolean reselect) {
+        schedule.lockPatient(patientId);
+        boolean changed =
+                reselect
+                        || !java.util.Objects.equals(
+                                before.get(KEY_NEXT_VISIT_DATE), data.get(KEY_NEXT_VISIT_DATE));
+        if (changed) schedule.revoke(patientId, recordId);
+        return onRecordSubmittedInternal(
+                patientId, recordId, visitDate, data, false, changed, reselect);
+    }
+
+    @Transactional
+    public void refreshCurrentDevice(long patientId) {
+        schedule.refresh(patientId);
+    }
+
+    public void lockPatient(long patientId) {
+        schedule.lockPatient(patientId);
+    }
+
+    public List<CurrentDeviceScheduleService.CommandView> doctorNextCommands(long patientId) {
+        return schedule.commands(patientId);
+    }
+
+    @Transactional
+    public void onRecordDeleted(long patientId, long recordId) {
+        schedule.revoke(patientId, recordId);
+        schedule.refresh(patientId);
     }
 
     // ---------------------------------------------------------------- 内部

@@ -85,7 +85,7 @@ public class FileDownloadService {
     public DownloadGrant downloadUrl(long fileId) {
         SessionPrincipal principal = CurrentSession.requireHospital();
         SysFileRow row = files.find(fileId);
-        if (row == null || "DELETED".equals(row.getStatus())) {
+        if (blocked(row)) {
             throw notFound();
         }
         // E15-T04：挂在沟通记录上的录音按患者数据范围校验（A-FU-025 下载走敏感权限 + 患者范围双闸）
@@ -142,7 +142,7 @@ public class FileDownloadService {
                 grant.tenantCode(),
                 () -> {
                     SysFileRow row = files.find(grant.fileId());
-                    if (row == null || "DELETED".equals(row.getStatus())) {
+                    if (blocked(row)) {
                         throw notFound();
                     }
                     byte[] body =
@@ -155,6 +155,7 @@ public class FileDownloadService {
                                 row.getObjectKey().length());
                         throw notFound();
                     }
+                    if (blocked(files.find(grant.fileId()))) throw notFound();
                     return new DownloadContent(body, row.getMimeType(), row.getOriginalName());
                 });
     }
@@ -201,6 +202,24 @@ public class FileDownloadService {
         if (count != null && count > properties.getIpHourlyLimit()) {
             throw new ApiException(429, 42900, "尝试次数过多，请稍后再试");
         }
+    }
+
+    private boolean blocked(SysFileRow row) {
+        if (row != null
+                && java.util.Set.of("INFECTED", "HASH_MISMATCH")
+                        .contains(java.util.Objects.toString(row.getVirusScanStatus(), ""))) {
+            audit.append(
+                    AuditEntry.operation("file", "FILE_UNSAFE_DOWNLOAD_DENIED")
+                            .objectType("sys_file")
+                            .objectId(String.valueOf(row.getId()))
+                            .description("异常文件禁止下载，保留原件待人工处置")
+                            .result(com.crdp.framework.audit.AuditResult.DENIED)
+                            .build());
+        }
+        return row == null
+                || "DELETED".equals(row.getStatus())
+                || java.util.Set.of("INFECTED", "HASH_MISMATCH")
+                        .contains(java.util.Objects.toString(row.getVirusScanStatus(), ""));
     }
 
     private static ApiException notFound() {

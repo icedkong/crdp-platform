@@ -252,7 +252,8 @@ class PatientOverviewServiceTest {
                                         7L,
                                         LocalDateTime.of(2025, 1, 15, 9, 0),
                                         7L,
-                                        LocalDateTime.of(2025, 1, 15, 9, 0)),
+                                        LocalDateTime.of(2025, 1, 15, 9, 0),
+                                        null),
                                 new FollowupRecordMapper.RecordRowRaw(
                                         802L,
                                         PATIENT_ID,
@@ -269,7 +270,8 @@ class PatientOverviewServiceTest {
                                         7L,
                                         LocalDateTime.of(2026, 2, 1, 9, 0),
                                         7L,
-                                        LocalDateTime.of(2026, 2, 1, 9, 0))));
+                                        LocalDateTime.of(2026, 2, 1, 9, 0),
+                                        null)));
 
         PatientOverviewService.TimelineView timeline = service.timelineOf(PATIENT_ID);
 
@@ -309,7 +311,8 @@ class PatientOverviewServiceTest {
                                         7L,
                                         LocalDateTime.of(2026, 6, 10, 15, 0),
                                         7L,
-                                        LocalDateTime.of(2026, 6, 10, 15, 0)),
+                                        LocalDateTime.of(2026, 6, 10, 15, 0),
+                                        null),
                                 new FollowupRecordMapper.RecordRowRaw(
                                         812L,
                                         PATIENT_ID,
@@ -326,7 +329,8 @@ class PatientOverviewServiceTest {
                                         7L,
                                         LocalDateTime.of(2026, 8, 2, 9, 0),
                                         7L,
-                                        LocalDateTime.of(2026, 8, 2, 9, 0)),
+                                        LocalDateTime.of(2026, 8, 2, 9, 0),
+                                        null),
                                 new FollowupRecordMapper.RecordRowRaw(
                                         813L,
                                         PATIENT_ID,
@@ -343,7 +347,8 @@ class PatientOverviewServiceTest {
                                         7L,
                                         LocalDateTime.of(2025, 1, 15, 9, 0),
                                         7L,
-                                        LocalDateTime.of(2025, 1, 15, 9, 0))));
+                                        LocalDateTime.of(2025, 1, 15, 9, 0),
+                                        null)));
 
         PatientOverviewService.TimelineView timeline = service.timelineOf(PATIENT_ID);
 
@@ -386,7 +391,8 @@ class PatientOverviewServiceTest {
                                         7L,
                                         LocalDateTime.of(2026, 10, 21, 9, 0),
                                         7L,
-                                        LocalDateTime.of(2026, 10, 21, 9, 0)),
+                                        LocalDateTime.of(2026, 10, 21, 9, 0),
+                                        null),
                                 new FollowupRecordMapper.RecordRowRaw(
                                         822L,
                                         PATIENT_ID,
@@ -403,7 +409,8 @@ class PatientOverviewServiceTest {
                                         7L,
                                         LocalDateTime.of(2026, 11, 3, 9, 0),
                                         7L,
-                                        LocalDateTime.of(2026, 11, 3, 9, 0)),
+                                        LocalDateTime.of(2026, 11, 3, 9, 0),
+                                        null),
                                 new FollowupRecordMapper.RecordRowRaw(
                                         823L,
                                         PATIENT_ID,
@@ -420,7 +427,8 @@ class PatientOverviewServiceTest {
                                         7L,
                                         LocalDateTime.of(2025, 1, 15, 9, 0),
                                         7L,
-                                        LocalDateTime.of(2025, 1, 15, 9, 0))));
+                                        LocalDateTime.of(2025, 1, 15, 9, 0),
+                                        null)));
 
         PatientOverviewService.TimelineView timeline = service.timelineOf(PATIENT_ID);
 
@@ -740,7 +748,7 @@ class PatientOverviewServiceTest {
         PatientOverviewService.PatientOverviewView view = service.summaryOf(PATIENT_ID);
 
         assertEquals("已设盲", view.patientNo(), "命中设盲规则的概览病案号替换占位（PLT-VIEW-011）");
-        assertEquals("张*）", view.name(), "无规则命中的姓名保留脱敏值（不放宽列表明文，OQ-107④）");
+        assertEquals("张*）", view.name(), "无规则命中的姓名保留脱敏值（不放宽列表明文，OQ-155④）");
     }
 
     @Test
@@ -1009,7 +1017,8 @@ class PatientOverviewServiceTest {
                                         OPERATOR_ID,
                                         LocalDateTime.of(2025, 7, 1, 9, 0),
                                         OPERATOR_ID,
-                                        LocalDateTime.of(2025, 7, 1, 9, 0))));
+                                        LocalDateTime.of(2025, 7, 1, 9, 0),
+                                        null)));
         when(recordMapper.findHighlightCountsByPatient(PATIENT_ID))
                 .thenReturn(
                         List.of(

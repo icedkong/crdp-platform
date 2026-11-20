@@ -46,7 +46,7 @@ class ClamdVirusScannerTest {
 
         assertFalse(result.infected());
         clamd.awaitRequest();
-        assertEquals("INSTREAM", clamd.command());
+        assertEquals("zINSTREAM", clamd.command());
         assertArrayEquals(body, clamd.reassembled());
     }
 
@@ -95,6 +95,39 @@ class ClamdVirusScannerTest {
         } catch (IOException ex) {
             throw new IllegalStateException(ex);
         }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(
+            strings = {
+                "garbage OK",
+                "stream: NOTOK",
+                "stream: OK extra",
+                "stream: ERROR",
+                "stream: "
+            })
+    void malformedReplyNeverMeansClean(String reply) {
+        clamd.start(reply);
+        assertEquals(
+                50300,
+                assertThrows(ApiException.class, () -> scanner().scan(new byte[] {1})).code());
+    }
+
+    @Test
+    void nulTerminatedReplyCompletesWithoutWaitingForEof() {
+        clamd.start("stream: OK\0untrusted trailing data");
+        assertFalse(scanner().scan(new byte[] {1}).infected());
+    }
+
+    @Test
+    void oversizedReplyAndUnlimitedTimeoutAreRejected() {
+        clamd.start("x".repeat(5000));
+        assertEquals(
+                50300,
+                assertThrows(ApiException.class, () -> scanner().scan(new byte[] {1})).code());
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new ClamdVirusScanner("localhost", 3310, 0, 100));
     }
 
     /** 假 clamd：接受一个连接，解析 INSTREAM 帧，按构造应答回写一行后关流。 */

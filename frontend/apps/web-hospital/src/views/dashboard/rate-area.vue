@@ -1,5 +1,10 @@
 <script lang="ts" setup>
-import type { NodeRateCardView, RateRow, YearlyRateCardView } from '@crdp/api';
+import type {
+  NodeRateCardView,
+  RateRow,
+  StatsDrillQuery,
+  YearlyRateCardView,
+} from '@crdp/api';
 
 import type { EchartsUIType } from '@vben/plugins/echarts';
 
@@ -10,6 +15,7 @@ import { EchartsUI, useEcharts } from '@vben/plugins/echarts';
 import { cohortYearOptions, formatRatePct } from '@crdp/api';
 import { colors } from '@crdp/tokens';
 import {
+  Button,
   Card,
   Empty,
   message,
@@ -22,6 +28,7 @@ import {
 import { fetchNodeRateCard, fetchYearlyRateCard } from '#/api/core/dashboard';
 
 import { rateChartOption } from './logic';
+import StatsDrillDrawer from './stats-drill-drawer.vue';
 
 defineOptions({ name: 'DashboardRateArea' });
 
@@ -50,6 +57,31 @@ const props = withDefaults(
   }>(),
   { showNode: false, showYearly: true, wardId: undefined },
 );
+
+const statsDrill = ref<null | StatsDrillQuery>(null);
+function drillRate(
+  row: RateRow,
+  kind: 'NODE' | 'YEAR',
+  metric: StatsDrillQuery['metric'],
+) {
+  statsDrill.value = {
+    kind,
+    metric,
+    wardId: props.wardId,
+    cohortYear: kind === 'YEAR' ? cohortYear.value : nodeCohortYear.value,
+    year: kind === 'YEAR' ? (row.year ?? undefined) : undefined,
+    planId: kind === 'NODE' ? nodeRate.value?.planId : undefined,
+    nodeId: kind === 'NODE' ? (row.nodeId ?? undefined) : undefined,
+    occurrence: kind === 'NODE' ? row.occurrence : undefined,
+    expectedCount: {
+      DUE: row.dueCount,
+      FOLLOWED: row.followedCount,
+      IN_WINDOW: row.inWindowCount,
+      DEATH: row.deathCount,
+      LOST: row.lostCount,
+    }[metric ?? 'DUE'],
+  };
+}
 
 // ---------------------------------------------------------------- 表格列（两卡同列，A 规格 §9 统计区）
 
@@ -173,6 +205,7 @@ defineExpose({ reload });
 </script>
 
 <template>
+  <StatsDrillDrawer :query="statsDrill" @close="statsDrill = null" />
   <div class="rate-area">
     <!-- 第四行统计区：每年随访率（A-DASH-006，表格 + 柱线图；随访率为醒目主列） -->
     <Card v-if="showYearly" class="rate-card" title="每年随访率">
@@ -189,6 +222,14 @@ defineExpose({ reload });
         </Space>
       </template>
       <Spin :spinning="yearlyLoading">
+        <div
+          v-if="
+            !yearlyLoading && yearly?.rows.length === 0 && yearly.refreshedAt
+          "
+          class="as-of"
+        >
+          实际刷新 {{ yearly.refreshedAt }}（每日刷新）
+        </div>
         <Empty
           v-if="!yearlyLoading && (yearly === null || yearly.rows.length === 0)"
           description="暂无随访数据"
@@ -203,14 +244,43 @@ defineExpose({ reload });
             data-testid="yearly-rate-table"
           >
             <template #bodyCell="{ column, record }">
-              <template v-if="column.key === 'followRate'">
+              <Button
+                v-if="
+                  column.dataIndex === 'dueCount' ||
+                  column.dataIndex === 'followedCount' ||
+                  column.dataIndex === 'deathCount'
+                "
+                type="link"
+                @click="
+                  drillRate(
+                    record,
+                    'YEAR',
+                    column.dataIndex === 'dueCount'
+                      ? 'DUE'
+                      : column.dataIndex === 'followedCount'
+                        ? 'FOLLOWED'
+                        : 'DEATH',
+                  )
+                "
+              >
+                {{ record[column.dataIndex] }}
+              </Button>
+
+              <template v-else-if="column.key === 'followRate'">
                 <span :style="{ color: colors.primary }" class="rate-main">{{
                   rateCell(record).main
                 }}</span>
-                <span class="rate-ref">{{ rateCell(record).ref }}</span>
+                <Button
+                  type="link"
+                  @click="drillRate(record, 'YEAR', 'IN_WINDOW')"
+                >
+                  {{ rateCell(record).ref }}
+                </Button>
               </template>
               <template v-else-if="column.key === 'lostRate'">
-                {{ formatRatePct(record.lostRatePct) }}
+                <Button type="link" @click="drillRate(record, 'YEAR', 'LOST')">
+                  {{ formatRatePct(record.lostRatePct) }}
+                </Button>
               </template>
             </template>
           </Table>
@@ -222,7 +292,8 @@ defineExpose({ reload });
             data-testid="yearly-rate-chart"
           />
           <div v-if="yearly.asOf" class="as-of">
-            数据截至 {{ yearly.asOf }}（每日刷新）
+            数据截至 {{ yearly.asOf }} · 实际刷新
+            {{ yearly.refreshedAt ?? '时间未知（旧汇总）' }}（每日刷新）
           </div>
         </template>
       </Spin>
@@ -257,6 +328,14 @@ defineExpose({ reload });
         </Space>
       </template>
       <Spin :spinning="nodeLoading">
+        <div
+          v-if="
+            !nodeLoading && nodeRate?.rows.length === 0 && nodeRate.refreshedAt
+          "
+          class="as-of"
+        >
+          实际刷新 {{ nodeRate.refreshedAt }}（每日刷新）
+        </div>
         <Empty
           v-if="
             !nodeLoading && (nodeRate === null || nodeRate.rows.length === 0)
@@ -273,14 +352,43 @@ defineExpose({ reload });
             data-testid="node-rate-table"
           >
             <template #bodyCell="{ column, record }">
-              <template v-if="column.key === 'followRate'">
+              <Button
+                v-if="
+                  column.dataIndex === 'dueCount' ||
+                  column.dataIndex === 'followedCount' ||
+                  column.dataIndex === 'deathCount'
+                "
+                type="link"
+                @click="
+                  drillRate(
+                    record,
+                    'NODE',
+                    column.dataIndex === 'dueCount'
+                      ? 'DUE'
+                      : column.dataIndex === 'followedCount'
+                        ? 'FOLLOWED'
+                        : 'DEATH',
+                  )
+                "
+              >
+                {{ record[column.dataIndex] }}
+              </Button>
+
+              <template v-else-if="column.key === 'followRate'">
                 <span :style="{ color: colors.primary }" class="rate-main">{{
                   rateCell(record).main
                 }}</span>
-                <span class="rate-ref">{{ rateCell(record).ref }}</span>
+                <Button
+                  type="link"
+                  @click="drillRate(record, 'NODE', 'IN_WINDOW')"
+                >
+                  {{ rateCell(record).ref }}
+                </Button>
               </template>
               <template v-else-if="column.key === 'lostRate'">
-                {{ formatRatePct(record.lostRatePct) }}
+                <Button type="link" @click="drillRate(record, 'NODE', 'LOST')">
+                  {{ formatRatePct(record.lostRatePct) }}
+                </Button>
               </template>
             </template>
           </Table>
@@ -292,7 +400,8 @@ defineExpose({ reload });
             data-testid="node-rate-chart"
           />
           <div v-if="nodeRate.asOf" class="as-of">
-            数据截至 {{ nodeRate.asOf }}（每日刷新）
+            数据截至 {{ nodeRate.asOf }} · 实际刷新
+            {{ nodeRate.refreshedAt ?? '时间未知（旧汇总）' }}（每日刷新）
           </div>
         </template>
       </Spin>

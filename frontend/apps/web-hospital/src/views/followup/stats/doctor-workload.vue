@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import type { DoctorWorkloadRow } from '@crdp/api';
+import type { DoctorWorkloadRow, StatsDrillQuery } from '@crdp/api';
 
 import { onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
@@ -9,6 +9,8 @@ import { colors, sizes } from '@crdp/tokens';
 import { Button, Card, Empty, message, Spin, Table } from 'ant-design-vue';
 
 import { fetchDoctorWorkload } from '#/api/core/dashboard';
+
+import StatsDrillDrawer from '../../dashboard/stats-drill-drawer.vue';
 
 defineOptions({ name: 'FollowupStatsDoctorWorkload' });
 
@@ -27,6 +29,7 @@ const props = defineProps<{
 }>();
 
 const router = useRouter();
+const statsDrill = ref<null | StatsDrillQuery>(null);
 
 const loading = ref(false);
 const rows = ref<DoctorWorkloadRow[]>([]);
@@ -76,6 +79,18 @@ function drill(
   row: DoctorWorkloadRow,
   kind: 'active' | 'monthDue' | 'overdue' | 'total',
 ) {
+  if (kind === 'monthDue' && row.monthDueDrill?.target === 'FOLLOWUP_STATS') {
+    const q = row.monthDueDrill.query ?? {};
+    statsDrill.value = {
+      kind: 'MONTH',
+      from: String(q.from),
+      to: String(q.to),
+      wardId: q.wardId ? String(q.wardId) : undefined,
+      doctorId: row.doctorId,
+      expectedCount: row.monthDue,
+    };
+    return;
+  }
   const target = doctorWorkloadRoute(row, kind);
   if (target) {
     void router.push(target);
@@ -99,6 +114,7 @@ onMounted(load);
 </script>
 
 <template>
+  <StatsDrillDrawer :query="statsDrill" @close="statsDrill = null" />
   <Card class="workload-card" title="医护负责患者数">
     <Spin :spinning="loading">
       <Empty

@@ -7,6 +7,7 @@ import { useRouter } from 'vue-router';
 import { abnormalRecordRoute } from '@crdp/api';
 import { colors } from '@crdp/tokens';
 import {
+  Alert,
   Card,
   Empty,
   message,
@@ -119,6 +120,12 @@ onMounted(() => {
       </Space>
     </template>
     <Spin :spinning="loading">
+      <Alert
+        v-if="view?.unknownSubmittedAtCount"
+        type="info"
+        show-icon
+        :message="`另有 ${view.unknownSubmittedAtCount} 条标红记录首次提交时间未知，未计入近 N 天统计`"
+      />
       <Empty
         v-if="!loading && !hasData"
         description="近 N 天暂无含标红参数的记录"

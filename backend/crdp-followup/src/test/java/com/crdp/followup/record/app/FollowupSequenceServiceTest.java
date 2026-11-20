@@ -277,6 +277,7 @@ class FollowupSequenceServiceTest {
                         java.util.Map.of(),
                         java.util.Map.of(),
                         null,
+                        null,
                         null);
         when(recordMapper.findRecordSequenceNo(701L)).thenReturn(4);
 
@@ -301,6 +302,7 @@ class FollowupSequenceServiceTest {
                         2,
                         java.util.Map.of(),
                         java.util.Map.of(),
+                        null,
                         null,
                         null);
         when(recordMapper.findRecordSequenceNo(701L)).thenReturn(null);
@@ -327,6 +329,7 @@ class FollowupSequenceServiceTest {
                         java.util.Map.of(),
                         java.util.Map.of(),
                         null,
+                        null,
                         null);
         when(assist.sequenceNoOf(PATIENT, 701L, JUN)).thenReturn(5);
         assertEquals(5, service.sequenceNoOfDetail(draft, JUN), "草稿走派生预演（落点）");
@@ -346,6 +349,7 @@ class FollowupSequenceServiceTest {
                         2,
                         java.util.Map.of(),
                         java.util.Map.of(),
+                        null,
                         null,
                         null);
         when(assist.sequenceNoOf(PATIENT, 701L, JUN)).thenReturn(4);
@@ -370,6 +374,7 @@ class FollowupSequenceServiceTest {
                         0,
                         java.util.Map.of(),
                         java.util.Map.of(),
+                        null,
                         null,
                         null);
         when(assist.sequenceNoOf(PATIENT, 701L, null)).thenReturn(null);

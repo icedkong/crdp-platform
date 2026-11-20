@@ -20,8 +20,12 @@ public class PatientSummaryService {
 
     private final PatientSummaryMapper mapper;
 
-    public PatientSummaryService(PatientSummaryMapper mapper) {
+    private final PatientFollowupSummaryService followup;
+
+    public PatientSummaryService(
+            PatientSummaryMapper mapper, PatientFollowupSummaryService followup) {
         this.mapper = mapper;
+        this.followup = followup;
     }
 
     /**
@@ -29,6 +33,12 @@ public class PatientSummaryService {
      */
     public void recompute(long patientId, Long triggeredBy) {
         mapper.upsertRecompute(patientId, triggeredBy);
+        followup.recompute(patientId, triggeredBy);
+    }
+
+    /** 仅供导入按写数回滚时定位要刷新的已有患者。 */
+    public Long patientOfImportedRecord(long recordId) {
+        return mapper.recordPatientId(recordId);
     }
 
     /**

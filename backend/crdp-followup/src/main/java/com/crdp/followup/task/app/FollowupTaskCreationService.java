@@ -53,7 +53,8 @@ import org.springframework.stereotype.Service;
  *       那次随访起循环，更换器械后入组结束、循环随之结束；常规随访同理按上次随访滚动，无随访时首次回落起算日期且与固定节点计划日重合时抑制（OQ-139②）；
  *   <li>医生指定下次随访日期（E21-T08 / C-FU-005，OQ-141）：fu_enrollment.doctor_next_date（E21-T06 随记录提交登记）
  *       作为「下一次任务」的计划日期，窗口按目标节点的宽度围绕该日期展开、开启日照常创建；优先级 医生指定 → ERI 期循环 → 计划默认， 只影响紧接着的下一次——任务创建或既有
- *       PENDING 任务重排后清理已用值（OQ-138③），滚动循环随后从医生日期起继续； 目标次数已按默认日期建过时重排而非跳过（非 PENDING 落空，登记照清）。
+ *       PENDING 任务重排后清理已用值（OQ-138③），滚动循环随后从医生日期起继续； 目标次数已按默认日期建过时重排而非跳过（非 PENDING /
+ *       已联系或上下文变化时冲突，原指令保留）。
  * </ul>
  *
  * <p>{@link #initializeForNewEnrollment}（E14-T05）：入组当天同步创建补录（BACKFILL）与当期（NORMAL）任务，
@@ -90,6 +91,7 @@ public class FollowupTaskCreationService {
     private final AuditLogger audit;
     private final JdbcTemplate jdbc;
     private final FollowupTaskStatusService statusService;
+    private final com.crdp.followup.plan.app.CurrentDeviceScheduleService schedule;
 
     public FollowupTaskCreationService(
             JobScheduler jobScheduler,
@@ -98,7 +100,9 @@ public class FollowupTaskCreationService {
             OutboxPublisher outbox,
             AuditLogger audit,
             JdbcTemplate jdbc,
-            FollowupTaskStatusService statusService) {
+            FollowupTaskStatusService statusService,
+            com.crdp.followup.plan.app.CurrentDeviceScheduleService schedule) {
+        this.schedule = schedule;
         this.jobScheduler = jobScheduler;
         this.taskMapper = taskMapper;
         this.planMapper = planMapper;
@@ -275,6 +279,21 @@ public class FollowupTaskCreationService {
             LocalDate logicalDate,
             LocalDate resumePausedFrom,
             boolean atEnrollment) {
+        return schedule.inEnrollmentTransaction(
+                enrollment.id(),
+                enrollment.patientId(),
+                () -> initializeLocked(enrollment, logicalDate, resumePausedFrom, atEnrollment));
+    }
+
+    private CreationCounts initializeLocked(
+            FollowupTaskMapper.EnrollmentRow enrollment,
+            LocalDate logicalDate,
+            LocalDate resumePausedFrom,
+            boolean atEnrollment) {
+        // 每次排期前校正派生事实，旧单调快照也能在部署后自然修正，不猜测历史日期。
+        schedule.refresh(enrollment.patientId());
+        enrollment = schedule.currentEnrollment(enrollment);
+        if (enrollment == null) return new CreationCounts(0, 0, 0);
         LocalDate startDate =
                 enrollment.startDate() != null
                         ? enrollment.startDate()
@@ -297,15 +316,6 @@ public class FollowupTaskCreationService {
                         : null;
         List<TaskCreationPlanner.NodeDef> defs = nodeDefs(rows);
         TaskCreationPlanner.LoopBasis loopBasis = loopBasisOf(enrollment.id(), defs);
-        LocalDate doctorNextDate = null;
-        if (!atEnrollment) { // 新入组行 doctor_next_date 恒 NULL（E21-T06 登记只落在既有入组）
-            if (enrollment.doctorNextDate() != null) {
-                doctorNextDate =
-                        enrollment.doctorNextDate(); // 每日调度行随 findSchedulableEnrollments 带出
-            } else if (resumePausedFrom != null) {
-                doctorNextDate = taskMapper.findDoctorNextDate(enrollment.id()); // 恢复补偿合成行
-            }
-        }
         PlanResult result;
         if (resumePausedFrom != null) {
             result =
@@ -317,7 +327,7 @@ public class FollowupTaskCreationService {
                             resumePausedFrom,
                             planEnd,
                             loopBasis,
-                            doctorNextDate);
+                            null);
         } else if (atEnrollment) {
             result =
                     TaskCreationPlanner.planForEnrollment(
@@ -332,8 +342,9 @@ public class FollowupTaskCreationService {
                             enrollment.enrolledOn(),
                             planEnd,
                             loopBasis,
-                            doctorNextDate);
+                            null);
         }
+        result = schedule.apply(enrollment.id(), result, defs, logicalDate, true);
         return createPlannedTasks(enrollment, result, rows, logicalDate);
     }
 
@@ -365,7 +376,7 @@ public class FollowupTaskCreationService {
      * 同上（纯装配，供 {@code StartDateRecalculationService} 的 next 缓存重算共用）：occurrenceRows 按次数升序，
      * 取每节点最后一行为「最新一次」。
      */
-    static TaskCreationPlanner.LoopBasis loopBasis(
+    public static TaskCreationPlanner.LoopBasis loopBasis(
             LocalDate lastVisitDate,
             List<FollowupTaskMapper.TaskOccurrenceRow> occurrenceRows,
             List<Long> rollingNodeIds) {
@@ -468,7 +479,7 @@ public class FollowupTaskCreationService {
             }
             if (task.doctorOverride()) {
                 // 医生指定已生效（OQ-138③ 清理已用值——只影响下一次；清完滚动循环从医生日期起继续）
-                taskMapper.clearDoctorNextDate(enrollment.id());
+                schedule.consume(enrollment.id(), task);
                 log.info(
                         "医生指定下次随访日期已建任务（E21-T08）：enrollment={} node={} occurrence={}"
                                 + " 计划日期={} 窗口={}~{}",
@@ -497,7 +508,7 @@ public class FollowupTaskCreationService {
 
     /**
      * 医生指定覆盖的目标次数已存在（按默认日期创建过）时的重排（E21-T08 / C-FU-005）：PENDING（尚无联系记录）→ 五列日期组按医生日期整体重排（E14-T07
-     * rescheduleTask 同款守卫，窗口围绕医生日期展开）； 非 PENDING（已联系 / 已完成 / 已终态）重排落空——登记同样清理（「只影响下一次」，下一次已不可再改）。
+     * rescheduleTask 同款守卫，窗口围绕医生日期展开）； 非 PENDING（已联系 / 已完成 / 已终态）重排失败明确冲突，原指令保留供医生重新确认。
      * 任务行本身即业务记录，不逐条写审计（与创建同口径）。
      */
     private void rescheduleExistingForDoctor(
@@ -514,7 +525,8 @@ public class FollowupTaskCreationService {
                         task.windowStart(),
                         task.windowEnd(),
                         task.openDate());
-        taskMapper.clearDoctorNextDate(enrollment.id());
+        if (moved != 1) throw com.crdp.followup.plan.app.CurrentDeviceScheduleService.conflict();
+        schedule.consume(enrollment.id(), task);
         log.info(
                 "医生指定下次随访日期重排既有任务（E21-T08）：taskId={} enrollment={} 计划日期={}" + " 窗口={}~{} moved={}",
                 existingId,

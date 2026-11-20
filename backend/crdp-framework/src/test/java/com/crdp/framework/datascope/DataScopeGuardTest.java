@@ -17,6 +17,35 @@ class DataScopeGuardTest {
         return DataScopeGuard.enforce(sql, snapshot, USER_ID, false);
     }
 
+    private static String assigned(String patientAlias) {
+        return "EXISTS (SELECT 1 FROM fu_task crdp_owned_task WHERE crdp_owned_task.patient_id = "
+                + patientAlias
+                + ".id AND crdp_owned_task.assignee_id = 5)";
+    }
+
+    @Test
+    void leftJoinScopeStaysInOnClauseSoTasklessBackfillsSurvive() {
+        String sql =
+                enforce(
+                        "SELECT r.id FROM fu_record r LEFT JOIN fu_task t ON t.id = r.task_id WHERE r.deleted = 0",
+                        ScopeSnapshot.restricted(List.of(3L), List.of(), false));
+        int where = sql.indexOf(" WHERE r.deleted");
+        assertTrue(sql.substring(0, where).contains("crdp_p.id = t.patient_id"));
+        assertFalse(sql.substring(where).contains("t.patient_id"));
+        assertTrue(sql.substring(where).contains("crdp_p.id = r.patient_id"));
+    }
+
+    @Test
+    void assignedPatientBranchSurvivesPatientAndEnrollmentJoins() {
+        String sql =
+                enforce(
+                        "SELECT t.id FROM fu_task t JOIN pt_patient p ON p.id=t.patient_id LEFT JOIN fu_enrollment e ON e.id=t.enrollment_id WHERE t.assignee_id=5",
+                        ScopeSnapshot.restricted(List.of(), List.of(), true));
+        assertTrue(sql.contains(assigned("p")));
+        assertTrue(sql.contains(assigned("crdp_p")));
+        assertFalse(sql.contains("WHERE t.assignee_id = 5 AND p.responsible_user_id = 5"));
+    }
+
     @Test
     void leavesUncontrolledTablesAlone() {
         String sql = "SELECT id FROM sys_user WHERE username = ?";
@@ -113,7 +142,9 @@ class DataScopeGuardTest {
         String rewritten = enforce("SELECT p.id FROM pt_patient p", scope);
         assertEquals(
                 "SELECT p.id FROM pt_patient p"
-                        + " WHERE (p.ward_id IN (3) OR p.dept_id IN (11) OR p.responsible_user_id = 5)",
+                        + " WHERE (p.ward_id IN (3) OR p.dept_id IN (11) OR p.responsible_user_id = 5 OR "
+                        + assigned("p")
+                        + ")",
                 rewritten);
     }
 
@@ -127,6 +158,8 @@ class DataScopeGuardTest {
                         + " AND EXISTS (SELECT 1 FROM pt_patient crdp_p WHERE crdp_p.id = t.patient_id"
                         + " AND crdp_p.deleted = 0"
                         + " AND (crdp_p.ward_id IN (3, 7) OR crdp_p.responsible_user_id = 5"
+                        + " OR "
+                        + assigned("crdp_p")
                         + " OR t.assignee_id = 5))",
                 rewritten);
     }
@@ -140,7 +173,9 @@ class DataScopeGuardTest {
                 "SELECT row_no FROM imp_row r"
                         + " WHERE EXISTS (SELECT 1 FROM pt_patient crdp_p WHERE crdp_p.id = r.patient_id"
                         + " AND crdp_p.deleted = 0"
-                        + " AND (crdp_p.ward_id IN (3) OR crdp_p.responsible_user_id = 5))",
+                        + " AND (crdp_p.ward_id IN (3) OR crdp_p.responsible_user_id = 5 OR "
+                        + assigned("crdp_p")
+                        + "))",
                 rewritten);
     }
 
@@ -166,7 +201,9 @@ class DataScopeGuardTest {
         assertEquals(
                 "SELECT id FROM pt_patient p"
                         + " WHERE (p.ward_id IN (3, 7, 9) OR p.dept_id IN (11, 12)"
-                        + " OR p.responsible_user_id = 5)",
+                        + " OR p.responsible_user_id = 5 OR "
+                        + assigned("p")
+                        + ")",
                 rewritten);
     }
 
@@ -176,7 +213,10 @@ class DataScopeGuardTest {
         ScopeSnapshot scope = ScopeSnapshot.restricted(List.of(), List.of(), true);
         String rewritten = enforce("SELECT id FROM pt_patient", scope);
         assertEquals(
-                "SELECT id FROM pt_patient WHERE pt_patient.responsible_user_id = 5", rewritten);
+                "SELECT id FROM pt_patient WHERE (pt_patient.responsible_user_id = 5 OR "
+                        + assigned("pt_patient")
+                        + ")",
+                rewritten);
     }
 
     /** 患者表与子表同场：患者直接条件 + 子表 EXISTS，两者 AND（更严不放宽）。 */

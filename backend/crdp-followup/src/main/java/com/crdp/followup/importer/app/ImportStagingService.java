@@ -26,6 +26,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
 /**
@@ -107,9 +108,6 @@ public class ImportStagingService {
         if (safe.fileName() == null || safe.fileName().isBlank()) {
             throw new ApiException(400, 40001, "上传文件名不能为空");
         }
-        if (staging.countActive(ImportStagingMapper.ACTIVE_STATUSES) > 0) {
-            throw new ApiException(409, 40901, "同一租户同一时间只允许一个导入作业，已有运行中的作业");
-        }
         JobInsert row =
                 new JobInsert(
                         safe.fileName().strip(),
@@ -117,7 +115,12 @@ public class ImportStagingService {
                         safe.sha256(),
                         operatorId,
                         operatorName);
-        staging.insertJob(row);
+        try {
+            // V140 生成列唯一约束负责互斥，不能以先 COUNT 后 INSERT 作为并发闸门。
+            staging.insertJob(row);
+        } catch (DuplicateKeyException conflict) {
+            throw new ApiException(409, 40901, "同一租户同一时间只允许一个导入作业，已有运行中的作业");
+        }
         return row.getId();
     }
 

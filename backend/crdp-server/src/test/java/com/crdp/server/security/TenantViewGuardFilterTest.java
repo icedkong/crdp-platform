@@ -492,13 +492,40 @@ class TenantViewGuardFilterTest {
     }
 
     @Test
+    void registrationCorrectionIsDeniedBeforeProxyPayloadCollection() throws Exception {
+        login(viewSession());
+        for (String path :
+                List.of(
+                        "/api/hospital/followup/patients/9",
+                        "/api/hospital/followup/patients/9/identity",
+                        "/api/hospital/followup/patients/-1/identity",
+                        "/api/hospital/followup/patients/9/identity/",
+                        "/api/hospital/followup/patients/9/identity;source=test")) {
+            registered("PUT", path, "followup:patient:correct", "followup");
+            var request = request("PUT", path);
+            request.setContent(
+                    "{\"changes\":{\"name\":\"纠错姓名（示例）\"}}"
+                            .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            var response = new MockHttpServletResponse();
+            filter.doFilter(
+                    request,
+                    response,
+                    (req, res) -> {
+                        throw new AssertionError("不应进入载荷采集或业务处理器");
+                    });
+        }
+        org.mockito.Mockito.verifyNoInteractions(proxy);
+        verify(errors, org.mockito.Mockito.times(5)).write(any(), eq(403), eq(40303), anyString());
+    }
+
+    @Test
     void releasedBusinessWriteAuditsProxyEdit() throws Exception {
         login(viewSession());
-        registered("PUT", "/api/hospital/followup/patients/9", "followup:patient:edit", "followup");
-        when(proxy.releaseAction(any(), eq(WriteClass.BUSINESS), eq("followup"), eq("patient")))
+        registered("PUT", "/api/hospital/followup/records/9", "followup:record:edit", "followup");
+        when(proxy.releaseAction(any(), eq(WriteClass.BUSINESS), eq("followup"), eq("record")))
                 .thenReturn(TenantViewProxyService.ACTION_PROXY_EDIT);
 
-        MockHttpServletRequest request = request("PUT", "/api/hospital/followup/patients/9");
+        MockHttpServletRequest request = request("PUT", "/api/hospital/followup/records/9");
         request.addHeader(TenantViewProxyService.REASON_HEADER, "排障修正录入（示例）");
         request.setContentType("application/json");
         request.setContent("{}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -525,9 +552,9 @@ class TenantViewGuardFilterTest {
                 .recordProxy(
                         any(),
                         eq("PUT"),
-                        eq("/api/hospital/followup/patients/9"),
+                        eq("/api/hospital/followup/records/9"),
                         eq(TenantViewProxyService.ACTION_PROXY_EDIT),
-                        eq("patient"),
+                        eq("record"),
                         eq("9"),
                         eq("排障修正录入（示例）"),
                         isNull(),

@@ -244,6 +244,10 @@ class CDashboardCardsIT {
     @Test
     void deviceDistCountsActivePatientsByTypeWithBrandSplit() {
         String admin = adminToken();
+        // 本地库可已有其他示例患者，按本用例新增量核对，不删除或改变其他数据。
+        Map<?, ?> baseline = data(get("/api/hospital/followup/dashboard/cards/device_dist", admin));
+        long baselineActive = ((Number) baseline.get("followedCount")).longValue();
+        Map<String, Map<?, ?>> baselineRows = rowsByLabel(baseline);
         LocalDate implant = LocalDate.now().minusMonths(6);
         registerPatient(admin, "21", "DDD", "MEDTRONIC", implant);
         registerPatient(admin, "22", "DDD", "ABBOTT", implant);
@@ -264,21 +268,36 @@ class CDashboardCardsIT {
 
         Map<?, ?> dist = data(get("/api/hospital/followup/dashboard/cards/device_dist", admin));
 
-        assertEquals(4L, ((Number) dist.get("followedCount")).longValue(), "分母 = 在随访患者数");
+        assertEquals(
+                baselineActive + 4L,
+                ((Number) dist.get("followedCount")).longValue(),
+                "分母 = 在随访患者数");
         Map<String, Map<?, ?>> rows = rowsByLabel(dist);
         // DDD 三名患者之一已取出器械：在用两名（美敦力 / 雅培各一），取出者归「未登记在用器械」
-        assertEquals(2L, countOf(rows.get("双腔起搏器(DDD)")));
+        assertEquals(countOf(baselineRows.get("双腔起搏器(DDD)")) + 2L, countOf(rows.get("双腔起搏器(DDD)")));
         assertEquals(
-                List.of("美敦力 ×1", "雅培 ×1"),
-                brandTexts(rows.get("双腔起搏器(DDD)")),
-                "品牌拆分按字典序（可按品牌拆分，C-DASH-002）");
-        assertEquals(1L, countOf(rows.get("单腔起搏器(SSI)")));
-        assertEquals(1L, countOf(rows.get("未登记在用器械")), "无在用器械患者归占位行");
+                brandCount(baselineRows.get("双腔起搏器(DDD)"), "美敦力") + 1L,
+                brandCount(rows.get("双腔起搏器(DDD)"), "美敦力"));
+        assertEquals(
+                brandCount(baselineRows.get("双腔起搏器(DDD)"), "雅培") + 1L,
+                brandCount(rows.get("双腔起搏器(DDD)"), "雅培"));
+        if (baselineRows.get("双腔起搏器(DDD)") == null) {
+            assertEquals(
+                    List.of("美敦力 ×1", "雅培 ×1"), brandTexts(rows.get("双腔起搏器(DDD)")), "品牌拆分按字典序");
+        }
+        assertEquals(countOf(baselineRows.get("单腔起搏器(SSI)")) + 1L, countOf(rows.get("单腔起搏器(SSI)")));
+        assertEquals(
+                countOf(baselineRows.get("未登记在用器械")) + 1L,
+                countOf(rows.get("未登记在用器械")),
+                "无在用器械患者归占位行");
 
         // 一个口径一个查询：分母 = 指标卡「在随访患者数」（implant 开 → C 指标集）
         Map<?, ?> kpi = data(get("/api/hospital/followup/dashboard/cards/kpi", admin));
         assertEquals("C", kpi.get("style"));
-        assertEquals(4L, number(metric(kpi, "active")), "device_dist 分母与指标卡「在随访患者数」同条件树");
+        assertEquals(
+                baselineActive + 4L,
+                number(metric(kpi, "active")),
+                "device_dist 分母与指标卡「在随访患者数」同条件树");
     }
 
     // ---------------------------------------------------------------- C-DASH-005 接近 ERI 器械列表
@@ -558,6 +577,15 @@ class CDashboardCardsIT {
 
     private static long countOf(Map<?, ?> row) {
         return row == null ? 0 : ((Number) row.get("count")).longValue();
+    }
+
+    private static long brandCount(Map<?, ?> row, String label) {
+        if (row == null) return 0;
+        for (Object value : (List<?>) row.get("brands")) {
+            Map<?, ?> brand = (Map<?, ?>) value;
+            if (label.equals(brand.get("label"))) return ((Number) brand.get("count")).longValue();
+        }
+        return 0;
     }
 
     private static List<String> brandTexts(Map<?, ?> row) {

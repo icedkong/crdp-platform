@@ -67,6 +67,7 @@ export {
   validateFormData,
   type ValidationRange,
 } from './form-validation';
+export { copyFormValue, sameFormValue } from './form-value';
 export { hasPermission } from './has-permission';
 export { resolveLoginRedirect } from './login-redirect';
 export {
@@ -74,6 +75,7 @@ export {
   permissionVersionChanged,
   shouldRefreshPermissions,
 } from './permission-refresh';
+
 export {
   addDateUnit,
   computeNodeSchedule,

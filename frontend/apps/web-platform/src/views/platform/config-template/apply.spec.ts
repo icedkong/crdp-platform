@@ -1,34 +1,17 @@
-import type { ConfigTableMeta, TenantListItem } from '@crdp/api';
+import type { TenantListItem } from '@crdp/api';
+
+import type { LoadedConfigPreview } from './apply';
 
 import { describe, expect, it } from 'vitest';
 
 import {
   applyResultSummaryText,
+  canSubmitConfigPreview,
   IMPORT_RULE_NOTES,
-  importActionOf,
-  previewSummary,
-  previewSummaryText,
-  tablePreview,
-  tablePreviews,
   targetTenantOptions,
   toApplyFormModel,
   validateApplyModel,
 } from './apply';
-
-function section(overrides: Partial<ConfigTableMeta> = {}): ConfigTableMeta {
-  return {
-    category: '字段字典与表单',
-    columns: ['id', 'code'],
-    excludedRowCount: 0,
-    mode: 'COPY',
-    module: 'followup',
-    present: true,
-    rowCount: 10,
-    sourceRowCount: 10,
-    table: 'fe_field',
-    ...overrides,
-  };
-}
 
 function tenant(overrides: Partial<TenantListItem> = {}): TenantListItem {
   return {
@@ -46,78 +29,6 @@ function tenant(overrides: Partial<TenantListItem> = {}): TenantListItem {
     ...overrides,
   };
 }
-
-describe('e12-T04 导入前预览推演（验收：导入前预览差异）', () => {
-  it('按导入口径推演单表动作：COPY 且 present → 导入；STRUCTURE_ONLY → 只复制结构；空节 → 跳过', () => {
-    expect(importActionOf(section())).toBe('IMPORT');
-    expect(
-      importActionOf(section({ mode: 'STRUCTURE_ONLY', rowCount: 0 })),
-    ).toBe('SKIP_STRUCTURE');
-    expect(importActionOf(section({ present: false, rowCount: 0 }))).toBe(
-      'SKIP_ABSENT',
-    );
-  });
-
-  it('单表预览行：导入行说明行数与合并口径；跳过行给出原因', () => {
-    const importRow = tablePreview(section({ rowCount: 42 }));
-    expect(importRow.actionText).toBe(
-      '将导入 42 行：与目标自然键相同的行被包值覆盖（合并），其余新增',
-    );
-    expect(importRow.tone).toBe('import');
-    expect(importRow.modeText).toBe('复制');
-
-    const structureRow = tablePreview(
-      section({ mode: 'STRUCTURE_ONLY', table: 'ward', rowCount: 0 }),
-    );
-    expect(structureRow.tone).toBe('skip');
-    expect(structureRow.actionText).toContain('只复制结构');
-    expect(structureRow.modeText).toBe('只复制结构');
-
-    const absentRow = tablePreview(
-      section({ present: false, rowCount: 0, module: 'followup' }),
-    );
-    expect(absentRow.actionText).toContain('空节');
-  });
-
-  it('预览汇总：只统计会写入的表；全部不写入时结论另有文案', () => {
-    const summary = previewSummary([
-      section({ rowCount: 40 }),
-      section({ rowCount: 2 }),
-      section({ mode: 'STRUCTURE_ONLY', rowCount: 0 }),
-      section({ present: false, rowCount: 0 }),
-    ]);
-    expect(summary).toEqual({ importRows: 42, importTables: 2, skipTables: 2 });
-    expect(previewSummaryText(summary)).toBe(
-      '将向目标租户写入 2 张配置表、共 42 行；其余 2 张表不写入（只复制结构或空节）。',
-    );
-
-    const empty = previewSummary([
-      section({ mode: 'STRUCTURE_ONLY', rowCount: 0 }),
-    ]);
-    expect(previewSummaryText(empty)).toBe(
-      '本包没有会写入目标租户的配置行（全部为只复制结构或空节）。',
-    );
-  });
-
-  it('tablePreviews 按包内顺序逐表输出预览行', () => {
-    const rows = tablePreviews([
-      section({ table: 'a' }),
-      section({ table: 'b', mode: 'STRUCTURE_ONLY', rowCount: 0 }),
-    ]);
-    expect(rows.map((row) => row.table)).toEqual(['a', 'b']);
-    expect(rows.map((row) => row.tone)).toEqual(['import', 'skip']);
-  });
-
-  it('导入口径提示覆盖合并语义、整组替换、交集、置空与权限版本递增', () => {
-    const text = IMPORT_RULE_NOTES.join('\n');
-    expect(text).toContain('源值覆盖');
-    expect(text).toContain('整组替换');
-    expect(text).toContain('取交集');
-    expect(text).toContain('置空');
-    expect(text).toContain('权限版本递增');
-    expect(text).toContain('以应用结果为准');
-  });
-});
 
 describe('e12-T04 目标租户选项与确认校验', () => {
   const tenants = [
@@ -161,5 +72,57 @@ describe('e12-T04 目标租户选项与确认校验', () => {
         skippedRows: 5,
       }),
     ).toBe('已应用：新增 100 行、覆盖 20 行、跳过 5 行、丢弃 3 行。');
+  });
+});
+
+describe('oqr-02 预检绑定与重新确认', () => {
+  const preview: LoadedConfigPreview = {
+    applicable: true,
+    changes: [],
+    mode: 'UPDATE',
+    planHash: 'example-hash',
+    tables: [],
+    templateId: 9,
+    tenantId: 2,
+  };
+  it('未确认、预检失败或冲突时禁止提交', () => {
+    expect(
+      canSubmitConfigPreview({ confirmed: false, tenantId: 2 }, preview, 9),
+    ).toBe(false);
+    expect(
+      canSubmitConfigPreview({ confirmed: true, tenantId: 2 }, null, 9),
+    ).toBe(false);
+    expect(
+      canSubmitConfigPreview(
+        { confirmed: true, tenantId: 2 },
+        { ...preview, applicable: false },
+        9,
+      ),
+    ).toBe(false);
+    expect(
+      canSubmitConfigPreview(
+        { confirmed: true, tenantId: 2 },
+        { ...preview, planHash: '' },
+        9,
+      ),
+    ).toBe(false);
+  });
+  it('目标或模板切换后不能提交旧预检', () => {
+    expect(
+      canSubmitConfigPreview({ confirmed: true, tenantId: 3 }, preview, 9),
+    ).toBe(false);
+    expect(
+      canSubmitConfigPreview({ confirmed: true, tenantId: 2 }, preview, 10),
+    ).toBe(false);
+    expect(
+      canSubmitConfigPreview({ confirmed: true, tenantId: 2 }, preview, 9),
+    ).toBe(true);
+  });
+  it('提示实际差异和旧版保护', () => {
+    const text = IMPORT_RULE_NOTES.join('\n');
+    expect(text).toContain('逐行显示');
+    expect(text).toContain('未发布的新版本');
+    expect(text).toContain('重新预览');
+    expect(text).not.toContain('整组替换');
   });
 });

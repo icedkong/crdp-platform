@@ -45,6 +45,7 @@ import org.springframework.stereotype.Service;
  * 按当前数据实时计算（A 规格 §9「统计时点」；60s 缓存随 E19-T08 / OQ-107① 落地，OQ-110①）。
  */
 @Service
+@org.springframework.transaction.annotation.Transactional(readOnly = true)
 public class CompletenessStatsService {
 
     /** 基线表单编码（A_BASELINE，分类 1–8；与 BaselineSectionService 同源）。 */
@@ -82,7 +83,7 @@ public class CompletenessStatsService {
             String timeField,
             Integer year) {}
 
-    /** 患者类型候选（范围内 DISTINCT 值；label = 编码，OQ-110⑤）。 */
+    /** 患者类型候选（范围内 DISTINCT 值；业务只读字典标签，未知旧码回落编码，OQ-110⑤）。 */
     public record PatientTypeOptionView(String code, String label) {}
 
     /** 随访年度候选（值 = 年度 N，label 带「第 N 年」）。 */
@@ -207,6 +208,16 @@ public class CompletenessStatsService {
                 .toList();
     }
 
+    public List<Long> baselinePatientIds(Query query) {
+        var safe = sanitizeBaseline(query);
+        return mapper.selectBaselinePatientIds(
+                safe.wardId(),
+                safe.patientType(),
+                BASELINE_DATE_COLUMNS.get(safe.timeField()),
+                safe.from(),
+                safe.to());
+    }
+
     /** 基线各单位字段进度（患者全集与分节数据同一棵条件树加载、按键合并；未保存过分节 = 空表单 → 全缺失）。 */
     private List<UnitFields> baselineUnits(List<Long> patients, Query query) {
         if (patients.isEmpty()) {
@@ -327,6 +338,40 @@ public class CompletenessStatsService {
             patients.add(Long.valueOf(unitKey));
         }
         return List.copyOf(patients);
+    }
+
+    public record RecordReference(long patientId, long recordId, int year) {}
+
+    public List<RecordReference> followupReferences(Query query) {
+        var safe = sanitizeFollowup(query);
+        return loadAnnualRecords(safe).stream()
+                .filter(r -> safe.year() == null || Objects.equals(r.followupYear(), safe.year()))
+                .map(r -> new RecordReference(r.patientId(), r.recordId(), r.followupYear()))
+                .toList();
+    }
+
+    /** 与 topMissing 相同的记录单位，不按患者去重；带年度 / 记录定位。 */
+    public List<RecordReference> recordsMissingFollowupField(String fieldKey, Query query) {
+        if (fieldKey == null || fieldKey.isBlank())
+            throw new ApiException(400, 40001, "fieldKey 不合法");
+        var safe = sanitizeFollowup(query);
+        var records =
+                loadAnnualRecords(safe).stream()
+                        .filter(
+                                r ->
+                                        safe.year() == null
+                                                || Objects.equals(safe.year(), r.followupYear()))
+                        .toList();
+        var units = recordUnits(records);
+        List<RecordReference> result = new ArrayList<>();
+        for (int i = 0; i < records.size(); i++)
+            if (!missingUnitKeys(List.of(units.get(i)), fieldKey).isEmpty()) {
+                var record = records.get(i);
+                result.add(
+                        new RecordReference(
+                                record.patientId(), record.recordId(), record.followupYear()));
+            }
+        return result;
     }
 
     /** 随访记录单位（按 (formCode, templateVersion) 分组批量求值——版本字段每版本只查一次）。 */
@@ -472,8 +517,20 @@ public class CompletenessStatsService {
     }
 
     private List<PatientTypeOptionView> patientTypeOptions() {
+        Map<String, String> labels = new HashMap<>();
+        // 表单引擎通过业务只读字典端口装配选项，不要求医生拥有字典管理权限。
+        var schema = formService.schema("PT_REG_A", null);
+        if (schema != null)
+            for (var c : schema.categories())
+                for (var f : c.fields())
+                    if ("patientType".equals(f.code()) && f.optionSet() != null)
+                        f.optionSet().forEach(o -> labels.put(String.valueOf(o.code()), o.label()));
         return mapper.selectPatientTypes().stream()
-                .map(row -> new PatientTypeOptionView(row.patientType(), row.patientType()))
+                .map(
+                        row ->
+                                new PatientTypeOptionView(
+                                        row.patientType(),
+                                        labels.getOrDefault(row.patientType(), row.patientType())))
                 .toList();
     }
 

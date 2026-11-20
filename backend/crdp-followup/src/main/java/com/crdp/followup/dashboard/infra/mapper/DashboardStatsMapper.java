@@ -43,28 +43,6 @@ public interface DashboardStatsMapper {
             """)
     List<PatientStatusCountRow> countPatientsByStatus(@Param("wardId") Long wardId);
 
-    /**
-     * 本月应随访（A-DASH-001 口径「计划日期在本月的年度随访数，按在组患者的下次计划日期实时计算」）： 计划日期落在 [from, to] 的常规随访任务（occurrence
-     * &gt; 0 且 followup_seq = 0，排除跟进 / 临时任务）， 入组仍在组（ACTIVE / PAUSED；已移除不计）。窗口开启日不晚于计划日期（fu_task
-     * 窗口口径），本月计划日期的任务已由每日作业或入组即建落库， 窗口未结束前始终在册；「任务尚未创建」的未来次数只影响以后月份（暂行口径见 OQ-107）。
-     */
-    @DataScope(resource = "patient")
-    @Select(
-            """
-            <script>
-            SELECT COUNT(*)
-            FROM fu_task t
-            JOIN fu_enrollment e ON e.id = t.enrollment_id
-                AND e.status IN ('ACTIVE', 'PAUSED')
-            JOIN pt_patient p ON p.id = t.patient_id AND p.deleted = 0
-            WHERE t.occurrence &gt; 0 AND t.followup_seq = 0
-              AND t.plan_date &gt;= #{from} AND t.plan_date &lt;= #{to}
-            <if test="wardId != null">AND p.ward_id = #{wardId}</if>
-            </script>
-            """)
-    long countMonthDue(
-            @Param("from") LocalDate from, @Param("to") LocalDate to, @Param("wardId") Long wardId);
-
     /** 按任务状态计数（当前逾期 = OVERDUE、C 的当前待随访 = PENDING；与任务列表 status 筛选同条件树， 钻取数字一致）。 */
     @DataScope(resource = "patient")
     @Select(
@@ -80,9 +58,8 @@ public interface DashboardStatsMapper {
     long countTasksByStatus(@Param("status") String status, @Param("wardId") Long wardId);
 
     /**
-     * 近 N 天含标红参数的已提交随访记录数（C-DASH-001；标红命中由 E17-T04 复算落在 fu_record.highlight）。 「近 N 天提交」以 updated_at
-     * 近似（提交 / 重算都会触碰该列；fu_record 无独立提交时间列，OQ-107）；软删行不在册（deleted = 0，V87—— 与 abnormal_records
-     * 卡片列表行同一条件树，E21-T19）。
+     * 近 N 天首次提交的标红记录数（OQR-05A）。首次提交时间未知不计入日期窗口； 与 abnormal_records 明细共用
+     * first_submitted_at、状态、软删与数据范围口径。
      */
     @DataScope(resource = "patient")
     @Select(
@@ -92,12 +69,26 @@ public interface DashboardStatsMapper {
             FROM fu_record r
             JOIN pt_patient p ON p.id = r.patient_id AND p.deleted = 0
             WHERE r.status = 'SUBMITTED' AND r.deleted = 0 AND r.highlight IS NOT NULL
-              AND r.updated_at &gt;= #{since}
+              AND r.first_submitted_at &gt;= #{since}
             <if test="wardId != null">AND p.ward_id = #{wardId}</if>
             </script>
             """)
     long countRecentHighlightRecords(
             @Param("since") LocalDateTime since, @Param("wardId") Long wardId);
+
+    /** 无法还原首次提交时间的标红记录，仅按当前范围计数，不归入任何日期窗口。 */
+    @DataScope(resource = "patient")
+    @Select(
+            """
+            <script>
+            SELECT COUNT(*) FROM fu_record r
+            JOIN pt_patient p ON p.id = r.patient_id AND p.deleted = 0
+            WHERE r.status = 'SUBMITTED' AND r.deleted = 0 AND r.highlight IS NOT NULL
+              AND r.first_submitted_at IS NULL
+            <if test="wardId != null">AND p.ward_id = #{wardId}</if>
+            </script>
+            """)
+    long countUnknownHighlightSubmissionTimes(@Param("wardId") Long wardId);
 
     /**
      * 按电子化状态计数的在册报告单数（E21-T15 / C-SCAN-011：C 指标「待录入扫描件数」= status = 'PENDING'）： 条件与全院报告单检索

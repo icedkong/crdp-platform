@@ -110,7 +110,7 @@ public interface ImportStagingMapper {
     @Options(useGeneratedKeys = true, keyProperty = "id", keyColumn = "id")
     int insertJob(JobInsert row);
 
-    /** 活跃作业数（0 = 可建新作业；导入频率低 + 上传端点串行派发，检查-插入足够）。 */
+    /** 活跃作业数（仅供观测；互斥由 V140 的 uk_imp_job_active_slot 保证，不能据此先查再写）。 */
     @Select(
             "<script>SELECT COUNT(*) FROM imp_job WHERE status IN ("
                     + " <foreach collection='statuses' item='s' separator=','>#{s}</foreach>)</script>")

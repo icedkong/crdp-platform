@@ -500,6 +500,9 @@ class ImportStagingServiceTest {
 
         @Override
         public int insertJob(JobInsert row) {
+            if (countActive(ImportStagingMapper.ACTIVE_STATUSES) > 0) {
+                throw new org.springframework.dao.DuplicateKeyException("uk_imp_job_active_slot");
+            }
             sequence += 1;
             row.setId(sequence);
             MutableJob job = new MutableJob();

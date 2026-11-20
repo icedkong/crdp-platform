@@ -1,8 +1,6 @@
 /**
- * E10-T04：pdf.js 与 docx-preview 渲染（懒加载——只有真的预览 PDF / DOCX 才打包进对应入口； tech-plan §2 前端选型）。
- *
- * 内容一律来自预览代理短时链接（E10-T04 后端 `/api/hospital/files/preview/{token}`， 不缓存）；渲染失败时调用方展示下载兜底。
- * pdf.js worker 用 `?url` 由 Vite 产出独立资源地址（不引 CDN、不内联）。
+ * 服务器水印 PDF 的懒加载渲染器。输入为鉴权获取的临时内存地址，DOCX 预览也已由服务器转换为 PDF。
+ * pdf.js worker 由 Vite 打包，不使用外部 CDN；失败交由调用方显示提示，下载仍需独立权限。
  */
 
 export async function renderPdfDocument(
@@ -38,21 +36,10 @@ export async function renderPdfDocument(
   }
 }
 
+/** DOCX 的服务端预览已转换为水印 PDF；不在浏览器解析原始 DOCX。 */
 export async function renderDocxDocument(
   container: HTMLElement,
   url: string,
 ): Promise<void> {
-  const [{ renderAsync }, response] = await Promise.all([
-    import('docx-preview'),
-    fetch(url),
-  ]);
-  if (!response.ok) {
-    throw new Error(`docx preview fetch failed: ${response.status}`);
-  }
-  const buffer = await response.arrayBuffer();
-  container.replaceChildren();
-  await renderAsync(buffer, container, undefined, {
-    breakPages: true,
-    inWrapper: true,
-  });
+  await renderPdfDocument(container, url);
 }

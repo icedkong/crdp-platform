@@ -49,6 +49,10 @@ class H5UploadTokenFilterTest {
     private final TenantLookupCache tenantLookup = mock(TenantLookupCache.class);
     private final DeniedOperationLogger denied = mock(DeniedOperationLogger.class);
 
+    private final com.crdp.framework.security.PermissionVersionStore versions =
+            mock(com.crdp.framework.security.PermissionVersionStore.class);
+    private final com.crdp.framework.security.SessionRefresher refresher =
+            mock(com.crdp.framework.security.SessionRefresher.class);
     private H5UploadTokenFilter filter;
 
     /** 最近一次 run() 的响应（每次新建，避免多次执行之间状态残留）。 */
@@ -63,7 +67,9 @@ class H5UploadTokenFilterTest {
                         mapper,
                         tenantLookup,
                         new ApiErrorWriter(new com.fasterxml.jackson.databind.ObjectMapper()),
-                        denied);
+                        denied,
+                        versions,
+                        refresher);
         SecurityContextHolder.clearContext();
         TenantContext.clear();
         lenient().when(mapper.findLoginRequired()).thenReturn(false);
@@ -76,6 +82,26 @@ class H5UploadTokenFilterTest {
     void cleanup() {
         SecurityContextHolder.clearContext();
         TenantContext.clear();
+    }
+
+    @Test
+    void h5RequestRefreshesRevokedIssuerPermissionsWithoutDesktopTraffic() throws Exception {
+        when(tokens.find("tok-1")).thenReturn(pending(null));
+        when(versions.current(any())).thenReturn(Long.MAX_VALUE);
+        when(refresher.refresh(any())).thenReturn(Optional.of(issuer(List.of(), false)));
+        run("POST", "/api/h5/upload/tok-1/files");
+        assertEquals(403, response.getStatus());
+        verify(sessions).save(any());
+    }
+
+    @Test
+    void revokedIssuerAccountInvalidatesQrCode() throws Exception {
+        when(tokens.find("tok-1")).thenReturn(pending(null));
+        when(versions.current(any())).thenReturn(Long.MAX_VALUE);
+        when(refresher.refresh(any())).thenReturn(Optional.empty());
+        run("GET", "/api/h5/upload/tok-1");
+        assertNull(SecurityContextHolder.getContext().getAuthentication());
+        verify(sessions).delete("issuer-token");
     }
 
     @Test

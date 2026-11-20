@@ -26,8 +26,10 @@ import org.springframework.stereotype.Service;
 public class DoctorWorkloadStatsService {
 
     private final DoctorWorkloadMapper mapper;
+    private final MonthlyDueService monthly;
 
-    public DoctorWorkloadStatsService(DoctorWorkloadMapper mapper) {
+    public DoctorWorkloadStatsService(DoctorWorkloadMapper mapper, MonthlyDueService monthly) {
+        this.monthly = monthly;
         this.mapper = mapper;
     }
 
@@ -71,8 +73,7 @@ public class DoctorWorkloadStatsService {
         LocalDate monthStart = today.withDayOfMonth(1);
         LocalDate monthEnd = today.withDayOfMonth(today.lengthOfMonth());
 
-        Map<Long, long[]> monthDue =
-                byDoctor(mapper.countMonthDueByDoctor(monthStart, monthEnd, ward));
+        Map<Long, long[]> monthDue = byDoctor(monthly.doctorRows(monthStart, monthEnd, ward));
         Map<Long, long[]> overdue = byDoctor(mapper.countOverdueByDoctor(ward));
         Map<Long, DoctorWorkloadMapper.DoctorRateRow> rates = new HashMap<>();
         LocalDate asOf = null;
@@ -115,16 +116,18 @@ public class DoctorWorkloadStatsService {
                             new DrillView(
                                     "PATIENT_LIST", merge(doctorQuery, Map.of("status", "ACTIVE"))),
                             new DrillView(
-                                    "TASK_LIST",
+                                    "FOLLOWUP_STATS",
                                     merge(
                                             doctorQuery,
                                             Map.of(
-                                                    "tab",
-                                                    "all",
-                                                    "dueFrom",
+                                                    "kind",
+                                                    "MONTH",
+                                                    "from",
                                                     monthStart.toString(),
-                                                    "dueTo",
-                                                    monthEnd.toString()))),
+                                                    "to",
+                                                    monthEnd.toString(),
+                                                    "wardId",
+                                                    ward == null ? "" : ward))),
                             new DrillView(
                                     "TASK_LIST",
                                     merge(

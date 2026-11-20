@@ -4,7 +4,6 @@ import com.crdp.framework.audit.AuditEntry;
 import com.crdp.framework.audit.AuditLogger;
 import com.crdp.framework.security.CurrentSession;
 import com.crdp.framework.security.PermissionVersionStore;
-import com.crdp.framework.security.SessionPrincipal;
 import com.crdp.framework.tenant.TenantContext;
 import com.crdp.framework.tenant.TenantRoutingDataSource;
 import com.crdp.framework.web.ApiException;
@@ -35,30 +34,13 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * 配置模板导入（E12-T02 / A-FLD-014，验收「导入后引用关系正确」，docs/api/platform.md §7.1）。
+ * 配置模板导入（E12-T02 / OQR-02 / A-FLD-014）。
  *
- * <p>把 {@code ConfigTemplateExportService} 导出的配置包应用到目标租户库（典型：新建租户选择模板初始化，医院 B 由医院 A 模板初始化）：
+ * <p>在用租户更新先只读预检，再在 REPEATABLE_READ 事务中锁定目标配置、校验同一应用计划摘要并执行。
+ * 已有计划及节点不覆盖、不删除；变化导入为新未发布版本。已有表单快照发生冲突则拒绝整包应用。 ID 重映射、授权范围交集、敏感信息拦截及审计沿用既有规则，差异响应不返回配置值。
  *
- * <ul>
- *   <li><b>ID 重映射</b>：每张 COPY 表按自然键 upsert，插入行由目标库自增分配新 ID，逐表维护「源 ID → 目标 ID」映射并改写数值引用列
- *       （sys_role_menu / sys_role_scope / sys_role_field_policy 的 role_id、fe_form_version_field 的
- *       version_id、 fu_plan_node 的 plan_id 与 parent_id 自引用）；引用解析不到目标行的行丢弃并在结果中计数；
- *   <li><b>用户引用置空</b>：created_by / updated_by / published_by 一律置 NULL——账号不随模板复制（A-FLD-014），不留源租户用户
- *       ID 的悬空引用；
- *   <li><b>角色权限取交集</b>：sys_role_menu 的 menu_id 须落在目标租户生效可分配范围（{@code
- *       TenantScopeService.assignableMenuIds}， = base 固定能力 ∪ 模板调整 ∩
- *       已开通模块）内，超出（模块未开通、敏感未放开、菜单不存在）丢弃；
- *   <li><b>合并语义（源值胜，重放幂等）</b>：自然键相同的行用包内值更新；sys_role_menu 取并集（INSERT IGNORE）； fu_plan_node
- *       无自然键，按计划版本整组替换（先删后插），重放不叠加重复节点；
- *   <li><b>整表策略</b>：sys_role_scope_dept 行全部丢弃（sys_dept 组织架构不在 A-FLD-014 复制清单，dept_id 无法重映射）；
- *       STRUCTURE_ONLY（术者、病区 / 中心）与 present=false / 目标库缺表的节跳过。
- * </ul>
- *
- * <p>导入在目标租户库单个事务内执行（全成或全败，不留断链的中间态）；平台库读取（包、租户、可分配范围）全部在事务外完成——事务内只碰目标租户库。导入后递增该租户全部用户的权限版本（角色授权可能变化，在线会话下次请求重算）。写
- * CONFIG_TEMPLATE_APPLY 审计。
- *
- * <p><b>敏感信息拦截（E12-T03）</b>：应用前对包跑 {@link SensitiveConfigChecker}——含患者 / 业务数据表、未标注表、
- * 术者取值或疑似患者敏感值的包直接 40901 拒绝（不进事务），并写失败审计。
+ * <p>新租户开通调用独立 initialize 入口，仅允许 PROVISIONING 状态，保留初始化合并与节点替换语义。
+ * 所有平台库读取在目标库事务外完成；目标事务只访问本租户配置表，成功后递增用户权限版本。
  */
 @Service
 public class ConfigTemplateImportService {
@@ -66,7 +48,19 @@ public class ConfigTemplateImportService {
     private static final ZoneId ZONE = ZoneId.of("Asia/Shanghai");
 
     /** 应用请求：tenantId = 目标租户（不能是模板源租户）。 */
-    public record ApplyRequest(Long tenantId) {}
+    public record ApplyRequest(Long tenantId, String planHash) {
+        public ApplyRequest(Long tenantId) {
+            this(tenantId, null);
+        }
+    }
+
+    /** 真实差异只返回行序号、动作与字段名，不泄露目标配置值。 */
+    public record PreviewView(
+            String planHash,
+            boolean applicable,
+            String mode,
+            List<ConfigImportPlan.Change> changes,
+            List<TableResult> tables) {}
 
     /** 单表导入结果。 */
     public record TableResult(
@@ -127,6 +121,7 @@ public class ConfigTemplateImportService {
         }
     }
 
+    private final com.crdp.framework.crypto.DigestService digest;
     private final JdbcTemplate jdbc;
     private final TenantConfigReader reader;
     private final ConfigTemplateExportService exporter;
@@ -144,7 +139,9 @@ public class ConfigTemplateImportService {
             TenantRoutingDataSource routing,
             AuditLogger audit,
             PermissionVersionStore permissionVersions,
-            PlatformTransactionManager transactionManager) {
+            PlatformTransactionManager transactionManager,
+            com.crdp.framework.crypto.DigestService digest) {
+        this.digest = digest;
         this.jdbc = jdbc;
         this.reader = reader;
         this.exporter = exporter;
@@ -153,13 +150,25 @@ public class ConfigTemplateImportService {
         this.audit = audit;
         this.permissionVersions = permissionVersions;
         this.transactions = new TransactionTemplate(transactionManager);
+        this.transactions.setIsolationLevel(
+                org.springframework.transaction.TransactionDefinition.ISOLATION_REPEATABLE_READ);
     }
 
     // ---------------------------------------------------------------- 应用入口
 
-    /** 把模板 {@code templateId} 应用到目标租户（platform:tenant:create）。 */
+    /** 在用租户更新：必须提交同一预检摘要；只执行锁定目标后仍一致的应用计划。 */
     public AppliedView apply(long templateId, ApplyRequest request) {
-        SessionPrincipal principal = CurrentSession.requirePlatform();
+        return applyInternal(templateId, request, false);
+    }
+
+    /** 仅供开通编排使用，不经公开 apply 接口暴露；仅 PROVISIONING 租户可走旧初始化合并。 */
+    public AppliedView initialize(long templateId, ApplyRequest request) {
+        return applyInternal(templateId, request, true);
+    }
+
+    private AppliedView applyInternal(
+            long templateId, ApplyRequest request, boolean initialization) {
+        CurrentSession.requirePlatform();
         if (request == null || request.tenantId() == null) {
             throw new ApiException(400, 40001, "tenantId 必填");
         }
@@ -167,6 +176,12 @@ public class ConfigTemplateImportService {
         ConfigTemplateExportService.ExportedView head = exporter.headerOf(templateId);
         Map<String, Object> tenant = tenantRow(request.tenantId());
         String tenantCode = String.valueOf(tenant.get("code"));
+        if (initialization && !"PROVISIONING".equals(tenant.get("status"))) {
+            throw new ApiException(409, 40901, "仅开通中的租户允许初始化配置；在用租户必须先预检");
+        }
+        if (Set.of("CANCELLING", "CANCELLED").contains(String.valueOf(tenant.get("status")))) {
+            throw new ApiException(409, 40901, "注销中或已注销的租户不能导入配置");
+        }
         String tenantName = String.valueOf(tenant.get("name"));
         if (head.tenantId() == request.tenantId()) {
             throw new ApiException(
@@ -210,11 +225,60 @@ public class ConfigTemplateImportService {
         Set<Long> assignable = tenantScopes.assignableMenuIds(request.tenantId());
 
         // ---- 目标租户库导入：单事务全成或全败 ----
-        Outcome outcome =
-                TenantContext.callAsTenant(
-                        request.tenantId(),
-                        tenantCode,
-                        () -> transactions.execute(status -> importAll(pkg, assignable)));
+        Outcome outcome;
+        try {
+            outcome =
+                    TenantContext.callAsTenant(
+                            request.tenantId(),
+                            tenantCode,
+                            () ->
+                                    transactions.execute(
+                                            status -> {
+                                                if (initialization)
+                                                    return importAll(pkg, assignable);
+                                                if (request.planHash() == null
+                                                        || request.planHash().isBlank()) {
+                                                    throw new ApiException(
+                                                            409, 40900, "请先生成目标租户差异预览，再确认应用");
+                                                }
+                                                Map<String, ConfigImportPlan.Target> snapshot =
+                                                        snapshot(true);
+                                                ConfigImportPlan plan =
+                                                        new ConfigImportPlan(
+                                                                pkg, snapshot, assignable, false);
+                                                String hash =
+                                                        planHash(
+                                                                templateId,
+                                                                request.tenantId(),
+                                                                head.packageHash(),
+                                                                pkg,
+                                                                snapshot,
+                                                                assignable,
+                                                                plan);
+                                                if (!hash.equals(request.planHash())) {
+                                                    throw new ApiException(
+                                                            409, 40900, "模板、权限范围或目标配置已变化，请重新预览");
+                                                }
+                                                if (!plan.applicable())
+                                                    throw new ApiException(
+                                                            409, 40901, "差异计划存在冲突，不能应用");
+                                                execute(plan);
+                                                return outcome(plan.tables);
+                                            }));
+        } catch (RuntimeException ex) {
+            int error = ex instanceof ApiException api ? api.code() : 50000;
+            audit.append(
+                    AuditEntry.operation("platform", "CONFIG_TEMPLATE_APPLY")
+                            .tenantId(request.tenantId())
+                            .objectType("plt_config_template")
+                            .objectId(String.valueOf(templateId))
+                            .description("目标租户配置应用失败，事务未提交")
+                            .fileHash(head.packageHash())
+                            .fail("应用被拒绝或执行失败，请重新预检并核对冲突")
+                            .errorCode(error)
+                            .build());
+            throw ex;
+        }
 
         // 角色授权可能变化：递增该租户全部用户权限版本（失败不回滚导入，下次登录重算）
         int refreshed = bumpPermissionVersions(request.tenantId(), tenantCode);
@@ -264,6 +328,196 @@ public class ConfigTemplateImportService {
                 outcome.skipped(),
                 outcome.dropped(),
                 outcome.tables());
+    }
+
+    /** 预检是只读目标库事务，不执行 INSERT / UPDATE / DELETE，也不刷新权限版本。 */
+    public PreviewView preview(long templateId, ApplyRequest request) {
+        CurrentSession.requirePlatform();
+        try {
+            return previewInternal(templateId, request);
+        } catch (RuntimeException ex) {
+            int error = ex instanceof ApiException api ? api.code() : 50000;
+            audit.append(
+                    AuditEntry.operation("platform", "CONFIG_TEMPLATE_PREVIEW")
+                            .tenantId(request == null ? null : request.tenantId())
+                            .objectType("plt_config_template")
+                            .objectId(String.valueOf(templateId))
+                            .description("目标租户配置差异预检失败")
+                            .fail("预检被拒绝或配置不可读取")
+                            .errorCode(error)
+                            .build());
+            throw ex;
+        }
+    }
+
+    private PreviewView previewInternal(long templateId, ApplyRequest request) {
+        if (request == null || request.tenantId() == null)
+            throw new ApiException(400, 40001, "tenantId 必填");
+        var head = exporter.headerOf(templateId);
+        var tenant = tenantRow(request.tenantId());
+        if (head.tenantId() == request.tenantId())
+            throw new ApiException(400, 40001, "目标租户不能是模板源租户");
+        if (!routing.hasTenant(request.tenantId())
+                || Set.of("CANCELLING", "CANCELLED")
+                        .contains(String.valueOf(tenant.get("status")))) {
+            throw new ApiException(409, 40901, "目标租户不可应用配置");
+        }
+        var pkg = exporter.packageOf(templateId);
+        if (pkg.formatVersion() != ConfigTemplateExportService.FORMAT_VERSION
+                || !SensitiveConfigChecker.check(pkg).isEmpty())
+            throw new ApiException(409, 40901, "配置包版本不支持或包含禁止导入的内容");
+        Set<Long> assignable = tenantScopes.assignableMenuIds(request.tenantId());
+        TransactionTemplate readonly =
+                new TransactionTemplate(transactions.getTransactionManager());
+        readonly.setReadOnly(true);
+        readonly.setIsolationLevel(
+                org.springframework.transaction.TransactionDefinition.ISOLATION_REPEATABLE_READ);
+        PreviewView view =
+                TenantContext.callAsTenant(
+                        request.tenantId(),
+                        String.valueOf(tenant.get("code")),
+                        () ->
+                                readonly.execute(
+                                        status -> {
+                                            var snapshot = snapshot(false);
+                                            var plan =
+                                                    new ConfigImportPlan(
+                                                            pkg, snapshot, assignable, false);
+                                            return new PreviewView(
+                                                    planHash(
+                                                            templateId,
+                                                            request.tenantId(),
+                                                            head.packageHash(),
+                                                            pkg,
+                                                            snapshot,
+                                                            assignable,
+                                                            plan),
+                                                    plan.applicable(),
+                                                    "UPDATE",
+                                                    plan.changes,
+                                                    plan.tables);
+                                        }));
+        audit.append(
+                AuditEntry.operation("platform", "CONFIG_TEMPLATE_PREVIEW")
+                        .tenantId(request.tenantId())
+                        .objectType("plt_config_template")
+                        .objectId(String.valueOf(templateId))
+                        .description("目标租户配置只读差异预检")
+                        .fileHash(head.packageHash())
+                        .success()
+                        .build());
+        return view;
+    }
+
+    private Map<String, ConfigImportPlan.Target> snapshot(boolean lock) {
+        Map<String, ConfigImportPlan.Target> result = new LinkedHashMap<>();
+        for (var entry : ConfigTableRegistry.ENTRIES) {
+            if (entry.mode() != ConfigCopyMode.COPY || !reader.tablePresent(entry.table()))
+                continue;
+            List<String> columns = reader.columns(entry.table());
+            // 全表锁定及范围间隙锁保证校验后执行期间配置不能被另一个事务插入或修改。
+            List<Map<String, Object>> rows =
+                    jdbc.queryForList(
+                            "SELECT * FROM `" + entry.table() + "`" + (lock ? " FOR UPDATE" : ""));
+            List<Map<String, Object>> normalized =
+                    rows.stream()
+                            .map(
+                                    row -> {
+                                        Map<String, Object> copy = new LinkedHashMap<>();
+                                        row.forEach(
+                                                (k, v) -> copy.put(k, ConfigPackage.cellValue(v)));
+                                        return copy;
+                                    })
+                            .sorted(java.util.Comparator.comparing(ConfigImportPlan::canonical))
+                            .toList();
+            result.put(entry.table(), new ConfigImportPlan.Target(columns, normalized));
+        }
+        return result;
+    }
+
+    private String planHash(
+            long templateId,
+            long tenantId,
+            String sourceHash,
+            ConfigPackage pkg,
+            Map<String, ConfigImportPlan.Target> snapshot,
+            Set<Long> assignable,
+            ConfigImportPlan plan) {
+        return digest.hashHex(
+                ConfigImportPlan.canonical(
+                        List.of(
+                                "OQR02-v1",
+                                templateId,
+                                tenantId,
+                                CurrentSession.requirePlatform().userId(),
+                                sourceHash,
+                                pkg,
+                                snapshot,
+                                assignable.stream().sorted().toList(),
+                                plan.writes,
+                                plan.changes)));
+    }
+
+    private void execute(ConfigImportPlan plan) {
+        Map<Long, Long> generated = new LinkedHashMap<>();
+        for (var write : plan.writes) {
+            Map<String, Object> values = new LinkedHashMap<>(write.values());
+            var spec = ConfigImportSpecs.of(write.table());
+            for (String column : spec.references().keySet()) {
+                Long value = asLong(values.get(column));
+                if (value != null && value < 0) {
+                    if (!generated.containsKey(value))
+                        throw new IllegalStateException("应用计划引用顺序错误");
+                    values.put(column, generated.get(value));
+                }
+            }
+            if (write.action().equals("INSERT")) {
+                if (spec.mode() == ConfigImportMode.SINGLE_ROW) {
+                    values.put("id", write.id());
+                    jdbc.update(
+                            "INSERT INTO `"
+                                    + write.table()
+                                    + "` ("
+                                    + quote(List.copyOf(values.keySet()))
+                                    + ") VALUES ("
+                                    + placeholders(values.size())
+                                    + ")",
+                            values.values().toArray());
+                } else if (spec.mode() == ConfigImportMode.LINK_ROWS) {
+                    jdbc.update(
+                            "INSERT INTO `"
+                                    + write.table()
+                                    + "` ("
+                                    + quote(List.copyOf(values.keySet()))
+                                    + ") VALUES ("
+                                    + placeholders(values.size())
+                                    + ")",
+                            values.values().toArray());
+                } else {
+                    long id =
+                            insertReturningId(write.table(), List.copyOf(values.keySet()), values);
+                    generated.put(write.id(), id);
+                }
+            } else {
+                Long id = write.id();
+                if (id != null && id < 0) id = generated.get(id);
+                values.put("id", id);
+                updateByKey(
+                        write.table(),
+                        write.values().keySet().stream().toList(),
+                        List.of("id"),
+                        values);
+            }
+        }
+    }
+
+    private static Outcome outcome(List<TableResult> tables) {
+        return new Outcome(
+                tables,
+                tables.stream().mapToLong(TableResult::inserted).sum(),
+                tables.stream().mapToLong(TableResult::merged).sum(),
+                tables.stream().mapToLong(TableResult::skipped).sum(),
+                tables.stream().mapToLong(TableResult::dropped).sum());
     }
 
     // ---------------------------------------------------------------- 导入主流程（目标租户上下文内）

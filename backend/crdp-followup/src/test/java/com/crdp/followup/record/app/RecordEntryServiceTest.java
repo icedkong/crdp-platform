@@ -145,7 +145,8 @@ class RecordEntryServiceTest {
                 data,
                 Map.of(),
                 null,
-                "2026-11-05T09:00:00+08:00");
+                "2026-11-05T09:00:00+08:00",
+                null);
     }
 
     @Test
@@ -189,7 +190,8 @@ class RecordEntryServiceTest {
                         Map.of(),
                         Map.of(),
                         null,
-                        "2026-11-05T09:00:00+08:00");
+                        "2026-11-05T09:00:00+08:00",
+                        null);
         when(recordService.record(702L)).thenReturn(backfill);
         when(deviceContext.resolve(301L, LocalDate.of(2025, 6, 1)))
                 .thenReturn(
@@ -256,6 +258,7 @@ class RecordEntryServiceTest {
                         0,
                         Map.of(),
                         Map.of(),
+                        null,
                         null,
                         null);
         when(recordService.record(703L)).thenReturn(remote);
@@ -406,7 +409,8 @@ class RecordEntryServiceTest {
                         Map.of(),
                         Map.of(),
                         null,
-                        "2026-11-05T09:00:00+08:00");
+                        "2026-11-05T09:00:00+08:00",
+                        null);
         when(recordService.record(702L)).thenReturn(backfill);
         when(taskQueryMapper.taskContextByRecordId(702L)).thenReturn(null);
         when(taskQueryMapper.patientBrief(301L))
@@ -428,6 +432,7 @@ class RecordEntryServiceTest {
     /** 详情默认无启用规则（各 detail 用例按需覆盖；E17-T03 compareRules 缺省 null）。 */
     @BeforeEach
     void noCompareRulesByDefault() {
+        lenient().when(recordService.record(701L)).thenReturn(record("DRAFT", Map.of()));
         lenient().when(compareRules.evaluationRules(any())).thenReturn(List.of());
         lenient().when(compareSource.resolve(anyLong(), anyLong(), any(), any())).thenReturn(null);
     }
@@ -669,6 +674,7 @@ class RecordEntryServiceTest {
                         data,
                         Map.of(),
                         null,
+                        null,
                         null);
         when(recordService.submit(eq(701L), eq(2), eq(data), any()))
                 .thenReturn(
@@ -704,6 +710,7 @@ class RecordEntryServiceTest {
                         3,
                         data,
                         Map.of(),
+                        null,
                         null,
                         null);
         when(recordService.submit(eq(701L), eq(2), eq(data), any()))
@@ -893,7 +900,8 @@ class RecordEntryServiceTest {
                         Map.of("f308", 1.2),
                         Map.of(),
                         null,
-                        "2026-11-05T09:00:00+08:00");
+                        "2026-11-05T09:00:00+08:00",
+                        null);
         when(recordService.updateSubmitted(eq(701L), eq(2), any(), any()))
                 .thenReturn(
                         new FollowupRecordService.SubmitOutcome(
@@ -945,7 +953,8 @@ class RecordEntryServiceTest {
                         Map.of(),
                         Map.of(),
                         null,
-                        "2026-11-05T09:00:00+08:00");
+                        "2026-11-05T09:00:00+08:00",
+                        null);
         when(recordService.updateSubmitted(eq(701L), eq(2), any(), any()))
                 .thenReturn(
                         new FollowupRecordService.SubmitOutcome(
@@ -970,12 +979,37 @@ class RecordEntryServiceTest {
         when(recordMapper.softDelete(eq(701L), eq("重复录入"), eq(7L))).thenReturn(1);
 
         service.deleteRecord(701L, "重复录入");
+        verify(compareHighlights).refreshSubmittedRecords(301L, "A_ANNUAL_FU");
 
         verify(recordMapper).softDelete(701L, "重复录入", 7L);
         verify(recordMapper).clearTaskRecordLink(701L);
         // E21-T09 / C-FU-018：软删出册后同一事务重排（后面记录序号回退）
         verify(sequences).resequence(301L, FollowupSequenceService.REASON_DELETE);
         verify(audit).append(any());
+    }
+
+    /** 新增可选重选标记不改变旧补录请求摘要；只有显式 true 才进入摘要。 */
+    @Test
+    void optionalReselectFlagPreservesLegacySubmitDigestShape() throws Exception {
+        var json =
+                new com.fasterxml.jackson.databind.ObjectMapper()
+                        .enable(
+                                com.fasterxml.jackson.databind.SerializationFeature
+                                        .ORDER_MAP_ENTRIES_BY_KEYS);
+        String old =
+                "{\"baseVersion\":2,\"data\":{},\"dataMeta\":null,\"transcribeReportId\":null}";
+        assertEquals(
+                old,
+                json.writeValueAsString(
+                        new RecordEntryService.SubmitCommand(2, Map.of(), null, null)));
+        assertEquals(
+                old,
+                json.writeValueAsString(
+                        new RecordEntryService.SubmitCommand(2, Map.of(), null, null, null)));
+        org.junit.jupiter.api.Assertions.assertTrue(
+                json.writeValueAsString(
+                                new RecordEntryService.SubmitCommand(2, Map.of(), null, null, true))
+                        .contains("\"reselectNextVisit\":true"));
     }
 
     /** 删除：原因缺失 40001；软删除 0 行（已被删 / 不存在）40400。 */
