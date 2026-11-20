@@ -11,6 +11,9 @@ import { Select } from 'ant-design-vue';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import RateArea from './rate-area.vue';
+vi.mock('./stats-drill-drawer.vue', () => ({
+  default: { props: ['query'], template: '<div />' },
+}));
 
 const fetchYearlyRateCard = vi.fn();
 const fetchNodeRateCard = vi.fn();
@@ -135,7 +138,8 @@ describe('e19-t04 首页统计区 · 每年随访率（A-DASH-006）', () => {
     expect(firstRow ?? '').toContain('其中窗口内完成 2 / 50.0%');
     expect(table.text()).toContain('死亡人数', '列头含死亡人数');
     expect(table.text()).toContain('失访率');
-    expect(wrapper.text()).toContain('数据截至 2026-11-08（每日刷新）');
+    expect(wrapper.text()).toContain('数据截至 2026-11-08');
+    expect(wrapper.text()).toContain('时间未知（旧汇总）');
   });
 
   it('无数据时显示空状态；队列筛选随行下发', async () => {

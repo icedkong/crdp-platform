@@ -34,8 +34,12 @@ import org.springframework.web.bind.annotation.RestController;
 public class RecordEntryController {
 
     private final RecordEntryService service;
+    private final com.crdp.followup.record.app.BackfillTaskLinkService links;
 
-    public RecordEntryController(RecordEntryService service) {
+    public RecordEntryController(
+            RecordEntryService service,
+            com.crdp.followup.record.app.BackfillTaskLinkService links) {
+        this.links = links;
         this.service = service;
     }
 
@@ -64,16 +68,22 @@ public class RecordEntryController {
     @RequiresPermission("followup:record:edit")
     public ApiResponse<RecordEntryService.SubmitResultView> submit(
             @PathVariable("id") long id, @RequestBody(required = false) SubmitBody body) {
-        return ApiResponse.ok(
-                service.submit(
-                        id,
-                        body == null
-                                ? null
-                                : new RecordEntryService.SubmitCommand(
-                                        body.baseVersion(),
-                                        body.data(),
-                                        body.dataMeta(),
-                                        body.transcribeReportId())));
+        try {
+            return ApiResponse.ok(
+                    links.submit(
+                            id,
+                            body == null
+                                    ? null
+                                    : new RecordEntryService.SubmitCommand(
+                                            body.baseVersion(),
+                                            body.data(),
+                                            body.dataMeta(),
+                                            body.transcribeReportId(),
+                                            body.reselectNextVisit()),
+                            body == null ? null : body.backfillTaskId()));
+        } catch (org.springframework.dao.PessimisticLockingFailureException competition) {
+            throw new com.crdp.framework.web.ApiException(409, 40901, "任务或入组正在变更，请重新加载候选后提交");
+        }
     }
 
     @Operation(
@@ -109,7 +119,8 @@ public class RecordEntryController {
                                         body.data(),
                                         body.dataMeta(),
                                         body.reason(),
-                                        body.transcribeReportId())));
+                                        body.transcribeReportId(),
+                                        body.reselectNextVisit())));
     }
 
     @Operation(
@@ -133,7 +144,20 @@ public class RecordEntryController {
             Integer baseVersion,
             Map<String, Object> data,
             Map<String, Object> dataMeta,
-            Long transcribeReportId) {}
+            Long transcribeReportId,
+            Long backfillTaskId,
+            Boolean reselectNextVisit) {}
+
+    @Operation(summary = "补录可关联任务：同患者 / 当前器械 / 表单、窗口内且无已有记录")
+    @GetMapping("/{id}/backfill-candidates")
+    @RequireModule("followup")
+    @RequiresPermission("followup:record:edit")
+    public ApiResponse<
+                    java.util.List<
+                            com.crdp.followup.record.app.BackfillTaskLinkService.CandidateView>>
+            backfillCandidates(@PathVariable("id") long id) {
+        return ApiResponse.ok(links.candidates(id));
+    }
 
     /** 开始修改请求体（ReasonModal「开始修改」带入的原因，写入审计）。 */
     public record EditSessionBody(String reason) {}
@@ -147,7 +171,8 @@ public class RecordEntryController {
             Map<String, Object> data,
             Map<String, Object> dataMeta,
             String reason,
-            Long transcribeReportId) {}
+            Long transcribeReportId,
+            Boolean reselectNextVisit) {}
 
     /** 删除请求体（reason 必填，C-FU-026）。 */
     public record DeleteBody(String reason) {}

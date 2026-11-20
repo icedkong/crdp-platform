@@ -31,7 +31,7 @@ import org.springframework.test.context.ActiveProfiles;
  *
  * <ol>
  *   <li>只读矩阵（PLT-VIEW-012）：配置类写（建用户）、批量接口（batch-assign）、原件下载签发口、 导出动作（GET / POST exports）全部
- *       40303；allowExport 规则命中时导出在视角守卫层放行、由内层二次认证防线 40304 收口（fail closed，OQ-107①⑥）。
+ *       40303；allowExport 规则命中时导出在视角守卫层放行、由内层二次认证防线 40304 收口（fail closed，OQ-155①⑥）。
  *   <li>脱敏矩阵（PLT-VIEW-010）：默认规则下视角读患者检索（POST search）与概览（GET summary）， 行内姓名 / 病案号只含脱敏值（前端不接收原值）；
  *       医院会话同接口同值（行为不变）。
  *   <li>设盲矩阵与优先级（PLT-VIEW-011、009）：FIELD 层病案号设盲 → 检索与概览病案号「已设盲」； TENANT 层姓名设盲压不过 FIELD 层脱敏 （字段 &gt;
@@ -132,7 +132,7 @@ class PlatformTenantViewAcceptanceMySqlIT {
                                 Map.of("scope", "SEARCH"))),
                 "提交导出默认禁止（allowExport 默认否）");
 
-        // allowExport 规则命中：视角守卫层放行（不再 40303），内层二次认证防线收口 40304（fail closed，OQ-107①⑥）
+        // allowExport 规则命中：视角守卫层放行（不再 40303），内层二次认证防线收口 40304（fail closed，OQ-155①⑥）
         insertRule(
                 "VR-IT-E20T07-EXPORT",
                 "IT：患者导出允许（示例）",

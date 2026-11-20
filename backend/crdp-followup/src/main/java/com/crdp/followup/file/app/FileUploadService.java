@@ -32,7 +32,7 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>病毒扫描（E22-T15 / 等保自查 D-01 整改，tech-plan §10 方案）：真实类型校验通过、写任何对象之前， 扫描启用（{@code
  * crdp.file.virus-scan.mode=clamd}）时把文件体经 INSTREAM 同步扫描——检出病毒 40001 拒绝并写 FILE_VIRUS_REJECTED
- * 审计（等保「恶意代码防范」证据）；扫描服务不可用 50300「稍后重试」，**不放行**（fail closed）； 禁用态（本机 / CI / 未部署 clamd）不扫描，台账 {@code
+ * 审计（等保「恶意代码防范」证据）；扫描服务不可用 50300「稍后重试」，**不放行**（fail closed）； 禁用态（仅本机 / CI）不扫描，台账 {@code
  * virus_scan_status=UNSCANNED}，由补扫作业（{@code VirusScanRetroService}）在启用后按 SHA-256 补扫存量。
  *
  * <p>通过后先写对象存储、再落 sys_file 台账（状态 PENDING，未关联报告单；关联与每份数量上限的落点校验随 E16 报告单）。 E10-T02 起文件体只在对象存储（OBS
@@ -143,24 +143,30 @@ public class FileUploadService {
         // 禁用态跳过（台账落 UNSCANNED，补扫作业启用后补）
         boolean scanned = virusScanner.enabled();
         if (scanned) {
-            VirusScanner.ScanResult verdict = virusScanner.scan(body);
+            VirusScanner.ScanResult verdict;
+            try {
+                verdict = virusScanner.scan(body);
+            } catch (ApiException unavailable) {
+                audit.append(
+                        com.crdp.framework.audit.AuditEntry.operation(
+                                        "file", "FILE_SCAN_UNAVAILABLE")
+                                .objectType("sys_file")
+                                .description("上传扫描不可用，未写入文件")
+                                .result(com.crdp.framework.audit.AuditResult.FAIL)
+                                .build());
+                throw unavailable;
+            }
             if (verdict.infected()) {
                 long deniedUploader = CurrentSession.requireHospital().userId();
-                audit.record(
-                        new AuditEvent(
-                                "FILE_VIRUS_REJECTED",
-                                deniedUploader,
-                                "CREATE",
-                                "sys_file:-",
-                                "上传文件检出病毒已拒绝："
-                                        + name
-                                        + "（检出 "
-                                        + verdict.virusName()
-                                        + "，真实类型 "
-                                        + real.code()
-                                        + "，"
-                                        + body.length
-                                        + " 字节）"));
+                audit.append(
+                        com.crdp.framework.audit.AuditEntry.operation("file", "CREATE")
+                                .eventType("FILE_VIRUS_REJECTED")
+                                .userId(deniedUploader)
+                                .objectType("sys_file")
+                                .objectId("-")
+                                .description("上传文件检出病毒已拒绝（检出 " + verdict.virusName() + "）")
+                                .result(com.crdp.framework.audit.AuditResult.DENIED)
+                                .build());
                 log.warn(
                         "上传文件检出病毒已拒绝 userId={} format={} virus={} bytes={}",
                         deniedUploader,

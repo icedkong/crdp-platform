@@ -56,6 +56,22 @@ class DashboardCardsIT {
     private static final String LEGACY = "IT-E19T02";
     private static final String PLAN_CODE = "PLAN-IT-E19T02";
 
+    @Autowired private com.crdp.framework.security.SessionStore fixtureSessions;
+
+    private long fixtureWard(String tenant) {
+        return runInTenant(tenant, () -> StatsFixtureScope.ward(jdbc, "IT-E19T02-STAT-WARD"));
+    }
+
+    @org.junit.jupiter.api.AfterAll
+    void removeFixtureWards() {
+        for (String tenant : List.of("demoa", "demob"))
+            runInTenant(
+                    tenant,
+                    () -> {
+                        jdbc.update("DELETE FROM ward WHERE code=?", "IT-E19T02-STAT-WARD");
+                    });
+    }
+
     @Autowired private TestRestTemplate rest;
     @Autowired private JdbcTemplate jdbc;
     @Autowired private PlanService planService;
@@ -139,7 +155,7 @@ class DashboardCardsIT {
                         () ->
                                 jdbc.queryForObject(
                                         "SELECT MIN(n.id) FROM fu_plan_node n JOIN fu_plan p"
-                                                + " ON p.id = n.plan_id WHERE p.code = ?",
+                                                + " ON p.id = n.plan_id WHERE p.code = ? AND n.node_type='NODE'",
                                         Long.class,
                                         PLAN_CODE + "-A"));
         insertTask("demoa", enrollmentMonthDue, activeMonthDue, planId, nodeId, today, "PENDING");
@@ -158,9 +174,9 @@ class DashboardCardsIT {
                 () -> {
                     jdbc.update(
                             "INSERT INTO fu_record (patient_id, source, form_code,"
-                                    + " template_version, status, highlight)"
+                                    + " template_version, status, highlight, first_submitted_at)"
                                     + " VALUES (?, 'BACKFILL', 'fu_annual_v1', 1, 'SUBMITTED',"
-                                    + " '[{\"key\":\"f010\",\"message\":\"示例标红（示例）\"}]')",
+                                    + " '[{\"key\":\"f010\",\"message\":\"示例标红（示例）\"}]', CURRENT_TIMESTAMP(3))",
                             activePlain);
                     jdbc.update(
                             "INSERT INTO fu_record (patient_id, source, form_code,"
@@ -197,14 +213,14 @@ class DashboardCardsIT {
         // 本月应随访：计划日期在本月的常规任务（口径：任务列表计划日期窗口）
         assertEquals(1L, number(metrics.get("monthDue")));
         Map<?, ?> monthDueDrill = (Map<?, ?>) ((Map<?, ?>) metrics.get("monthDue")).get("drill");
-        assertEquals("TASK_LIST", monthDueDrill.get("target"));
+        assertEquals("FOLLOWUP_STATS", monthDueDrill.get("target"));
         assertEquals(
                 today.withDayOfMonth(1).toString(),
-                ((Map<?, ?>) monthDueDrill.get("query")).get("dueFrom"),
+                ((Map<?, ?>) monthDueDrill.get("query")).get("from"),
                 "钻取带本月起始日");
         assertEquals(
                 today.withDayOfMonth(today.lengthOfMonth()).toString(),
-                ((Map<?, ?>) monthDueDrill.get("query")).get("dueTo"),
+                ((Map<?, ?>) monthDueDrill.get("query")).get("to"),
                 "钻取带本月截止日");
 
         // 当前逾期 = 任务列表 status=OVERDUE&scope=ALL 总数（A 规格 §9 验收「点击当前逾期进入已筛选好的逾期任务列表」）
@@ -472,8 +488,7 @@ class DashboardCardsIT {
     /** 登记患者（legacy_no 自清锚点）。 */
     private long registerPatient(String tenant, String token, String suffix, String dischargeDate) {
         long wardId =
-                runInTenant(
-                        tenant, () -> jdbc.queryForObject("SELECT MIN(id) FROM ward", Long.class));
+                runInTenant(tenant, () -> StatsFixtureScope.ward(jdbc, "IT-E19T02-STAT-WARD"));
         Map<String, Object> body = new HashMap<>();
         body.put("medicalRecordNo", "IT-E19T02-" + suffix);
         body.put("name", "钱示例（示例）");
@@ -579,7 +594,7 @@ class DashboardCardsIT {
                 List.of("followup:dashboard:view"),
                 List.of("followup"),
                 1L,
-                ScopeSnapshot.allowAll(),
+                ScopeSnapshot.restricted(List.of(fixtureWard(tenant)), List.of(), false),
                 false,
                 null);
     }
@@ -630,7 +645,10 @@ class DashboardCardsIT {
                         null,
                         Map.of("tenantCode", tenant, "username", username, "password", password));
         assertEquals(0, codeOf(response), "登录失败：" + response);
-        return (String) data(response).get("token");
+        return StatsFixtureScope.restrict(
+                fixtureSessions,
+                (String) data(response).get("token"),
+                List.of(fixtureWard(tenant)));
     }
 
     private ResponseEntity<Map> get(String path, String token) {

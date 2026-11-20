@@ -331,14 +331,16 @@ class ImportJobServiceTest {
     }
 
     @Test
-    void retryRequiresPartialFailedAndDispatchesRetryFailed() {
+    void retryClaimsSlotBeforeDispatchingExecution() {
         when(staging.findJob(JOB_ID)).thenReturn(job("PARTIAL_FAILED"));
-        when(commit.retryFailed(JOB_ID))
+        when(commit.execute(JOB_ID))
                 .thenReturn(
                         new com.crdp.followup.importer.app.ImportCommitService.CommitSummary(
                                 JOB_ID, "DONE", 1, 0, 0, 0, 0, List.of()));
         assertEquals(JOB_ID, service.retry(JOB_ID).jobId());
-        verify(commit).retryFailed(JOB_ID);
+        var order = org.mockito.Mockito.inOrder(commit);
+        order.verify(commit).prepareRetry(JOB_ID);
+        order.verify(commit).execute(JOB_ID);
 
         when(staging.findJob(44L)).thenReturn(job("DONE"));
         ApiException done = assertThrows(ApiException.class, () -> service.retry(44L));
@@ -346,7 +348,28 @@ class ImportJobServiceTest {
     }
 
     @Test
+    void retrySlotConflictIsReturnedBeforeExecution() {
+        when(staging.findJob(JOB_ID)).thenReturn(job("PARTIAL_FAILED"));
+        org.mockito.Mockito.doThrow(new ApiException(409, 40901, "已有活动作业"))
+                .when(commit)
+                .prepareRetry(JOB_ID);
+        assertEquals(40901, assertThrows(ApiException.class, () -> service.retry(JOB_ID)).code());
+        verify(commit, never()).execute(anyLong());
+        verify(audit).append(any());
+    }
+
+    @Test
+    void anotherOperatorsOriginalWorkbookIsNotDownloadable() {
+        JobRow other = mock(JobRow.class);
+        when(other.operatorId()).thenReturn(OPERATOR + 1);
+        when(staging.findJob(JOB_ID)).thenReturn(other);
+        assertEquals(40400, assertThrows(ApiException.class, () -> service.report(JOB_ID)).code());
+        verify(validation, never()).annotatedReport(anyLong());
+    }
+
+    @Test
     void reportDownloadsAnnotatedReportWithAudit() {
+        when(staging.findJob(JOB_ID)).thenReturn(job("PRECHECKED"));
         byte[] body = "report-xlsx（示例）".getBytes();
         when(validation.annotatedReport(JOB_ID)).thenReturn(body);
 

@@ -3,6 +3,7 @@ package com.crdp.followup.task.app;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -54,9 +55,32 @@ class FollowupTaskCreationServiceTest {
     private final JdbcTemplate jdbc = mock(JdbcTemplate.class);
     private final FollowupTaskStatusService statusService = mock(FollowupTaskStatusService.class);
 
+    private final com.crdp.followup.plan.app.CurrentDeviceScheduleService schedule =
+            mock(com.crdp.followup.plan.app.CurrentDeviceScheduleService.class);
+
+    @org.junit.jupiter.api.BeforeEach
+    void scheduleTransaction() {
+        org.mockito.Mockito.lenient()
+                .when(schedule.currentEnrollment(any()))
+                .thenAnswer(inv -> inv.getArgument(0));
+        org.mockito.Mockito.lenient()
+                .when(schedule.inEnrollmentTransaction(anyLong(), anyLong(), any()))
+                .thenAnswer(inv -> ((java.util.function.Supplier<?>) inv.getArgument(2)).get());
+        org.mockito.Mockito.lenient()
+                .when(schedule.apply(anyLong(), any(), any(), any(), anyBoolean()))
+                .thenAnswer(inv -> inv.getArgument(1));
+    }
+
     private final FollowupTaskCreationService service =
             new FollowupTaskCreationService(
-                    jobScheduler, taskMapper, planMapper, outbox, audit, jdbc, statusService);
+                    jobScheduler,
+                    taskMapper,
+                    planMapper,
+                    outbox,
+                    audit,
+                    jdbc,
+                    statusService,
+                    schedule);
 
     // ---------------------------------------------------------------- 装配（A 年度形态：开启日 2026-03-08）
 
@@ -242,6 +266,7 @@ class FollowupTaskCreationServiceTest {
         moduleOpen();
         annualEnrollment();
         when(taskMapper.findTaskId(ENROLLMENT_ID, NODE_ID, 1)).thenReturn(901L);
+        when(taskMapper.rescheduleTask(anyLong(), any(), any(), any(), any(), any())).thenReturn(1);
 
         run(LocalDate.of(2026, 3, 8));
 
@@ -888,6 +913,29 @@ class FollowupTaskCreationServiceTest {
 
     /** 可调入组（C 常规随访滚动 + 医生指定 2027-01-15，上次随访 2026-11-13）。 */
     private void doctorDateEnrollment(LocalDate doctorNextDate) {
+        when(schedule.apply(anyLong(), any(), any(), any(), eq(true)))
+                .thenAnswer(
+                        inv -> {
+                            var original =
+                                    (com.crdp.followup.task.domain.TaskCreationPlanner.PlanResult)
+                                            inv.getArgument(1);
+                            var defs =
+                                    (java.util.List<
+                                                    com.crdp.followup.task.domain
+                                                            .TaskCreationPlanner.NodeDef>)
+                                            inv.getArgument(2);
+                            var day = (LocalDate) inv.getArgument(3);
+                            return com.crdp.followup.task.domain.TaskCreationPlanner.plan(
+                                    defs,
+                                    "NORMAL",
+                                    BASIS,
+                                    day,
+                                    BASIS,
+                                    null,
+                                    new com.crdp.followup.task.domain.TaskCreationPlanner.LoopBasis(
+                                            LocalDate.of(2026, 11, 13), java.util.Map.of()),
+                                    doctorNextDate);
+                        });
         when(taskMapper.findSchedulableEnrollments())
                 .thenReturn(
                         List.of(
@@ -945,7 +993,7 @@ class FollowupTaskCreationServiceTest {
         assertEquals(LocalDate.of(2026, 12, 16), row.getOpenDate(), "窗口开始日创建");
         assertEquals("NORMAL", row.getCreateType());
         assertEquals("PENDING", row.getStatus());
-        verify(taskMapper).clearDoctorNextDate(ENROLLMENT_ID);
+        verify(schedule).consume(eq(ENROLLMENT_ID), any());
         verify(outbox).publish(eq("TaskOpened"), contains("\"windowStart\":\"2026-12-16\""));
         verify(audit).append(any());
     }
@@ -959,7 +1007,7 @@ class FollowupTaskCreationServiceTest {
         run(LocalDate.of(2026, 12, 15));
 
         verify(taskMapper, never()).insertTask(any());
-        verify(taskMapper, never()).clearDoctorNextDate(anyLong());
+        verify(schedule, never()).consume(anyLong(), any());
         // 缓存保持计划默认（lastVisit + 12 个月 = 2027-11-13，开启 2027-10-14）
         verify(taskMapper)
                 .updateNextCache(
@@ -972,6 +1020,7 @@ class FollowupTaskCreationServiceTest {
         moduleOpen();
         doctorDateEnrollment(LocalDate.of(2027, 1, 15));
         when(taskMapper.findTaskId(ENROLLMENT_ID, NODE_ID, 1)).thenReturn(901L);
+        when(taskMapper.rescheduleTask(anyLong(), any(), any(), any(), any(), any())).thenReturn(1);
 
         run(LocalDate.of(2026, 12, 16));
 
@@ -984,7 +1033,7 @@ class FollowupTaskCreationServiceTest {
                         LocalDate.of(2026, 12, 16),
                         LocalDate.of(2027, 2, 14),
                         LocalDate.of(2026, 12, 16));
-        verify(taskMapper).clearDoctorNextDate(ENROLLMENT_ID);
+        verify(schedule).consume(eq(ENROLLMENT_ID), any());
         verify(outbox, never()).publish(anyString(), anyString());
     }
 

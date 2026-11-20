@@ -33,5 +33,6 @@ public class ProductionSafetyEnvironmentPostProcessor implements EnvironmentPost
         MobileUploadProperties mobile = new MobileUploadProperties();
         mobile.setMobileBaseUrl(environment.getProperty("crdp.h5-upload.mobile-base-url", ""));
         new ProductionSafetyCheck(environment, crypto, auditArchive, sms, mobile);
+        FileScanProductionSafetyCheck.validate(environment);
     }
 }

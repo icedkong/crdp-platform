@@ -36,7 +36,7 @@ import org.springframework.test.context.ActiveProfiles;
  *   <li><b>并集表</b>（角色三表，OQ-91 ①「INSERT IGNORE 并集 / 目标独有行保留」）：源行全量落地（多重集包含），目标既有角色与授权不被删除；
  *       sys_role_menu 只断言落在目标可分配范围内的源授权（范围外按交集丢弃是 A-FLD-014 口径，不属配置漂移）； sys_role_scope_dept
  *       行全部丢弃（OQ-91 ④：sys_dept 组织架构不随模板复制）；
- *   <li><b>整组替换表</b>（fu_plan_node，OQ-91 ②）：目标先放同自然键旧计划 + 多余节点，导入后该计划版本的节点组与源完全一致（多余节点被删）；
+ *   <li><b>计划版本保护</b>（OQR-02 / OQ-91）：目标旧版本和节点保留，源定义落到新未发布版本，引用保持闭环；
  *   <li><b>源值胜收敛</b>：目标先行分叉的 cfg_param / 字典项 / ntf_rule / ntf_setting 单行表，导入后全部收敛到源值；
  *   <li><b>排除与只复制结构</b>（A-FLD-014、OQ-90 ②③）：术者取值不入包（详情 excludedRowCount）、目标病区行与患者业务表零变化；
  *   <li><b>漂移收敛重放</b>：源改值 / 加行后重新导出再应用，目标跟上新值且行数不叠加（重复导入仍一致）。
@@ -214,7 +214,9 @@ class ConfigTemplateRoundTripMySqlIT {
     private static Long planVersionId(JdbcTemplate db) {
         List<Long> ids =
                 db.queryForList(
-                        "SELECT id FROM fu_plan WHERE code = ? AND version = 1", Long.class, PLAN);
+                        "SELECT id FROM fu_plan WHERE code = ? ORDER BY version DESC LIMIT 1",
+                        Long.class,
+                        PLAN);
         return ids.isEmpty() ? null : ids.get(0);
     }
 
@@ -282,7 +284,7 @@ class ConfigTemplateRoundTripMySqlIT {
             "SELECT form_code, rule_id, category_key, target_field, severity, rule_type, params,"
                     + " message, sort_no, status FROM `{db}`.fe_rule"
         },
-        // ---- followup：计划模板（fu_plan_node join 计划版本 → 整组替换后与源一致）----
+        // ---- followup：计划模板（fu_plan_node join 计划版本 → 新版本内容包含源定义）----
         {
             "fu_plan",
             "SELECT code, name, version, status, start_date_field, cycle_type, cycle_years,"
@@ -483,9 +485,31 @@ class ConfigTemplateRoundTripMySqlIT {
                     sortedRows(demoa.queryForList(query[1].replace("{db}", "t_demoa")));
             List<Map<String, Object>> fromTarget =
                     sortedRows(demob.queryForList(query[1].replace("{db}", "t_demob")));
-            assertThat(fromTarget)
-                    .as("导入后 demob.%s 与 demoa 一致（源 %d 行）", query[0], fromSource.size())
-                    .isEqualTo(fromSource);
+            if (query[0].equals("fu_plan") || query[0].equals("fu_plan_node")) {
+                // OQR-02：在用更新保留目标旧版本，源配置内容存在于目标的新版本或相同内容版本。
+                for (Map<String, Object> sourceRow : fromSource) {
+                    Map<String, Object> expected = new java.util.LinkedHashMap<>(sourceRow);
+                    expected.remove("version");
+                    expected.remove("status");
+                    assertThat(
+                                    fromTarget.stream()
+                                            .anyMatch(
+                                                    target -> {
+                                                        Map<String, Object> actual =
+                                                                new java.util.LinkedHashMap<>(
+                                                                        target);
+                                                        actual.remove("version");
+                                                        actual.remove("status");
+                                                        return actual.equals(expected);
+                                                    }))
+                            .as("目标新 / 复用版本包含源 %s 配置", query[0])
+                            .isTrue();
+                }
+            } else {
+                assertThat(fromTarget)
+                        .as("导入后 demob.%s 与 demoa 一致（源 %d 行）", query[0], fromSource.size())
+                        .isEqualTo(fromSource);
+            }
         }
     }
 
@@ -538,10 +562,16 @@ class ConfigTemplateRoundTripMySqlIT {
                                 NTF_RULE_EVENT))
                 .isEqualTo(1);
         assertThat(demob.queryForMap(SETTING_QUERY)).isEqualTo(ntfSettingSourceBefore);
-        // fu_plan 源值胜 + fu_plan_node 整组替换：目标旧计划名收敛、多余节点删除、节点组与源一致
+        // OQR-02：旧计划与多余节点保留，新版本承载源定义。
         assertThat(
                         demob.queryForObject(
                                 "SELECT name FROM fu_plan WHERE code = ? AND version = 1",
+                                String.class,
+                                PLAN))
+                .isEqualTo("目标旧计划（示例）");
+        assertThat(
+                        demob.queryForObject(
+                                "SELECT name FROM fu_plan WHERE code = ? ORDER BY version DESC LIMIT 1",
                                 String.class,
                                 PLAN))
                 .isEqualTo("往返验证计划（示例）");
@@ -938,12 +968,20 @@ class ConfigTemplateRoundTripMySqlIT {
     }
 
     private Map<?, ?> applyTemplate(String token, long id) {
+        Map<?, ?> preview =
+                request(
+                        HttpMethod.POST,
+                        "/api/platform/config-templates/" + id + "/preview",
+                        token,
+                        Map.of("tenantId", TARGET_TENANT));
+        assertThat(preview).isNotNull();
+        assertThat(preview.get("applicable")).as("差异动作：%s", preview.get("changes")).isEqualTo(true);
         Map<?, ?> view =
                 request(
                         HttpMethod.POST,
                         "/api/platform/config-templates/" + id + "/apply",
                         token,
-                        Map.of("tenantId", TARGET_TENANT));
+                        Map.of("tenantId", TARGET_TENANT, "planHash", preview.get("planHash")));
         assertThat(view).isNotNull();
         assertThat(String.valueOf(view.get("tenantCode"))).isEqualTo("demob");
         assertThat(String.valueOf(view.get("sourceTenantCode"))).isEqualTo("demoa");

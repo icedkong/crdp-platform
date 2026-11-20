@@ -48,12 +48,15 @@ public class StartDateRecalculationService {
     private final PlanMapper planMapper;
     private final PlanEnrollmentMapper enrollmentMapper;
     private final AuditLogger audit;
+    private final com.crdp.followup.plan.app.CurrentDeviceScheduleService schedule;
 
     public StartDateRecalculationService(
             FollowupTaskMapper taskMapper,
             PlanMapper planMapper,
             PlanEnrollmentMapper enrollmentMapper,
-            AuditLogger audit) {
+            AuditLogger audit,
+            com.crdp.followup.plan.app.CurrentDeviceScheduleService schedule) {
+        this.schedule = schedule;
         this.taskMapper = taskMapper;
         this.planMapper = planMapper;
         this.enrollmentMapper = enrollmentMapper;
@@ -156,6 +159,8 @@ public class StartDateRecalculationService {
         int withdrawn = 0;
         for (FollowupTaskMapper.UnstartedTaskRow task :
                 taskMapper.findUnstartedTasks(enrollmentId)) {
+            if (this.schedule.isBoundTarget(enrollmentId, task.nodeId(), task.occurrence()))
+                continue;
             PlanDateCalculator.NodeSchedule schedule =
                     TaskCreationPlanner.occurrenceScheduleOf(
                             defs, task.nodeId(), task.occurrence(), newStart);

@@ -638,7 +638,7 @@ class ContactLogServiceTest {
                 serviceOf(guard).list(PATIENT, 1, 20).items().get(0).audios().size(),
                 "医院会话不经视角执行点（行为不变）");
 
-        // 视角会话：通话录音对视角隐藏（V109 默认规则；BLINDED 对结构字段等同隐藏，OQ-107⑤）
+        // 视角会话：通话录音对视角隐藏（V109 默认规则；BLINDED 对结构字段等同隐藏，OQ-155⑤）
         SecurityContextHolder.getContext()
                 .setAuthentication(
                         new org.springframework.security.authentication

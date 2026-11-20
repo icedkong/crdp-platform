@@ -40,7 +40,7 @@ import org.springframework.util.MultiValueMap;
  *
  * <p>单测（E10-T01/T04 的 FileUploadServiceTest 等）已锁校验逻辑；这里补**全链路 HTTP** 验收： 伪装文件在 multipart
  * 上传口被拒（任务验收①：改扩展名的可执行文件 40001，台账与 FILE_UPLOAD 审计无痕）； MP3 从上传 → preview-url（inlinePlayable）→
- * 公开取流口（无登录令牌，原生 audio 的真实姿势）整链可播（验收②）； 上传口 40300 / 模块关闭 40301；A 院文件在 B 院 preview-url 40400（租户隔离）。
+ * 鉴权取流口（匿名拒绝、同会话可播）（验收②）； 上传口 40300 / 模块关闭 40301；A 院文件在 B 院 preview-url 40400（租户隔离）。
  * 前端「水印不可关」（验收②水印口径）由 frontend/packages/viewer 的 e10-t06 对抗用例覆盖（visibility / 背景抹除 / 容器清空 / 假关闭
  * prop）。
  *
@@ -96,7 +96,7 @@ class FileServiceAcceptanceIT {
                                 jdbc, "DELETE FROM aud_log WHERE action = 'FILE_PREVIEW'");
                     });
         }
-        // 公开取流口按 IP 限流计数复位（其余 IT 共用本机 IP，避免累积影响重复运行）
+        // 预览取流口按 IP 限流计数复位（其余 IT 共用本机 IP，避免累积影响重复运行）
         Set<String> limited = redis.keys("crdp:file-preview:ip:*");
         if (limited != null && !limited.isEmpty()) {
             redis.delete(limited);
@@ -150,7 +150,7 @@ class FileServiceAcceptanceIT {
 
     // ---------------------------------------------------------------- 验收②：MP3 上传 → 签发 → 原生播放取流
 
-    /** MP3 全链路：上传成 mp3 台账 → preview-url 可内联播放 → 公开取流口（无登录令牌）按 audio/mpeg inline 回流原字节。 */
+    /** MP3 全链路：上传成 mp3 台账 → preview-url 可内联播放 → 同会话鉴权取流口按 audio/mpeg inline 回流原字节。 */
     @Test
     void mp3UploadsAndPlaysThroughPreviewProxy() {
         String token = hospitalToken("demoa");
@@ -185,14 +185,18 @@ class FileServiceAcceptanceIT {
         assertEquals("audio/mpeg", grant.get("mime"));
         assertEquals(Boolean.TRUE, grant.get("inlinePlayable"), "MP3 浏览器原生可播");
         String url = (String) grant.get("url");
-        assertTrue(url.startsWith("/api/hospital/files/preview/"), "短时链接指向公开取流口");
+        assertTrue(url.startsWith("/api/hospital/files/preview/"), "短时链接指向鉴权取流口");
         assertTrue(
                 ((Number) grant.get("expiresAtEpochSecond")).longValue()
                         > System.currentTimeMillis() / 1000,
                 "链接未过期");
 
-        // 原生 <audio> 是浏览器子资源请求，带不了登录令牌——取流口必须匿名可达
-        ResponseEntity<byte[]> streamed = rest.getForEntity(url, byte[].class);
+        // 浏览器由 API 携带登录令牌取得内存 Blob，短时授权本身不能匿名取流
+        assertEquals(401, rest.getForEntity(url, byte[].class).getStatusCode().value(), "预览不再匿名可达");
+        HttpHeaders previewHeaders = new HttpHeaders();
+        previewHeaders.setBearerAuth(token);
+        ResponseEntity<byte[]> streamed =
+                rest.exchange(url, HttpMethod.GET, new HttpEntity<>(previewHeaders), byte[].class);
         assertEquals(200, streamed.getStatusCode().value());
         assertEquals(
                 MediaType.parseMediaType("audio/mpeg"), streamed.getHeaders().getContentType());
@@ -212,7 +216,11 @@ class FileServiceAcceptanceIT {
         assertArrayEquals(body, streamed.getBody(), "取流字节与上传一致（不转码、不另存副本）");
 
         // 同一令牌窗口内可多次取流（播放器 seek / 重试会重复请求）
-        assertEquals(200, rest.getForEntity(url, byte[].class).getStatusCode().value());
+        assertEquals(
+                200,
+                rest.exchange(url, HttpMethod.GET, new HttpEntity<>(previewHeaders), byte[].class)
+                        .getStatusCode()
+                        .value());
 
         runInTenant(
                 "demoa",
@@ -225,6 +233,17 @@ class FileServiceAcceptanceIT {
                                         Long.class,
                                         String.valueOf(fileId)),
                                 "每次预览写 FILE_PREVIEW 审计"));
+
+        runInTenant(
+                "demoa",
+                () ->
+                        assertEquals(
+                                2L,
+                                jdbc.queryForObject(
+                                        "SELECT COUNT(*) FROM aud_data_access_log WHERE action = 'FILE_PREVIEW_CONTENT' AND object_id = ?",
+                                        Long.class,
+                                        String.valueOf(fileId)),
+                                "每次鉴权取流分别写数据访问审计"));
 
         // 对照：AMR 只下载不可在线播放（A-FU-025）
         Map<?, ?> amr = data(uploadRaw(token, PREFIX + "通话录音（示例）.amr", amr()));

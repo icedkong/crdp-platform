@@ -50,6 +50,14 @@ class DataScopeRuntimeChainTest {
     /**
      * @DataScope 方法执行期间上下文携带会话快照与用户 id，返回后清理（不泄漏到同线程后续查询）。
      */
+    private static String assigned(String alias) {
+        return "EXISTS (SELECT 1 FROM fu_task crdp_owned_task WHERE crdp_owned_task.patient_id = "
+                + alias
+                + ".id AND crdp_owned_task.assignee_id = "
+                + USER_ID
+                + ")";
+    }
+
     @Test
     void aspectOpensScopeContextFromSessionAndClearsItAfterwards() {
         ScopeSnapshot scope = ScopeSnapshot.restricted(List.of(7L), List.of(3L), true);
@@ -117,7 +125,12 @@ class DataScopeRuntimeChainTest {
                 scoped(ScopeSnapshot.restricted(List.of(), List.of(3L), false)),
                 "DEPT / RESPONSIBLE_DEPT / CUSTOM_DEPT：科室清单 IN");
         assertEquals(
-                PATIENT_SQL + " AND pt_patient.responsible_user_id = " + USER_ID,
+                PATIENT_SQL
+                        + " AND (pt_patient.responsible_user_id = "
+                        + USER_ID
+                        + " OR "
+                        + assigned("pt_patient")
+                        + ")",
                 scoped(ScopeSnapshot.restricted(List.of(), List.of(), true)),
                 "SELF / RESPONSIBLE_PATIENT：责任医生等值分支");
         assertEquals(
@@ -126,6 +139,8 @@ class DataScopeRuntimeChainTest {
                         + " OR pt_patient.dept_id IN (3, 4)"
                         + " OR pt_patient.responsible_user_id = "
                         + USER_ID
+                        + " OR "
+                        + assigned("pt_patient")
                         + ")",
                 scoped(ScopeSnapshot.restricted(List.of(7L), List.of(3L, 4L), true)),
                 "多角色并集：病区与科室恒 OR（C-WARD-004），本人分支同组");
@@ -149,6 +164,8 @@ class DataScopeRuntimeChainTest {
                         + " AND crdp_p.deleted = 0"
                         + " AND (crdp_p.responsible_user_id = "
                         + USER_ID
+                        + " OR "
+                        + assigned("crdp_p")
                         + " OR t.assignee_id = "
                         + USER_ID
                         + "))",

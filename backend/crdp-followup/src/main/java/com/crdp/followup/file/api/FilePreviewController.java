@@ -14,14 +14,10 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 预览内容代理（E10-T04 / tech-plan §10「预览」：经应用代理按流返回、不缓存）。
+ * 会话鉴权的预览代理。前端携带登录令牌获取水印副本，再以临时内存地址展示。
  *
- * <p>pdf.js、docx-preview 与原生 {@code <audio>} 是浏览器子资源请求，带不了登录令牌——内容取流走 {@code GET
- * /api/hospital/files/preview/{token}}：{@code @PublicApi} 登记（ApiResourceGuardFilter 放行）+
- * SecurityConfig permitAll，凭 preview-url 签发的 ≤ 5 分钟随机令牌定位租户与文件（限流与令牌校验在 {@link
- * FilePreviewService#content}）。
- *
- * <p>响应不缓存（{@code no-store}，规格「不缓存」）、inline 展示、MIME 取台账登记值（只可能是上传白名单内的类型）。
+ * <p>{@code @PublicApi} 仅豁免资源码登记，不豁免 SecurityConfig 登录校验；服务层复核会话、范围和文件版本。
+ * 图片及文档只返回服务器水印副本，音频保留原格式。响应禁用缓存。
  */
 @RestController
 public class FilePreviewController {
@@ -38,6 +34,7 @@ public class FilePreviewController {
 
     @GetMapping(URL_PREFIX + "{token}")
     @PublicApi
+    @com.crdp.framework.security.RequireModule("followup")
     public ResponseEntity<byte[]> preview(@PathVariable String token, HttpServletRequest request) {
         FilePreviewService.PreviewContent content =
                 preview.content(token, clientIps.resolve(request));

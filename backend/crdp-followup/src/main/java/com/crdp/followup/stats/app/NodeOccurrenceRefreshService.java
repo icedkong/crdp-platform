@@ -118,6 +118,7 @@ public class NodeOccurrenceRefreshService {
                             List<NodeOccurrenceInsertRow> computed = computeAll(asOf);
                             occurrenceMapper.deleteAll();
                             computed.forEach(occurrenceMapper::insertFact);
+                            occurrenceMapper.markRefresh(asOf);
                             return computed.size();
                         });
         int rows = written != null ? written : 0;

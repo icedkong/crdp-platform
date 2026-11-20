@@ -100,28 +100,12 @@ public interface FollowupTaskMapper {
     int backfillStartDate(@Param("id") long id, @Param("startDate") LocalDate startDate);
 
     /**
-     * 入组的上次实际随访日期快照（E21-T07 / C-FU-006：滚动循环节点 LAST_VISIT 的排期基准，followup V93）。 记录提交时单调推进（只增不减）；
-     * 只取单列日期，无患者数据输出。
+     * 入组的上次实际随访日期快照（E21-T07 / C-FU-006：滚动循环节点 LAST_VISIT 的排期基准，followup V93）。 由当前器械有效已提交记录派生，记录更正 /
+     * 删除后可回退或清空； 只取单列日期，无患者数据输出。
      */
     @IgnoreScope(reason = "滚动循环排期（E21-T07）读取入组快照列：只取日期值，不输出患者数据；" + "与 next_plan_date 缓存同口径")
     @Select("SELECT last_visit_date FROM fu_enrollment WHERE id = #{id}")
     LocalDate findLastVisitDate(@Param("id") long id);
-
-    /**
-     * 入组的医生指定下次随访日期（E21-T08 / C-FU-005 消费输入；恢复补偿等同步入口读取—— doctor_next_date 不进 EnrollmentRow
-     * 的入口单独取）。 只取单列日期，无患者数据输出。
-     */
-    @IgnoreScope(reason = "医生指定下次随访日期消费（E21-T08）读取入组登记列：只取日期值，不输出患者数据；" + "与 last_visit_date 快照同口径")
-    @Select("SELECT doctor_next_date FROM fu_enrollment WHERE id = #{id}")
-    LocalDate findDoctorNextDate(@Param("id") long id);
-
-    /**
-     * 清理已用的医生指定下次随访日期（E21-T08 / OQ-138③「清理已用值」——只影响下一次）： 覆盖任务创建（insert）或既有 PENDING
-     * 任务按医生日期重排（reschedule）后调用。定向 UPDATE，无 SELECT 输出；reason 进日志。
-     */
-    @IgnoreScope(reason = "医生指定下次随访日期消费（E21-T08）：按入组 id 定向 UPDATE 清理已用值（调度事务内），" + "无 SELECT 输出")
-    @Update("UPDATE fu_enrollment SET doctor_next_date = NULL WHERE id = #{id}")
-    int clearDoctorNextDate(@Param("id") long id);
 
     /** 入组已排任务行的节点 / 次数 / 计划日期（E21-T07 滚动循环推进状态：按节点、次数升序）。只取排期依据列，无患者数据输出。 */
     record TaskOccurrenceRow(long nodeId, int occurrence, LocalDate planDate) {}
@@ -249,6 +233,8 @@ public interface FollowupTaskMapper {
             FROM fu_task
             WHERE enrollment_id = #{enrollmentId} AND status = 'PENDING'
               AND create_type IN ('NORMAL', 'BACKFILL')
+              AND NOT EXISTS (SELECT 1 FROM fu_contact_log c WHERE c.task_id=fu_task.id)
+              AND NOT EXISTS (SELECT 1 FROM fu_record r WHERE r.task_id=fu_task.id AND r.deleted=0)
             ORDER BY node_id, occurrence
             """)
     List<UnstartedTaskRow> findUnstartedTasks(@Param("enrollmentId") long enrollmentId);
@@ -268,6 +254,8 @@ public interface FollowupTaskMapper {
                 window_start = #{windowStart}, window_end = #{windowEnd},
                 open_date = #{openDate}, lock_version = lock_version + 1
             WHERE id = #{id} AND status = 'PENDING'
+              AND NOT EXISTS (SELECT 1 FROM fu_contact_log c WHERE c.task_id=fu_task.id)
+              AND NOT EXISTS (SELECT 1 FROM fu_record r WHERE r.task_id=fu_task.id AND r.deleted=0)
             """)
     int rescheduleTask(
             @Param("id") long id,
@@ -285,7 +273,12 @@ public interface FollowupTaskMapper {
             reason =
                     "起算日期变更重算（E14-T07）撤回未开始任务：按任务 id 定向 DELETE（状态守卫 PENDING），"
                             + "调用方已做患者数据范围校验（40400）；无 SELECT 输出")
-    @Delete("DELETE FROM fu_task WHERE id = #{id} AND status = 'PENDING'")
+    @Delete(
+            """
+            DELETE FROM fu_task WHERE id = #{id} AND status = 'PENDING'
+              AND NOT EXISTS (SELECT 1 FROM fu_contact_log c WHERE c.task_id=fu_task.id)
+              AND NOT EXISTS (SELECT 1 FROM fu_record r WHERE r.task_id=fu_task.id AND r.deleted=0)
+            """)
     int withdrawTask(@Param("id") long id);
 
     /** 更新入组起算日期快照（A-FU-011「下次计划日期按新日期实时重算」的基准；V46 预留列，调度回填只补空值，本入口整体覆盖）。 */

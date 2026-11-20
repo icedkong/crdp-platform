@@ -122,8 +122,8 @@ public final class TaskCreationPlanner {
 
     /**
      * 滚动循环（basis = LAST_VISIT）节点的排期输入（E21-T07 / C-FU-006）：{@code lastVisitDate} = 入组的上次实际随访日期快照
-     * （fu_enrollment.last_visit_date，记录提交时单调推进）， {@code nodeStates} = 各滚动节点已排任务的推进状态（下次次数 = 已排最大次数
-     * + 1、最新一次计划日期）。 无滚动节点的计划（A / B）传 {@link #none()}——滚动分支退回「首次回落起算日期」的旧行为。
+     * （fu_enrollment.last_visit_date，按当前器械有效已提交记录重算）， {@code nodeStates} = 各滚动节点已排任务的推进状态（下次次数 =
+     * 已排最大次数 + 1、最新一次计划日期）。 无滚动节点的计划（A / B）传 {@link #none()}——滚动分支退回「首次回落起算日期」的旧行为。
      */
     public record LoopBasis(LocalDate lastVisitDate, Map<Long, NodeLoopState> nodeStates) {
 
@@ -405,7 +405,7 @@ public final class TaskCreationPlanner {
     }
 
     /** 节点行的日期参数（fu_plan_node 偏移 / 提醒 / 窗口列 → NodeTiming，单位归一大写）。 */
-    private static PlanDateCalculator.NodeTiming timingOf(NodeDef node) {
+    public static PlanDateCalculator.NodeTiming timingOf(NodeDef node) {
         return new PlanDateCalculator.NodeTiming(
                 node.offsetValue(),
                 node.offsetUnit().toUpperCase(),
@@ -626,7 +626,7 @@ public final class TaskCreationPlanner {
      * 期随访循环」、OQ-138⑦——固定与常规节点不再创建新任务，未完成的原任务由切换终止）； 常规（NORMAL / 未配置）模式排非 ERI 节点（含 enroll_mode 为空的 A
      * / B 计划节点）。
      */
-    static boolean activeInMode(String nodeEnrollMode, String enrollmentMode) {
+    public static boolean activeInMode(String nodeEnrollMode, String enrollmentMode) {
         if ("ERI".equalsIgnoreCase(enrollmentMode)) {
             return "ERI".equalsIgnoreCase(nodeEnrollMode);
         }

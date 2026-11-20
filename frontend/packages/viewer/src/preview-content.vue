@@ -7,9 +7,10 @@
  */
 import type { PreviewableFile } from './typings';
 
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import { previewModeOf } from './preview';
+import { PREVIEW_REVOKED_EVENT } from './preview-events';
 import { renderDocxDocument, renderPdfDocument } from './renderers';
 
 const props = withDefaults(
@@ -27,19 +28,38 @@ const emit = defineEmits<{
 
 const documentHost = ref<HTMLDivElement>();
 const renderError = ref(false);
+const invalid = ref(false);
+let sequence = 0;
+function revoke(event: Event) {
+  if ((event as CustomEvent<string>).detail !== props.url) return;
+  invalid.value = true;
+  sequence++;
+  documentHost.value?.replaceChildren();
+}
 
 const decision = computed(() => previewModeOf(props.file));
 
 onMounted(() => {
+  window.addEventListener(PREVIEW_REVOKED_EVENT, revoke);
   void renderDocument();
 });
 
 watch(
   () => [props.url, decision.value.mode] as const,
-  () => void renderDocument(),
+  () => {
+    invalid.value = false;
+    void renderDocument();
+  },
+  { flush: 'post' },
 );
 
+onBeforeUnmount(() => {
+  sequence++;
+  window.removeEventListener(PREVIEW_REVOKED_EVENT, revoke);
+});
+
 async function renderDocument(): Promise<void> {
+  const request = ++sequence;
   const mode = decision.value.mode;
   if (mode !== 'docx' && mode !== 'pdf') {
     return;
@@ -48,13 +68,21 @@ async function renderDocument(): Promise<void> {
   if (!container || !props.url) {
     return;
   }
+  container.replaceChildren();
   renderError.value = false;
   try {
+    const staging = document.createElement('div');
     await (mode === 'pdf'
-      ? renderPdfDocument(container, props.url)
-      : renderDocxDocument(container, props.url));
+      ? renderPdfDocument(staging, props.url)
+      : renderDocxDocument(staging, props.url));
+    if (
+      request === sequence &&
+      !invalid.value &&
+      container === documentHost.value
+    )
+      container.replaceChildren(...staging.childNodes);
   } catch {
-    renderError.value = true;
+    if (request === sequence) renderError.value = true;
   }
 }
 
@@ -66,16 +94,18 @@ function onDownload(): void {
 <template>
   <div class="preview-content">
     <img
-      v-if="decision.mode === 'image'"
+      v-if="!invalid && decision.mode === 'image'"
       :alt="file.name ?? '预览图片'"
       class="preview-image"
       :src="url"
     />
     <div
-      v-else-if="decision.mode === 'pdf' || decision.mode === 'docx'"
-      ref="documentHost"
+      v-else-if="
+        !invalid && (decision.mode === 'pdf' || decision.mode === 'docx')
+      "
       class="preview-document"
     >
+      <div ref="documentHost"></div>
       <p v-if="renderError" class="preview-fallback">
         在线预览加载失败，请下载后查看
         <button v-if="canDownload" type="button" @click="onDownload">
@@ -83,7 +113,10 @@ function onDownload(): void {
         </button>
       </p>
     </div>
-    <div v-else-if="decision.mode === 'audio'" class="preview-audio">
+    <div
+      v-else-if="!invalid && decision.mode === 'audio'"
+      class="preview-audio"
+    >
       <audio
         class="preview-audio-element"
         controls
@@ -93,6 +126,7 @@ function onDownload(): void {
       ></audio>
       <p class="preview-audio-note">如需保存录音，请使用下载（需下载权限）</p>
     </div>
+    <p v-else-if="invalid" class="preview-fallback">预览已失效，请重新打开</p>
     <div v-else class="preview-download-only">
       <p class="preview-download-reason">{{ decision.reason }}</p>
       <button v-if="canDownload" type="button" @click="onDownload">下载</button>

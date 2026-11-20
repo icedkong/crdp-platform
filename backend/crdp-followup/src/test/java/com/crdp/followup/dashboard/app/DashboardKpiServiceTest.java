@@ -41,7 +41,10 @@ class DashboardKpiServiceTest {
     private final DashboardStatsMapper stats = mock(DashboardStatsMapper.class);
     private final DashboardFeatureMapper features = mock(DashboardFeatureMapper.class);
     private final EriListService eriList = mock(EriListService.class);
-    private final DashboardKpiService service = new DashboardKpiService(stats, features, eriList);
+    private final com.crdp.followup.stats.app.MonthlyDueService monthly =
+            mock(com.crdp.followup.stats.app.MonthlyDueService.class);
+    private final DashboardKpiService service =
+            new DashboardKpiService(stats, features, eriList, monthly);
 
     {
         lenient().when(features.findEnabled("implant")).thenReturn(false);
@@ -53,7 +56,7 @@ class DashboardKpiServiceTest {
                                 new DashboardStatsMapper.PatientStatusCountRow("DEAD", 2L),
                                 new DashboardStatsMapper.PatientStatusCountRow("TERMINATED", 1L),
                                 new DashboardStatsMapper.PatientStatusCountRow("LOST", 1L)));
-        lenient().when(stats.countMonthDue(any(), any(), any())).thenReturn(8L);
+        lenient().when(monthly.count(any(), any(), any())).thenReturn(8L);
         lenient().when(stats.countTasksByStatus(eq("OVERDUE"), any())).thenReturn(5L);
         lenient().when(stats.countTasksByStatus(eq("PENDING"), any())).thenReturn(20L);
         lenient().when(stats.countRecentHighlightRecords(any(), any())).thenReturn(3L);
@@ -88,8 +91,8 @@ class DashboardKpiServiceTest {
                 Map.of("tab", "all", "status", "OVERDUE"), byCode.get("overdue").drill().query());
         // 本月应随访钻取带当月计划日期窗口
         assertEquals(8L, byCode.get("monthDue").value());
-        assertEquals("TASK_LIST", byCode.get("monthDue").drill().target());
-        assertEquals("all", byCode.get("monthDue").drill().query().get("tab"));
+        assertEquals("FOLLOWUP_STATS", byCode.get("monthDue").drill().target());
+        assertEquals("MONTH", byCode.get("monthDue").drill().query().get("kind"));
         for (MetricView metric : view.metrics()) {
             assertTrue(metric.available(), metric.code() + " 应可用");
         }
@@ -102,7 +105,7 @@ class DashboardKpiServiceTest {
 
         ArgumentCaptor<LocalDate> from = ArgumentCaptor.forClass(LocalDate.class);
         ArgumentCaptor<LocalDate> to = ArgumentCaptor.forClass(LocalDate.class);
-        verify(stats).countMonthDue(from.capture(), to.capture(), any());
+        verify(monthly).count(from.capture(), to.capture(), any());
         assertEquals(today.withDayOfMonth(1), from.getValue());
         assertEquals(today.withDayOfMonth(today.lengthOfMonth()), to.getValue());
         assertEquals(
@@ -113,7 +116,7 @@ class DashboardKpiServiceTest {
                         .orElseThrow()
                         .drill()
                         .query()
-                        .get("dueFrom"));
+                        .get("from"));
     }
 
     // ---------------------------------------------------------------- 医院 C 指标集
@@ -251,6 +254,6 @@ class DashboardKpiServiceTest {
         service.kpi(7L);
         verify(stats).countPatientsByStatus(7L);
         verify(stats).countTasksByStatus(eq("OVERDUE"), eq(7L));
-        verify(stats).countMonthDue(any(), any(), eq(7L));
+        verify(monthly).count(any(), any(), eq(7L));
     }
 }

@@ -13,7 +13,6 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
@@ -106,28 +105,9 @@ public class TokenAuthenticationFilter extends OncePerRequestFilter {
 
     /** 权限版本落后：按数据库当前授权重算会话内容（令牌不变），随后请求即以新权限执行； 重算发现账号已停用 / 不存在 → 删除会话并返回 null（本次及后续请求都按未认证处理）。 */
     private SessionPrincipal refreshStalePermissions(SessionPrincipal principal) {
-        long current = permissionVersions.current(principal);
-        if (principal.permissionVersion() >= current) {
-            return principal;
-        }
-        Optional<SessionPrincipal> refreshed = sessionRefresher.refresh(principal);
-        if (refreshed.isEmpty()) {
-            sessionStore.delete(principal.token());
-            log.info(
-                    "session dropped after permission change side={} userId={} reason=account-unavailable",
-                    principal.sessionType(),
-                    principal.userId());
-            return null;
-        }
-        SessionPrincipal active = refreshed.get();
-        sessionStore.save(active);
-        log.info(
-                "session permissions refreshed side={} userId={} version {} -> {}",
-                principal.sessionType(),
-                principal.userId(),
-                principal.permissionVersion(),
-                active.permissionVersion());
-        return active;
+        return new com.crdp.framework.security.SessionPermissionResolver(
+                        sessionStore, permissionVersions, sessionRefresher)
+                .resolve(principal);
     }
 
     /** 权限码 + 会话端别权限；端别权限供 SecurityConfig 做跨端拒绝（PLT-AUTH-005）。 */

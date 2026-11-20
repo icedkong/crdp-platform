@@ -81,6 +81,7 @@ class RecordBackfillServiceTest {
                                 Map.of(),
                                 Map.of(),
                                 null,
+                                null,
                                 null));
 
         RecordBackfillService.BackfillView view =
@@ -120,6 +121,7 @@ class RecordBackfillServiceTest {
                                 Map.of(),
                                 Map.of(),
                                 null,
+                                null,
                                 null));
 
         service.create(
@@ -152,6 +154,7 @@ class RecordBackfillServiceTest {
                                 0,
                                 Map.of(),
                                 Map.of(),
+                                null,
                                 null,
                                 null));
 
@@ -207,6 +210,7 @@ class RecordBackfillServiceTest {
                                 0,
                                 Map.of(),
                                 Map.of(),
+                                null,
                                 null,
                                 null));
 
@@ -309,6 +313,7 @@ class RecordBackfillServiceTest {
                                 Map.of(),
                                 Map.of(),
                                 null,
+                                null,
                                 null));
 
         RecordBackfillService.BackfillView view =
@@ -399,6 +404,7 @@ class RecordBackfillServiceTest {
                                 0,
                                 Map.of(),
                                 Map.of(),
+                                null,
                                 null,
                                 null));
 

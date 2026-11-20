@@ -118,6 +118,14 @@ class PermissionScopeMaskingIT {
     // ================================================================ 七种范围类型
 
     /** 类型一 ALL：任一启用角色为 ALL 即全院，不再改写 SQL（A-WARD-007）；预览不列病区 / 科室清单。 */
+    private static String assignedPatient(String alias, long user) {
+        return "EXISTS (SELECT 1 FROM fu_task crdp_owned_task WHERE crdp_owned_task.patient_id = "
+                + alias
+                + ".id AND crdp_owned_task.assignee_id = "
+                + user
+                + ")";
+    }
+
     @Test
     void allScopeSeesWholeTenantAndDominatesRestrictedRoles() {
         long role = roleWithScope("ITR-PSM-ALL", "IT 全院范围角色（示例）", List.of("ALL"), List.of());
@@ -287,9 +295,14 @@ class PermissionScopeMaskingIT {
 
         String rewritten = DataScopeGuard.enforce(PATIENT_SQL, scope, user, false);
         assertEquals(
-                PATIENT_SQL + " AND pt_patient.responsible_user_id = " + user,
+                PATIENT_SQL
+                        + " AND (pt_patient.responsible_user_id = "
+                        + user
+                        + " OR "
+                        + assignedPatient("pt_patient", user)
+                        + ")",
                 rewritten,
-                "仅本人：患者责任医生 = 本人");
+                "仅本人：患者责任医生或任务负责人 = 本人");
 
         UserEffectivePermissionsView preview = previewOf(user);
         assertTrue(typesOf(preview).contains("SELF"));
@@ -324,6 +337,8 @@ class PermissionScopeMaskingIT {
                         + " AND crdp_p.deleted = 0"
                         + " AND (crdp_p.responsible_user_id = "
                         + user
+                        + " OR "
+                        + assignedPatient("crdp_p", user)
                         + " OR t.assignee_id = "
                         + user
                         + "))",
@@ -334,9 +349,11 @@ class PermissionScopeMaskingIT {
         assertEquals(
                 "SELECT r.row_no FROM imp_row r"
                         + " WHERE EXISTS (SELECT 1 FROM pt_patient crdp_p WHERE crdp_p.id = r.patient_id"
-                        + " AND crdp_p.deleted = 0 AND crdp_p.responsible_user_id = "
+                        + " AND crdp_p.deleted = 0 AND (crdp_p.responsible_user_id = "
                         + user
-                        + ")",
+                        + " OR "
+                        + assignedPatient("crdp_p", user)
+                        + "))",
                 rows,
                 "无负责人语义的子表只带患者侧条件");
 
@@ -400,6 +417,8 @@ class PermissionScopeMaskingIT {
                         + custom
                         + ") OR pt_patient.responsible_user_id = "
                         + user
+                        + " OR "
+                        + assignedPatient("pt_patient", user)
                         + ")",
                 rewritten,
                 "病区与科室无上下级关系，三组分支恒 OR（C-WARD-004）");

@@ -3,6 +3,7 @@ import type {
   DashboardLayoutView,
   KpiCardView,
   KpiMetric,
+  StatsDrillQuery,
   TrendCardView,
 } from '@crdp/api';
 
@@ -57,9 +58,12 @@ import EriListArea from './eri-list-area.vue';
 import { defaultTrendRange, metricIcon, trendChartOption } from './logic';
 import RateArea from './rate-area.vue';
 import ScanProgressArea from './scan-progress-area.vue';
+import StatsDrillDrawer from './stats-drill-drawer.vue';
 import TaskArea from './task-area.vue';
 
 defineOptions({ name: 'HospitalDashboard' });
+
+const statsDrill = ref<null | StatsDrillQuery>(null);
 
 /**
  * E19-T02 / A-DASH-001、A-DASH-002、C-DASH-001 · E19-T03 / A-DASH-003、004、005、008、C-DASH-003、008 ·
@@ -152,6 +156,17 @@ async function loadKpi() {
 
 /** 点指标卡钻取（条件由后端下发：患者列表 status、任务列表 tab/status/dueFrom/dueTo）。 */
 function handleDrill(metric: KpiMetric) {
+  if (metric.drill?.target === 'FOLLOWUP_STATS') {
+    const query = metric.drill.query ?? {};
+    statsDrill.value = {
+      kind: 'MONTH',
+      from: String(query.from),
+      to: String(query.to),
+      wardId: query.wardId ? String(query.wardId) : undefined,
+      expectedCount: metric.value ?? undefined,
+    };
+    return;
+  }
   const target = kpiMetricRoute(metric);
   if (target) {
     void router.push(target);
@@ -218,6 +233,7 @@ function handleLayoutSaved(view: DashboardLayoutView) {
 </script>
 
 <template>
+  <StatsDrillDrawer :query="statsDrill" @close="statsDrill = null" />
   <Result
     v-if="isMobile && !responsive"
     status="info"

@@ -81,6 +81,8 @@ jobs:
       # 打包并短暂启动应用完成平台库与演示租户库的 Flyway 迁移与种子，再跑全量测试。
       - name: 启动 MySQL 与 Redis（与本地 docker compose 相同）
         run: docker compose up -d --wait
+      - name: 安装预览中文字体
+        run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
       - name: 打包后端
         run: mvn -B -f backend/pom.xml -pl crdp-server -am -DskipTests package
       - name: 预迁移平台库与演示租户库（启动应用至健康后停止）
@@ -95,10 +97,15 @@ jobs:
             echo "应用未健康启动，无法预迁移"; exit 1; }
           kill $(cat /tmp/crdp.pid)
           sleep 3
+      - name: 构建隔离预览转换镜像
+        run: |
+          scripts/preview/build-worker.sh
+          docker build -t crdp-preview-renderer:oqr07 backend/crdp-followup/target/preview-image
       - name: 格式、编译与测试（含跨租户隔离与开通编排 IT）
         run: mvn -B -f backend/pom.xml spotless:check test
         env:
           CRDP_IT_MYSQL_PORT: "13306"
+          CRDP_IT_PREVIEW_LAUNCHER: ${{ github.workspace }}/scripts/preview/docker-launcher.sh
       # E22-T06：单院恢复脚本。静态校验（护栏 / 五阶段 / 注册表切换）+ 在 compose MySQL 上
       # 用虚构租户 rstcheck 演练「PITR 快照 → 导出 → 导入 → 切换注册表 → 回滚」全流程。
       - name: 单院恢复脚本校验与本地演练

@@ -58,7 +58,8 @@ class RecordDraftServiceTest {
                 Map.of("f214", "2026-03-10"),
                 Map.of(),
                 null,
-                "2026-03-10T10:15:00+08:00");
+                "2026-03-10T10:15:00+08:00",
+                null);
     }
 
     @Test

@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
@@ -46,8 +47,15 @@ class FollowupRecordServiceTest {
     private final com.crdp.followup.implant.app.DeviceContextService deviceContext =
             mock(com.crdp.followup.implant.app.DeviceContextService.class);
 
+    private final com.crdp.followup.record.infra.mapper.RecordFeatureMapper features =
+            mock(com.crdp.followup.record.infra.mapper.RecordFeatureMapper.class);
     private final FollowupRecordService service =
-            new FollowupRecordService(recordMapper, formService, deviceContext);
+            new FollowupRecordService(
+                    recordMapper,
+                    formService,
+                    deviceContext,
+                    features,
+                    mock(com.crdp.followup.patient.app.PatientFollowupSummaryService.class));
 
     private static final FollowupRecordMapper.RecordRowRaw ROW =
             new FollowupRecordMapper.RecordRowRaw(
@@ -66,7 +74,8 @@ class FollowupRecordServiceTest {
                     7L,
                     LocalDateTime.of(2026, 11, 1, 9, 0),
                     8L,
-                    LocalDateTime.of(2026, 11, 5, 10, 0));
+                    LocalDateTime.of(2026, 11, 5, 10, 0),
+                    null);
 
     @BeforeEach
     void login() {
@@ -78,6 +87,24 @@ class FollowupRecordServiceTest {
     @AfterEach
     void logout() {
         SecurityContextHolder.clearContext();
+    }
+
+    @Test
+    void mappingCannotBypassSubmittedRecordEditPermission() {
+        var limited = org.mockito.Mockito.spy(principal());
+        when(limited.permissionCodes()).thenReturn(List.of("followup:scan:upload"));
+        SecurityContextHolder.getContext()
+                .setAuthentication(
+                        new UsernamePasswordAuthenticationToken(limited, null, List.of()));
+        when(recordMapper.findRecord(888L)).thenReturn(rowWithStatus("SUBMITTED"));
+        when(features.findEnabled("record_edit_submitted")).thenReturn(true);
+        assertEquals(
+                40300,
+                assertThrows(
+                                ApiException.class,
+                                () -> service.applyMappingWrite(888L, 0, Map.of("f248", 55)))
+                        .code());
+        verify(recordMapper, never()).applyMappingWrite(anyLong(), anyInt(), any(), anyLong());
     }
 
     @Test
@@ -138,7 +165,8 @@ class FollowupRecordServiceTest {
                         7L,
                         LocalDateTime.of(2026, 11, 1, 9, 0),
                         8L,
-                        LocalDateTime.of(2026, 11, 5, 10, 0));
+                        LocalDateTime.of(2026, 11, 5, 10, 0),
+                        null);
         FollowupRecordMapper.RecordRowRaw after =
                 new FollowupRecordMapper.RecordRowRaw(
                         701L,
@@ -156,7 +184,8 @@ class FollowupRecordServiceTest {
                         7L,
                         LocalDateTime.of(2026, 11, 1, 9, 0),
                         7L,
-                        LocalDateTime.of(2026, 11, 6, 10, 0));
+                        LocalDateTime.of(2026, 11, 6, 10, 0),
+                        null);
         when(recordMapper.findRecord(701L)).thenReturn(submitted, after);
         when(formService.writeGateData(eq("A_ANNUAL_FU"), eq(1), any()))
                 .thenAnswer(
@@ -233,7 +262,8 @@ class FollowupRecordServiceTest {
                         7L,
                         LocalDateTime.of(2026, 11, 1, 9, 0),
                         8L,
-                        LocalDateTime.of(2026, 11, 5, 10, 0));
+                        LocalDateTime.of(2026, 11, 5, 10, 0),
+                        null);
         when(recordMapper.findRecord(701L)).thenReturn(bumped);
         when(formService.fieldLabels("A_ANNUAL_FU", 1)).thenReturn(Map.of("f214", "随访日期"));
         when(recordMapper.findDisplayName(8L)).thenReturn("李医生（示例）");
@@ -289,7 +319,8 @@ class FollowupRecordServiceTest {
                         7L,
                         LocalDateTime.of(2026, 11, 1, 9, 0),
                         8L,
-                        LocalDateTime.of(2026, 11, 5, 10, 0));
+                        LocalDateTime.of(2026, 11, 5, 10, 0),
+                        null);
         when(recordMapper.findRecord(703L)).thenReturn(submitted);
         assertEquals(
                 40901,
@@ -390,7 +421,8 @@ class FollowupRecordServiceTest {
                         7L,
                         LocalDateTime.of(2026, 11, 1, 9, 0),
                         8L,
-                        LocalDateTime.of(2026, 11, 5, 10, 0));
+                        LocalDateTime.of(2026, 11, 5, 10, 0),
+                        null);
         when(recordMapper.findRecord(703L)).thenReturn(submitted);
         assertEquals(
                 40901,
@@ -416,7 +448,8 @@ class FollowupRecordServiceTest {
                 7L,
                 LocalDateTime.of(2026, 11, 1, 9, 0),
                 7L,
-                LocalDateTime.of(2026, 11, 5, 10, 0));
+                LocalDateTime.of(2026, 11, 5, 10, 0),
+                null);
     }
 
     private static SessionPrincipal principal() {
@@ -431,7 +464,7 @@ class FollowupRecordServiceTest {
                 "张医生（示例）",
                 List.of("FOLLOWUP_DOCTOR"),
                 List.of(),
-                List.of(),
+                List.of("followup:record:edit"),
                 List.of("followup"),
                 1L,
                 com.crdp.framework.security.ScopeSnapshot.allowAll(),
@@ -462,7 +495,8 @@ class FollowupRecordServiceTest {
                 7L,
                 LocalDateTime.of(2026, 11, 5, 9, 0),
                 7L,
-                LocalDateTime.of(2026, 11, 5, 9, 0));
+                LocalDateTime.of(2026, 11, 5, 9, 0),
+                null);
     }
 
     /** 指定 version 的行（更新后重读：version + 1）。 */
@@ -485,7 +519,8 @@ class FollowupRecordServiceTest {
                 row.createdBy(),
                 row.createdAt(),
                 row.updatedBy(),
-                row.updatedAt());
+                row.updatedAt(),
+                null);
     }
 
     // ------------------------------------------------------- 修改已提交 / 器械维度（E21-T11 /
@@ -534,5 +569,39 @@ class FollowupRecordServiceTest {
                                 () -> service.updateSubmitted(888L, 5, Map.of(), null))
                         .code(),
                 "baseVersion 过期 → 40900");
+    }
+
+    @Test
+    void submissionFactUsesBeijingZoneEvenWhenJvmDefaultIsUtcAndNeverFallsBackToUpdatedAt() {
+        var previous = java.util.TimeZone.getDefault();
+        try {
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("UTC"));
+            var time = LocalDateTime.of(2026, 11, 18, 10, 0);
+            var row =
+                    new FollowupRecordMapper.RecordRowRaw(
+                            701L,
+                            301L,
+                            null,
+                            "BACKFILL",
+                            null,
+                            null,
+                            "A_ANNUAL_FU",
+                            1,
+                            "SUBMITTED",
+                            1,
+                            "{}",
+                            "{}",
+                            1L,
+                            time,
+                            1L,
+                            time,
+                            time);
+            when(recordMapper.findRecord(701L)).thenReturn(row);
+            assertEquals("2026-11-18T10:00:00+08:00", service.record(701L).firstSubmittedAt());
+            when(recordMapper.findRecord(701L)).thenReturn(ROW);
+            assertNull(service.record(701L).firstSubmittedAt());
+        } finally {
+            java.util.TimeZone.setDefault(previous);
+        }
     }
 }

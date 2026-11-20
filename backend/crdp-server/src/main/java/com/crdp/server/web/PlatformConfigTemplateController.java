@@ -42,7 +42,7 @@ public class PlatformConfigTemplateController {
 
     public record ExportBody(Long tenantId, String name) {}
 
-    public record ApplyBody(Long tenantId) {}
+    public record ApplyBody(Long tenantId, String planHash) {}
 
     @Operation(
             summary =
@@ -87,6 +87,18 @@ public class PlatformConfigTemplateController {
         return ApiResponse.ok(service.registry());
     }
 
+    @Operation(summary = "只读生成目标租户真实行级差异计划（OQR-02）")
+    @PostMapping("/{id}/preview")
+    @RequiresPermission("platform:tenant:create")
+    public ApiResponse<ConfigTemplateImportService.PreviewView> preview(
+            @PathVariable long id, @RequestBody ApplyBody body) {
+        if (body == null || body.tenantId() == null)
+            throw new ApiException(400, 40001, "tenantId 必填");
+        return ApiResponse.ok(
+                importService.preview(
+                        id, new ConfigTemplateImportService.ApplyRequest(body.tenantId())));
+    }
+
     @Operation(
             summary =
                     "将配置模板应用到目标租户（A-FLD-014）：导入配置表并重映射 ID / 改写引用；用户引用列置空；"
@@ -99,6 +111,8 @@ public class PlatformConfigTemplateController {
         }
         return ApiResponse.ok(
                 importService.apply(
-                        id, new ConfigTemplateImportService.ApplyRequest(body.tenantId())));
+                        id,
+                        new ConfigTemplateImportService.ApplyRequest(
+                                body.tenantId(), body.planHash())));
     }
 }

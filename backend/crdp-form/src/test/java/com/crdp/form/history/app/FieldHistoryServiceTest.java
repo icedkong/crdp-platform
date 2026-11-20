@@ -695,6 +695,40 @@ class FieldHistoryServiceTest {
         return field("f013", "general_note", "一般备注", "textarea", false, 90);
     }
 
+    @Test
+    void sensitiveEntityHistoryStoresOnlyValidatedDigests() {
+        when(recordMapper.findVersionFields("A_BASELINE", 1)).thenReturn(List.of(sensitiveName()));
+        service.logDigestChange(
+                101L, "A_BASELINE", 1, "f019", "a".repeat(64), "b".repeat(64), "身份核实（示例）");
+        ArgumentCaptor<FieldHistoryInsert> row = ArgumentCaptor.forClass(FieldHistoryInsert.class);
+        verify(historyMapper).insert(row.capture());
+        assertEquals("PT_PATIENT", row.getValue().getRecordType());
+        assertTrue(row.getValue().getOldValue().contains("digest"));
+        assertTrue(row.getValue().getNewValue().contains("b".repeat(64)));
+    }
+
+    @Test
+    void sensitiveEntityHistoryRejectsPlaintextAndNonSensitiveKeys() {
+        when(recordMapper.findVersionFields("A_BASELINE", 1)).thenReturn(List.of(smoking()));
+        assertThrows(
+                ApiException.class,
+                () ->
+                        service.logDigestChange(
+                                101L, "A_BASELINE", 1, "f019", "姓名（示例）", "b".repeat(64), "核实（示例）"));
+        assertThrows(
+                ApiException.class,
+                () ->
+                        service.logDigestChange(
+                                101L,
+                                "A_BASELINE",
+                                1,
+                                "f010",
+                                "a".repeat(64),
+                                "b".repeat(64),
+                                "核实（示例）"));
+        verify(historyMapper, never()).insert(any());
+    }
+
     /** 敏感字段（防御：不应出现在 data JSON，出现也不落明文历史）。 */
     private static VersionFieldRow sensitiveName() {
         return field("f019", "patient_name", "姓名", "text", true, 5);

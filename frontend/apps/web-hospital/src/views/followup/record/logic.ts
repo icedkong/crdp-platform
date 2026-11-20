@@ -14,7 +14,7 @@ import type {
   RecordTaskContext,
 } from '@crdp/api';
 
-import { addDateUnit } from '@crdp/rules';
+import { addDateUnit, sameFormValue } from '@crdp/rules';
 
 /** 顶部横幅（pages.md §5.1，文案照抄）。 */
 export interface WorkbenchBanner {
@@ -106,7 +106,7 @@ export function diffChanges(
   for (const key of new Set([...Object.keys(base), ...Object.keys(current)])) {
     const before = base[key];
     const after = current[key];
-    if (!Object.is(before, after)) {
+    if (!sameFormValue(before, after)) {
       changes[key] = after === undefined ? null : after;
     }
   }
@@ -218,19 +218,31 @@ export function nextVisitFieldKey(schema: FormSchema | null): null | string {
 
 /**
  * 提交校验（pages.md §5.1 照抄）：「下次随访时间不能早于或等于本次随访日期」「不能早于今天」；
- * 返回文案（空 = 通过）。后端登记侧对早于今天的值忽略（OQ-138③ 暂行），前端照设计文档拦截；
- * 补录的历史记录照填（提示「只保存」，见 nextVisitNote）。
+ * 返回文案（空 = 通过），按北京时间校验，后端同样强制核验；
+ * 历史 BACKFILL 中已过去的下次日期只归档，显式重选仍校验当前日期（OQR-06）。
  */
 export function nextVisitIssueText(
   value: unknown,
   visitDate: null | string,
-  today: () => string = () => new Date().toISOString().slice(0, 10),
+  today: () => string = () =>
+    new Intl.DateTimeFormat('sv-SE', {
+      timeZone: 'Asia/Shanghai',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date()),
+  source: null | string = null,
 ): string {
   if (typeof value !== 'string' || !value) return '';
   if (visitDate && value <= visitDate) {
     return '下次随访时间不能早于或等于本次随访日期';
   }
-  if (value < today()) return '下次随访时间不能早于今天';
+  const businessDate = today();
+  if (
+    value < businessDate &&
+    !(source === 'BACKFILL' && visitDate && visitDate < businessDate)
+  )
+    return '下次随访时间不能早于今天';
   return '';
 }
 
@@ -451,4 +463,21 @@ export function canContinueBackfill(input: {
     Boolean(input.patientId) &&
     input.implantEnabled
   );
+}
+
+/** OQR-05A：未知事实不能回落到更新时间；草稿与历史未知分别显示。 */
+export function recordSubmissionTimeText(
+  status: string,
+  firstSubmittedAt?: null | string,
+): string {
+  if (status !== 'SUBMITTED') return '未提交';
+  return firstSubmittedAt || '未知（历史记录未留存首次提交时间）';
+}
+
+/** OQR-01：多候选不能默选；唯一候选也传明确 ID，提交时失配应重新确认。 */
+export function backfillTaskChoice(candidates: Array<{ taskId: string }>) {
+  return {
+    needsChoice: candidates.length > 1,
+    taskId: candidates.length === 1 ? candidates[0]?.taskId : undefined,
+  };
 }

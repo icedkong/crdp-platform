@@ -245,7 +245,7 @@ public interface ReportMapper {
             JOIN pt_patient pt ON pt.id = r.patient_id AND pt.deleted = 0
             LEFT JOIN fu_task t ON t.id = r.task_id
             LEFT JOIN fu_plan_node n ON n.id = t.node_id
-            WHERE r.patient_id = #{patientId}
+            WHERE r.patient_id = #{patientId} AND r.deleted = 0
             ORDER BY COALESCE(t.plan_date, r.visit_date) ASC, r.id ASC
             """)
     List<RecordRow> recordsOfPatient(@Param("patientId") long patientId);
@@ -475,7 +475,7 @@ public interface ReportMapper {
             FROM fu_record r
             LEFT JOIN fu_task t ON t.id = r.task_id
             LEFT JOIN fu_plan_node n ON n.id = t.node_id
-            WHERE r.id = #{id}
+            WHERE r.id = #{id} AND r.deleted = 0
             """)
     RecordRow findRecordById(@Param("id") long id);
 

@@ -179,12 +179,11 @@ class DoctorWorkloadIT {
                         .get("doctorId"));
         Map<?, ?> monthDueQuery =
                 (Map<?, ?>) ((Map<?, ?>) zhangRow.get("monthDueDrill")).get("query");
-        assertEquals("all", monthDueQuery.get("tab"));
-        assertEquals(
-                TODAY.withDayOfMonth(1).toString(), String.valueOf(monthDueQuery.get("dueFrom")));
+        assertEquals("MONTH", monthDueQuery.get("kind"));
+        assertEquals(TODAY.withDayOfMonth(1).toString(), String.valueOf(monthDueQuery.get("from")));
         assertEquals(
                 TODAY.withDayOfMonth(TODAY.lengthOfMonth()).toString(),
-                String.valueOf(monthDueQuery.get("dueTo")));
+                String.valueOf(monthDueQuery.get("to")));
         Map<?, ?> overdueQuery =
                 (Map<?, ?>) ((Map<?, ?>) zhangRow.get("overdueDrill")).get("query");
         assertEquals("TASK_LIST", ((Map<?, ?>) zhangRow.get("overdueDrill")).get("target"));

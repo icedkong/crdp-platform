@@ -178,7 +178,12 @@ public class RecordEntryService {
             String visitNo,
             Integer sequenceNo,
             EntryDefaultsView entryDefaults,
-            List<Map<String, Object>> highlightHits) {}
+            List<Map<String, Object>> highlightHits,
+            String createdAt,
+            String updatedAt,
+            String firstSubmittedAt,
+            List<com.crdp.followup.plan.app.CurrentDeviceScheduleService.CommandView>
+                    doctorNextCommands) {}
 
     /** 患者摘要（补录记录的表单页头幅；姓名 / 病案号只输出脱敏值）。 */
     public record PatientBriefView(
@@ -200,7 +205,8 @@ public class RecordEntryService {
             String completeKind,
             int fieldChanges,
             List<WarningView> warnings,
-            String transcribedReportId) {}
+            String transcribedReportId,
+            String firstSubmittedAt) {}
 
     /** 软校验警告（不拦截提交，前端 yellow 提示口径，A-FLD-003「提示但可保存」）。 */
     public record WarningView(String key, String message) {}
@@ -227,7 +233,17 @@ public class RecordEntryService {
             Map<String, Object> data,
             Map<String, Object> dataMeta,
             String reason,
-            Long transcribeReportId) {}
+            Long transcribeReportId,
+            Boolean reselectNextVisit) {
+        public UpdateCommand(
+                Integer baseVersion,
+                Map<String, Object> data,
+                Map<String, Object> dataMeta,
+                String reason,
+                Long transcribeReportId) {
+            this(baseVersion, data, dataMeta, reason, transcribeReportId, false);
+        }
+    }
 
     // ---------------------------------------------------------------- 详情（表单页装配）
 
@@ -266,7 +282,11 @@ public class RecordEntryService {
                                 : (context == null ? null : context.planDate())),
                 entryDefaultsOf(record),
                 // E21-T32 / C-PAT-018：持久化标红命中（分组条 ▲n 数据面；compare_highlight 关闭为 null）
-                compareHighlights.persistedHits(record.id()));
+                compareHighlights.persistedHits(record.id()),
+                record.createdAt(),
+                record.updatedAt(),
+                record.firstSubmittedAt(),
+                planSwitch.doctorNextCommands(record.patientId()));
     }
 
     /**
@@ -324,9 +344,21 @@ public class RecordEntryService {
     /** 提交（一次事务：校验 → SUBMITTED → 字段历史 → 任务完成 → 死亡联动 → 审计）。 */
     @Transactional
     public SubmitResultView submit(long recordId, SubmitCommand command) {
+        return submitInternal(recordId, command, false);
+    }
+
+    /** OQR-01：仅供已锁定并复核候选的补录编排入口，同一事务提交。 */
+    @Transactional
+    public SubmitResultView submitBackfillLinked(long recordId, SubmitCommand command) {
+        return submitInternal(recordId, command, true);
+    }
+
+    private SubmitResultView submitInternal(
+            long recordId, SubmitCommand command, boolean backfillLink) {
         if (command == null || command.baseVersion() == null) {
             throw new ApiException(400, 40001, "提交必须携带 baseVersion（乐观锁）");
         }
+        planSwitch.lockPatient(recordService.record(recordId).patientId());
         FollowupRecordService.SubmitOutcome outcome =
                 recordService.submit(
                         recordId, command.baseVersion(), command.data(), command.dataMeta());
@@ -359,7 +391,10 @@ public class RecordEntryService {
         Long patientIdForDeath = null;
         if (context != null) {
             FollowupTaskStatusService.CompletionView completion =
-                    statusService.complete(context.id(), operator);
+                    backfillLink
+                            ? statusService.completeBackfill(
+                                    context.id(), operator, outcome.view().visitDate())
+                            : statusService.complete(context.id(), operator);
             taskStatus = completion.status();
             completeKind = completion.completeKind();
             patientIdForDeath = context.patientId();
@@ -373,11 +408,26 @@ public class RecordEntryService {
         }
         // 计划切换联动（E21-T06 / C-FU-007 切换表「接近 ERI / ERI 标记解除 / 医生指定」行）：ERI 标记翻入组模式、
         // 医生指定下次随访时间登记 doctor_next_date（SW-7 / SW-8 / SW-10）；A / B 表单无 f323 / f324 / f333 键，天然不触发
-        planSwitch.onRecordSubmitted(
-                outcome.view().patientId(),
-                recordId,
-                effectiveVisitDate(outcome.view()),
-                outcome.view().data());
+        if (Boolean.TRUE.equals(command.reselectNextVisit())) {
+            planSwitch.onRecordReselected(
+                    outcome.view().patientId(),
+                    recordId,
+                    effectiveVisitDate(outcome.view()),
+                    outcome.view().data(),
+                    backfillLink);
+        } else if (backfillLink) {
+            planSwitch.onBackfillSubmitted(
+                    outcome.view().patientId(),
+                    recordId,
+                    effectiveVisitDate(outcome.view()),
+                    outcome.view().data());
+        } else {
+            planSwitch.onRecordSubmitted(
+                    outcome.view().patientId(),
+                    recordId,
+                    effectiveVisitDate(outcome.view()),
+                    outcome.view().data());
+        }
         // 转录完成联动（E21-T17 / C-SCAN-012：转录态提交同一事务）——报告单自动加入该记录位置并置「已电子化」
         if (command.transcribeReportId() != null) {
             reportTranscribe.completeTranscription(
@@ -416,7 +466,8 @@ public class RecordEntryService {
                         .toList(),
                 command.transcribeReportId() == null
                         ? null
-                        : String.valueOf(command.transcribeReportId()));
+                        : String.valueOf(command.transcribeReportId()),
+                outcome.view().firstSubmittedAt());
     }
 
     /**
@@ -427,7 +478,16 @@ public class RecordEntryService {
             Integer baseVersion,
             Map<String, Object> data,
             Map<String, Object> dataMeta,
-            Long transcribeReportId) {}
+            Long transcribeReportId,
+            @JsonInclude(JsonInclude.Include.NON_DEFAULT) Boolean reselectNextVisit) {
+        public SubmitCommand(
+                Integer baseVersion,
+                Map<String, Object> data,
+                Map<String, Object> dataMeta,
+                Long transcribeReportId) {
+            this(baseVersion, data, dataMeta, transcribeReportId, false);
+        }
+    }
 
     // ------------------------------------------------------- 修改 / 删除已提交记录（E21-T11 / C-FU-026、Q17）
 
@@ -471,6 +531,7 @@ public class RecordEntryService {
             throw new ApiException(400, 40001, "修改已提交记录必须填写修改原因（OQ-14）");
         }
         requireSubmittedEditPermission();
+        planSwitch.lockPatient(recordService.record(recordId).patientId());
         FollowupRecordService.SubmitOutcome outcome =
                 recordService.updateSubmitted(
                         recordId, command.baseVersion(), command.data(), command.dataMeta());
@@ -506,11 +567,13 @@ public class RecordEntryService {
                         .build());
         // 计划切换联动（E21-T06）：修改已提交记录更正 ERI 状态（如接近 → 正常）同样翻入组模式（SW-8 的「更正」路径）；
         // 下次随访时间修改同样覆盖 doctor_next_date（SW-10）。修改不动任务（完成状态不回退），模式切换照常终止未完成任务
-        planSwitch.onRecordSubmitted(
+        planSwitch.onRecordUpdated(
                 outcome.view().patientId(),
                 recordId,
                 effectiveVisitDate(outcome.view()),
-                outcome.view().data());
+                outcome.before(),
+                outcome.view().data(),
+                Boolean.TRUE.equals(command.reselectNextVisit()));
         // 转录完成联动（E21-T17 / C-SCAN-012：位置中已有已提交记录的对照录入，保存修改同一事务完成转录）
         if (command.transcribeReportId() != null) {
             reportTranscribe.completeTranscription(
@@ -543,6 +606,7 @@ public class RecordEntryService {
             throw new ApiException(400, 40001, "删除随访记录必须填写删除原因（C-FU-026）");
         }
         FollowupRecordService.RecordView record = recordService.record(recordId);
+        planSwitch.lockPatient(record.patientId());
         int updated =
                 recordMapper.softDelete(
                         recordId, reason, CurrentSession.requireHospital().userId());
@@ -550,8 +614,11 @@ public class RecordEntryService {
             throw new ApiException(404, 40400, "随访记录不存在（或已被删除）");
         }
         recordMapper.clearTaskRecordLink(recordId);
+        planSwitch.onRecordDeleted(record.patientId(), recordId);
+        recordService.refreshPatientSummary(record.patientId());
         // 随访序号重排（E21-T09 / C-FU-018）：软删行出册后排在后面的记录序号回退，同一事务重排并入变更历史
         sequences.resequence(record.patientId(), FollowupSequenceService.REASON_DELETE);
+        compareHighlights.refreshSubmittedRecords(record.patientId(), record.formCode());
         audit.append(
                 AuditEntry.operation("followup", "RECORD_DELETE")
                         .objectType("FU_RECORD")
@@ -671,37 +738,15 @@ public class RecordEntryService {
 
     /**
      * 该次记录的有效随访日期（计划切换联动的 ERI 起算基准，E21-T06）：fu_record.visit_date（补录 / 计划外落列） ?? 表单随访日期字段（模板字段编码
-     * followup_date 定位稳定键，与 RecordEntryAssistService 重复提示同口径）?? null（切换服务回落今天）。
+     * followup_date 定位稳定键，与 RecordEntryAssistService 重复提示同口径）?? null（未知，不触发当前计划指令）。
      */
     private LocalDate effectiveVisitDate(FollowupRecordService.RecordView record) {
-        if (record.visitDate() != null) {
-            return record.visitDate();
-        }
-        FormService.SchemaView schema =
-                formService.schema(record.formCode(), record.templateVersion());
-        if (schema == null) {
-            return null;
-        }
-        String dateKey = null;
-        for (FormService.CategoryView category : schema.categories()) {
-            for (FormService.FieldView field : category.fields()) {
-                if (RecordEntryAssistService.FIELD_CODE_FOLLOWUP_DATE.equals(field.code())) {
-                    dateKey = field.key();
-                }
-            }
-        }
-        if (dateKey == null) {
-            return null;
-        }
-        Object value = record.data().get(dateKey);
-        if (!(value instanceof String text) || text.isBlank()) {
-            return null;
-        }
-        try {
-            return LocalDate.parse(text.trim());
-        } catch (RuntimeException invalid) {
-            return null;
-        }
+        return new EffectiveVisitDateResolver(formService)
+                .resolve(
+                        record.visitDate(),
+                        record.formCode(),
+                        record.templateVersion(),
+                        record.data());
     }
 
     private String decrypt(String cipher) {

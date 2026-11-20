@@ -13,6 +13,10 @@
   <description>随访域（M0 仅包结构与占位，无业务功能）</description>
   <dependencies>
     <dependency>
+      <groupId>org.apache.pdfbox</groupId>
+      <artifactId>pdfbox</artifactId>
+    </dependency>
+    <dependency>
       <groupId>com.crdp</groupId>
       <artifactId>crdp-form</artifactId>
     </dependency>

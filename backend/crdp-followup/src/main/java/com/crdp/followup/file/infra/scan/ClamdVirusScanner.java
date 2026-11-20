@@ -28,6 +28,21 @@ public class ClamdVirusScanner implements VirusScanner {
     /** INSTREAM 分块大小（字节）。 */
     private static final int CHUNK_SIZE = 2048;
 
+    private static final java.util.concurrent.ScheduledThreadPoolExecutor DEADLINES = deadlines();
+
+    private static java.util.concurrent.ScheduledThreadPoolExecutor deadlines() {
+        var executor =
+                new java.util.concurrent.ScheduledThreadPoolExecutor(
+                        1,
+                        task -> {
+                            var thread = new Thread(task, "clamd-deadline");
+                            thread.setDaemon(true);
+                            return thread;
+                        });
+        executor.setRemoveOnCancelPolicy(true);
+        return executor;
+    }
+
     private final String host;
     private final int port;
     private final int connectTimeoutMillis;
@@ -44,6 +59,14 @@ public class ClamdVirusScanner implements VirusScanner {
     /** 测试 / 显式装配。 */
     public ClamdVirusScanner(
             String host, int port, int connectTimeoutMillis, int readTimeoutMillis) {
+        if (host == null
+                || host.isBlank()
+                || port < 1
+                || port > 65535
+                || connectTimeoutMillis < 1
+                || connectTimeoutMillis > 60000
+                || readTimeoutMillis < 1
+                || readTimeoutMillis > 60000) throw new IllegalArgumentException("扫描地址或有限超时配置无效");
         this.host = host;
         this.port = port;
         this.connectTimeoutMillis = connectTimeoutMillis;
@@ -58,41 +81,43 @@ public class ClamdVirusScanner implements VirusScanner {
     @Override
     public ScanResult scan(byte[] body) {
         try (Socket socket = new Socket()) {
-            socket.connect(new InetSocketAddress(host, port), connectTimeoutMillis);
-            socket.setSoTimeout(readTimeoutMillis);
-            OutputStream out = socket.getOutputStream();
-            // 命令自带 NUL 终止（"INSTREAM\0"），随后直接进分块流
-            out.write("INSTREAM\0".getBytes(StandardCharsets.US_ASCII));
-            for (int offset = 0; offset < body.length; offset += CHUNK_SIZE) {
-                int length = Math.min(CHUNK_SIZE, body.length - offset);
-                writeChunk(out, body, offset, length);
+            var deadline =
+                    DEADLINES.schedule(
+                            () -> {
+                                try {
+                                    socket.close();
+                                } catch (IOException ignored) {
+                                    /* 仅关闭本次扫描连接 */
+                                }
+                            },
+                            Math.min(60000L, (long) connectTimeoutMillis + readTimeoutMillis),
+                            java.util.concurrent.TimeUnit.MILLISECONDS);
+            try {
+                socket.connect(new InetSocketAddress(host, port), connectTimeoutMillis);
+                socket.setSoTimeout(readTimeoutMillis);
+                OutputStream out = socket.getOutputStream();
+                // 命令自带 NUL 终止（"zINSTREAM\0"），随后直接进分块流
+                out.write("zINSTREAM\0".getBytes(StandardCharsets.US_ASCII));
+                for (int offset = 0; offset < body.length; offset += CHUNK_SIZE) {
+                    int length = Math.min(CHUNK_SIZE, body.length - offset);
+                    writeChunk(out, body, offset, length);
+                }
+                out.write(new byte[4]); // 0 长度块 = 流结束
+                out.flush();
+                String reply = readReply(socket.getInputStream());
+                if ("stream: OK".equals(reply.strip())) return ScanResult.clean();
+                if (reply.strip().matches("stream: [A-Za-z0-9_.:()/-]{1,200} FOUND")) {
+                    String name = reply.strip().substring("stream: ".length());
+                    return ScanResult.infected(
+                            name.substring(0, name.length() - " FOUND".length()));
+                }
+                throw unavailable("应答不合法");
+            } finally {
+                deadline.cancel(false);
             }
-            out.write(new byte[4]); // 0 长度块 = 流结束
-            out.flush();
-            String reply = readReply(socket.getInputStream());
-            log.debug(
-                    "clamd 扫描完成 bytes={} reply={}",
-                    body.length,
-                    reply.strip().replaceAll("\0", ""));
-            if (reply.endsWith("OK")) {
-                return ScanResult.clean();
-            }
-            if (reply.endsWith("FOUND")) {
-                // " stream: {病毒名} FOUND" → 取中间名称段
-                String name =
-                        reply.replace("stream:", "")
-                                .replace("FOUND", "")
-                                .strip()
-                                .replaceAll("\0", "");
-                return ScanResult.infected(name.isBlank() ? "UNKNOWN" : name);
-            }
-            throw unavailable("clamd 应答异常：" + reply.strip().replaceAll("\0", ""));
         } catch (IOException | RuntimeException failure) {
             // 连接拒绝 / 超时 / 应答损坏：一律不可用（fail closed），不降级放行
-            throw unavailable(
-                    failure.getMessage() == null
-                            ? failure.getClass().getSimpleName()
-                            : failure.getMessage());
+            throw unavailable("连接、超时或协议错误");
         }
     }
 
@@ -105,17 +130,16 @@ public class ClamdVirusScanner implements VirusScanner {
         out.write(body, offset, length);
     }
 
-    /** 读到连接关闭或换行为止（clamd 应答单行，部分实现不带换行直接关流）。 */
+    /** 只接受完整 NUL / 换行终止的有界应答，不将截断或任意 OK 后缀当作干净。 */
     private static String readReply(InputStream in) throws IOException {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         int b;
         while ((b = in.read()) != -1) {
-            if (b == '\n') {
-                break;
-            }
+            if (b == 0 || b == '\n') return buffer.toString(StandardCharsets.UTF_8);
+            if (buffer.size() >= 4096) throw new IOException("应答过长");
             buffer.write(b);
         }
-        return buffer.toString(StandardCharsets.UTF_8);
+        throw new IOException("应答未完整终止");
     }
 
     private static ApiException unavailable(String reason) {

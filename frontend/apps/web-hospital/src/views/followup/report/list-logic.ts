@@ -168,11 +168,14 @@ export function patientSubText(row: ReportSearchRow): string {
  */
 export function filtersFromRouteQuery(query: Record<string, unknown>): {
   digitizeStatus: null | string;
+  wardIds?: number[];
 } {
   const raw = query.digitizeStatus;
+  const ward = Number(query.wardId);
   const allowed = DIGITIZE_STATUS_OPTIONS.map((option) => option.value);
   return {
     digitizeStatus:
       typeof raw === 'string' && allowed.includes(raw) ? raw : null,
+    ...(Number.isSafeInteger(ward) && ward > 0 ? { wardIds: [ward] } : {}),
   };
 }

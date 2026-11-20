@@ -293,8 +293,8 @@ def main() -> int:
     for ref in ["CL-01", "CL-02", "CL-03", "CL-05", "Q18", "105"]:
         check(f"C 复核清单含条目锚点「{ref}」", ref in manual_c)
     check(
-        "C 手册披露 OQ-148 替代路径",
-        "补录不自动完成" in manual_c and "替代路径" in manual_c,
+        "C 手册说明 OQ-148 开关联动、候选选择与替代路径",
+        "backfill_task_link" in manual_c and "多候选" in manual_c and "替代路径" in manual_c,
     )
     check("C 手册复核清单挂接签字判据（§7-4）", "复核清单 5 项的确认结果" in manual_c)
     # 预演与回填留痕结构

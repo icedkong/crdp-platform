@@ -110,7 +110,7 @@ public interface CompletenessStatsMapper {
             LEFT JOIN fu_task t ON t.id = r.task_id
             LEFT JOIN fu_plan_node n ON n.id = t.node_id
             LEFT JOIN fu_plan_node sp ON sp.id = COALESCE(n.parent_id, n.id)
-            WHERE r.status = 'SUBMITTED'
+            WHERE r.status = 'SUBMITTED' AND r.deleted = 0
               AND (
                 (r.task_id IS NOT NULL AND sp.repeat_mode = 'CYCLE' AND sp.cycle_unit = 'YEAR')
                 OR (r.task_id IS NULL AND r.enrollment_id IS NOT NULL AND r.followup_year IS NOT NULL)

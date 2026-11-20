@@ -55,29 +55,6 @@ public interface DoctorWorkloadMapper {
     List<DoctorPatientRow> countPatientsByDoctor(@Param("wardId") Long wardId);
 
     /**
-     * 本月应随访（与指标卡 {@code countMonthDue} 同条件树 + 按责任医生分组）： 计划日期落在 [from, to] 的常规随访任务（occurrence &gt; 0
-     * 且 followup_seq = 0，排除跟进 / 临时任务）， 入组仍在组（ACTIVE / PAUSED；已移除不计，OQ-107）。
-     */
-    @DataScope(resource = "patient")
-    @Select(
-            """
-            <script>
-            SELECT p.responsible_user_id AS doctorId, COUNT(*) AS total
-            FROM fu_task t
-            JOIN fu_enrollment e ON e.id = t.enrollment_id
-                AND e.status IN ('ACTIVE', 'PAUSED')
-            JOIN pt_patient p ON p.id = t.patient_id AND p.deleted = 0
-            WHERE t.occurrence &gt; 0 AND t.followup_seq = 0
-              AND t.plan_date &gt;= #{from} AND t.plan_date &lt;= #{to}
-              AND p.responsible_user_id IS NOT NULL
-            <if test="wardId != null">AND p.ward_id = #{wardId}</if>
-            GROUP BY p.responsible_user_id
-            </script>
-            """)
-    List<DoctorTaskRow> countMonthDueByDoctor(
-            @Param("from") LocalDate from, @Param("to") LocalDate to, @Param("wardId") Long wardId);
-
-    /**
      * 当前逾期（与指标卡 {@code countTasksByStatus('OVERDUE')} 同条件树 + 按责任医生分组）： 钻取目标任务列表的 doctorId
      * 为「任务负责人或患者责任医生」（E15-T02），本表按面板口径只计责任医生行（OQ-118）。
      */

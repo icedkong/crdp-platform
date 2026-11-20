@@ -61,6 +61,22 @@ class DashboardRateCardsIT {
     private static final String PLAN_CODE = "PLAN-IT-E19T04";
     private static final LocalDate AS_OF = LocalDate.of(2026, 6, 1);
 
+    @Autowired private com.crdp.framework.security.SessionStore fixtureSessions;
+
+    private long fixtureWard(String tenant) {
+        return runInTenant(tenant, () -> StatsFixtureScope.ward(jdbc, "IT-E19T04-STAT-WARD"));
+    }
+
+    @org.junit.jupiter.api.AfterAll
+    void removeFixtureWards() {
+        for (String tenant : List.of("demoa", "demob"))
+            runInTenant(
+                    tenant,
+                    () -> {
+                        jdbc.update("DELETE FROM ward WHERE code=?", "IT-E19T04-STAT-WARD");
+                    });
+    }
+
     @Autowired private TestRestTemplate rest;
     @Autowired private JdbcTemplate jdbc;
     @Autowired private PlanEnrollmentService enrollmentService;
@@ -382,8 +398,7 @@ class DashboardRateCardsIT {
     /** 登记患者（legacy_no 自清锚点；全部落 MIN(id) 病区）。 */
     private long registerPatient(String tenant, String token, String suffix, String dischargeDate) {
         long wardId =
-                runInTenant(
-                        tenant, () -> jdbc.queryForObject("SELECT MIN(id) FROM ward", Long.class));
+                runInTenant(tenant, () -> StatsFixtureScope.ward(jdbc, "IT-E19T04-STAT-WARD"));
         Map<String, Object> body = new HashMap<>();
         body.put("medicalRecordNo", "IT-E19T04-" + suffix);
         body.put("name", "钱示例（示例）");
@@ -601,7 +616,10 @@ class DashboardRateCardsIT {
                         null,
                         Map.of("tenantCode", tenant, "username", username, "password", password));
         assertEquals(0, codeOf(response), "登录失败：" + response);
-        return (String) data(response).get("token");
+        return StatsFixtureScope.restrict(
+                fixtureSessions,
+                (String) data(response).get("token"),
+                List.of(fixtureWard(tenant)));
     }
 
     private ResponseEntity<Map> get(String path, String token) {

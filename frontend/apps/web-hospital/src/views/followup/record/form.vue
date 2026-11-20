@@ -1,5 +1,6 @@
 <script lang="ts" setup>
 import type {
+  BackfillTaskCandidate,
   FormSchema,
   RecordDeviceContext,
   RecordPatientBrief,
@@ -34,6 +35,7 @@ import {
   useAutoSave,
 } from '@crdp/form-engine';
 import { useKeyboardSafeBottom } from '@crdp/responsive';
+import { copyFormValue } from '@crdp/rules';
 import { StatusTag } from '@crdp/status-tag';
 import {
   Alert,
@@ -42,6 +44,7 @@ import {
   message,
   Modal,
   Result,
+  Select,
   Space,
   Spin,
   Tooltip,
@@ -50,11 +53,15 @@ import {
 import { fetchFormSchema } from '#/api/core/form';
 import { fetchPatientReports } from '#/api/core/report';
 import {
+  deleteRecord,
+  fetchBackfillTaskCandidates,
   fetchRecordDetail,
   fetchTaskQueue,
   saveRecordDraft,
+  startRecordEditSession,
   startTask,
   submitRecord,
+  updateSubmittedRecord,
 } from '#/api/core/task';
 import BackfillRecordModal from '#/components/followup/backfill-record-modal.vue';
 import CategoryBar from '#/components/followup/category-bar.vue';
@@ -80,6 +87,7 @@ import { useWatermarkViewer } from '#/reference/use-watermark-viewer';
 import { queueFilterOfQuery } from '../task/logic';
 import {
   applyEntryDefaults,
+  backfillTaskChoice,
   bannersOf,
   canContinueBackfill,
   canEditSubmittedRecord,
@@ -98,6 +106,7 @@ import {
   nextVisitText,
   nextVisitWindowPreviewOf,
   readonlyBanner,
+  recordSubmissionTimeText,
   rendererContextOf,
   submitConfirmText,
   submitSuccessMessage,
@@ -210,6 +219,22 @@ const meta = ref<Record<string, unknown>>({});
 const savedData = ref<Record<string, unknown>>({});
 const version = ref(0);
 const status = ref<'DRAFT' | 'SUBMITTED'>('DRAFT');
+const firstSubmittedAt = ref<null | string>(null);
+const doctorNextCommands = ref<
+  {
+    date: string;
+    enrollmentId: string;
+    occurrence: null | number;
+    state: string;
+  }[]
+>([]);
+const reselectNextVisit = ref(false);
+const doctorScheduleConflict = ref(false);
+const backfillCandidates = ref<BackfillTaskCandidate[]>([]);
+const backfillTaskId = ref<string>();
+const choosingBackfillTask = ref(false);
+const loadingBackfillCandidates = ref(false);
+
 const context = ref<null | RecordTaskContext>(null);
 /** 补录 / 计划外记录的患者摘要与来源（E15-T07：context 为 null 时的头幅与横幅）。 */
 const patient = ref<null | RecordPatientBrief>(null);
@@ -353,7 +378,14 @@ const nextVisitAffordance = computed<NextVisitAffordance | null>(() => {
 /** 提交 / 保存修改前的「下次随访时间」校验（pages.md §5.1 照抄）；空 = 通过。 */
 function nextVisitBlocked(): string {
   const key = nextVisitFieldKey(schema.value);
-  return key ? nextVisitIssueText(data.value[key], effectiveVisitDate()) : '';
+  return key
+    ? nextVisitIssueText(
+        data.value[key],
+        effectiveVisitDate(),
+        undefined,
+        reselectNextVisit.value ? null : source.value,
+      )
+    : '';
 }
 
 // ---------------------------------------------------------------- 对照报告单分屏（E16-T11 / A-ATT-019、C-FU-017）
@@ -470,9 +502,9 @@ const autosave = useAutoSave({
   }),
   isDirty: dirty,
   kind: 'followup',
-  async onSaved(_result, trigger: AutoSaveTrigger) {
+  async onSaved(_result, trigger: AutoSaveTrigger, snapshot) {
     version.value = _result.version;
-    savedData.value = { ...data.value };
+    savedData.value = { ...snapshot.data };
     if (trigger === 'manual') {
       message.success('已暂存到服务器（草稿），任务变为进行中');
     }
@@ -544,9 +576,15 @@ const deathSelected = computed(() => {
 // ---------------------------------------------------------------- 加载
 
 async function load() {
+  doctorNextCommands.value = [];
+  reselectNextVisit.value = false;
+  doctorScheduleConflict.value = false;
   loading.value = true;
   editing.value = false;
   try {
+    backfillTaskId.value = undefined;
+    backfillCandidates.value = [];
+    choosingBackfillTask.value = false;
     const detail = await fetchRecordDetail(recordId.value);
     // E17-T03：对比规则由记录详情下发（followup 域 fu_compare_rule），并入渲染器模板契约
     // 的 schema.compareRules（components.md §10.1）；previous 同源（E17-T02）。
@@ -562,10 +600,14 @@ async function load() {
       : null;
     highlightCountByKey.value = {};
     data.value = { ...detail.data };
-    savedData.value = { ...detail.data };
+    savedData.value = copyFormValue(detail.data);
     meta.value = { ...detail.dataMeta };
     version.value = detail.version;
     status.value = detail.status;
+    firstSubmittedAt.value = detail.firstSubmittedAt ?? null;
+    doctorNextCommands.value = detail.doctorNextCommands ?? [];
+    reselectNextVisit.value = false;
+    doctorScheduleConflict.value = false;
     context.value = detail.context ?? null;
     patient.value = detail.patient ?? null;
     source.value = detail.source ?? null;
@@ -683,7 +725,13 @@ async function handleSaveDraft() {
 }
 
 async function handleSubmit() {
-  if (readonly.value || submitting.value || submitted.value) return;
+  if (
+    readonly.value ||
+    submitting.value ||
+    submitted.value ||
+    loadingBackfillCandidates.value
+  )
+    return;
   if (submitBlocked.value) {
     message.warning(submitBlockedTooltip.value);
     return;
@@ -702,15 +750,51 @@ async function handleSubmit() {
     message.warning(nextVisitIssue);
     return;
   }
+  backfillTaskId.value = undefined;
+  if (source.value === 'BACKFILL' && isEnabled('backfill_task_link')) {
+    const expected = recordId.value;
+    loadingBackfillCandidates.value = true;
+    try {
+      const candidates = await fetchBackfillTaskCandidates(expected);
+      if (expected !== recordId.value) return;
+      backfillCandidates.value = candidates;
+      const choice = backfillTaskChoice(candidates);
+      backfillTaskId.value = choice.taskId;
+      if (choice.needsChoice) {
+        choosingBackfillTask.value = true;
+        return;
+      }
+    } catch {
+      message.error('关联任务候选加载失败，请重试后提交');
+      return;
+    } finally {
+      loadingBackfillCandidates.value = false;
+    }
+  }
+  await confirmSubmit();
+}
+
+async function confirmBackfillTask() {
+  if (!backfillTaskId.value) {
+    message.warning('请选择本次补录对应的任务');
+    return;
+  }
+  choosingBackfillTask.value = false;
+  await confirmSubmit();
+}
+
+async function confirmSubmit() {
+  const expectedRecord = recordId.value;
   // C-FU-024 重复记录提示：同一患者同一随访日期已有记录时先确认「确定继续？」再提交
   const duplicate = await checkDuplicateOfCurrent();
+  if (expectedRecord !== recordId.value) return;
   if (duplicate) {
     Modal.confirm({
       title: '重复记录提示',
       content: duplicateRecordConfirmText(effectiveVisitDate() ?? ''),
       okText: '继续保存',
       cancelText: '取消',
-      onOk: () => doSubmit(),
+      onOk: () => (expectedRecord === recordId.value ? doSubmit() : undefined),
     });
     return;
   }
@@ -719,7 +803,7 @@ async function handleSubmit() {
     content: submitConfirmText(context.value !== null, source.value),
     okText: '确认提交',
     cancelText: '取消',
-    onOk: () => doSubmit(),
+    onOk: () => (expectedRecord === recordId.value ? doSubmit() : undefined),
   });
 }
 
@@ -745,10 +829,13 @@ async function checkDuplicateOfCurrent(): Promise<boolean> {
 }
 
 async function doSubmit() {
+  const expectedRecord = recordId.value;
   submitting.value = true;
   try {
     const result = await submitRecord(recordId.value, {
       baseVersion: version.value,
+      backfillTaskId: backfillTaskId.value,
+      reselectNextVisit: reselectNextVisit.value,
       data: data.value,
       dataMeta: meta.value,
       // 转录态提交（E21-T17）：同事务完成转录（报告单自动置「已电子化」）
@@ -756,8 +843,10 @@ async function doSubmit() {
         ? (compareReportId.value ?? undefined)
         : undefined,
     });
+    if (expectedRecord !== recordId.value) return;
     submitted.value = true;
     status.value = 'SUBMITTED';
+    firstSubmittedAt.value = result.firstSubmittedAt ?? null;
     // 服务器已收到全量数据：丢弃本机草稿，重开不再提示恢复
     void autosave.discardLocalDraft();
     message.success(
@@ -773,8 +862,13 @@ async function doSubmit() {
       void nextTick(() => continueButton.value?.$el?.focus());
     }
   } catch (error) {
-    message.error('提交失败，请稍后重试');
-    console.error(error);
+    doctorScheduleConflict.value =
+      error instanceof Error && error.message.includes('指定排期');
+    message.error(
+      error instanceof Error
+        ? error.message
+        : '提交失败；关联任务变化时请重新选择后提交',
+    );
   } finally {
     submitting.value = false;
   }
@@ -786,8 +880,9 @@ async function doSubmit() {
 async function handleStartEdit(reason: string) {
   try {
     const view = await startRecordEditSession(recordId.value, { reason });
+    editSessionReason = reason;
     version.value = view.version;
-    savedData.value = { ...data.value };
+    savedData.value = copyFormValue(data.value);
     editing.value = true;
     editReasonModalOpen.value = false;
     message.info('进入修改：保存后生成 v2，字段级历史记下原因');
@@ -809,12 +904,20 @@ async function handleSaveEdit() {
     return;
   }
   // 修改同样覆盖 doctor_next_date（E21-T06 / SW-10）：校验口径与提交一致（C-FU-005）
-  const editNextVisitIssue = nextVisitBlocked();
+  const nextDateKey = nextVisitFieldKey(schema.value);
+  const nextDateChanged =
+    reselectNextVisit.value ||
+    (nextDateKey && savedData.value?.[nextDateKey] !== data.value[nextDateKey]);
+  const editNextVisitIssue = nextDateChanged ? nextVisitBlocked() : '';
   if (editNextVisitIssue) {
     message.warning(editNextVisitIssue);
     return;
   }
-  if (savedData.value && !hasChanges(savedData.value, data.value)) {
+  if (
+    savedData.value &&
+    !hasChanges(savedData.value, data.value) &&
+    !reselectNextVisit.value
+  ) {
     message.info('没有需要保存的修改');
     return;
   }
@@ -835,22 +938,27 @@ async function doSaveEdit() {
       data: data.value,
       dataMeta: meta.value,
       reason: editSessionReason,
+      reselectNextVisit: reselectNextVisit.value,
       // 转录态保存修改（E21-T17）：位置中已有已提交记录的对照录入同样完成转录
       transcribeReportId: transcribing.value
         ? (compareReportId.value ?? undefined)
         : undefined,
     });
     version.value = result.version;
-    savedData.value = { ...data.value };
+    savedData.value = copyFormValue(data.value);
     editing.value = false;
+    await load();
     message.success(
       `已保存修改（v${result.version}），字段级历史已记录（${result.fieldChanges} 项）${transcribeAppendedText(
         result.transcribedReportId,
       )}`,
     );
   } catch (error) {
-    message.error('保存修改失败，请稍后重试');
-    console.error(error);
+    doctorScheduleConflict.value =
+      error instanceof Error && error.message.includes('指定排期');
+    message.error(
+      error instanceof Error ? error.message : '保存修改失败，请稍后重试',
+    );
   } finally {
     savingEdit.value = false;
   }
@@ -962,6 +1070,31 @@ function handleJump(key: string) {
 </script>
 
 <template>
+  <Modal
+    v-model:open="choosingBackfillTask"
+    title="选择补录对应的任务"
+    ok-text="确认关联"
+    cancel-text="返回核对"
+    @ok="confirmBackfillTask"
+  >
+    <Alert
+      message="有多个任务窗口包含本次实际随访日期，请选择一项；提交时会再次校验。"
+      type="info"
+      show-icon
+    />
+    <Select
+      v-model:value="backfillTaskId"
+      :options="
+        backfillCandidates.map((c) => ({
+          value: c.taskId,
+          label: `${c.planName} · ${c.nodeName} · ${c.planDate}（${c.windowStart} 至 ${c.windowEnd}）`,
+        }))
+      "
+      :style="{ width: '100%' }"
+      placeholder="请选择任务"
+    />
+  </Modal>
+
   <Result
     v-if="submitted"
     data-testid="record-submitted"
@@ -1048,6 +1181,49 @@ function handleJump(key: string) {
           variant="dot"
         />
       </div>
+
+      <div v-if="!loading" data-testid="record-first-submitted-at">
+        首次提交：{{ recordSubmissionTimeText(status, firstSubmittedAt) }}
+      </div>
+
+      <Alert
+        v-for="command in doctorNextCommands"
+        :key="command.enrollmentId"
+        :type="command.state === 'CONFLICT' ? 'warning' : 'info'"
+        :message="
+          command.state === 'CONFLICT'
+            ? '指定排期的目标已变化，原指令尚未消费；请核对日期并重新选择下一次任务。'
+            : `已指定 ${command.date}，绑定第 ${command.occurrence ?? '待确认'} 次，尚未消费。`
+        "
+        show-icon
+      >
+        <template v-if="!readonly && command.state === 'CONFLICT'" #description>
+          <Button @click="reselectNextVisit = true">
+            {{
+              reselectNextVisit
+                ? '已选择：保存时重新确认下一次任务'
+                : '重新选择下一次任务'
+            }}
+          </Button>
+        </template>
+      </Alert>
+
+      <Alert
+        v-if="doctorScheduleConflict && !readonly"
+        type="warning"
+        message="目标任务已变化，原记录未保存。请核对指定日期后重新确认下一次任务。"
+        show-icon
+      >
+        <template #description>
+          <Button @click="reselectNextVisit = true">
+            {{
+              reselectNextVisit
+                ? '已选择：保存时重新确认下一次任务'
+                : '重新选择下一次任务'
+            }}
+          </Button>
+        </template>
+      </Alert>
 
       <FormStatusBar
         v-if="!readonly"

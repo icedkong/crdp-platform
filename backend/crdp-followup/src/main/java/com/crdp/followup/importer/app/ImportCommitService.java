@@ -67,6 +67,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -271,6 +272,15 @@ public class ImportCommitService {
 
     /** 固化选项与范围快照、切批、置 IMPORTING（会话内调用：范围快照取当前登录人；无会话按空范围，见 {@link #frozenScope}）。 */
     void prepare(long jobId, ConfirmOptions options) {
+        try {
+            transactions.executeWithoutResult(ignored -> prepareInTransaction(jobId, options));
+        } catch (DuplicateKeyException conflict) {
+            // 活动槽竞争失败须回滚整个确认事务，不能覆盖选项 / 范围或留下切批结果。
+            throw activeJobConflict();
+        }
+    }
+
+    private void prepareInTransaction(long jobId, ConfirmOptions options) {
         JobRow job = requireJob(jobId);
         if (!"PRECHECKED".equals(job.status())) {
             throw new ApiException(409, 40901, "导入任务不在预检完成状态（当前 " + job.status() + "），不能确认导入");
@@ -289,16 +299,17 @@ public class ImportCommitService {
             throw new ApiException(
                     400, 40001, "校验报告存在 " + errors + " 个错误问题，处理后再确认导入（A-PAT-018：错误行不可导入）");
         }
-        commit.saveCommitOptions(
-                jobId,
-                writeJson(
-                        Map.of(
-                                "duplicateStrategy",
-                                strategy,
-                                "defaultWardId",
-                                defaultWard == null ? "" : String.valueOf(defaultWard))),
-                writeJson(frozenScope()));
-        if (staging.casStatus(jobId, "PRECHECKED", "IMPORTING") == 0) {
+        int claimed =
+                commit.saveCommitOptions(
+                        jobId,
+                        writeJson(
+                                Map.of(
+                                        "duplicateStrategy",
+                                        strategy,
+                                        "defaultWardId",
+                                        defaultWard == null ? "" : String.valueOf(defaultWard))),
+                        writeJson(frozenScope()));
+        if (claimed == 0) {
             throw new ApiException(409, 40901, "导入任务已被其他提交占用");
         }
         List<PatientRowRef> refs = commit.findPatientRowRefs(jobId);
@@ -331,14 +342,27 @@ public class ImportCommitService {
 
     /** 重试失败批次（PARTIAL_FAILED → IMPORTING → 只重跑 FAILED 批，tech-plan §12 状态机）。 */
     public CommitSummary retryFailed(long jobId) {
+        prepareRetry(jobId);
+        return execute(jobId);
+    }
+
+    /** 会话内先争用活动槽，再异步执行；不能异步失败却向前端报告重试已受理。 */
+    void prepareRetry(long jobId) {
         JobRow job = requireJob(jobId);
         if (!"PARTIAL_FAILED".equals(job.status())) {
             throw new ApiException(409, 40901, "导入任务没有可重试的失败批次（当前 " + job.status() + "）");
         }
-        if (staging.casStatus(jobId, "PARTIAL_FAILED", "IMPORTING") == 0) {
-            throw new ApiException(409, 40901, "导入任务状态已变化，请刷新后重试");
+        try {
+            if (staging.casStatus(jobId, "PARTIAL_FAILED", "IMPORTING") == 0) {
+                throw new ApiException(409, 40901, "导入任务状态已变化，请刷新后重试");
+            }
+        } catch (DuplicateKeyException conflict) {
+            throw activeJobConflict();
         }
-        return execute(jobId);
+    }
+
+    private static ApiException activeJobConflict() {
+        return new ApiException(409, 40901, "同一租户同一时间只允许一个导入作业，已有运行中的作业");
     }
 
     /** 批次视图（向导进度，E18-T06）。 */
@@ -566,7 +590,6 @@ public class ImportCommitService {
         if (created) {
             patientId = insertPatient(job, batch, entity, name, row.mrnBlind(), mrn, counts);
             statusHistory.recordRegistration(patientId, entity.dischargeDate(), job.operatorId());
-            summary.recompute(patientId, job.operatorId());
             writeContacts(job, batch, context, patientId, baseline, true, counts);
             writeBaseline(job, batch, context, patientId, baseline, true, counts);
         } else {
@@ -589,6 +612,7 @@ public class ImportCommitService {
                 writeRecords(
                         job, batch.id(), context, patientId, null, entity, followups, counts, true);
                 refreshBaselineCompleteness(job, context, patientId);
+                summary.recompute(patientId, job.operatorId());
                 counts.updated++;
                 return;
             }
@@ -607,6 +631,7 @@ public class ImportCommitService {
         writeRecords(
                 job, batch.id(), context, patientId, enrollmentId, entity, followups, counts, dead);
         refreshBaselineCompleteness(job, context, patientId);
+        summary.recompute(patientId, job.operatorId());
         if (dead) {
             patientStatus.transition(
                     patientId,
@@ -1015,6 +1040,7 @@ public class ImportCommitService {
     /** 按写入逆序删除（事务内）：记录 → 联系方式 → 入组 → 分节 → 新建患者（连状态时间线 / 摘要一起删）。 */
     private RollbackView rollbackWrites(long jobId, ImportCommitMapper.BatchRow batch) {
         List<ImportCommitMapper.WriteRow> writes = commit.findWrites(batch.id());
+        java.util.Set<Long> affectedPatients = new java.util.HashSet<>();
         int records = 0;
         int contacts = 0;
         int enrollments = 0;
@@ -1024,6 +1050,10 @@ public class ImportCommitService {
             ImportCommitMapper.WriteRow write = writes.get(i);
             switch (write.entityType()) {
                 case "FU_RECORD" -> {
+                    if (!write.createdFlag()) {
+                        Long patientId = summary.patientOfImportedRecord(write.entityId());
+                        if (patientId != null) affectedPatients.add(patientId);
+                    }
                     commit.deleteImportedRecord(write.entityId());
                     records++;
                 }
@@ -1050,6 +1080,9 @@ public class ImportCommitService {
                 }
                 default -> log.warn("未知导入写数类型，跳过 jobId={} type={}", jobId, write.entityType());
             }
+        }
+        for (Long patientId : affectedPatients) {
+            summary.recompute(patientId, CurrentSession.requireHospital().userId());
         }
         commit.deleteWrites(batch.id());
         commit.markBatchRolledBack(batch.id());

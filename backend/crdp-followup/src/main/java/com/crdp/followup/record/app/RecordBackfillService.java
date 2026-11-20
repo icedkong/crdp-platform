@@ -18,8 +18,8 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p><b>历史补录（BACKFILL）</b>验收口径（A-FU-014「为过去年度补录随访记录，填写实际随访日期，标记为补录」；C-FU-013「不需要任务、不受窗口限制」）：
  * 选择患者后直接新建过去日期的随访记录（source = BACKFILL、visit_date 必填且早于今天），创建 DRAFT 草稿后统一用 recordId
- * 进入随访整页表单（pages.md §5）填写并提交——提交流程与任务录入同一条（{@link RecordEntryService#submit}，无任务
- * 不联动完成）。表单缺省取患者在组计划的 FORM 节点表单（首个；显式传 formCode 时以请求为准）。
+ * 进入随访整页表单（pages.md §5）填写并提交——提交流程与任务录入同一条（{@link RecordEntryService#submit}，无任务 默认独立提交；开启
+ * backfill_task_link 后由补录提交编排按候选关联）。表单缺省取患者在组计划的 FORM 节点表单（首个；显式传 formCode 时以请求为准）。
  *
  * <p><b>建议随访时间点（E21-T14 / C-FU-014，随 C 医院接入）</b>：创建时经 {@link TimepointSuggestionService}
  * 按随访日期距植入天数建议时间点并<b>种进草稿</b>（visit_timepoint 字段，可改选）；随访日期不得早于患者最早植入日期（C 规格 §5「补录一份纸质随访记录」：

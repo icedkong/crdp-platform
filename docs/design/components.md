@@ -686,9 +686,10 @@ interface WatermarkPreviewProps {
 // emits: update:open, update:index, download(fileId)
 ```
 
-- 全屏深色遮罩，顶部工具栏：`下载`（有权限才显示）/ `旋转` / `翻转` / `缩小` / `放大` / `关闭`，图片用 `a-image` 的 `preview` + `toolbarRender`；PDF 用 pdf.js（`packages/viewer`）；DOCX 用 docx-preview；XLSX 只能下载（无权限时显示「无法在线预览，需下载权限」）；音频用 `<audio controls controlsList="nodownload">`（AMR 只能下载）。
-- 内容走预览代理的**短时有效链接**（`GET …/files/{fileId}/preview-url`，推断，待确认），不缓存；后端每次写审计。
-- **水印**（不可关闭）：平铺文本「姓名（账号）· 医院名称 · 预览时间（精确到分钟）」，例如「王医生（示例）（demo_doctor）· 医院 A（示例租户）· 2026-10-31 14:05」；canvas 生成背景图覆盖在预览层之上，`pointer-events: none`，旋转 -20°，透明度约 0.15（推断，待确认）。**水印口径（G6 / OQ-127）：水印仅页面层——短时预览直链与签名下载返回对象存储原件（无水印），持直链者绕过页面即无水印；防线 = 链接短时（5 分钟）+ 签发即审计 + 下载单独权限。上线前若要求水印随文件走，需在预览 / 下载代理烧录（另立任务）。**
+- 全屏深色遮罩，顶部工具栏：`下载`（有权限才显示）/ `旋转` / `翻转` / `缩小` / `放大` / `关闭`，图片用 `a-image` 的 `preview` + `toolbarRender`；PDF 用 pdf.js（`packages/viewer`）；DOCX 用服务器转换后的水印 PDF（同样由 pdf.js 展示）；XLSX 只能下载（无权限时显示「无法在线预览，需下载权限」）；音频用 `<audio controls controlsList="nodownload">`（AMR 只能下载）。
+- 内容走已登录会话的预览代理（`GET …/files/{fileId}/preview-url`），由 API 层携带登录令牌获取二进制，再以临时 Blob 地址展示；授权最长 5 分钟。签发及实际取流分别审计，不持久化预览数据。
+- **水印（OQR-07 / OQ-127）**：服务器将「姓名（账号）· 医院名称 · 北京时间（精确到分钟）」烧录进图片 / PDF / DOCX 的可视副本像素，原件下载仍独立授权。页面继续平铺相同身份水印作为叠加层，`pointer-events: none`、旋转 -20°、透明度约 0.15；删除页面水印不会得到无水印预览。音频鉴权播放，不承诺不可复制。
+- 关闭 / 切换文件时丢弃迟到响应；到期、退出 / 换账号或收到权限版本变化后，释放内存地址并清除已展示内容。转换失败显示加载失败提示，下载按钮仍按独立权限控制，不自动拉取原件。
 - 防篡改：`MutationObserver` 观察水印节点及其父节点的 `childList`、`attributes`（style / class），被删或改时 **立即重绘**；同时每 2 秒自检一次（推断，待确认）。
 - 下载：点「下载」→ `POST …/files/{fileId}/download-url` 拿 5 分钟签名链接 → `window.location` 打开；后端写审计。
 - 手机 / 平板：全屏，双指缩放（图片），工具栏图标 ≥ 40px。
@@ -744,3 +745,40 @@ interface CompareReportPaneProps {
 - 每个组件一个 `*.spec.ts`（Vitest + @vue/test-utils），放在组件旁边或 `__tests__/`；断点相关用 `matchMedia` mock，计时用 fake timers。
 - 测试数据只能用虚构示例（`张*明（示例）`、`DEMO-A-0001` 等，见 design-system §17），**禁止**使用任何真实姓名、电话、证件号、病案号。
 - 每个测试文件头注释写覆盖的需求编号，如 `// A-PAT-010, C-PAT-012`。
+
+### 自动保存并发约定补记（2026-11-17）
+
+`useAutoSave.onSaved(result, trigger, snapshot)` 的第三参是请求发出时的表单快照；页面必须以该快照更新已保存基准，不能使用响应时的当前数据。请求期间的新输入仍是待同步修改，保留本机草稿；此时 `saveNow()` 返回 false，阻止“暂存并离开”误丢数据。切换记录后旧响应不更新新记录的版本或冲突状态。
+
+复合表单值（多选数组、成对数值、嵌套元信息）按内容比较，加载记录时也必须独立复制保存基准，避免共享数组引用导致漏检或虚假脏状态。
+
+
+### RegistrationCard 登记信息卡（OQR-04）
+
+位置：患者详情基线页签、基线分节之前。props `{ patientId: string, locked?: boolean }`；事件 `saved` 通知页头 / 基线 / 时间轴刷新。字段元数据来自登记读取接口的 schema / identitySchema / statusSchema，普通值与只读状态通过 FormRenderer 展示，身份新值按元数据键绑定专用加密实体适配器。
+
+操作按 patient:edit / patient:correct 独立显隐；锁定禁用，租户视角隐藏。敏感输入仅内存 60 秒、关闭即清除，不做草稿持久化；未输入不修改，明确勾选才清空可选值。字段历史、错误重试、版本冲突保留输入与服务器重载均在卡片内处理。患者切换清除输入并丢弃旧请求响应。间距使用 tokens，控件使用 Ant Design Vue。
+
+
+### OQR-05A 记录时间显示与异常卡片补记
+
+记录页首次提交时间来自详情 / 提交响应 firstSubmittedAt，草稿与历史未知分别显示「未提交」和「未知（历史记录未留存首次提交时间）」，不从 updatedAt 派生。异常卡片的 unknownSubmittedAtCount 通过 Ant Design Vue Alert 提示，表示未计入日期窗口的范围内历史标红记录；0 时不显示提示。
+
+
+### OQR-01 补录关联确认
+
+随访工作台复用 Ant Design Vue Modal + Select，选项来源 backfill-candidates，taskId 始终按字符串传递。多候选无默认值，未选择不可确认；零候选独立提交，唯一候选带明确 ID 供服务端复核。选择不写临床表单 JSON，不在候选查询阶段完成任务；关闭 / 失败保留原录入值。沿用原表单草稿机制和提交确认，服务端冲突后重新取候选。
+
+
+### StatsDrillDrawer 统计明细（OQR-05B）
+
+props `{ query: StatsDrillQuery | null }`，事件 `close`。query 非空时读取 POST stats/drill，关闭由父组件置 null；每页固定 20。query 包含统计类型、指标与全部原筛选，服务端重验 dashboard:view / patient:view 权限、patient 范围与节点开关。
+
+以统计单位分行，姓名默认脱敏；上下文展示计划 / 节点、年度或次数、计划日期、已存在的记录跳转；未生成的月度次数标“尚未生成任务”。链接查看患者，记录按钮另需 task:view；不提供逐行明文。加载前清空旧数据，权限版本变化重新查询，关闭 / 卸载 / query 切换后旧响应作废。当前 total 与 expectedCount 不同显示范围 / 数据变化提示。
+
+KPI 的 FOLLOWUP_STATS 目标和医护月度列、RateArea 数字、CompletenessArea 记录 / 缺失字段复用此组件。每日汇总保留 asOf 逻辑日并显示真实 refreshedAt；未知旧时间明确提示，不伪造时间或暗示实时。
+
+
+### OQR-06 指定排期状态
+
+记录页使用服务端 doctorNextCommands 显示待消费 / 冲突状态，复用 Alert 与原有修改原因弹窗。仅可编辑时允许显式重新确认下一次任务，保存按钮可在仅有重选标记时提交；保存成功重读详情，避免显示旧冲突。绑定状态、来源标识及重选标记是运行时状态，不作为模板临床字段保存。权限和请求契约见 followup.md 的 OQR-06 小节。

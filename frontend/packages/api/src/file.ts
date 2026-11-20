@@ -3,20 +3,20 @@
  * （后端 `com.crdp.followup.file.api.FileController` / `FilePreviewController`，docs/api/report.md §1）。
  *
  * 内容经应用代理按流返回、不缓存：登录态换 `preview-url`（≤ 5 分钟、每次预览写审计），
- * 浏览器子资源（pdf.js、docx-preview、原生 audio 带不了登录令牌）凭返回的短时链接取流。 前端不缓存该链接，每次预览重新获取。
+ * 前端携带同一登录令牌取得水印副本，再用临时内存地址展示，不持久缓存。
  */
 
 /** GET /api/hospital/files/{fileId}/preview-url 的返回。 */
 export interface FilePreviewGrant {
   /** 链接过期时刻（epoch 秒）。 */
-  expiresAt: number;
-  /** 后端真实类型目录编码（pdf/jpg/png/docx/xlsx/mp3/m4a/wav/amr）。 */
+  expiresAtEpochSecond: number;
+  /** 预览类型编码（图片为 png，PDF / DOCX 为 pdf，音频及仅下载类型保持原编码）。 */
   format: string;
   /** 浏览器原生可播 / 可预览：false = AMR（不能直接播放）或 XLSX（只能下载）。 */
   inlinePlayable: boolean;
   mime?: null | string;
   originalName: string;
-  /** 短时有效（≤ 5 分钟）的取流路径（相对路径，拼 API 基地址后直用，如 <audio :src>）。 */
+  /** 短时有效（≤ 5 分钟）的鉴权取流路径；API 客户端解析后替换为临时 Blob 地址。 */
   url: string;
 }
 
@@ -25,7 +25,7 @@ export function previewGrantExpired(
   grant: FilePreviewGrant,
   now = Date.now(),
 ): boolean {
-  return grant.expiresAt * 1000 <= now;
+  return grant.expiresAtEpochSecond * 1000 <= now;
 }
 
 /**

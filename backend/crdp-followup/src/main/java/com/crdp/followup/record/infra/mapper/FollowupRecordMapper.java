@@ -47,7 +47,8 @@ public interface FollowupRecordMapper {
             Long createdBy,
             LocalDateTime createdAt,
             Long updatedBy,
-            LocalDateTime updatedAt) {}
+            LocalDateTime updatedAt,
+            LocalDateTime firstSubmittedAt) {}
 
     /** 单条记录（越范围 / 不存在 / 已软删 null——40400 由服务层抛，不暴露存在）。 */
     @com.crdp.framework.datascope.DataScope(resource = "patient")
@@ -58,7 +59,7 @@ public interface FollowupRecordMapper {
                    form_code AS formCode, template_version AS templateVersion,
                    status, version, data, data_meta AS dataMeta,
                    created_by AS createdBy, created_at AS createdAt,
-                   updated_by AS updatedBy, updated_at AS updatedAt
+                   updated_by AS updatedBy, updated_at AS updatedAt, first_submitted_at AS firstSubmittedAt
             FROM fu_record WHERE id = #{id} AND deleted = 0
             """)
     RecordRowRaw findRecord(@Param("id") long id);
@@ -92,7 +93,7 @@ public interface FollowupRecordMapper {
             """
             UPDATE fu_record
             SET data = #{data}, data_meta = #{dataMeta}, version = version + 1,
-                status = 'SUBMITTED', implant_id = #{implantId}, updated_by = #{updatedBy}
+                first_submitted_at = COALESCE(first_submitted_at, CURRENT_TIMESTAMP(3)), status = 'SUBMITTED', implant_id = #{implantId}, updated_by = #{updatedBy}
             WHERE id = #{id} AND version = #{baseVersion} AND status = 'DRAFT' AND deleted = 0
             """)
     int submitRecord(
@@ -162,7 +163,7 @@ public interface FollowupRecordMapper {
                    form_code AS formCode, template_version AS templateVersion,
                    status, version, data, data_meta AS dataMeta,
                    created_by AS createdBy, created_at AS createdAt,
-                   updated_by AS updatedBy, updated_at AS updatedAt
+                   updated_by AS updatedBy, updated_at AS updatedAt, first_submitted_at AS firstSubmittedAt
             FROM fu_record
             WHERE patient_id = #{patientId} AND task_id IS NULL AND deleted = 0
             ORDER BY visit_date ASC, id ASC

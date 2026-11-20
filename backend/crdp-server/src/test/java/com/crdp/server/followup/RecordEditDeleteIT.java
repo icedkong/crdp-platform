@@ -289,6 +289,14 @@ class RecordEditDeleteIT {
                 40400,
                 code(get("/api/hospital/followup/records/" + recordId, adminWithDelete)),
                 "软删行对读取侧等同不存在（不暴露存在）");
+        Map<?, ?> locations =
+                get(
+                        "/api/hospital/followup/patients/" + patientId + "/report-locations",
+                        adminWithDelete);
+        assertEquals(0, code(locations));
+        assertTrue(
+                !String.valueOf(locations.get("data")).contains("rec:" + recordId),
+                "已删记录不得再选作报告单位置");
         // 软删后不再算重复（C-FU-024：软删不算）
         Map<?, ?> afterDelete =
                 get(

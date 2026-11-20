@@ -385,7 +385,7 @@ class PlanSwitchIT {
     void sw7Sw8Sw10EriCycleAndDoctorNextVisitDate() {
         enableImplant();
         String admin = adminToken();
-        publishedPlan(admin, PACER_CODE, "示例 IT 普通起搏器术后随访");
+        publishedEriLoopPlan(admin, PACER_CODE);
         publishedPlan(admin, ICD_CODE, "示例 IT ICD/CRT-D 术后随访");
         assertEquals(
                 0, code(put("/api/hospital/followup/plans/device-mapping", admin, mappingBody())));
@@ -408,6 +408,10 @@ class PlanSwitchIT {
         assertTrue(
                 String.valueOf(taskRow(taskId).get("terminate_reason")).contains("ERI"),
                 "终止原因记录 ERI 切换");
+
+        // 旧正常记录是历史事实，不得解除当前 ERI 或覆盖当前医生指定日期。
+        submitBackfillRecord(admin, patientId, eriVisit.minusDays(20), Map.of("f323", 0));
+        assertEquals("ERI", enrollmentRow(enrollmentId).get("mode"), "补录旧正常记录不得回退当前 ERI");
 
         // SW-10 医生指定下次随访时间：不改变计划类型，只登记 doctor_next_date（窗口围绕展开随 E21-T08）
         LocalDate doctorDate = LocalDate.now().plusMonths(3);
@@ -436,7 +440,7 @@ class PlanSwitchIT {
     void sw7LowBatteryLifeAlsoTriggersEriCycle() {
         enableImplant();
         String admin = adminToken();
-        publishedPlan(admin, PACER_CODE, "示例 IT 普通起搏器术后随访");
+        publishedEriLoopPlan(admin, PACER_CODE);
         publishedPlan(admin, ICD_CODE, "示例 IT ICD/CRT-D 术后随访");
         assertEquals(
                 0, code(put("/api/hospital/followup/plans/device-mapping", admin, mappingBody())));

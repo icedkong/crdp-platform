@@ -18,9 +18,10 @@ import org.springframework.stereotype.Service;
  * 刷新侧已保证），单计划下年度节点两处数字一致（A-DASH-012「与每年随访率的关系」）。
  *
  * <p>数据范围由 Mapper 语句上的 {@code @DataScope(resource = "patient")} 按患者病区出行（范围内无患者返回空行集，不报错）； 病区 /
- * 队列为范围内再收窄。数据时点 = 最近一次每日刷新（asOf 回显 refreshed_date，当日完成 / 补录次日刷新前以最近刷新为准，OQ-106①）。
+ * 队列为范围内再收窄。数据时点 = 最近一次每日刷新（asOf 回显逻辑日，refreshedAt 回显真实成功时刻或未知；当日完成 / 补录次日刷新前以最近刷新为准，OQ-106①）。
  */
 @Service
+@org.springframework.transaction.annotation.Transactional(readOnly = true)
 public class NodeOccurrenceStatsService {
 
     /** 节点随访率卡片的功能开关（A-DASH-013 卡片目录：医院 A 默认不显示、B / C 显示；种子 V100）。 */
@@ -91,14 +92,16 @@ public class NodeOccurrenceStatsService {
             long deathCount,
             double followRatePct,
             double inWindowRatePct,
-            double lostRatePct) {}
+            double lostRatePct,
+            Long nodeId) {}
 
     /** 每年随访率卡片（A-DASH-006）：rows 按随访年度 N 升序，只列至少有 1 名应随访患者的年度。 */
     public record YearlyRateCardView(
             LocalDate asOf,
             Integer cohortYear,
             List<Integer> cohortYears,
-            List<RateRowView> rows) {}
+            List<RateRowView> rows,
+            String refreshedAt) {}
 
     /** 节点随访率卡片（A-DASH-012 / C-DASH-004）：rows 按计划内节点顺序，plans 为候选。 */
     public record NodeRateCardView(
@@ -108,7 +111,8 @@ public class NodeOccurrenceStatsService {
             Integer cohortYear,
             List<Integer> cohortYears,
             List<PlanOptionView> plans,
-            List<RateRowView> rows) {}
+            List<RateRowView> rows,
+            String refreshedAt) {}
 
     /** 每年随访率（年度节点；病区 / 出院年份队列筛选，A-DASH-006）。 */
     public YearlyRateCardView yearlyRate(Long wardId, Integer cohortYear) {
@@ -132,10 +136,12 @@ public class NodeOccurrenceStatsService {
                                                 row.deathCount(),
                                                 pct(row.followedCount(), row.dueCount()),
                                                 pct(row.inWindowCount(), row.dueCount()),
-                                                pct(row.lostCount(), row.dueCount())))
+                                                pct(row.lostCount(), row.dueCount()),
+                                                null))
                         .toList();
         LocalDate asOf = aggregated.isEmpty() ? null : aggregated.get(0).refreshedDate();
-        return new YearlyRateCardView(asOf, cohort, occurrenceMapper.findCohortYears(null), rows);
+        return new YearlyRateCardView(
+                asOf, cohort, occurrenceMapper.findCohortYears(null), rows, refreshedAt());
     }
 
     /**
@@ -183,7 +189,8 @@ public class NodeOccurrenceStatsService {
                 cohort,
                 occurrenceMapper.findCohortYears(effectivePlanId == 0L ? null : effectivePlanId),
                 plans,
-                rows);
+                rows,
+                refreshedAt());
     }
 
     /** 节点行 → 卡片行：行标签按节点形态（固定 = 节点名、年度循环 = 第 N 年、其余循环 = 第 N 次，A-DASH-012「节点」口径）。 */
@@ -208,7 +215,15 @@ public class NodeOccurrenceStatsService {
                 row.deathCount(),
                 pct(row.followedCount(), row.dueCount()),
                 pct(row.inWindowCount(), row.dueCount()),
-                pct(row.lostCount(), row.dueCount()));
+                pct(row.lostCount(), row.dueCount()),
+                row.nodeId());
+    }
+
+    private String refreshedAt() {
+        var state = occurrenceMapper.lastRefresh();
+        return state == null
+                ? null
+                : state.refreshedAt().atOffset(java.time.ZoneOffset.ofHours(8)).toString();
     }
 
     /** 比率换算：百分数、一位小数；分母为 0 时为 0（聚合行分母 ≥ 1，防御兜底）。 */

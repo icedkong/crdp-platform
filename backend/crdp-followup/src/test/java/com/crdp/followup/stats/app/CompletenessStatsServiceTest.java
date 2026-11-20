@@ -406,4 +406,42 @@ class CompletenessStatsServiceTest {
                                         null, null, null, null, null, null)),
                 "空 fieldKey 40001");
     }
+
+    @Test
+    void patientTypeLabelsComeFromReadonlyBusinessDictionaryOptions() {
+        stubBaselineBatch();
+        when(mapper.selectBaselinePatientIds(any(), any(), any(), any(), any()))
+                .thenReturn(List.of());
+        when(mapper.selectPatientTypes())
+                .thenReturn(List.of(new CompletenessStatsMapper.PatientTypeRow("EXAMPLE")));
+        var field =
+                new FormService.FieldView(
+                        "patientType",
+                        "patientType",
+                        "患者类型",
+                        "select",
+                        null,
+                        null,
+                        null,
+                        null,
+                        List.of(
+                                new FormService.OptionItemView(
+                                        "EXAMPLE", "登记类型（示例）", 1, false, false, false)),
+                        false,
+                        null,
+                        null,
+                        null,
+                        false,
+                        "column",
+                        null);
+        when(formService.schema("PT_REG_A", null))
+                .thenReturn(
+                        schema(
+                                new FormService.CategoryView(
+                                        "registration", "登记信息", 1, List.of(field))));
+        var card =
+                service.baselineCard(
+                        new CompletenessStatsService.Query(null, null, null, null, null, null));
+        assertEquals("登记类型（示例）", card.patientTypes().getFirst().label());
+    }
 }

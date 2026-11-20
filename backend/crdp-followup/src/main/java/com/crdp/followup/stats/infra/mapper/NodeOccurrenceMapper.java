@@ -66,6 +66,16 @@ public interface NodeOccurrenceMapper {
     /** 刷新输入：患者状态时间线（pt_status_history；统计按窗口开始日回看，V39）。 */
     record StatusPointRow(long patientId, String status, LocalDate effectiveDate) {}
 
+    record RefreshState(LocalDate logicalDate, java.time.LocalDateTime refreshedAt) {}
+
+    @Select(
+            "SELECT logical_date AS logicalDate,refreshed_at AS refreshedAt FROM st_refresh_state WHERE code='node_occurrence'")
+    RefreshState lastRefresh();
+
+    @Insert(
+            "INSERT INTO st_refresh_state(code,logical_date,refreshed_at) VALUES ('node_occurrence',#{date},CURRENT_TIMESTAMP(3)) ON DUPLICATE KEY UPDATE logical_date=VALUES(logical_date),refreshed_at=VALUES(refreshed_at)")
+    int markRefresh(@Param("date") LocalDate date);
+
     /** 按节点聚合结果（验收：按节点出应随访、已随访数；失访 / 死亡 / 窗口内完成随行供 E19-T04 卡片）。 */
     record NodeCountRow(
             long nodeId,
@@ -131,11 +141,14 @@ public interface NodeOccurrenceMapper {
             SELECT t.id AS taskId, t.record_id AS recordId, t.enrollment_id AS enrollmentId,
                    t.node_id AS nodeId, t.occurrence, t.plan_date AS planDate,
                    t.window_start AS windowStart, t.window_end AS windowEnd,
-                   t.create_type AS createType, t.status, t.complete_kind AS completeKind,
+                   t.create_type AS createType,
+                   CASE WHEN t.task_type='FORM' AND EXISTS(SELECT 1 FROM fu_record deleted_record WHERE deleted_record.task_id=t.id AND deleted_record.deleted=1)
+                     AND NOT EXISTS(SELECT 1 FROM fu_record live_record WHERE live_record.task_id=t.id AND live_record.deleted=0 AND live_record.status='SUBMITTED')
+                     THEN 'RECORD_DELETED' ELSE t.status END AS status, t.complete_kind AS completeKind,
                    r.visit_date AS recordVisitDate, r.form_code AS recordFormCode,
                    r.template_version AS recordTemplateVersion, r.data AS recordData
             FROM fu_task t
-            LEFT JOIN fu_record r ON r.id = t.record_id
+            LEFT JOIN fu_record r ON r.id = t.record_id AND r.deleted=0
             WHERE t.occurrence > 0 AND t.followup_seq = 0
             ORDER BY t.enrollment_id, t.node_id, t.occurrence
             """)
@@ -151,7 +164,7 @@ public interface NodeOccurrenceMapper {
                    r.occurrence, r.source, r.status, r.visit_date AS visitDate
             FROM fu_record r
             WHERE r.enrollment_id IS NOT NULL AND r.node_id IS NOT NULL AND r.occurrence IS NOT NULL
-              AND r.task_id IS NULL
+              AND r.task_id IS NULL AND r.deleted=0
             ORDER BY r.enrollment_id, r.node_id, r.occurrence
             """)
     List<AnchoredRecordRow> findAnchoredRecords();
@@ -161,8 +174,8 @@ public interface NodeOccurrenceMapper {
             """
             SELECT r.id AS recordId, r.patient_id AS patientId, r.visit_date AS visitDate
             FROM fu_record r
-            WHERE r.source = 'BACKFILL' AND r.status = 'SUBMITTED'
-              AND r.enrollment_id IS NULL AND r.task_id IS NULL
+            WHERE r.source = 'BACKFILL' AND r.status = 'SUBMITTED' AND r.deleted=0
+              AND r.enrollment_id IS NULL AND r.task_id IS NULL AND r.deleted=0
             ORDER BY r.patient_id, r.visit_date
             """)
     List<FloatingRecordRow> findFloatingBackfills();

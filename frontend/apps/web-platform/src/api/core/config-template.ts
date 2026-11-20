@@ -3,6 +3,7 @@
  * 读（列表 / 详情 / 包 / 注册表）platform:tenant:view，导出与应用 platform:tenant:create。
  */
 import type {
+  ConfigApplyPreview,
   ConfigApplyResult,
   ConfigPackageView,
   ConfigRegistryEntry,
@@ -54,9 +55,21 @@ export function configTemplatePackage(id: number) {
 }
 
 /** 应用到目标租户（导入 + ID 重映射；目标不能是源租户）。 */
-export function applyConfigTemplate(id: number, tenantId: number) {
+export function applyConfigTemplate(
+  id: number,
+  tenantId: number,
+  planHash: string,
+) {
   return requestClient.post<ConfigApplyResult>(
     apiPath(`/config-templates/${id}/apply`),
+    { planHash, tenantId },
+  );
+}
+
+/** 目标配置只读预检；提交必须携带返回的 planHash。 */
+export function previewConfigTemplate(id: number, tenantId: number) {
+  return requestClient.post<ConfigApplyPreview>(
+    apiPath(`/config-templates/${id}/preview`),
     { tenantId },
   );
 }

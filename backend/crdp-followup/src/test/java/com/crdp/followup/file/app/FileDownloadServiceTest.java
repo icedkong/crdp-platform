@@ -106,6 +106,23 @@ class FileDownloadServiceTest {
         TenantContext.clear();
     }
 
+    @Test
+    void knownUnsafeFilesRejectIssuanceAndOldSignedLinksWithoutDeletingEvidence() throws Exception {
+        for (String status : new String[] {"INFECTED", "HASH_MISMATCH"}) {
+            var unsafe = row("t/demoa/files/202611/x.pdf", "pdf", "application/pdf", "PENDING");
+            unsafe.setVirusScanStatus(status);
+            stubRow(unsafe);
+            assertEquals(
+                    40400,
+                    assertThrows(ApiException.class, () -> service.downloadUrl(FILE_ID)).code());
+            var token = signer.sign(TENANT, TENANT_CODE, FILE_ID, Instant.now().plusSeconds(300));
+            assertEquals(
+                    40400,
+                    assertThrows(ApiException.class, () -> service.content(token, "")).code());
+        }
+        verify(files, never()).markDeleted(anyLong());
+    }
+
     // ---------------------------------------------------------------- 签发
 
     /** 正常签发：短时链接（≤ 5 分钟）、到期时间进签名、写 DOWNLOAD 数据访问审计（含文件 SHA-256）。 */
@@ -203,6 +220,19 @@ class FileDownloadServiceTest {
         assertArrayEquals(body, content.body());
         assertEquals("application/pdf", content.mime());
         assertEquals("复查报告.pdf", content.originalName());
+    }
+
+    @Test
+    void unsafeVerdictArrivingDuringStorageReadPreventsDelivery() {
+        storage.put("files/202611/x.pdf", new byte[] {1, 2, 3}, "application/pdf");
+        var clean = row("t/demoa/files/202611/x.pdf", "pdf", "application/pdf", "PENDING");
+        var infected = row("t/demoa/files/202611/x.pdf", "pdf", "application/pdf", "PENDING");
+        infected.setVirusScanStatus("INFECTED");
+        when(files.find(FILE_ID)).thenReturn(clean, infected);
+        String token = signer.sign(TENANT, TENANT_CODE, FILE_ID, Instant.now().plusSeconds(300));
+        assertEquals(
+                40400, assertThrows(ApiException.class, () -> service.content(token, "")).code());
+        assertArrayEquals(new byte[] {1, 2, 3}, storage.get("files/202611/x.pdf"));
     }
 
     /** 台账查询必须发生在签名绑定的租户上下文里（公开口没有登录令牌，租户只来自签名）。 */

@@ -17,8 +17,9 @@ import org.springframework.stereotype.Service;
  * 首页指标卡（E19-T02 / A-DASH-001、C-DASH-001；docs/api/stats.md §3 cardCode = kpi）。
  *
  * <p>验收「数字与列表钻取一致」：每项指标的取数条件与钻取目标列表的检索条件同一棵条件树——患者状态计数 = 患者列表 status 筛选总数（deleted = 0；患者总数含已死亡 /
- * 已终止，Q01）、任务状态计数 = 任务列表 status 筛选总数、 本月应随访 = 任务列表计划日期窗口筛选（跟进 / 临时任务不在「年度随访数」口径内，OQ-107）； 数据范围由
- * Mapper 语句上的 {@code @DataScope(resource = "patient")} 出行，范围内无患者时全部为 0（stats.md §1，不报错）。
+ * 已终止，Q01）、任务状态计数 = 任务列表 status 筛选总数、 本月应随访 = 月内计划次数与实际任务去重集合（OQR-05B）（跟进 /
+ * 临时任务不在「年度随访数」口径内，OQ-107）； 数据范围由 Mapper 语句上的 {@code @DataScope(resource = "patient")}
+ * 出行，范围内无患者时全部为 0（stats.md §1，不报错）。
  *
  * <p>指标集按租户差异用功能开关判定（stats.md §3「A 与 C 指标不同，按租户配置」）： {@code implant} 开 → 医院 C 指标集 （C-DASH-001
  * 七项，其中「接近 ERI 器械数」自 E21-T19 起随 {@code eri_cycle} 开关出数——与「接近 ERI 器械」卡片（eri_list） 同一查询，关闭仍占位
@@ -26,6 +27,7 @@ import org.springframework.stereotype.Service;
  * 开关出数、关闭仍占位））；关 → 医院 A 指标集（A-DASH-001 七项）。随 E19-T06 卡片目录按角色配置时，指标集配置随目录 落库（OQ-107）。
  */
 @Service
+@org.springframework.transaction.annotation.Transactional(readOnly = true)
 public class DashboardKpiService {
 
     /** C 指标「近 30 天含标红参数的记录数」的窗口天数（C-DASH-001 固定 30；N 可配置随 E21）。 */
@@ -40,9 +42,14 @@ public class DashboardKpiService {
     private final DashboardStatsMapper stats;
     private final DashboardFeatureMapper features;
     private final EriListService eriList;
+    private final com.crdp.followup.stats.app.MonthlyDueService monthly;
 
     public DashboardKpiService(
-            DashboardStatsMapper stats, DashboardFeatureMapper features, EriListService eriList) {
+            DashboardStatsMapper stats,
+            DashboardFeatureMapper features,
+            EriListService eriList,
+            com.crdp.followup.stats.app.MonthlyDueService monthly) {
+        this.monthly = monthly;
         this.stats = stats;
         this.features = features;
         this.eriList = eriList;
@@ -76,6 +83,23 @@ public class DashboardKpiService {
         LocalDate today = PlanDateCalculator.businessToday(java.time.Instant.now());
         boolean hospitalC = Boolean.TRUE.equals(features.findEnabled("implant"));
         List<MetricView> metrics = hospitalC ? cMetrics(ward, today) : aMetrics(ward, today);
+        if (ward != null)
+            metrics =
+                    metrics.stream()
+                            .map(
+                                    m -> {
+                                        if (m.drill() == null) return m;
+                                        Map<String, Object> query =
+                                                new java.util.LinkedHashMap<>(m.drill().query());
+                                        query.put("wardId", ward);
+                                        return new MetricView(
+                                                m.code(),
+                                                m.title(),
+                                                m.value(),
+                                                m.available(),
+                                                new DrillView(m.drill().target(), query));
+                                    })
+                            .toList();
         return new KpiCardView(
                 hospitalC ? "C" : "A",
                 today.getYear() + "-" + String.format("%02d", today.getMonthValue()),
@@ -93,7 +117,7 @@ public class DashboardKpiService {
         long total = byStatus.values().stream().mapToLong(Long::longValue).sum();
         LocalDate monthStart = today.withDayOfMonth(1);
         LocalDate monthEnd = today.withDayOfMonth(today.lengthOfMonth());
-        long monthDue = stats.countMonthDue(monthStart, monthEnd, ward);
+        long monthDue = monthly.count(monthStart, monthEnd, ward);
         long overdue = stats.countTasksByStatus("OVERDUE", ward);
         List<MetricView> metrics = new ArrayList<>();
         metrics.add(
@@ -134,11 +158,16 @@ public class DashboardKpiService {
                         monthDue,
                         true,
                         new DrillView(
-                                "TASK_LIST",
+                                "FOLLOWUP_STATS",
                                 Map.of(
-                                        "tab", "all",
-                                        "dueFrom", monthStart.toString(),
-                                        "dueTo", monthEnd.toString()))));
+                                        "kind",
+                                        "MONTH",
+                                        "from",
+                                        monthStart.toString(),
+                                        "to",
+                                        monthEnd.toString(),
+                                        "wardId",
+                                        ward == null ? "" : ward))));
         metrics.add(
                 new MetricView(
                         "overdue",
@@ -175,14 +204,19 @@ public class DashboardKpiService {
                 new MetricView(
                         "monthDue",
                         "本月应随访",
-                        stats.countMonthDue(monthStart, monthEnd, ward),
+                        monthly.count(monthStart, monthEnd, ward),
                         true,
                         new DrillView(
-                                "TASK_LIST",
+                                "FOLLOWUP_STATS",
                                 Map.of(
-                                        "tab", "all",
-                                        "dueFrom", monthStart.toString(),
-                                        "dueTo", monthEnd.toString()))));
+                                        "kind",
+                                        "MONTH",
+                                        "from",
+                                        monthStart.toString(),
+                                        "to",
+                                        monthEnd.toString(),
+                                        "wardId",
+                                        ward == null ? "" : ward))));
         metrics.add(
                 new MetricView(
                         "pending",

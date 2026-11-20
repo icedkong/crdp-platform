@@ -29,6 +29,7 @@ import type {
 
 import { onScopeDispose, ref, watch } from 'vue';
 
+import { copyFormValue } from '@crdp/rules';
 import { timings } from '@crdp/tokens';
 
 import { defaultDraftStorage } from './local-draft-store';
@@ -135,6 +136,7 @@ export interface AutoSaveOptions {
   onSaved?: (
     result: AutoSaveSavedView,
     trigger: AutoSaveTrigger,
+    snapshot: LocalDraftSnapshot,
   ) => Promise<void> | void;
   /** IndexedDB 键：`${tenantId}:${userId}:${kind}:${id}`。 */
   recordKey: ComputedRef<string> | Ref<string>;
@@ -260,7 +262,7 @@ export function useAutoSave(options: AutoSaveOptions): AutoSaveApi {
 
   async function writeLocalDraft(key = options.recordKey.value): Promise<void> {
     try {
-      const snapshot = options.getSnapshot();
+      const snapshot = copyFormValue(options.getSnapshot());
       snapshot.savedAt = new Date().toISOString();
       await storage.put(key, snapshot);
     } catch {
@@ -275,7 +277,11 @@ export function useAutoSave(options: AutoSaveOptions): AutoSaveApi {
     if (!options.enabled.value) return false;
     if (status.value === 'conflict' && trigger !== 'keepMine') return false;
     if (inFlight) return false;
-    const changes = options.getChanges();
+    const key = options.recordKey.value;
+    // 表单值为 JSON 数据，冻结请求快照，不能让请求期间的新输入成为已保存基准。
+    const snapshot = copyFormValue(options.getSnapshot());
+    snapshot.baseVersion = baseVersionOverride ?? options.getBaseVersion();
+    const changes = copyFormValue(options.getChanges());
     if (Object.keys(changes).length === 0) {
       // 有改动才保存（NFR-SAVE-001）：无改动直接视为成功并归一状态
       normalizeAfterDirtyChange();
@@ -290,22 +296,35 @@ export function useAutoSave(options: AutoSaveOptions): AutoSaveApi {
     status.value = 'saving';
     try {
       const result = await options.saveDraft({
-        baseVersion: baseVersionOverride ?? options.getBaseVersion(),
+        baseVersion: snapshot.baseVersion,
         changes,
         ...(trigger === 'keepMine' ? { overwrite: true } : {}),
       });
+      if (options.recordKey.value !== key || !options.enabled.value)
+        return false;
       lastSavedAt.value = hhmmOf(result.savedAt);
       status.value = 'saved';
       conflict.value = null;
-      // 服务器已有最新改动：清掉本机草稿，重开时不再误提示「发现未提交的草稿」
+      await options.onSaved?.(result, trigger, snapshot);
+      if (dirtyNow()) {
+        status.value = 'dirty';
+        await writeLocalDraft(key);
+        return false;
+      }
       try {
-        await storage.remove(options.recordKey.value);
+        await storage.remove(key);
       } catch {
         // 清理失败不影响保存结果
       }
-      await options.onSaved?.(result, trigger);
+      if (options.recordKey.value !== key) return false;
+      if (dirtyNow()) {
+        status.value = 'dirty';
+        await writeLocalDraft(key);
+        return false;
+      }
       return true;
     } catch (error) {
+      if (options.recordKey.value !== key) return false;
       const detail =
         error instanceof DraftConflictError
           ? error.detail
@@ -368,6 +387,11 @@ export function useAutoSave(options: AutoSaveOptions): AutoSaveApi {
   if (options.isDirty) {
     watch(options.isDirty, normalizeAfterDirtyChange);
   }
+  watch(options.recordKey, () => {
+    conflict.value = null;
+    lastSavedAt.value = null;
+    status.value = dirtyNow() ? 'dirty' : 'idle';
+  });
   watch(options.enabled, (enabled) => {
     if (!enabled) {
       conflict.value = null;

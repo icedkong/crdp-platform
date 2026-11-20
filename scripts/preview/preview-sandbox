@@ -1,0 +1,20 @@
+#!/bin/sh
+# 生产 Linux 启动器：需要 bubblewrap 与允许的非特权 user namespace；缺失就失败，不降级。
+set -eu
+work=$1
+format=$2
+case "$format" in pdf|docx|jpg|png) ;; *) exit 64 ;; esac
+runtime=/opt/crdp-preview
+[ -x /usr/bin/bwrap ] && [ -x /usr/bin/java ] && [ -d "$runtime/lib" ] || exit 69
+exec /usr/bin/bwrap --unshare-all --unshare-user --die-with-parent --new-session --cap-drop ALL \
+  --ro-bind /usr /usr --ro-bind-try /lib /lib --ro-bind-try /lib64 /lib64 \
+  --ro-bind /etc/fonts /etc/fonts --ro-bind /etc/alternatives /etc/alternatives \
+  --ro-bind /etc/libreoffice /etc/libreoffice --ro-bind-try /opt/java /opt/java \
+  --ro-bind-try /etc/java-21-openjdk /etc/java-21-openjdk --ro-bind /etc/ld.so.cache /etc/ld.so.cache \
+  --ro-bind "$runtime" "$runtime" --proc /proc --dev /dev \
+  --tmpfs /tmp --tmpfs /work \
+  --ro-bind "$work/input.bin" /work/input.bin --ro-bind "$work/watermark.txt" /work/watermark.txt \
+  --bind "$work/output" /work/output --clearenv --setenv HOME /tmp --setenv LANG C.UTF-8 --setenv PATH /usr/bin:/bin \
+  /usr/bin/timeout --signal=KILL 40s /usr/bin/prlimit --cpu=35 --fsize=67108864 --nofile=128 --nproc=128 -- \
+  /usr/bin/java -Xmx256m -XX:ActiveProcessorCount=2 -Djava.awt.headless=true -cp "$runtime/classes:$runtime/lib/*" \
+  com.crdp.followup.file.infra.preview.render.PreviewRasterWorker /work "$format"

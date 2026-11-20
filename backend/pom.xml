@@ -35,6 +35,7 @@
     <netty.version>4.2.17.Final</netty.version>
     <tomcat.version>10.1.59</tomcat.version>
     <tika.version>3.3.3</tika.version>
+    <pdfbox.version>3.0.8</pdfbox.version>
     <obs-sdk.version>3.26.9</obs-sdk.version>
     <surefire.version>3.5.3</surefire.version>
     <compiler.version>3.14.0</compiler.version>
@@ -125,6 +126,11 @@
         <groupId>org.apache.tomcat.embed</groupId>
         <artifactId>tomcat-embed-core</artifactId>
         <version>${tomcat.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.pdfbox</groupId>
+        <artifactId>pdfbox</artifactId>
+        <version>${pdfbox.version}</version>
       </dependency>
       <!-- E10-T01 / A-ATT-008、C-SCAN-018：真实文件类型识别（只引 tika-core 按魔数检测，不带解析器全家桶） -->
       <dependency>

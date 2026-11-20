@@ -12,7 +12,7 @@
      控制器 DTO 带 reason；前端 implant.ts 的 ImplantUpdatePayload / buildImplantUpdatePayload /
      implantEditReasonError、implant-form-modal.vue 编辑态原因输入；implant.md §1 PUT 契约与
      components.md ReasonModal 行同步；
-   - UAT 就绪开关清单（UAT-SELF-02）：uat-hospital-c.md §3 激活链④为八项开关清单
+   - UAT 就绪开关清单（UAT-SELF-02）：uat-hospital-c.md §3 激活链④为九项开关清单
      （含 record_edit_submitted / record_sequence_no），E-3 角色勘误为「医生」；
    - 修复有测试锁定（ImplantServiceTest / ImplantRecordIT / implant.spec.ts 的新用例名）；
 3. 索引同步：ci.yml 含本校验步骤、docs/README.md、C UAT 手册 §10 / §11、AGENTS.md 脚本清单。
@@ -61,7 +61,7 @@ IMPLANT_SPEC = ROOT / "frontend/packages/api/src/implant.spec.ts"
 # 自查发现表行格式：| UAT-SELF-nn | 级别 | module | ...（级别列取第二列）
 FINDING_ROW = re.compile(r"^\|\s*(UAT-SELF-\d+)\s*\|\s*(阻断|严重|一般|建议)\s*\|", re.MULTILINE)
 
-# UAT-SELF-02：C 手册 §3 激活链的八项开关（漏任一项即失败）
+# UAT-SELF-02：C 手册 §3 激活链的九项开关（漏任一项即失败）
 REQUIRED_FLAGS = (
     "implant",
     "scan_progress",
@@ -71,6 +71,7 @@ REQUIRED_FLAGS = (
     "report_inbox",
     "record_edit_submitted",
     "record_sequence_no",
+    "backfill_task_link",
 )
 
 
@@ -213,7 +214,7 @@ def main() -> int:
         check("§3 激活链④行在位", bool(activation))
         if activation:
             check(
-                "§3 激活链为八项开关清单（含两项易漏开关）",
+                "§3 激活链为九项开关清单（含两项易漏开关）",
                 all(f"`{flag}`" in activation for flag in REQUIRED_FLAGS),
             )
             check("§3 注明漏开后果（OQ-136① / OQ-143②）", "OQ-136①" in activation and "OQ-143②" in activation)

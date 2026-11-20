@@ -27,7 +27,7 @@ import type { TaskRow } from './task';
 /** 一项指标的钻取目标（query 为列表页路由 query 参数）。 */
 export interface KpiDrill {
   query?: Record<string, unknown>;
-  target: 'PATIENT_LIST' | 'TASK_LIST';
+  target: 'FOLLOWUP_STATS' | 'PATIENT_LIST' | 'REPORT_LIST' | 'TASK_LIST';
 }
 
 /** 指标卡单行（value=null 且 available=false 表示数据源随 E21 落地，前端隐藏）。 */
@@ -136,7 +136,7 @@ export const TREND_GROUP_BY_OPTIONS: Array<{
  */
 export function kpiMetricRoute(metric: KpiMetric): null | RouteLocationRaw {
   const drill = metric.drill;
-  if (!drill) return null;
+  if (!drill || drill.target === 'FOLLOWUP_STATS') return null;
   if (drill.target === 'PATIENT_LIST') {
     return { path: '/followup/patient', query: drill.query ?? {} };
   }
@@ -331,7 +331,7 @@ export interface AbnormalRecordItem {
   name: string;
   patientId: string;
   recordId: string;
-  submittedAt: string;
+  submittedAt: null | string;
   visitDate?: null | string;
   visitNo?: null | string;
 }
@@ -343,6 +343,8 @@ export interface AbnormalRecordsView {
   limit: number;
   since: string;
   total: number;
+  /** 当前范围内首次提交时间未知的标红记录数，不归入近 N 天。 */
+  unknownSubmittedAtCount?: number;
 }
 
 /** 异常标红记录请求参数（wardId 页面级病区筛选；days 近 N 天缺省 30）。 */
@@ -392,7 +394,9 @@ export interface RateRow {
   inWindowCount: number;
   inWindowRatePct: number;
   label: string;
+  lostCount?: number;
   lostRatePct: number;
+  nodeId?: null | number | string;
   nodeName?: null | string;
   occurrence: number;
   year?: null | number;
@@ -403,6 +407,7 @@ export interface YearlyRateCardView {
   asOf?: null | string;
   cohortYear?: null | number;
   cohortYears: number[];
+  refreshedAt?: null | string;
   rows: RateRow[];
 }
 
@@ -420,6 +425,7 @@ export interface NodeRateCardView {
   planId: number;
   planName?: null | string;
   plans: NodeRatePlanOption[];
+  refreshedAt?: null | string;
   rows: RateRow[];
 }
 
@@ -893,7 +899,7 @@ export interface DoctorWorkloadRow {
 /** 钻取目标（query 为列表页路由 query 参数；doctorName 供列表页钻取标签展示）。 */
 export interface DoctorWorkloadDrill {
   query?: Record<string, unknown>;
-  target: 'PATIENT_LIST' | 'TASK_LIST';
+  target: 'FOLLOWUP_STATS' | 'PATIENT_LIST' | 'TASK_LIST';
 }
 
 /** 医护负责患者数响应（asOfMonth = 「本月」口径月；asOf = 随访率数据时点，每日刷新，无数据为空）。 */
@@ -920,7 +926,7 @@ export function doctorWorkloadRoute(
     total: row.totalDrill,
   };
   const drill = drills[kind];
-  if (!drill) return null;
+  if (!drill || drill.target === 'FOLLOWUP_STATS') return null;
   if (drill.target === 'PATIENT_LIST') {
     return { path: '/followup/patient', query: drill.query ?? {} };
   }

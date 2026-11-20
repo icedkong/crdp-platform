@@ -14,6 +14,7 @@ import { mount } from '@vue/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import CompletenessArea from './completeness-area.vue';
+import StatsDrillDrawer from './stats-drill-drawer.vue';
 
 const fetchBaselineCompletenessCard = vi.fn();
 const fetchFollowupCompletenessCard = vi.fn();
@@ -128,7 +129,11 @@ function mountArea(
 ) {
   fetchBaselineCompletenessCard.mockResolvedValue(baseline);
   fetchFollowupCompletenessCard.mockResolvedValue(followup);
-  const wrapper = mount(CompletenessArea, { attachTo: document.body, props });
+  const wrapper = mount(CompletenessArea, {
+    attachTo: document.body,
+    props,
+    global: { stubs: { StatsDrillDrawer: true } },
+  });
   mounted.push(wrapper);
   return wrapper;
 }
@@ -227,29 +232,27 @@ describe('e19-t05 首页数据完整度 · 钻取与筛选（验收「可钻取�
     await wrapper
       .find('[data-testid="baseline-missing-f9t5b"]')
       .trigger('click');
-    expect(routerPush).toHaveBeenCalledWith({
-      path: '/followup/patient',
-      query: {
-        missingField: 'f9t5b',
-        missingFieldLabel: '字段二（示例）',
-        missingKind: 'BASELINE',
-        timeField: 'DISCHARGE',
-        wardId: 3,
-      },
+    expect(
+      wrapper.findComponent(StatsDrillDrawer).props('query'),
+    ).toMatchObject({
+      kind: 'BASELINE_MISSING',
+      fieldKey: 'f9t5b',
+      timeField: 'DISCHARGE',
+      wardId: 3,
+      expectedCount: 2,
     });
 
     await wrapper
       .find('[data-testid="followup-missing-f214"]')
       .trigger('click');
-    expect(routerPush).toHaveBeenLastCalledWith({
-      path: '/followup/patient',
-      query: {
-        missingField: 'f214',
-        missingFieldLabel: '随访日期（示例）',
-        missingKind: 'FOLLOWUP',
-        timeField: 'VISIT',
-        wardId: 3,
-      },
+    expect(
+      wrapper.findComponent(StatsDrillDrawer).props('query'),
+    ).toMatchObject({
+      kind: 'FOLLOWUP_MISSING',
+      fieldKey: 'f214',
+      timeField: 'VISIT',
+      wardId: 3,
+      expectedCount: 1,
     });
   });
 

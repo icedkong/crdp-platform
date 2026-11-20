@@ -10,6 +10,8 @@
 > 当前缺陷库 **0 条 MLPS-ID Issue**（窗口未到）。仓库侧本 PR 交付——**整改工作流（§2–§3 / §6）+ 已知偏差
 > 后端面的先行整改（D-01 本轮已落地，§4）**；窗口内真实测评问题到达后按同一流程处置，不另立口径。
 
+**2026-11-20 OQR-08 覆盖说明**：下文历史实施记录中的“未部署 clamd 可在生产 off”不再有效。生产默认 clamd、地址必填、off 拒绝启动；运行故障拒绝上传。异常文件的旧预览 / 下载授权均受状态闸门限制，原件不删除；V147 增加准确尝试记录与轮转重试，缺失对象也登记失败。现行操作和验收见 [扫描安全手册](../file-scan-safety.md)，本地通过不代表引擎 / 签名 / 云上生效。
+
 ## 1. 目标与验收口径
 
 - 目的：路由到 E22-T15 的测评问题（不符合 / 部分符合）全部整改并复测通过（E22-T17），配合 E22-T16
@@ -54,7 +56,7 @@ D-02~D-08 已有结论（已接受 / 由人 / 条件触发），后端无悬空�
 
 | 编号 | 偏差（自查 §4 原口径） | 处置结论 | 证据 / 测试（本 PR） |
 |---|---|---|---|
-| D-01 | 上传病毒扫描首期不做（§2.4 恶意代码防范部分符合；整改窗口 W44 按 tech-plan §10 补齐） | **整改**：按 tech-plan §10 定稿方案落地——自建 ClamAV（clamd INSTREAM）**同步扫描**：上传链路在真实类型校验后、写任何对象前扫描（`FileUploadService`），检出 40001 + `FILE_VIRUS_REJECTED` 审计（等保证据），扫描不可用 **50300 不放行**（fail closed，「稍后重试」）；禁用态（本机 / CI / 未部署 clamd）不扫描、台账 UNSCANNED。**存量补扫**：`sys_file` 加扫描列（followup V139），`VirusScanRetroService`（每日 03:20，按租户扇出 job_tenant_run）按已记录 SHA-256 读回核对完整性后补扫——干净 CLEAN、检出 INFECTED + `FILE_VIRUS_FOUND` 审计（**不自动删除**，处置见表后）、对象与台账哈希不一致 HASH_MISMATCH + `FILE_VIRUS_HASH_MISMATCH` 审计（完整性事件）；单趟单租户上限 `retro-batch-limit`（默认 200）逐晚推进。**不用云沙箱**（文件不出平台，tech-plan §10 方案对比）；HSS 病毒查杀为主机层补充（云上由运维配置，§5） | `ClamdVirusScannerTest`（4：INSTREAM 分块编码与多块重组 / 干净 / 检出名称解析 / 连接拒绝与 ERROR 应答 50300 fail closed）、`FileUploadServiceTest`（+4：检出 40001 + 审计 + 零对象写入 / 干净 CLEAN·禁用 UNSCANNED / 不可用 50300 fail closed / 扫描顺序在类型后配额前）、`VirusScanRetroServiceTest`（7：禁用 no-op / CLEAN / INFECTED 不删对象 / HASH_MISMATCH / 不可用中止批次幂等 / 对象缺失与前缀不符跳过 / 批量上限）、`SysFileVirusScanSqlTest`（3：只新增 / 存量默认 UNSCANNED / 状态机登记）、`ProdProfileHardeningTest`（+1：prod 字面量 `${CRDP_VIRUS_SCAN_MODE:off}` 等三键锁定） |
+| D-01 | 上传病毒扫描首期不做（§2.4 恶意代码防范部分符合；整改窗口 W44 按 tech-plan §10 补齐） | **整改**：按 tech-plan §10 定稿方案落地——自建 ClamAV（clamd INSTREAM）**同步扫描**：上传链路在真实类型校验后、写任何对象前扫描（`FileUploadService`），检出 40001 + `FILE_VIRUS_REJECTED` 审计（等保证据），扫描不可用 **50300 不放行**（fail closed，「稍后重试」）；禁用态（仅本机 / CI）不扫描、台账 UNSCANNED。**存量补扫**：`sys_file` 加扫描列（followup V139），`VirusScanRetroService`（每日 03:20，按租户扇出 job_tenant_run）按已记录 SHA-256 读回核对完整性后补扫——干净 CLEAN、检出 INFECTED + `FILE_VIRUS_FOUND` 审计（**不自动删除**，处置见表后）、对象与台账哈希不一致 HASH_MISMATCH + `FILE_VIRUS_HASH_MISMATCH` 审计（完整性事件）；单趟单租户上限 `retro-batch-limit`（默认 200）逐晚推进。**不用云沙箱**（文件不出平台，tech-plan §10 方案对比）；HSS 病毒查杀为主机层补充（云上由运维配置，§5） | `ClamdVirusScannerTest`（4：INSTREAM 分块编码与多块重组 / 干净 / 检出名称解析 / 连接拒绝与 ERROR 应答 50300 fail closed）、`FileUploadServiceTest`（+4：检出 40001 + 审计 + 零对象写入 / 干净 CLEAN·禁用 UNSCANNED / 不可用 50300 fail closed / 扫描顺序在类型后配额前）、`VirusScanRetroServiceTest`（7：禁用 no-op / CLEAN / INFECTED 不删对象 / HASH_MISMATCH / 不可用中止批次幂等 / 对象缺失与前缀不符跳过 / 批量上限）、`SysFileVirusScanSqlTest`（3：只新增 / 存量默认 UNSCANNED / 状态机登记）、`ProdProfileHardeningTest`（+1：prod 字面量 `${CRDP_VIRUS_SCAN_MODE:off}` 等三键锁定） |
 | D-02 | 跨区域备份异步、区域级 RPO 不保证（已确认接受，不购 DRS） | **接受风险**：区域内 RPO ≤ 5 分钟达标；如测评要求区域级保障，DRS 方案已备（tech-plan §14），届时另行立项（云上资源，运维） | 决策记录（self-assessment §4）；条件触发不预算实现 |
 | D-03 | 审计归档无异地 WORM 副本（已确认接受） | **接受风险**：在线 1 年审计随 RDS 跨区域备份；如需整改：归档作业双写备用区域 WORM 桶 + 历史补传（tech-plan §14，届时另行立项） | 同上 |
 | D-04 | 归档桶未开桶级默认加密（OQ-123 ③） | **条件触发**：测评或监管要求则加桶级 SSE-KMS（IaC 一处 + 基线一字段，运维执行） | `iac/obs-archive/worm-baseline.json` 结构已留扩展位；触发后在 OQ-123 登记 |
@@ -76,7 +78,7 @@ INFECTED」一致（§2 流程第 2 步走产品确认）。
       `CRDP_CLAMD_HOST`），不与业务容器混部。由持账号运维执行（AGENTS §9：云上资源不落仓库，部署清单
       存运维 wiki，随 M-16 留痕）；
 - [ ] **启用时点**：clamd 部署并核验（上传一个 EICAR 测试文件被 40001 拒绝、正常文件通过）后，UAT 与
-      生产置 `CRDP_VIRUS_SCAN_MODE=clamd`（经 `crdp-server-env` Secret 注入，同 PT-SELF-02 口径）；
+      生产必须保持 `CRDP_VIRUS_SCAN_MODE=clamd`（经 `crdp-server-env` Secret 注入，同 PT-SELF-02 口径）；
       启用后存量由补扫作业逐晚自动补扫（无需人工触发）；
 - [ ] **HSS 病毒查杀任务（主机层补充）**：HSS 企业版建周期查杀任务扫描节点容器目录（云上由运维配置，
       tech-plan §10；不作为上传前置——文件要先落盘再异步扫，且不扫 OBS 对象）；

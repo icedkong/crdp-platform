@@ -192,6 +192,40 @@ public class FieldHistoryService {
                 operator);
     }
 
+    /** 敏感实体字段只记录密文摘要，不接受原值；摘要校验及敏感字段标记防止误用。 */
+    @Transactional
+    public void logDigestChange(
+            long patientId,
+            String formCode,
+            int version,
+            String fieldKey,
+            String oldDigest,
+            String newDigest,
+            String reason) {
+        validateCommon("PT_PATIENT", reason, List.of());
+        for (String digest : java.util.Arrays.asList(oldDigest, newDigest)) {
+            if (digest != null && !digest.matches("[0-9a-f]{64}")) throw bad("敏感字段历史只接受密文摘要");
+        }
+        boolean sensitive =
+                requireFields(formCode, version).stream()
+                        .anyMatch(
+                                field ->
+                                        field.fieldKey().equals(fieldKey) && field.sensitiveFlag());
+        if (!sensitive) throw bad("字段不是敏感身份字段");
+        insert(
+                "PT_PATIENT",
+                patientId,
+                formCode,
+                version,
+                fieldKey,
+                oldDigest == null ? null : java.util.Map.of("digest", oldDigest),
+                newDigest == null ? null : java.util.Map.of("digest", newDigest),
+                ChangeSource.USER,
+                null,
+                reason,
+                resolveOperator(ChangeSource.USER));
+    }
+
     // ---------------------------------------------------------------- 写入：隐藏字段清空（E11-T03 承接）
 
     /**

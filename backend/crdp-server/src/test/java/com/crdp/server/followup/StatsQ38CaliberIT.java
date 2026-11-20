@@ -81,6 +81,15 @@ class StatsQ38CaliberIT {
     private static final String PLAN_PREFIX = "PLAN-IT-E19T08-";
     private static final LocalDate AS_OF = LocalDate.of(2027, 1, 1);
 
+    @Autowired private com.crdp.framework.security.SessionStore fixtureSessions;
+
+    @org.junit.jupiter.api.AfterAll
+    void removeFixtureWards() {
+        runInTenant(
+                "demoa",
+                () -> jdbc.update("DELETE FROM ward WHERE code LIKE 'IT-Q38-STAT-WARD-%'"));
+    }
+
     @Autowired private TestRestTemplate rest;
     @Autowired private JdbcTemplate jdbc;
     @Autowired private PlanEnrollmentService enrollmentService;
@@ -668,11 +677,7 @@ class StatsQ38CaliberIT {
     /** 病区 id（种子预置病区按 id 升序第 offset 个）。 */
     private long wardIdAtOffset(String tenant, int offset) {
         return runInTenant(
-                tenant,
-                () ->
-                        jdbc.queryForObject(
-                                "SELECT id FROM ward ORDER BY id LIMIT 1 OFFSET " + offset,
-                                Long.class));
+                tenant, () -> StatsFixtureScope.ward(jdbc, "IT-Q38-STAT-WARD-" + offset));
     }
 
     /** 患者状态流转：患者表 + 状态时间线各一行（统计按窗口开始日回看，V39）。 */
@@ -829,7 +834,10 @@ class StatsQ38CaliberIT {
                                 "password",
                                 PASSWORD));
         assertEquals(0, codeOf(response), "登录失败：" + response);
-        return (String) data(response).get("token");
+        return StatsFixtureScope.restrict(
+                fixtureSessions,
+                (String) data(response).get("token"),
+                List.of(wardIdAtOffset("demoa", 0), wardIdAtOffset("demoa", 1)));
     }
 
     private ResponseEntity<Map> get(String path, String token) {

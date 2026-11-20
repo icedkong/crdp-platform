@@ -4,43 +4,24 @@ import com.crdp.followup.file.domain.FileFormat;
 import com.crdp.followup.file.infra.mapper.SysFileMapper;
 import com.crdp.followup.file.infra.mapper.SysFileRow;
 import com.crdp.followup.file.infra.preview.FilePreviewTokenStore;
-import com.crdp.framework.audit.AuditEntry;
-import com.crdp.framework.audit.AuditLogger;
-import com.crdp.framework.security.CurrentSession;
+import com.crdp.framework.audit.*;
 import com.crdp.framework.security.SessionPrincipal;
 import com.crdp.framework.storage.ObjectStorage;
 import com.crdp.framework.tenant.TenantContext;
 import com.crdp.framework.web.ApiException;
-import java.time.Duration;
-import java.time.Instant;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import java.time.*;
+import java.time.format.DateTimeFormatter;
+import java.util.Objects;
+import java.util.Set;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
-/**
- * 预览代理（E10-T04 / A-FU-025、tech-plan §10「预览」；docs/api/report.md §1）。
- *
- * <p>预览**经应用代理按流返回、不缓存**（不把对象存储直链暴露给浏览器）：登录态调 {@code GET /files/{fileId}/preview-url} 换短时链接（≤ 5
- * 分钟，{@link FilePreviewTokenStore}）， 公开取流口凭令牌定位租户与文件后从对象存储读回流。**每次预览（签发链接时）写 FILE_PREVIEW
- * 审计**（用户、租户、文件、时间、IP 由审计服务自动补全）——水印是威慑、审计是追溯（tech-plan §10 残余风险口径）。
- *
- * <p>权限：登录医院会话 + followup 模块开通（控制器注解）；「能看到所属报告单」的数据范围 校验随 E16 报告单子域落地（sys_file 尚未挂
- * rpt_report_file，见 report.md §1）。跨租户由两层挡住： 台账查询按令牌租户路由租户库；对象键前缀与令牌租户不符直接 40400（E10-T02 前缀隔离）。
- *
- * <p>浏览器可播性（A-FU-025）：MP3 / M4A / WAV 原生播放、图片 / PDF / DOCX 页内预览； AMR 与 XLSX 不在线预览（{@code
- * inlinePlayable=false}，前端只给下载），录音不转码（E10-T03 口径）。
- */
+/** OQR-07：会话绑定的鉴权预览；可视文件只返回沙箱生成的水印副本，音频鉴权原流。 */
 @Service
 public class FilePreviewService {
-
-    private static final Logger log = LoggerFactory.getLogger(FilePreviewService.class);
-
-    /** 公开取流口路径前缀（与 FilePreviewController 的映射一致；前端拼基地址后直接用）。 */
     static final String URL_PREFIX = "/api/hospital/files/preview/";
-
-    private static final String IP_LIMIT_PREFIX = "crdp:file-preview:ip:";
-
+    private static final Set<String> VISUAL = Set.of("pdf", "docx", "jpg", "png");
+    private static final Set<String> AUDIO = Set.of("mp3", "m4a", "wav");
     private final SysFileMapper files;
     private final ObjectStorage storage;
     private final FilePreviewTokenStore tokens;
@@ -49,6 +30,8 @@ public class FilePreviewService {
     private final StringRedisTemplate redis;
     private final ContactAudioScopePort contactScope;
     private final ReportFileScopePort reportScope;
+    private final PreviewRenderer renderer;
+    private final PreviewAccessService access;
 
     public FilePreviewService(
             SysFileMapper files,
@@ -58,7 +41,9 @@ public class FilePreviewService {
             FilePreviewProperties properties,
             StringRedisTemplate redis,
             ContactAudioScopePort contactScope,
-            ReportFileScopePort reportScope) {
+            ReportFileScopePort reportScope,
+            PreviewRenderer renderer,
+            PreviewAccessService access) {
         this.files = files;
         this.storage = storage;
         this.tokens = tokens;
@@ -67,22 +52,14 @@ public class FilePreviewService {
         this.redis = redis;
         this.contactScope = contactScope;
         this.reportScope = reportScope;
+        this.renderer = renderer;
+        this.access = access;
     }
 
-    /**
-     * 沟通录音的患者数据范围校验端口（E15-T04）：文件挂沟通记录时校验患者可见性， 不可见一律 40400（不暴露存在）。放在 file 子域的 app 层接口，避免 file →
-     * contact 的 反向编译依赖（依赖方向 contact → file）；实现由 contact 子域提供。
-     */
     public interface ContactAudioScopePort {
-
-        /**
-         * 文件挂沟通记录 → 按患者数据范围校验（越范围 40400）并返回 {@code true}； 未挂 → 返回 {@code false}（S1：未关联文件改由调用方按
-         * 上传者本人收紧，不再「未挂即放行」）。
-         */
         boolean requireAudioPlayable(long fileId);
     }
 
-    /** 签发结果：短时链接 + 展示与播放判定所需字段（前端不缓存，用完即弃）。 */
     public record PreviewGrant(
             String url,
             long expiresAtEpochSecond,
@@ -91,133 +68,184 @@ public class FilePreviewService {
             String originalName,
             boolean inlinePlayable) {}
 
-    /** 取流结果：原始字节 + MIME + 文件名（代理响应不缓存，inline 展示）。 */
     public record PreviewContent(byte[] body, String mime, String originalName) {}
 
-    /** 签发预览短时链接（登录医院会话；文件不存在 / 已删除 → 40400，不暴露存在性）。 */
     public PreviewGrant previewUrl(long fileId) {
-        SessionPrincipal principal = CurrentSession.requireHospital();
-        SysFileRow row = files.find(fileId);
-        if (row == null || "DELETED".equals(row.getStatus())) {
-            throw notFound();
+        try {
+            var actor = access.current();
+            var row = authorize(fileId, actor);
+            long expires = Instant.now().getEpochSecond() + properties.effectiveTtlSeconds();
+            var grant =
+                    new FilePreviewTokenStore.Grant(
+                            2,
+                            actor.tenantId(),
+                            actor.tenantCode(),
+                            fileId,
+                            actor.userId(),
+                            actor.sessionId(),
+                            row.getObjectKey(),
+                            row.getSha256(),
+                            row.getSizeBytes(),
+                            row.getFormatCode(),
+                            watermark(actor),
+                            expires);
+            String token = tokens.issue(grant);
+            audit("FILE_PREVIEW", fileId, AuditResult.SUCCESS, "签发会话与文件版本绑定的预览授权");
+            var type = previewType(row.getFormatCode());
+            return new PreviewGrant(
+                    URL_PREFIX + token,
+                    expires,
+                    type[0],
+                    type[1],
+                    previewName(row.getOriginalName(), row.getFormatCode()),
+                    VISUAL.contains(row.getFormatCode()) || AUDIO.contains(row.getFormatCode()));
+        } catch (ApiException rejected) {
+            audit("FILE_PREVIEW_DENIED", fileId, AuditResult.DENIED, "预览授权被拒绝");
+            throw rejected;
         }
-        // E15-T04：挂在沟通记录上的录音按患者数据范围校验（OQ-62① 的沟通录音部分提前收紧）
-        boolean audioLinked = contactScope.requireAudioPlayable(fileId);
-        // E16-T09：挂在报告单上的文件按患者数据范围校验（OQ-62① 的报告单部分——报告单子域已落地）
-        boolean reportLinked = reportScope.requireReportFileReadable(fileId) != null;
-        // S1（M3 审查）：未挂任何业务对象的文件不再「登录 + 本院台账」放行，只允许上传者本人取链接
-        requireUploaderIfUnlinked(audioLinked, reportLinked, row, principal);
-        relativeKeyOf(row.getObjectKey(), principal.tenantCode());
-        String token = tokens.issue(principal.tenantId(), principal.tenantCode(), fileId);
-        audit.append(
-                AuditEntry.operation("file", "FILE_PREVIEW")
-                        .eventType("FILE_PREVIEW")
-                        .objectType("sys_file")
-                        .objectId(String.valueOf(fileId))
-                        .description(
-                                "预览文件："
-                                        + row.getOriginalName()
-                                        + "（真实类型 "
-                                        + row.getFormatCode()
-                                        + "）")
-                        .build());
-        log.info(
-                "预览链接签发 fileId={} format={} userId={} ttl={}s",
-                fileId,
-                row.getFormatCode(),
-                principal.userId(),
-                properties.effectiveTtlSeconds());
-        return new PreviewGrant(
-                URL_PREFIX + token,
-                Instant.now().getEpochSecond() + properties.effectiveTtlSeconds(),
-                row.getFormatCode(),
-                row.getMimeType(),
-                row.getOriginalName(),
-                inlinePlayable(row.getFormatCode()));
     }
 
-    /**
-     * 公开取流口：先按 IP 限流（AGENTS.md 第 6 节），再凭令牌在**令牌租户**上下文里读台账与对象。
-     *
-     * @param token 预览令牌（preview-url 签发）
-     * @param clientIp 客户端 IP（反代后取 X-Forwarded-For 首段；空则跳过限流，令牌本身仍是硬闸）
-     */
     public PreviewContent content(String token, String clientIp) {
         rateLimit(clientIp);
-        FilePreviewTokenStore.Grant grant =
-                tokens.resolve(token).orElseThrow(FilePreviewService::notFound);
-        return TenantContext.callAsTenant(
-                grant.tenantId(),
-                grant.tenantCode(),
-                () -> {
-                    SysFileRow row = files.find(grant.fileId());
-                    if (row == null || "DELETED".equals(row.getStatus())) {
-                        throw notFound();
-                    }
-                    byte[] body =
-                            storage.get(relativeKeyOf(row.getObjectKey(), grant.tenantCode()));
-                    if (body == null) {
-                        log.warn(
-                                "预览对象缺失 fileId={} tenant={} objectKeyLength={}",
-                                grant.fileId(),
-                                grant.tenantCode(),
-                                row.getObjectKey().length());
-                        throw notFound();
-                    }
-                    return new PreviewContent(body, row.getMimeType(), row.getOriginalName());
-                });
+        var grant = tokens.resolve(token).orElseThrow(FilePreviewService::notFound);
+        try {
+            SysFileRow row = authorizedGrant(grant);
+            if (!VISUAL.contains(row.getFormatCode()) && !AUDIO.contains(row.getFormatCode()))
+                throw new ApiException(400, 40001, "该格式不支持在线预览，原件下载需单独权限");
+            if (row.getSizeBytes() > PreviewRenderer.MAX_BYTES) throw PreviewRenderer.unavailable();
+            byte[] source = storage.get(relativeKeyOf(row.getObjectKey(), grant.tenantCode()));
+            if (source == null || source.length != grant.sizeBytes()) throw notFound();
+            PreviewContent result;
+            if (VISUAL.contains(row.getFormatCode())) {
+                var rendered = renderer.render(source, row.getFormatCode(), grant.watermark());
+                result =
+                        new PreviewContent(
+                                rendered.body(),
+                                rendered.mime(),
+                                previewName(row.getOriginalName(), row.getFormatCode()));
+            } else
+                result =
+                        new PreviewContent(
+                                source, previewType(row.getFormatCode())[1], row.getOriginalName());
+            // 转换期间可能撤权、登出、删除或改版；输出前再次按当前会话与范围核验。
+            if (tokens.resolve(token).filter(grant::equals).isEmpty()) throw notFound();
+            authorizedGrant(grant);
+            audit(
+                    "FILE_PREVIEW_CONTENT",
+                    grant.fileId(),
+                    AuditResult.SUCCESS,
+                    "鉴权返回预览内容（可视文件为水印副本）");
+            return result;
+        } catch (ApiException rejected) {
+            audit(
+                    "FILE_PREVIEW_CONTENT_DENIED",
+                    grant.fileId(),
+                    rejected.httpStatus() >= 500 ? AuditResult.FAIL : AuditResult.DENIED,
+                    "预览内容未返回");
+            throw rejected;
+        }
     }
 
-    // ---------------------------------------------------------------- 私有
+    private SysFileRow authorizedGrant(FilePreviewTokenStore.Grant grant) {
+        var actor = access.current();
+        if (!Objects.equals(grant.sessionId(), actor.sessionId())
+                || grant.userId() != actor.userId()
+                || grant.tenantId() != actor.tenantId()
+                || !Objects.equals(grant.tenantCode(), actor.tenantCode())) throw notFound();
+        var row = authorize(grant.fileId(), actor);
+        if (!Objects.equals(row.getObjectKey(), grant.objectKey())
+                || !Objects.equals(row.getSha256(), grant.sha256())
+                || !Objects.equals(row.getFormatCode(), grant.format())
+                || row.getSizeBytes() != grant.sizeBytes()) throw notFound();
+        return row;
+    }
 
-    /**
-     * S1（M3 审查）：未挂任何沟通记录 / 报告单的文件（PENDING 待关联、手机上传未提交）只允许**上传者本人**
-     * 取预览与下载链接——文件号自增，原先「本院任意登录用户可按号取链接」属越权预览。已挂业务对象的文件维持患者范围校验（越范围已在端口内 40400）。
-     */
+    private SysFileRow authorize(long id, SessionPrincipal actor) {
+        var tenant = TenantContext.require();
+        if (!Objects.equals(tenant.tenantId(), actor.tenantId())
+                || !Objects.equals(tenant.tenantCode(), actor.tenantCode())) throw notFound();
+        var row = files.find(id);
+        if (row == null
+                || "DELETED".equals(row.getStatus())
+                || Set.of("INFECTED", "HASH_MISMATCH")
+                        .contains(Objects.toString(row.getVirusScanStatus(), ""))) throw notFound();
+        boolean audio = contactScope.requireAudioPlayable(id);
+        boolean report = reportScope.requireReportFileReadable(id) != null;
+        requireUploaderIfUnlinked(audio, report, row, actor);
+        String permission = audio || report ? "followup:patient:view" : "followup:scan:upload";
+        if (!actor.permissionCodes().contains(permission))
+            throw new ApiException(403, 40300, "无权预览该文件");
+        relativeKeyOf(row.getObjectKey(), actor.tenantCode());
+        return row;
+    }
+
     static void requireUploaderIfUnlinked(
-            boolean audioLinked, boolean reportLinked, SysFileRow row, SessionPrincipal principal) {
-        if (audioLinked || reportLinked) {
-            return;
-        }
-        if (row.getUploaderId() != principal.userId()) {
-            throw notFound();
-        }
+            boolean audio, boolean report, SysFileRow row, SessionPrincipal actor) {
+        if (!audio && !report && row.getUploaderId() != actor.userId()) throw notFound();
     }
 
-    /**
-     * 校验台账对象键确在令牌租户前缀下并剥出相对键（存储端口会再按当前上下文拼回前缀， 双保险）。前缀对不上说明令牌与台账不是同一租户 → 40400（E10-T02 按租户前缀隔离）。
-     */
-    private static String relativeKeyOf(String objectKey, String tenantCode) {
-        String prefix = "t/" + tenantCode + "/";
-        if (objectKey == null || !objectKey.startsWith(prefix)) {
-            log.warn(
-                    "对象键与租户前缀不符（跨租户访问或数据异常）tenant={} keyLength={}",
-                    tenantCode,
-                    objectKey == null ? 0 : objectKey.length());
-            throw notFound();
-        }
-        return objectKey.substring(prefix.length());
+    private static String relativeKeyOf(String key, String tenant) {
+        String prefix = "t/" + tenant + "/";
+        if (key == null || !key.startsWith(prefix)) throw notFound();
+        return key.substring(prefix.length());
     }
 
-    /** 浏览器原生可播 / 可预览：AMR（浏览器不能直接播放）与 XLSX（需下载查看，A-ATT-005）之外全部可。 */
-    private static boolean inlinePlayable(String formatCode) {
-        return FileFormat.ofExtension(formatCode)
-                .filter(format -> format != FileFormat.AMR && format != FileFormat.XLSX)
-                .isPresent();
+    private static String watermark(SessionPrincipal actor) {
+        String identity =
+                actor.tenantView()
+                        ? "平台支持人员（" + actor.sessionId() + "）"
+                        : actor.displayName() + "（" + actor.username() + "）";
+        if (actor.tenantName() == null
+                || actor.tenantName().isBlank()
+                || actor.displayName() == null
+                || actor.username() == null) throw PreviewRenderer.unavailable();
+        return identity
+                + " · "
+                + actor.tenantName()
+                + " · "
+                + LocalDateTime.now(ZoneId.of("Asia/Shanghai"))
+                        .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
     }
 
-    private void rateLimit(String clientIp) {
-        if (clientIp == null || clientIp.isBlank()) {
-            return;
-        }
-        String key = IP_LIMIT_PREFIX + clientIp;
+    private static String[] previewType(String format) {
+        if (VISUAL.contains(format))
+            return Set.of("png", "jpg").contains(format)
+                    ? new String[] {"png", "image/png"}
+                    : new String[] {"pdf", "application/pdf"};
+        return new String[] {
+            format,
+            FileFormat.ofExtension(format)
+                    .map(f -> f.mimes().getFirst())
+                    .orElse("application/octet-stream")
+        };
+    }
+
+    private static String previewName(String name, String format) {
+        if (!VISUAL.contains(format)) return name;
+        String base = name == null ? "文件" : name.replaceFirst("\\.[^.]*$", "");
+        return base + "（水印预览）." + (Set.of("png", "jpg").contains(format) ? "png" : "pdf");
+    }
+
+    private void rateLimit(String ip) {
+        if (ip == null || ip.isBlank()) return;
+        String key = "crdp:file-preview:ip:" + ip;
         Long count = redis.opsForValue().increment(key);
-        if (count != null && count == 1L) {
-            redis.expire(key, Duration.ofHours(1));
-        }
-        if (count != null && count > properties.getIpHourlyLimit()) {
+        if (count != null && count == 1) redis.expire(key, Duration.ofHours(1));
+        if (count != null && count > properties.getIpHourlyLimit())
             throw new ApiException(429, 42900, "尝试次数过多，请稍后再试");
-        }
+    }
+
+    private void audit(String action, long id, AuditResult result, String description) {
+        audit.append(
+                (action.equals("FILE_PREVIEW") || action.equals("FILE_PREVIEW_DENIED")
+                                ? AuditEntry.operation("file", action)
+                                : AuditEntry.dataAccess("file", action))
+                        .eventType(action)
+                        .objectType("sys_file")
+                        .objectId(String.valueOf(id))
+                        .description(description)
+                        .result(result)
+                        .build());
     }
 
     private static ApiException notFound() {

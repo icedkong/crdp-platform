@@ -44,7 +44,12 @@ class StartDateRecalculationServiceTest {
     private final AuditLogger audit = mock(AuditLogger.class);
 
     private final StartDateRecalculationService service =
-            new StartDateRecalculationService(taskMapper, planMapper, enrollmentMapper, audit);
+            new StartDateRecalculationService(
+                    taskMapper,
+                    planMapper,
+                    enrollmentMapper,
+                    audit,
+                    mock(com.crdp.followup.plan.app.CurrentDeviceScheduleService.class));
 
     // ---------------------------------------------------------------- 装配（A 年度形态：+1 年、提前 7 天、窗口 ±7
     // 天）

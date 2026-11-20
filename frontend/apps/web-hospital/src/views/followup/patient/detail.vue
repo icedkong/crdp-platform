@@ -18,7 +18,14 @@ import type {
 import type { CompareTarget } from '#/components/followup/compare-entry-logic';
 import type { ReportLocation } from '#/reference/types';
 
-import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+} from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import {
@@ -75,6 +82,7 @@ import {
   fetchPatientWardHistory,
   markPatientLost,
 } from '#/api/core/patient';
+import { releasePreviewUrls, trackPreviewUrls } from '#/api/core/preview-blob';
 import { deleteReport, fetchPatientReports } from '#/api/core/report';
 import { deleteRecord, startTask } from '#/api/core/task';
 import {
@@ -148,6 +156,7 @@ import {
   initialPatientDetailTab,
   visiblePatientDetailTabs,
 } from './detail-tabs-logic';
+import RegistrationCard from './registration-card.vue';
 
 defineOptions({ name: 'FollowupPatientDetail' });
 
@@ -332,6 +341,18 @@ onMounted(async () => {
     loading.value = false;
   }
 });
+
+async function registrationSaved() {
+  const id = patientId.value;
+  const [summary, events] = await Promise.all([
+    fetchPatientSummary(id),
+    fetchPatientTimeline(id),
+  ]);
+  if (id !== patientId.value) return;
+  overview.value = summary;
+  timeline.value = events.items;
+  await loadBaseline();
+}
 
 /** 基线全量视图（分节 + 进度 + 锁定态）；失败保留空态，不影响档案主体。 */
 async function loadBaseline() {
@@ -623,6 +644,7 @@ function handleReportCreated() {
 
 /** 图片首附件 → 预览短时链接（≤ 5 分钟、写审计；懒加载、不跨会话缓存）。 */
 const thumbnailUrls = ref<Record<string, string>>({});
+trackPreviewUrls(thumbnailUrls);
 
 async function loadNavThumbnails(rows: ReportRow[]) {
   const targets = rows
@@ -1284,6 +1306,7 @@ async function confirmRecordDelete(reason: string) {
 
 const timelineLegendNote =
   '时间轴含每年随访、历史补录、计划外随访（不影响后续节点）、远程监测（与门诊程控记录区分）与下次计划日期（计划中）；终点事件随 E17、医院 C 的器械事件随 E21 接入。';
+onBeforeUnmount(() => releasePreviewUrls(Object.values(thumbnailUrls.value)));
 </script>
 
 <template>
@@ -1387,9 +1410,11 @@ const timelineLegendNote =
             锁定
           </Button>
         </div>
-        <!-- G5（M3 审查）：原「基线信息（出院登记）」「计划与随访」两块硬编码登记字段已删除——
-             右侧只保留模板只读渲染；姓名 / 病区 / 编号 / 完整度 / 下次随访 / 最近随访在页头
-             PatientHeader（OQ-21 概览并入头部）；登记固定字段是否进模板见 OQ-126 -->
+        <RegistrationCard
+          :patient-id="patientId"
+          :locked="baselineLocked"
+          @saved="registrationSaved"
+        />
         <section
           v-for="section in baselineSectionViews"
           :id="`crdp-anchor-${section.code}`"

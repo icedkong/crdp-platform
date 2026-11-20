@@ -53,8 +53,8 @@ import org.springframework.test.context.ActiveProfiles;
  *       档走真实路径（提交 ERI 状态记录翻入组模式）优先于天数；建议只是种进草稿的缺省，**可改选**（提交改选值落库）；
  *   <li>C-ACC-27 补录链路：不需任务、不受窗口限制（空档日期直接新建过去日期记录，source =
  *       BACKFILL、无任务关联）；「继续补录下一次」同一创建接口——保留患者、器械按新随访日期匹配、 测量值清空；日期边界（不早于植入日期 / 不晚于今天 →
- *       40001）。「补录日期落在未完成任务窗口内 → 自动完成该任务」条款与现行实现（补录提交无任务不联动完成，followup.md §3） 冲突，未在本类断言，缺口与暂行口径见
- *       OQ-146 与留痕文档。
+ *       40001）。「补录日期落在未完成任务窗口内 → 自动完成该任务」已由 OQR-01 / BackfillTaskLinkIT 验证；本类保留开关关闭时的独立补录回归，见
+ *       OQ-148 与留痕文档。
  * </ol>
  *
  * <p>程控记录直接走随包 C_PROGRAM_FU 表单（V90，demoa 常驻，只读引用不删改种子）。门控 CRDP_IT_MYSQL_PORT（CI 起 docker compose
@@ -251,9 +251,9 @@ class CNextVisitBackfillAcceptanceIT {
         Map<String, Object> beforeOpen = enrollmentRow(enrollmentId);
         assertEquals(java.sql.Date.valueOf(doctor), beforeOpen.get("doctor_next_date"), "未消费不清理");
         assertEquals(
-                java.sql.Date.valueOf(defaultPlan),
+                java.sql.Date.valueOf(doctor),
                 beforeOpen.get("next_plan_date"),
-                "缓存保持计划默认（读取侧 COALESCE 医生日期优先，OQ-141）");
+                "缓存展示绑定后的医生日期（OQR-06），不再展示默认日期");
 
         // 窗口开始日当天（规格例 2026-12-16 同构）：创建「常规随访」任务——计划日期 = 医生指定日期、窗口 ±30 天围绕展开、开启日 = 窗口开始日
         creationService.runForDate(doctor.minusDays(30));

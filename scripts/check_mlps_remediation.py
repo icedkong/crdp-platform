@@ -16,7 +16,7 @@
    - 台账与补扫：followup V139 扫描列、`VirusScanRetroService`（SHA-256 完整性核对 +
      CLEAN / INFECTED / HASH_MISMATCH 三态、检出不删对象）、`VirusScanRetroScheduler`（03:20）；
    - 配置：application.yml 默认 off；application-prod.yml 经 `CRDP_VIRUS_SCAN_MODE` 注入
-     （缺省 off，clamd 部署核验后置 clamd）；
+     （缺省 clamd，生产强制配置校验）；
    - 错误码 50300 已在 `docs/api/README.md` 登记（AGENTS §6：新码先登记再用）、
      `docs/api/report.md` §1 上传行为同步；
 4. 自查回写：`self-assessment.md` §2.4 恶意代码防范转「符合」（E22-T15）、D-01 已整改、
@@ -182,9 +182,12 @@ def main() -> int:
     )
     prod = read(PROD_YML)
     check(
-        "application-prod.yml 经 CRDP_VIRUS_SCAN_MODE 注入（缺省 off，不静默默认启用）",
-        "${CRDP_VIRUS_SCAN_MODE:off}" in prod and "${CRDP_CLAMD_HOST" in prod,
+        "application-prod.yml 经 CRDP_VIRUS_SCAN_MODE 注入（缺省 clamd，配置缺失或 off 拒绝启动）",
+        "${CRDP_VIRUS_SCAN_MODE:clamd}" in prod and "${CRDP_CLAMD_HOST" in prod,
     )
+    safety = read(ROOT / "backend/crdp-server/src/main/java/com/crdp/server/config/FileScanProductionSafetyCheck.java")
+    check("生产扫描闸门包含模式 / 地址 / 有限超时校验", all(k in safety for k in ("clamd", "validateClamd", "prod")))
+    check("补扫失败进度迁移在位", (ROOT / "backend/crdp-server/src/main/resources/db/tenant/followup/V147__file_scan_retry_progress.sql").exists())
     api = read(API_README)
     check("错误码 50300 已登记（docs/api/README.md，AGENTS §6 先登记再用）", "| 50300 |" in api)
     report = read(REPORT_API)

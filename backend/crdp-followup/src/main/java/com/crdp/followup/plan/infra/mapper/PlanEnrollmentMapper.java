@@ -294,6 +294,11 @@ public interface PlanEnrollmentMapper {
             """)
     List<SwitchableEnrollmentRow> findSwitchableEnrollments(long patientId);
 
+    @IgnoreScope(reason = "补录提交已核验患者范围；锁定当前 ACTIVE 入组防止暂停 / 终止竞争，仅内部状态处置")
+    @Select(
+            "SELECT e.id,e.plan_id AS planId,e.plan_code AS planCode,e.mode,e.status FROM fu_enrollment e JOIN pt_patient p ON p.id=e.patient_id WHERE e.patient_id=#{patientId} AND e.status='ACTIVE' AND p.followup_status='ACTIVE' AND p.deleted=0 ORDER BY e.id FOR UPDATE")
+    List<SwitchableEnrollmentRow> lockActiveBackfillEnrollments(long patientId);
+
     /**
      * 计划切换结束原入组（C-FU-007：升级 / 更换 / 器械类型更正 / 取出）：在组（ACTIVE / PAUSED）→ SWITCHED（终态， active_key 置空释放
      * uk_fu_enrollment_active，同族可重新入组），switch_reason 记原因（V88）； 返回 0 = 已不在组（并发状态变化，调用方跳过）。
@@ -329,41 +334,6 @@ public interface PlanEnrollmentMapper {
             @Param("enrollmentId") long enrollmentId,
             @Param("mode") String mode,
             @Param("eriSince") LocalDate eriSince);
-
-    /**
-     * 医生指定下次随访日期（C-FU-005 / 切换表末行「只覆盖下一次任务的计划日期」）：该患者在组入组统一登记 doctor_next_date（V88， 每次提交覆盖）；
-     * 窗口围绕展开与任务创建消费随 E21-T08。定向 UPDATE，无 SELECT 输出。
-     */
-    @IgnoreScope(
-            reason =
-                    "医生指定下次随访日期（C-FU-005）：按患者定向 UPDATE 在组入组，触发入口（记录提交）"
-                            + "已做患者数据范围校验（40400）；无 SELECT 输出")
-    @Update(
-            """
-            UPDATE fu_enrollment
-            SET doctor_next_date = #{nextDate}
-            WHERE patient_id = #{patientId} AND status IN ('ACTIVE', 'PAUSED')
-            """)
-    int setDoctorNextDate(
-            @Param("patientId") long patientId, @Param("nextDate") LocalDate nextDate);
-
-    /**
-     * 上次实际随访日期快照单调推进（E21-T07 / C-FU-006，followup V93：滚动循环节点 LAST_VISIT 的排期基准）： 只增不减——早于现快照的补录 /
-     * 修改不回拨；删除或改早最新一次记录不回退（下次提交自愈，OQ-140②）。按患者定向 UPDATE 在组入组，无 SELECT 输出。
-     */
-    @IgnoreScope(
-            reason =
-                    "滚动循环排期基准快照（E21-T07）：按患者定向 UPDATE 在组入组（调度消费，无患者数据"
-                            + "输出），触发入口（记录提交 / 修改）已做患者数据范围校验（40400）")
-    @Update(
-            """
-            UPDATE fu_enrollment
-            SET last_visit_date = #{visitDate}
-            WHERE patient_id = #{patientId} AND status IN ('ACTIVE', 'PAUSED')
-              AND (last_visit_date IS NULL OR last_visit_date < #{visitDate})
-            """)
-    int advanceLastVisitDate(
-            @Param("patientId") long patientId, @Param("visitDate") LocalDate visitDate);
 
     /**
      * 在组（ACTIVE / PAUSED）入组的 ERI 模式位与起算日（E21-T14 / C-FU-014 补录建议「ERI期随访」用）：

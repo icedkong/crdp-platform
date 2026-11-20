@@ -19,6 +19,14 @@
 - 留存：在线 1 年后转归档（PLT-AUD-010）。
 - 运维注意：只读触发器要求迁移账号能建触发器——binlog 开启时非 SUPER 账号需 `log_bin_trust_function_creators=1`（MySQL 1419）。本地 / CI 的 `docker-compose.yml` 已用 `--skip-log-bin` 关闭 binlog；生产由 RDS 参数组处置（运维 E22）。
 
+### 文件预览审计（OQR-07）
+
+签发成功 / 拒绝写操作日志 `FILE_PREVIEW` / `FILE_PREVIEW_DENIED`，保留原事件查询契约。实际取流成功 / 拒绝或生成失败写数据访问日志 `FILE_PREVIEW_CONTENT` / `FILE_PREVIEW_CONTENT_DENIED`（access_method 同事件名），每次取流记录一次，不再沿用旧“仅签发审计”口径。对象为 `sys_file` / 文件 ID，描述为固定文字，不记录文件名、患者字段、短链令牌、水印正文或文件内容。通用鉴权和模块闸门在服务调用前拒绝的请求仍由全局拒绝审计处理。原件下载审计沿用既有定义。
+
+### 文件扫描审计（OQR-08）
+
+上传扫描不可用 `FILE_SCAN_UNAVAILABLE`（FAIL）与检出 `FILE_VIRUS_REJECTED`（DENIED，action 保留 CREATE），异常下载 `FILE_UNSAFE_DOWNLOAD_DENIED`（DENIED），补扫 `FILE_VIRUS_FOUND` / `FILE_VIRUS_HASH_MISMATCH` / `FILE_VIRUS_RETRO`；有重试行时汇总结果为 FAIL，包含本趟处理与待重试数量。描述与日志不记患者明文、文件名、原始扫描服务应答；补扫仅记录文件 ID、固定原因 / 计数及合法引擎签名名。原件保留，业务软删除仍走原有删除原因与审计。
+
 ## 2. 租户查询与导出（E08-T04 已实现）
 
 | 方法 | 路径 | 权限 | 说明 |
@@ -74,3 +82,40 @@
 - 组合查询（时间 / 模块 / 结果 / IP / traceId）与详情前后值、traceId 关联（E08-T04，`AuditQueryExportMySqlIT`）。
 - 导出审批：租户管理员免审批、普通用户待审批（未审批下载 40901）、平台申请人不能自审（40901）、审批通过后异步生成并限时下载、导出 / 审批 / 下载全程记审计（验收原文：导出需审批，导出本身记审计）。
 - E08-T05：触发规则后站内信告警（验收原文）——连续失败锁定 → `ABNORMAL_LOGIN`、导出提交 → `BATCH_EXPORT` 各自落 `plt_security_alert` 派发行（INBOX、PENDING、接收人含种子 `platform.admin`）；权限变更 `ROLE_*` 同口径，普通操作与被拒（DENIED / FAIL）不告警（`SecurityAlertMySqlIT`，真库端到端 + `SecurityAlertServiceTest` 规则矩阵）。
+
+
+### OQR-02 配置预检与应用审计
+
+真实只读预检完成 / 失败写平台 `CONFIG_TEMPLATE_PREVIEW`（目标 tenantId、模板 objectId、包哈希；不记录目标配置值）。应用缺少 / 过期摘要、计划冲突或事务失败写 `CONFIG_TEMPLATE_APPLY` FAIL（40900 / 40901 / 50000）；成功沿用原 APPLY 审计。预检不刷新用户权限版本，不写租户业务数据。
+
+
+### OQR-03 活动作业竞争审计
+
+上传因活动槽冲突被拒时清理本次存储对象，写 IMPORT_UPLOAD FAIL（无作业 ID）；确认和重试的同步争用被拒分别写 IMPORT_COMMIT / IMPORT_RETRY FAIL（作业 ID、业务错误码与固定原因）。不记录文件内容、选项中的患者数据或数据库异常原文。原有成功提交与回滚审计继续沿用。
+
+
+### OQR-04 登记与身份更正审计
+
+普通 / 敏感请求分别记 PATIENT_REGISTRATION_CORRECT_REQUEST / PATIENT_IDENTITY_CORRECT_REQUEST（包含被拒或失败的尝试，不记录请求载荷）；实际产生变更另记 PATIENT_REGISTRATION_CORRECT / PATIENT_IDENTITY_CORRECT，含患者 ID、更正原因与成功结果。无变更不产生实际变更事件。权限 / 租户视角拒绝仍走安全入口审计。
+
+普通字段历史使用 PT_PATIENT、旧 / 新值与更正原因；敏感身份历史仅保存旧 / 新密文 SHA-256 摘要 `{ digest }`，不能由摘要还原明文。原因不得填写患者敏感原值 / 新值。新敏感值不进入请求描述、代理 payload 或通用表单 JSON。更正涉及范围声明为 patient；日期在用计数为已核验范围患者的内部 IgnoreScope，不能返回其他患者数据。
+
+
+### OQR-05A 首次提交事实
+
+first_submitted_at 与提交状态 / 版本在同一数据库更新中写入，沿用 RECORD_SUBMIT 或导入批次的既有审计，不新增独立可更正入口。修改、映射、重算和删除不能重写该事实；历史未知不以旧审计近似推断。临床随访日期、平台接纳时间与最后修改时间分别保留。
+
+
+### OQR-01 补录任务联动
+
+BACKFILL_CANDIDATES 记录范围内候选查询，RECORD_SUBMIT_REQUEST 记录提交尝试（含失败），都不记录请求载荷。实际补录提交成功另写 BACKFILL_TASK_LINK（记录 ID、选中任务 ID或无候选独立提交说明），沿用 RECORD_SUBMIT / TASK_COMPLETE 与转录、死亡联动既有审计。完全相同的幂等重试只记录请求尝试，不重复实际完成 / 字段历史。摘要及幂等结果存业务记录专用列，不落原始数据载荷；既有患者脱敏规则不变。
+
+
+### OQR-05B 统计明细与刷新
+
+统计明细读取写 STATS_DRILL（含被拒的尝试），描述固定，不记录请求载荷或患者明文。查询只读，不因查看“未生成次数”创建任务。原 STATS_NODE_REFRESH 成功审计继续沿用，V144 的实际刷新标记与事实重建同一事务；失败不推进刷新标记。新查询均声明 patient 数据范围，姓名只经字段策略与脱敏装配输出，未新增明文通道或权限码。
+
+
+### OQR-06 日期派生与指定排期
+
+新增 LAST_VISIT_RECALC（当前器械记录更正 / 删除及排期前校正日期）、DOCTOR_NEXT_BIND（绑定具体次数）、DOCTOR_NEXT_CONSUME（创建或重排成功后消费并留任务来源）、DOCTOR_NEXT_REVOKE（来源记录删除 / 清空指令）。前三项对象为 ENROLLMENT，撤销对象为 FU_RECORD；与记录或调度事务一起提交 / 回滚。描述只含操作说明与对象标识，不带临床 JSON 或患者明文；记录修改 / 删除的原审计保留。

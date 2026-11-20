@@ -221,6 +221,9 @@ public class ImportJobService {
         } catch (RuntimeException rejection) {
             // E23-T07 演练发现：建作业被拒（40901 已有运行中作业等）时先写的对象无人清理，桶内留孤儿文件——拒绝路径回收已写对象
             deleteQuietly(relativeKey);
+            if (rejection instanceof ApiException api && api.code() == 40901) {
+                rejected(null, "IMPORT_UPLOAD", "上传导入作业被拒绝：同院已有活动作业", api);
+            }
             throw rejection;
         }
         staging.updateStorageKey(jobId, relativeKey);
@@ -350,7 +353,12 @@ public class ImportJobService {
     /** 确认提交：prepare 在会话内（校验策略 / 兜底病区、有 ERROR 40001、冻结选项与操作人范围快照）， execute 异步执行（向导轮询批次进度）。 */
     public UploadedJob confirm(long jobId, ConfirmOptions options) {
         requireFeatureEnabled();
-        commit.prepare(jobId, options);
+        try {
+            commit.prepare(jobId, options);
+        } catch (ApiException rejection) {
+            rejected(jobId, "IMPORT_COMMIT", "确认导入被拒绝", rejection);
+            throw rejection;
+        }
         runner.dispatch(jobId, commit::execute);
         return new UploadedJob(jobId);
     }
@@ -383,8 +391,25 @@ public class ImportJobService {
         if (!"PARTIAL_FAILED".equals(job.status())) {
             throw new ApiException(409, 40901, "导入任务没有可重试的失败批次（当前 " + job.status() + "）");
         }
-        runner.dispatch(jobId, commit::retryFailed);
+        try {
+            commit.prepareRetry(jobId);
+        } catch (ApiException rejection) {
+            rejected(jobId, "IMPORT_RETRY", "重试导入被拒绝", rejection);
+            throw rejection;
+        }
+        runner.dispatch(jobId, commit::execute);
         return new UploadedJob(jobId);
+    }
+
+    private void rejected(Long jobId, String event, String description, ApiException failure) {
+        audit.append(
+                AuditEntry.operation("followup", event)
+                        .objectType("IMPORT_JOB")
+                        .objectId(jobId == null ? null : String.valueOf(jobId))
+                        .description(description)
+                        .fail("导入校验或作业状态不满足操作条件")
+                        .errorCode(failure.code())
+                        .build());
     }
 
     /** 回滚整个作业（全部已完成批次；审计在 E18-T05 服务内 IMPORT_ROLLBACK）。 */
@@ -407,6 +432,10 @@ public class ImportJobService {
      */
     public FileDownload report(long jobId) {
         requireFeatureEnabled();
+        JobRow job = requireJob(jobId);
+        if (job.operatorId() != CurrentSession.requireHospital().userId()) {
+            throw new ApiException(404, 40400, "导入任务不存在或无权访问");
+        }
         byte[] body = validation.annotatedReport(jobId);
         audit.append(
                 AuditEntry.dataAccess("followup", "DOWNLOAD")

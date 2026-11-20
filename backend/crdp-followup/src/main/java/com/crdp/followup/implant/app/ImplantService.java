@@ -318,6 +318,7 @@ public class ImplantService {
 
     private ImplantRow doCreate(
             long patientId, ImplantPayload payload, long userId, boolean fromRegistration) {
+        planSwitch.lockPatient(patientId);
         DictTables dicts = loadDicts();
         Normalized normalized = normalize(payload, dicts);
         ImplantRow active = gateway.activeImplantOf(patientId);
@@ -424,6 +425,7 @@ public class ImplantService {
         if (existing == null) {
             throw new ApiException(404, 40400, "植入记录不存在或不在您的数据范围内");
         }
+        planSwitch.lockPatient(existing.patientId());
         String reason = trimToNull(request.reason(), 255, "修改原因");
         if (reason == null) {
             throw new ApiException(400, 40001, "修改植入记录必须填写修改原因（C-PAT-011）");
@@ -552,6 +554,8 @@ public class ImplantService {
         } else if (activeRecord && dateChanged) {
             startDateRecalc.recalculateOnBaseDateChange(existing.patientId(), userId);
         }
+        if (activeRecord && (typeCorrected || dateChanged))
+            planSwitch.refreshCurrentDevice(existing.patientId());
 
         return listUnchecked(existing.patientId()).items().stream()
                 .filter(item -> item.id().equals(String.valueOf(implantId)))
@@ -588,6 +592,7 @@ public class ImplantService {
     public ImplantView replace(long implantId, ReplaceRequest request) {
         requireFeatureEnabled();
         ImplantRow target = requireActiveImplantInScope(implantId, "更换 / 升级 / 电极修正");
+        planSwitch.lockPatient(target.patientId());
         if (request == null || request.baseVersion() != target.version()) {
             throw new ApiException(409, 40900, "该植入记录已被他人修改，请刷新后重试");
         }
@@ -743,6 +748,7 @@ public class ImplantService {
     public ImplantView explant(long implantId, ExplantRequest request) {
         requireFeatureEnabled();
         ImplantRow target = requireActiveImplantInScope(implantId, "取出");
+        planSwitch.lockPatient(target.patientId());
         if (request == null || request.baseVersion() != target.version()) {
             throw new ApiException(409, 40900, "该植入记录已被他人修改，请刷新后重试");
         }

@@ -135,7 +135,23 @@ final class RestrictedScopeRewriter {
         collectControlledRefs(body.getFromItem(), refs);
         if (body.getJoins() != null) {
             for (Join join : body.getJoins()) {
-                collectControlledRefs(join.getRightItem(), refs);
+                if (join.isLeft()) {
+                    List<String[]> optionalRefs = new ArrayList<>();
+                    collectControlledRefs(join.getRightItem(), optionalRefs);
+                    Expression on = null;
+                    for (Expression original : join.getOnExpressions()) on = and(on, original);
+                    for (String[] ref : optionalRefs) {
+                        Expression scope =
+                                PATIENT_TABLE.equals(ref[1])
+                                        ? directPatientCondition(ref[0])
+                                        : existsCondition(ref[0], ref[1]);
+                        on = and(on, scope);
+                    }
+                    if (!optionalRefs.isEmpty()) join.setOnExpressions(List.of(on));
+                    coveredRefs += optionalRefs.size();
+                } else {
+                    collectControlledRefs(join.getRightItem(), refs);
+                }
             }
         }
         if (body.getWhere() != null) {
@@ -199,6 +215,7 @@ final class RestrictedScopeRewriter {
         }
         if (snapshot.self()) {
             branches.add(equalsCondition(qualifier, RESPONSIBLE_COLUMN, userId));
+            branches.add(assignedPatientCondition(qualifier));
         }
         return orGroup(branches);
     }
@@ -227,6 +244,7 @@ final class RestrictedScopeRewriter {
         }
         if (snapshot.self()) {
             branches.add(equalsCondition(SCOPED_PATIENT_ALIAS, RESPONSIBLE_COLUMN, userId));
+            branches.add(assignedPatientCondition(SCOPED_PATIENT_ALIAS));
             String ownerColumn = SELF_OWNER_COLUMNS.get(tableName);
             if (ownerColumn != null) {
                 branches.add(equalsCondition(qualifier, ownerColumn, userId));
@@ -238,6 +256,20 @@ final class RestrictedScopeRewriter {
         ExistsExpression exists = new ExistsExpression();
         exists.setRightExpression(sub);
         return exists;
+    }
+
+    /** A-WARD-003：责任医生或任一任务负责人为本人，均可访问该患者及其子表。 */
+    private Expression assignedPatientCondition(String patientQualifier) {
+        try {
+            return CCJSqlParserUtil.parseCondExpression(
+                    "EXISTS (SELECT 1 FROM fu_task crdp_owned_task WHERE crdp_owned_task.patient_id = "
+                            + patientQualifier
+                            + ".id AND crdp_owned_task.assignee_id = "
+                            + userId
+                            + ")");
+        } catch (JSQLParserException impossible) {
+            throw new IllegalStateException("无法构造本人负责患者范围", impossible);
+        }
     }
 
     private InExpression inCondition(String qualifier, String column, List<Long> values) {

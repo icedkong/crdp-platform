@@ -65,7 +65,7 @@ public interface SysFileMapper {
     int markDeleted(@org.apache.ibatis.annotations.Param("id") long id);
 
     /**
-     * 补扫批次（E22-T15 / D-01）：未删除且未扫描的行按 id 升序取一批（{@code LIMIT} 上限由补扫作业按
+     * 补扫批次（E22-T15 / D-01）：未删除且未扫描的行按最近尝试时间、id 排序取一批（未尝试优先）（{@code LIMIT} 上限由补扫作业按
      * crdp.file.virus-scan.retro-batch-limit 传入）；只取补扫需要的列。
      */
     @Select(
@@ -74,11 +74,21 @@ public interface SysFileMapper {
                    size_bytes AS sizeBytes, sha256
             FROM sys_file
             WHERE virus_scan_status = 'UNSCANNED' AND status <> 'DELETED'
-            ORDER BY id
+            ORDER BY virus_scan_attempted_at, id
             LIMIT #{limit}
             """)
     java.util.List<SysFileRow> findUnscanned(
             @org.apache.ibatis.annotations.Param("limit") int limit);
+
+    @Update(
+            "UPDATE sys_file SET virus_scan_attempts=virus_scan_attempts+1, virus_scan_attempted_at=CURRENT_TIMESTAMP(3), virus_scan_retry_reason=NULL WHERE id=#{id} AND virus_scan_status='UNSCANNED' AND status <> 'DELETED'")
+    int markScanAttempt(@org.apache.ibatis.annotations.Param("id") long id);
+
+    @Update(
+            "UPDATE sys_file SET virus_scan_retry_reason=#{reason} WHERE id=#{id} AND virus_scan_status='UNSCANNED' AND status <> 'DELETED'")
+    int markScanRetry(
+            @org.apache.ibatis.annotations.Param("id") long id,
+            @org.apache.ibatis.annotations.Param("reason") String reason);
 
     /**
      * 回填补扫结论（E22-T15）：CLEAN / INFECTED / HASH_MISMATCH。守卫 {@code virus_scan_status =
@@ -87,8 +97,8 @@ public interface SysFileMapper {
     @Update(
             """
             UPDATE sys_file
-            SET virus_scan_status = #{status}, virus_scanned_at = CURRENT_TIMESTAMP(3)
-            WHERE id = #{id} AND virus_scan_status = 'UNSCANNED'
+            SET virus_scan_status = #{status}, virus_scanned_at = CURRENT_TIMESTAMP(3), virus_scan_retry_reason=NULL
+            WHERE id = #{id} AND virus_scan_status = 'UNSCANNED' AND status <> 'DELETED'
             """)
     int markVirusScanResult(
             @org.apache.ibatis.annotations.Param("id") long id,

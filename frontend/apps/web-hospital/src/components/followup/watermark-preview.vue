@@ -19,12 +19,13 @@ export interface WatermarkPreviewFile {
 <script lang="ts" setup>
 import type { WatermarkViewer } from '@crdp/viewer';
 
-import { computed, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 
 import { FullscreenViewer } from '@crdp/viewer';
 import { Button } from 'ant-design-vue';
 
 import { getFilePreviewUrl } from '#/api/core/file';
+import { releasePreviewUrls, trackPreviewUrls } from '#/api/core/preview-blob';
 
 const props = withDefaults(
   defineProps<{
@@ -48,6 +49,9 @@ const emit = defineEmits<{
 /** 会话内的短时链接（打开期间翻回已看过的份不重复签发；关闭即弃，不跨会话缓存）。 */
 const urls = ref<Record<string, string>>({});
 const failed = ref(false);
+trackPreviewUrls(urls, () => {
+  failed.value = true;
+});
 
 /** 当前文件（索引夹取；空清单 = 不渲染查看器）。 */
 const currentFile = computed(() =>
@@ -62,7 +66,9 @@ const currentUrl = computed(() => {
   return file ? (urls.value[String(file.fileId)] ?? null) : null;
 });
 
+let sequence = 0;
 async function resolveCurrent(): Promise<void> {
+  const request = ++sequence;
   const file = currentFile.value;
   if (!file || urls.value[String(file.fileId)]) {
     return;
@@ -70,12 +76,20 @@ async function resolveCurrent(): Promise<void> {
   failed.value = false;
   try {
     const grant = await getFilePreviewUrl(file.fileId);
+    if (
+      request !== sequence ||
+      !props.open ||
+      currentFile.value?.fileId !== file.fileId
+    ) {
+      releasePreviewUrls([grant.url]);
+      return;
+    }
     urls.value = {
       ...urls.value,
       [String(file.fileId)]: grant.url,
     };
   } catch {
-    failed.value = true;
+    if (request === sequence && props.open) failed.value = true;
   }
 }
 
@@ -83,7 +97,9 @@ watch(
   () => [props.open, props.index, props.files] as const,
   ([open]) => {
     if (!open) {
+      sequence++;
       // 会话结束即弃（短时链接不缓存；下次打开重新签发、重新写审计）
+      releasePreviewUrls(Object.values(urls.value));
       urls.value = {};
       failed.value = false;
       return;
@@ -104,6 +120,10 @@ function handleIndex(next: number): void {
 function handleDownload(file: { fileId: number | string }): void {
   emit('download', file.fileId);
 }
+onBeforeUnmount(() => {
+  sequence++;
+  releasePreviewUrls(Object.values(urls.value));
+});
 </script>
 
 <template>
